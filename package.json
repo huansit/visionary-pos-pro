@@ -1,0 +1,34 @@
+{
+  "name": "visionary-pos-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync backend for Visionary POS — multi-branch (SIPCITY + Cape Town) event-log sync over Postgres.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "dev:mem": "node db/dev-mem-server.js",
+    "migrate": "node db/migrate.js",
+    "seed:device": "node db/make-device.js",
+    "hash": "node db/hash-credential.js",
+    "test:sync": "node --test test/sync.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.12.0",
+    "pg-mem": "^3.0.5",
+    "supertest": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@babel/parser": "^8.0.0"
+  }
+}
