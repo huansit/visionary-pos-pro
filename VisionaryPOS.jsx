@@ -531,6 +531,17 @@ function syncConfig() {
     deviceToken: cfg.deviceToken || (ls && ls.getItem(DEVICE_TOKEN_KEY)) || "",
   };
 }
+async function authApi(path, body) {
+  const cfg = syncConfig();
+  const response = await fetch(cfg.apiBaseUrl + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "request_failed");
+  return data;
+}
 function cleanPayload(type, record) {
   const { synced, _sync, ...payload } = record || {};
   if (type === "user") {
@@ -1760,26 +1771,58 @@ function OwnerSignup({ data, onBack, onRegistered }) {
   const [name, setName] = useState("");
   const [idType, setIdType] = useState("email"); // "email" | "phone"
   const [ident, setIdent] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [pw, setPw] = useState(""), [pw2, setPw2] = useState("");
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
-  const submit = () => {
-    if (!name.trim()) return setErr("Enter the owner's name.");
+  const [busy, setBusy] = useState(false);
+  const target = () => {
     const id = ident.trim();
     if (idType === "email") {
-      if (!isValidEmail(id)) return setErr("Enter a valid email address.");
-    } else {
-      if (!isValidPhone(id)) return setErr("Enter a valid phone (e.g. 0712345678 or +254712345678).");
+      if (!isValidEmail(id)) throw new Error("Enter a valid email address.");
+      return id.toLowerCase();
     }
-    const emailVal = idType === "email" ? id.toLowerCase() : "";
-    const phoneVal = idType === "phone" ? normPhone(id) : "";
+    if (!isValidPhone(id)) throw new Error("Enter a valid phone (e.g. 0712345678 or +254712345678).");
+    return normPhone(id);
+  };
+  const sendCode = async () => {
+    setErr("");
+    try {
+      const t = target();
+      setBusy(true);
+      await authApi("/api/auth/send-code", { channel: idType, target: t });
+      setCodeSent(true);
+    } catch (error) {
+      setErr(error.message === "email_provider_not_configured" ? "Email sending is not configured on the server." :
+        error.message === "sms_provider_not_configured" ? "SMS sending is not configured on the server." : error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = async () => {
+    if (!name.trim()) return setErr("Enter the owner's name.");
+    let t;
+    try { t = target(); } catch (error) { return setErr(error.message); }
+    const emailVal = idType === "email" ? t : "";
+    const phoneVal = idType === "phone" ? t : "";
     // uniqueness against existing accounts
     const clash = (emailVal && (data.employees || []).some((e) => (e.email || "").toLowerCase() === emailVal))
       || (phoneVal && (data.employees || []).some((e) => normPhone(e.phone) === phoneVal));
     if (clash) return setErr("That email or phone is already in use by another user.");
     const issue = passwordIssue(pw); if (issue) return setErr(issue);
     if (pw !== pw2) return setErr("Passwords don't match.");
-    onRegistered({ name: name.trim(), email: emailVal, phone: phoneVal, password: pw, provisioned: true });
+    if (!/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit verification code.");
+    try {
+      setBusy(true);
+      await authApi("/api/auth/register-owner", { channel: idType, target: t, code: code.trim(), name: name.trim(), password: pw });
+      onRegistered({ name: name.trim(), email: emailVal, phone: phoneVal, password: pw, provisioned: true });
+    } catch (error) {
+      setErr(error.message === "invalid_code" ? "That verification code is incorrect." :
+        error.message === "code_not_found_or_expired" ? "That verification code expired. Send a new one." : error.message);
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <AuthShellV3>
@@ -1796,14 +1839,18 @@ function OwnerSignup({ data, onBack, onRegistered }) {
         <div className="field"><label className="label">{idType === "email" ? "Email address" : "Phone number"}</label>
           <input className="input" type={idType === "email" ? "email" : "tel"} inputMode={idType === "email" ? "email" : "tel"}
             placeholder={idType === "email" ? "you@store.com" : "0712345678 or +254712345678"} value={ident}
-            onChange={(e) => { setIdent(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
+            onChange={(e) => { setIdent(e.target.value); setCode(""); setCodeSent(false); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && sendCode()} /></div>
+        <div className="field"><button className="btn btn-ghost" disabled={busy} onClick={sendCode}>{idType === "email" ? <Mail /> : <Smartphone />}{codeSent ? "Send code again" : "Send verification code"}</button></div>
+        {codeSent && <div className="field"><label className="label">Verification code</label>
+          <input className="input mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code}
+            onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} /></div>}
         <div className="field"><label className="label">Password</label><div className="input-wrap">
           <input className="input" type={show ? "text" : "password"} placeholder="8+ chars, upper, number, symbol" value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }} />
           <button className="toggle-eye" onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
         <div className="field"><label className="label">Confirm password</label>
           <input className="input" type={show ? "text" : "password"} placeholder="Re-enter password" value={pw2} onChange={(e) => { setPw2(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <div className="field"><button className="btn btn-primary" onClick={submit}><ShieldCheck /> Create account & sign in</button></div>
+        <div className="field"><button className="btn btn-primary" disabled={busy || !codeSent} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : "Create account & sign in"}</button></div>
         <button className="authback" onClick={onBack}><ArrowLeft /> Back to sign-in</button>
       </div>
     </AuthShellV3>
@@ -2832,18 +2879,27 @@ const CATS = ["Whisky", "Gin", "Vodka", "Rum", "Cognac", "Wine", "Beer", "Spirit
 function ProductsTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
+  const [f, setF] = useState({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [catF, setCatF] = useState("All");
   const [delMsg, setDelMsg] = useState("");
-  const reset = () => { setF({ name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" }); setErr(""); setAdding(false); };
+  const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
+  const productCodeMatch = (p, code) => {
+    const normalized = cleanCode(code).toLowerCase();
+    if (!normalized) return false;
+    return [p.sku, p.barcode].some((value) => cleanCode(value).toLowerCase() === normalized);
+  };
+  const reset = () => { setF({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" }); setErr(""); setAdding(false); };
   const add = () => {
     const price = Math.round(parseFloat(f.price) * 100);
     if (!f.name.trim()) return setErr("Add a product name.");
     if (!price || price <= 0) return setErr("Enter a valid price.");
     const sku = f.sku.trim() || "SIP" + Math.floor(1000 + Math.random() * 9000);
-    update((d) => ({ ...d, products: [...d.products, { id: uid("p"), name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: Math.round((parseFloat(f.cost) || 0) * 100), barcode: sku, reorderLevel: d.settings.reorderLevel, synced: false }] }));
+    const barcode = cleanCode(f.barcode);
+    if (data.products.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists.");
+    if (barcode && data.products.some((p) => productCodeMatch(p, barcode))) return setErr("Barcode already exists.");
+    update((d) => ({ ...d, products: [...d.products, { id: uid("p"), name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: Math.round((parseFloat(f.cost) || 0) * 100), barcode: barcode || sku, reorderLevel: d.settings.reorderLevel, synced: false }] }));
     reset();
   };
   const remove = (id) => {
@@ -2926,7 +2982,11 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add product</button> : (
         <div className="addpanel fade"><div className="section-title" style={{ margin: "0 0 12px" }}>New product</div>
           <div className="grid2"><div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setErr(""); }} placeholder="e.g. Jameson Whisky 750ML" /></div>
-            <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => setF({ ...f, sku: e.target.value })} placeholder="SIP0068" /></div></div>
+            <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
+          <div className="field" style={{ marginTop: 12 }}>
+            <label className="label">Barcode scan</label>
+            <input className="input" inputMode="numeric" autoComplete="off" value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
+          </div>
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Size</label><input className="input" value={f.size} onChange={(e) => setF({ ...f, size: e.target.value })} placeholder="750 ML" /></div>
             <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
@@ -2943,7 +3003,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       </div>
       {(() => {
         const reorder = data.settings.reorderLevel || 4;
-        const list = data.products.filter((p) => (catF === "All" || p.category === catF) && (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())));
+        const list = data.products.filter((p) => (catF === "All" || p.category === catF) && (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase().includes(q.toLowerCase())));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
