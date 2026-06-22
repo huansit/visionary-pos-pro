@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let Pool = pg.Pool;
+const databaseUrl = process.env.DATABASE_URL || "";
+export const isMySql = databaseUrl.startsWith("mysql://") || databaseUrl.startsWith("mysql2://");
 
 if (process.env.PG_MEM === "1") {
   const { newDb } = await import("pg-mem");
@@ -13,19 +15,88 @@ if (process.env.PG_MEM === "1") {
   Pool = adapter.Pool;
 }
 
+function postgresPool() {
+  return new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: parseInt(process.env.PGPOOL_MAX || "20", 10),
+    idleTimeoutMillis: parseInt(process.env.PGPOOL_IDLE_TIMEOUT_MS || "30000", 10),
+    connectionTimeoutMillis: parseInt(process.env.PGPOOL_CONNECTION_TIMEOUT_MS || "5000", 10),
+  });
+}
+
+function mysqlParams(params = []) {
+  return params.map((value) => {
+    if (value && typeof value === "object" && !(value instanceof Date) && !Buffer.isBuffer(value)) {
+      return JSON.stringify(value);
+    }
+    return value;
+  });
+}
+
+function mysqlText(text) {
+  return text.replace(/\$(\d+)/g, "?");
+}
+
+function normalizeRows(rows) {
+  return rows.map((row) => {
+    for (const key of ["payload", "rights"]) {
+      if (typeof row[key] === "string") {
+        try { row[key] = JSON.parse(row[key]); } catch (_) {}
+      }
+    }
+    return row;
+  });
+}
+
+function mysqlPool(rawPool) {
+  return {
+    async query(text, params = []) {
+      const [rows] = await rawPool.execute(mysqlText(text), mysqlParams(params));
+      return { rows: Array.isArray(rows) ? normalizeRows(rows) : [], raw: rows };
+    },
+    async connect() {
+      const connection = await rawPool.getConnection();
+      return {
+        async query(text, params = []) {
+          const sql = text === "BEGIN" ? "START TRANSACTION" : text;
+          const [rows] = await connection.execute(mysqlText(sql), mysqlParams(params));
+          return { rows: Array.isArray(rows) ? normalizeRows(rows) : [], raw: rows };
+        },
+        release() {
+          connection.release();
+        }
+      };
+    },
+    async end() {
+      await rawPool.end();
+    }
+  };
+}
+
+async function createPool() {
+  if (isMySql) {
+    const mysql = await import("mysql2/promise");
+    const rawPool = mysql.createPool({
+      uri: databaseUrl,
+      waitForConnections: true,
+      connectionLimit: parseInt(process.env.MYSQL_POOL_MAX || process.env.PGPOOL_MAX || "20", 10),
+      queueLimit: 0,
+    });
+    return mysqlPool(rawPool);
+  }
+  return postgresPool();
+}
+
 // Single shared connection pool (don't open a connection per request).
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: parseInt(process.env.PGPOOL_MAX || "20", 10),
-  idleTimeoutMillis: parseInt(process.env.PGPOOL_IDLE_TIMEOUT_MS || "30000", 10),
-  connectionTimeoutMillis: parseInt(process.env.PGPOOL_CONNECTION_TIMEOUT_MS || "5000", 10),
-});
+export const pool = await createPool();
 
 export const q = (text, params) => pool.query(text, params);
 
-export const ready = process.env.PG_MEM === "1" && process.env.PG_MEM_AUTO_MIGRATE !== "0"
-  ? applyMemorySchema()
-  : Promise.resolve();
+export const ready = isMySql
+  ? applyMySqlSchema()
+  : process.env.PG_MEM === "1" && process.env.PG_MEM_AUTO_MIGRATE !== "0"
+    ? applyMemorySchema()
+    : Promise.resolve();
 
 async function applyMemorySchema() {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +106,22 @@ async function applyMemorySchema() {
     .replace(/,\s*CONSTRAINT credential_pin_hash_is_bcrypt CHECK \(pin_hash IS NULL OR pin_hash ~ '[^']+'\)/g, "")
     .replace(/,\s*CONSTRAINT credential_password_hash_is_bcrypt CHECK \(password_hash IS NULL OR password_hash ~ '[^']+'\)/g, "");
   await pool.query(schema);
+}
+
+async function applyMySqlSchema() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const schema = readFileSync(join(here, "..", "db", "schema.mysql.sql"), "utf8");
+  const statements = schema
+    .split(/;\s*(?:\r?\n|$)/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  for (const statement of statements) {
+    try {
+      await pool.query(statement);
+    } catch (error) {
+      if (error?.code !== "ER_DUP_KEYNAME") throw error;
+    }
+  }
 }
 
 export async function tx(fn) {

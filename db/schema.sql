@@ -70,3 +70,19 @@ CREATE TABLE IF NOT EXISTS credentials (
 
 CREATE UNIQUE INDEX IF NOT EXISTS credentials_email_idx ON credentials (lower(email)) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS credentials_phone_idx ON credentials (phone) WHERE phone IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS auth_verification_codes (
+  id bigserial PRIMARY KEY,
+  channel text NOT NULL CHECK (channel IN ('email', 'phone')),
+  target text NOT NULL,
+  code_hash text NOT NULL,
+  purpose text NOT NULL DEFAULT 'owner_signup',
+  attempts integer NOT NULL DEFAULT 0,
+  consumed_at timestamptz,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT auth_verification_code_hash_is_bcrypt CHECK (code_hash ~ '^\$2[aby]\$')
+);
+
+CREATE INDEX IF NOT EXISTS auth_verification_codes_lookup_idx
+  ON auth_verification_codes (channel, target, purpose, consumed_at, expires_at);

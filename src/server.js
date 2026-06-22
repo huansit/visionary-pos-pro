@@ -7,7 +7,7 @@ import "dotenv/config";
 import authRoutes from "./routes/auth.js";
 import syncRoutes from "./routes/sync.js";
 import { requireDevice } from "./auth.js";
-import { q, ready } from "./db.js";
+import { isMySql, q, ready } from "./db.js";
 
 await ready;
 
@@ -42,16 +42,27 @@ app.use("/api/sync", syncRoutes);
 app.get("/api/reconcile/oversell", requireDevice, async (_req, res, next) => {
   try {
     const result = await q(
-      `SELECT
-         COALESCE(branch_id, payload->>'branchId') AS "branchId",
-         payload->>'productId' AS "productId",
-         SUM(COALESCE((payload->>'qty')::numeric, (payload->>'quantity')::numeric, 0)) AS "onHand"
-       FROM events
-       WHERE type = 'stockMovement'
-         AND payload ? 'productId'
-       GROUP BY COALESCE(branch_id, payload->>'branchId'), payload->>'productId'
-       HAVING SUM(COALESCE((payload->>'qty')::numeric, (payload->>'quantity')::numeric, 0)) < 0
-       ORDER BY "branchId", "productId"`
+      isMySql
+        ? `SELECT
+             COALESCE(branch_id, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId'))) AS branchId,
+             JSON_UNQUOTE(JSON_EXTRACT(payload, '$.productId')) AS productId,
+             SUM(COALESCE(JSON_EXTRACT(payload, '$.qty') + 0, JSON_EXTRACT(payload, '$.quantity') + 0, 0)) AS onHand
+           FROM events
+           WHERE type = 'stockMovement'
+             AND JSON_EXTRACT(payload, '$.productId') IS NOT NULL
+           GROUP BY COALESCE(branch_id, JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId'))), JSON_UNQUOTE(JSON_EXTRACT(payload, '$.productId'))
+           HAVING SUM(COALESCE(JSON_EXTRACT(payload, '$.qty') + 0, JSON_EXTRACT(payload, '$.quantity') + 0, 0)) < 0
+           ORDER BY branchId, productId`
+        : `SELECT
+             COALESCE(branch_id, payload->>'branchId') AS "branchId",
+             payload->>'productId' AS "productId",
+             SUM(COALESCE((payload->>'qty')::numeric, (payload->>'quantity')::numeric, 0)) AS "onHand"
+           FROM events
+           WHERE type = 'stockMovement'
+             AND payload ? 'productId'
+           GROUP BY COALESCE(branch_id, payload->>'branchId'), payload->>'productId'
+           HAVING SUM(COALESCE((payload->>'qty')::numeric, (payload->>'quantity')::numeric, 0)) < 0
+           ORDER BY "branchId", "productId"`
     );
     res.json({ rows: result.rows });
   } catch (error) {
