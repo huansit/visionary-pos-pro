@@ -393,7 +393,7 @@ const SEED = () => {
   });
   products.forEach((p) => delete p._stock);
   return {
-    settings: { currency: "KES", taxRate: 0, store: "Visionary POS", reorderLevel: 4, theme: "light", activeBranchId: "b_sip", lastEndDay: t - 86400000 },
+    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", activeBranchId: "b_sip", lastEndDay: t - 86400000 },
     admin: { name: "Owner", email: "admin@visionary.app", phone: "", password: "Admin@123", provisioned: false },
     branches,
     employees: [
@@ -444,7 +444,7 @@ const SEED = () => {
 const CLEAN_SETUP = () => {
   const t = now();
   return {
-    settings: { currency: "KES", taxRate: 0, store: "Visionary POS", reorderLevel: 4, theme: "light", activeBranchId: "", lastEndDay: t },
+    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", activeBranchId: "", lastEndDay: t },
     admin: { name: "", email: "", phone: "", password: "", provisioned: false },
     branches: [],
     employees: [],
@@ -493,7 +493,11 @@ async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
 
 async function loadData() {
   const data = await loadJson(STORE_KEY, null);
-  if (data) return { ...data, _sync: await syncStatus() };
+  if (data) {
+    const settings = { ...(data.settings || {}) };
+    if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
+    return { ...data, settings, _sync: await syncStatus() };
+  }
   return null;
 }
 async function saveData(data) {
@@ -1518,7 +1522,7 @@ function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><d
 /* ================================================================== */
 /*  App                                                               */
 /* ================================================================== */
-export default function VisionaryPOS() {
+export default function VisionPOS() {
   const [data, setData] = useState(null);
   const dataRef = useRef(null);
   const [view, setView] = useState("pin");
@@ -1610,7 +1614,7 @@ export default function VisionaryPOS() {
         </div>
         <div className="content">
           {view === "register" && <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />}
-          {view === "admin" && <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONARY Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} />}
+          {view === "admin" && <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} />}
         </div>
       </div>
     </div>
@@ -1740,7 +1744,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       <AuthShellV3>
         <div className="authform">
           <div className="authfield-label" style={{ marginBottom: 14 }}>Reset your password</div>
-          <div className="authnote">For security, an admin password can't be reset from the sign-in screen. The account owner can change it under <strong>Settings → Security</strong> while signed in. If no one can sign in, contact your Visionary POS administrator to restore access.</div>
+          <div className="authnote">For security, an admin password can't be reset from the sign-in screen. The account owner can change it under <strong>Settings → Security</strong> while signed in. If no one can sign in, contact your VISIONPOS administrator to restore access.</div>
           <button className="authback" style={{ marginTop: 16 }} onClick={() => { setForgot(false); setErr(""); }}><ArrowLeft /> Back to sign-in</button>
         </div>
       </AuthShellV3>
@@ -4015,7 +4019,7 @@ function aiDigest(data) {
   const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
   const totalToday = branches.reduce((s, b) => s + b.salesTodayKES, 0); const totalProfit = branches.reduce((s, b) => s + b.grossProfitKES, 0); const totalExp = k(expT.reduce((s, e) => s + e.amountCents, 0));
   return {
-    currency: cur, date: new Date().toLocaleString(), company: data.settings.store || "Visionary POS",
+    currency: cur, date: new Date().toLocaleString(), company: data.settings.store || "VISIONPOS",
     totals: { salesTodayKES: totalToday, salesYesterdayKES: branches.reduce((s, b) => s + b.salesYesterdayKES, 0), transactionsToday: branches.reduce((s, b) => s + b.transactionsToday, 0), grossProfitKES: totalProfit, expensesTodayKES: totalExp, netProfitKES: totalProfit - totalExp },
     branches, topProducts,
     paymentMixTodayKES: Object.fromEntries(Object.entries(payT).map(([m, v]) => [m, k(v)])),
@@ -4046,7 +4050,7 @@ function AIManagerTab({ data }) {
       const text = (json.content || []).map((b) => (b.type === "text" ? b.text : "")).join("\n").trim();
       setMessages((m) => [...m, { role: "assistant", content: text || "I couldn't generate an answer. Please try again." }]);
     } catch (e) {
-      setError("Could not reach the AI service. Ask My Business needs an internet connection and works in the deployed Visionary POS app.");
+      setError("Could not reach the AI service. Ask My Business needs an internet connection and works in the deployed VISIONPOS app.");
       setMessages((m) => m.slice(0, -1));
     }
     setLoading(false);
@@ -4193,7 +4197,7 @@ function discrepancyPdfLines(report, cur) {
   const pad = (s, w) => { s = String(s); return s.length >= w ? s.slice(0, w) : s + " ".repeat(w - s.length); };
   const padL = (s, w) => { s = String(s); return s.length >= w ? s : " ".repeat(w - s.length) + s; };
   const L = [];
-  L.push({ text: report.store || "VISIONARY POS", size: 16 });
+  L.push({ text: report.store || "VISIONPOS", size: 16 });
   L.push({ text: "INVENTORY DISCREPANCY REPORT — READ-ONLY", size: 11, gray: 0.35 });
   L.push({ text: "Branch: " + report.branchName + "    " + new Date(report.ts).toLocaleString(), size: 9.5, gray: 0.35 });
   L.push({ text: "", size: 6 });
@@ -4207,7 +4211,7 @@ function discrepancyPdfLines(report, cur) {
   rows.forEach((l) => { L.push({ text: pad(l.name, 26) + pad(l.sku, 12) + padL(l.system, 5) + padL(l.counted, 6) + padL((l.variance > 0 ? "+" : "") + l.variance, 6) + padL(fmt(l.variance * l.costCents, cur), 13) + "  " + (l.kind === "amendment" ? "amend" : "count"), size: 9.5 }); });
   if (rows.length === 0) L.push({ text: "No items counted.", size: 10, gray: 0.4 });
   L.push({ text: "", size: 8 });
-  L.push({ text: "Generated by Visionary POS · This document is read-only.", size: 8, gray: 0.5 });
+  L.push({ text: "Generated by VISIONPOS · This document is read-only.", size: 8, gray: 0.5 });
   return L;
 }
 // Download / print / export an inventory discrepancy report. kind: "pdf" | "print" | "csv" | "json".
@@ -4219,7 +4223,7 @@ function exportDiscrepancy(report, cur, kind) {
     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const rowsArr = report.lines && report.lines.length ? report.lines : report.discrepancies;
     const rows = rowsArr.map((l) => "<tr><td>" + esc(l.name) + "<br><small>" + esc(l.sku) + "</small></td><td class='r'>" + l.system + "</td><td class='r'>" + l.counted + "</td><td class='r' style='font-weight:700;color:" + (l.variance < 0 ? "#b00" : l.variance > 0 ? "#070" : "#666") + "'>" + (l.variance > 0 ? "+" : "") + l.variance + "</td><td class='r'>" + fmt(l.variance * l.costCents, cur) + "</td><td>" + (l.kind === "amendment" ? "amendment" : "count") + "</td></tr>").join("");
-    const html = "<html><head><title>Discrepancy Report</title><style>body{font-family:monospace;padding:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:400;margin:2px 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left}td.r,th.r{text-align:right}small{color:#888}.s{margin:10px 0;font-size:12px}</style></head><body><h1>" + esc(report.store || "Visionary POS") + "</h1><h2>Inventory Discrepancy Report — READ-ONLY · " + esc(report.branchName) + " · " + new Date(report.ts).toLocaleString() + "</h2><div class='s'>Discrepancies: <b>" + report.discrepancies.length + "</b> · Amendments: <b>" + report.amendments + "</b> · Shortage: <b>" + fmt(report.shortCost, cur) + "</b> · Overage: <b>" + fmt(report.overCost, cur) + "</b> · Net value: <b>" + fmt(report.varianceCost, cur) + "</b></div><table><thead><tr><th>Product</th><th class='r'>System</th><th class='r'>Counted</th><th class='r'>Variance</th><th class='r'>Value</th><th>Type</th></tr></thead><tbody>" + rows + "</tbody></table></body></html>";
+    const html = "<html><head><title>Discrepancy Report</title><style>body{font-family:monospace;padding:24px;color:#111}h1{font-size:18px;margin:0}h2{font-size:12px;color:#555;font-weight:400;margin:2px 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #ddd;padding:5px 6px;text-align:left}td.r,th.r{text-align:right}small{color:#888}.s{margin:10px 0;font-size:12px}</style></head><body><h1>" + esc(report.store || "VISIONPOS") + "</h1><h2>Inventory Discrepancy Report — READ-ONLY · " + esc(report.branchName) + " · " + new Date(report.ts).toLocaleString() + "</h2><div class='s'>Discrepancies: <b>" + report.discrepancies.length + "</b> · Amendments: <b>" + report.amendments + "</b> · Shortage: <b>" + fmt(report.shortCost, cur) + "</b> · Overage: <b>" + fmt(report.overCost, cur) + "</b> · Net value: <b>" + fmt(report.varianceCost, cur) + "</b></div><table><thead><tr><th>Product</th><th class='r'>System</th><th class='r'>Counted</th><th class='r'>Variance</th><th class='r'>Value</th><th>Type</th></tr></thead><tbody>" + rows + "</tbody></table></body></html>";
     try {
       const fr = document.createElement("iframe"); fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
       document.body.appendChild(fr); const d = fr.contentWindow.document; d.open(); d.write(html); d.close();
@@ -4796,7 +4800,7 @@ function DocumentsTab({ data }) {
         return (
           <div className="scrim" onClick={() => setRepView(null)}>
             <div className="modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
-              <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{r.store || "Visionary POS"} · {r.branchName}</div><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Boxes style={{ width: 18, height: 18 }} /> Inventory Discrepancy Report</div><div className="sub" style={{ marginTop: 2 }}>{dt(r.ts)}</div></div>
+              <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{r.store || "VISIONPOS"} · {r.branchName}</div><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Boxes style={{ width: 18, height: 18 }} /> Inventory Discrepancy Report</div><div className="sub" style={{ marginTop: 2 }}>{dt(r.ts)}</div></div>
                 <div className="expbtns"><button className="btn xs btn-primary" onClick={() => exportDiscrepancy(r, cur, "pdf")}><FileText /> Download PDF (read-only)</button>
                   <button className="btn xs btn-ghost" onClick={() => exportDiscrepancy(r, cur, "print")}><Printer /> Print</button>
                   <button className="btn xs btn-ghost" onClick={() => openMail("Inventory Discrepancy Report · " + r.branchName, "Inventory Discrepancy Report — " + r.branchName + " · " + dt(r.ts) + "\n\nItems counted: " + r.lines.length + "\nDiscrepancies: " + r.discrepancies.length + "\nAmendments: " + r.amendments + "\nShortage total: " + fmt(r.shortCost, cur) + "\nOverage total: " + fmt(r.overCost, cur) + "\nNet variance value: " + fmt(r.varianceCost, cur) + "\n\n" + (r.discrepancies.length ? r.discrepancies.map((l) => l.name + ": system " + l.system + ", counted " + l.counted + ", variance " + (l.variance > 0 ? "+" : "") + l.variance).join("\n") : "No discrepancies."))}>Email</button>

@@ -1,6 +1,6 @@
-# Visionary POS Sync API
+# VISIONPOS Sync API
 
-Node + Express + PostgreSQL sync backend for the Visionary POS front end.
+Node + Express + PostgreSQL sync backend for the VISIONPOS front end.
 
 ## What It Implements
 
