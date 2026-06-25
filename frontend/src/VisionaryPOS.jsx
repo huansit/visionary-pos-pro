@@ -3148,6 +3148,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [scannerOn, setScannerOn] = useState(true);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const barcodeInputRef = useRef(null);
+  const editBarcodeInputRef = useRef(null);
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
@@ -3160,6 +3161,19 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     if (!isValidBarcode(barcode)) {
       setErr("Invalid barcode: " + barcode);
       appendBarcodeScanLog({ barcode, status: "products:invalid" });
+      return;
+    }
+    if (editId) {
+      const existing = data.products.find((p) => p.id !== editId && productCodeMatch(p, barcode));
+      if (existing) {
+        setErr("Barcode already belongs to " + existing.name + ".");
+        appendBarcodeScanLog({ barcode, status: "products:edit_duplicate", productId: existing.id });
+        return;
+      }
+      setEf((prev) => ({ ...prev, barcode }));
+      setErr("");
+      appendBarcodeScanLog({ barcode, status: "products:edit_prefilled", productId: editId });
+      window.setTimeout(() => editBarcodeInputRef.current?.focus(), 0);
       return;
     }
     const existing = data.products.find((p) => productCodeMatch(p, barcode));
@@ -3181,6 +3195,11 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const id = window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
   }, [adding, scannerOn]);
+  useEffect(() => {
+    if (!editId || !scannerOn) return;
+    const id = window.setTimeout(() => editBarcodeInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [editId, scannerOn]);
   const printBarcodeLabel = () => {
     const code = cleanCode(f.barcode) || generateBarcodeValue();
     const w = window.open("", "_blank", "width=420,height=320");
@@ -3238,14 +3257,29 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
   };
   const [editId, setEditId] = useState(null);
-  const [ef, setEf] = useState({ price: "", cost: "" });
-  const startEdit = (p) => { setEditId(p.id); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString() }); };
+  const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
+  const startEdit = (p) => { setEditId(p.id); setErr(""); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); };
   const saveEdit = (p) => {
     const price = Math.round(parseFloat(ef.price) * 100);
     if (!price || price <= 0) return;
     const cost = Math.round(parseFloat(ef.cost) * 100);
-    update((d) => ({ ...d, products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, costCents: Number.isNaN(cost) ? x.costCents : cost, synced: false } : x) }));
+    const barcode = cleanCode(ef.barcode) || p.barcode || p.sku;
+    const extraBarcodes = String(ef.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
+    if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
+    if (price < (Number.isNaN(cost) ? p.costCents : cost)) return setErr("Selling price cannot be below cost.");
+    const otherProducts = data.products.filter((x) => x.id !== p.id);
+    if (otherProducts.some((x) => productCodeMatch(x, barcode))) return setErr("Barcode already exists.");
+    const seenCodes = new Set([barcode.toLowerCase(), p.sku.toLowerCase()]);
+    const duplicateExtra = extraBarcodes.find((code) => {
+      const normalized = code.toLowerCase();
+      if (seenCodes.has(normalized)) return true;
+      seenCodes.add(normalized);
+      return otherProducts.some((x) => productCodeMatch(x, code));
+    });
+    if (duplicateExtra) return setErr("Duplicate barcode: " + duplicateExtra);
+    update((d) => ({ ...d, products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, costCents: Number.isNaN(cost) ? x.costCents : cost, barcode, barcodes: extraBarcodes, synced: false, updatedAt: now() } : x) }));
     setEditId(null);
+    setErr("");
   };
   const [impMsg, setImpMsg] = useState("");
   const exportCSV = () => {
@@ -3287,7 +3321,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     <div>
       <PageHead title="Products" sub={data.products.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => barcodeInputRef.current?.focus(), 0); return next; })}><Barcode /> Scanner</button>
+          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> Scanner</button>
           <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
           <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
           <button className="btn sm btn-ghost" onClick={downloadJSON}>Download</button>
@@ -3351,6 +3385,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                       <td colSpan={8}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <b style={{ marginRight: 4 }}>{p.name}</b>
+                          <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
+                          <input className="input" style={{ width: 220, height: 38, fontFamily: "var(--font-mono)" }} value={ef.extraBarcodes} onChange={(e) => setEf({ ...ef, extraBarcodes: e.target.value })} placeholder="Extra barcodes" />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} inputMode="decimal" value={ef.price} onChange={(e) => setEf({ ...ef, price: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Price" />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} inputMode="decimal" value={ef.cost} onChange={(e) => setEf({ ...ef, cost: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Cost" />
                           <button className="btn xs btn-primary" onClick={() => saveEdit(p)}><Check /> Save</button>
