@@ -3042,6 +3042,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [delMsg, setDelMsg] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
+  const barcodeInputRef = useRef(null);
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
@@ -3070,6 +3071,11 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     appendBarcodeScanLog({ barcode, status: "products:prefilled" });
   };
   useBarcodeScanner({ enabled: scannerOn, mode: "products", onScan: handleProductScan });
+  useEffect(() => {
+    if (!adding || !scannerOn) return;
+    const id = window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [adding, scannerOn]);
   const add = () => {
     const price = Math.round(parseFloat(f.price) * 100);
     if (!f.name.trim()) return setErr("Add a product name.");
@@ -3150,7 +3156,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     <div>
       <PageHead title="Products" sub={data.products.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> Scanner</button>
+          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => barcodeInputRef.current?.focus(), 0); return next; })}><Barcode /> Scanner</button>
           <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
           <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
           <button className="btn sm btn-ghost" onClick={downloadJSON}>Download</button>
@@ -3166,7 +3172,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Barcode scan</label>
-            <input className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
+            <input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
           </div>
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Size</label><input className="input" value={f.size} onChange={(e) => setF({ ...f, size: e.target.value })} placeholder="750 ML" /></div>
