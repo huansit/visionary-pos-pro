@@ -12,6 +12,7 @@ import {
 /*  Local-first storage                                               */
 /* ================================================================== */
 const STORE_KEY = "visionary:pos:full:v11";
+const SESSION_KEY = "visionary:pos:session:v1";
 const OUTBOX_KEY = "visionary:pos:sync:outbox:v1";
 const CURSOR_KEY = "visionary:pos:sync:cursor:v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
@@ -496,6 +497,9 @@ async function loadJson(key, fallback) {
   try { return JSON.parse(raw); } catch (_) { return fallback; }
 }
 async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
+async function loadSessionState() { return await loadJson(SESSION_KEY, null); }
+async function saveSessionState(value) { await saveJson(SESSION_KEY, value); }
+async function clearSessionState() { await kvSet(SESSION_KEY, ""); }
 
 function normalizeLoadedData(data) {
   if (!data) return data;
@@ -1713,7 +1717,40 @@ export default function VisionPOS() {
   const [syncing, setSyncing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { dataRef.current = data; }, [data]);
-  useEffect(() => { (async () => { const l = await loadData(); if (l) setData(l); else { const s = { ...SEED(), _sync: await syncStatus() }; setData(s); saveData(s); } })(); }, []);
+  useEffect(() => { (async () => {
+    const l = await loadData();
+    const loaded = l || { ...SEED(), _sync: await syncStatus() };
+    if (!l) saveData(loaded);
+    const savedSession = await loadSessionState();
+    if (savedSession?.view === "register" && savedSession.employeeId) {
+      const emp = (loaded.employees || []).find((e) => e.id === savedSession.employeeId);
+      if (emp) {
+        setSession(emp);
+        setView("register");
+      } else {
+        await clearSessionState();
+      }
+    } else if (savedSession?.view === "admin") {
+      const emp = savedSession.employeeId ? (loaded.employees || []).find((e) => e.id === savedSession.employeeId) : null;
+      if (savedSession.employeeId && !emp) await clearSessionState();
+      else {
+        setSession(emp || null);
+        setView("admin");
+      }
+    }
+    setData(loaded);
+  })(); }, []);
+  const signInSession = (nextView, emp = null) => {
+    setSession(emp || null);
+    setView(nextView);
+    saveSessionState({ view: nextView, employeeId: emp?.id || null, ts: now() });
+  };
+  const signOutSession = () => {
+    setMenuOpen(false);
+    setSession(null);
+    setView("pin");
+    clearSessionState();
+  };
   const update = (fn) => setData((prev) => {
     const next = { ...fn(prev), _sync: prev?._sync || { outboxLength: 0, cursor: 0 } };
     saveData(next);
@@ -1722,7 +1759,7 @@ export default function VisionPOS() {
   });
   const cleanReset = () => {
     const empty = { ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } };
-    saveOutbox([]); saveCursor(0); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
+    saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
   };
   const runSync = async () => {
     if (!navigator.onLine || syncing || !dataRef.current) return;
@@ -1756,9 +1793,9 @@ export default function VisionPOS() {
 
   if (view === "pin" || view === "adminLogin" || view === "signup") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
-      {view === "pin" && <PinScreen employees={data.employees} onAdmin={() => setView("adminLogin")} onSuccess={(e) => { setSession(e); setView("register"); }} />}
-      {view === "adminLogin" && <AdminLogin admin={data.admin} employees={data.employees} onBack={() => setView("pin")} onSignup={() => setView("signup")} onSignedIn={(emp) => { setSession(emp || null); if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); setView("admin"); }} />}
-      {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); setSession(null); setView("admin"); }} />}
+      {view === "pin" && <PinScreen employees={data.employees} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
+      {view === "adminLogin" && <AdminLogin admin={data.admin} employees={data.employees} onBack={() => setView("pin")} onSignup={() => setView("signup")} onSignedIn={(emp) => { if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); signInSession("admin", emp || null); }} />}
+      {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
   }
   const adminBranch = data.branches.find((b) => b.id === data.settings.activeBranchId) || data.branches[0];
@@ -1788,7 +1825,7 @@ export default function VisionPOS() {
                   <div className="topmenu-row status"><span className={"led" + syncCls} />{syncLabel}{online && pending > 0 && !syncing && <button className="topmenu-mini" onClick={() => { runSync(); }}>Sync now</button>}</div>
                   <button className="topmenu-row" onClick={() => update((d) => ({ ...d, settings: { ...d.settings, theme: d.settings.theme === "dark" ? "light" : "dark" } }))}>{data.settings.theme === "dark" ? <Sun /> : <Moon />}<span>{data.settings.theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
                   <div className="topmenu-div" />
-                  <button className="topmenu-row signout" onClick={() => { setMenuOpen(false); setSession(null); setView("pin"); }}><LogOut /><span>Sign out</span></button>
+                  <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
                 </div>
               </>)}
             </div>
