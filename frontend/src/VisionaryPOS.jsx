@@ -671,6 +671,17 @@ async function authApi(path, body) {
   if (!response.ok) throw new Error(data.error || "request_failed");
   return data;
 }
+async function aiComplete({ system, messages, maxTokens = 400 }) {
+  const cfg = syncConfig();
+  const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ system, messages, maxTokens }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "ai_request_failed");
+  return String(data.text || "").trim();
+}
 function cleanPayload(type, record) {
   const { synced, _sync, ...payload } = record || {};
   if (type === "user") {
@@ -2825,8 +2836,7 @@ function InsightsTab({ data, online }) {
     if (!online) { setAns(local(question)); setLoading(false); return; }
     try {
       const sys = "You are the analyst for a wines & spirits retailer in Kenya (currency KES). Answer the question using ONLY the JSON business data. Reply with a one-line headline, then up to 5 concise bullet points with concrete numbers. If the data doesn't cover it, say so in one line.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 500, system: sys, messages: [{ role: "user", content: question }] }) });
-      const j = await res.json(); const txt = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: question }], maxTokens: 500 });
       setAns(txt || local(question));
     } catch (e) { setAns(local(question)); }
     setLoading(false);
@@ -3222,10 +3232,7 @@ function DashboardTab({ data, update, branch, online }) {
     if (sumLoading) return; setSumLoading(true);
     try {
       const sys = "You are the analyst for a wines & spirits retailer in Kenya (KES). Write a concise 2-3 sentence business summary of today: sales, profit, credit risk, and the single most important action. Use ONLY the JSON. No preamble.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 220, system: sys, messages: [{ role: "user", content: "Give me today's business summary." }] }) });
-      const j = await res.json();
-      const txt = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: "Give me today's business summary." }], maxTokens: 220 });
       setSummary(txt || localSummary());
     } catch (e) { setSummary(localSummary()); }
     setSumLoading(false);
@@ -4039,8 +4046,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
     try {
       const payload = lines.map((l) => ({ product: l.name, onHand: l.onHand, reorder: l.reorder, suggestQty: l.qty, quotes: l.quotes.map((q) => ({ supplier: q.supplier.name, cost: q.costCents / 100 })) }));
       const sys = "You are a procurement assistant for a wines & spirits shop in Kenya (currency KES). Given low-stock items each with supplier quotes, write 2-4 short sentences: state which supplier is cheapest for each item that has quotes, flag any item with no quotes, and give the total estimated order value. Concise, no markdown, no bullet symbols.";
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 320, system: sys, messages: [{ role: "user", content: JSON.stringify(payload) }] }) });
-      const j = await res.json(); const txt = (j.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: JSON.stringify(payload) }], maxTokens: 320 });
       setPlanNote(txt || localNote(lines));
     } catch (e) { setPlanNote(localNote(lines)); }
     setPlanLoading(false);
@@ -4728,15 +4734,10 @@ function AIManagerTab({ data }) {
     setMessages(history); setLoading(true);
     const system = "You are 'Ask My Business', the analyst for a multi-branch wines & spirits retailer in Kenya (currency KES). Answer using ONLY the JSON business data below. Be very brief: reply in 1-3 short sentences and lead with the direct answer/number. Do NOT add long explanations, methodology, or breakdowns unless the user explicitly asks for detail. For list requests (e.g. purchase orders, which branches), give a short bulleted list only — no preamble. Use KES. If something is not in the data (discounts, refunds, loyalty, demographics, hourly data), say briefly that it is not tracked rather than inventing it.\n\nBUSINESS DATA (JSON):\n" + JSON.stringify(aiDigest(data));
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 400, system, messages: history.map((m) => ({ role: m.role, content: m.content })) }),
-      });
-      const json = await res.json();
-      const text = (json.content || []).map((b) => (b.type === "text" ? b.text : "")).join("\n").trim();
+      const text = await aiComplete({ system, messages: history.map((m) => ({ role: m.role, content: m.content })), maxTokens: 400 });
       setMessages((m) => [...m, { role: "assistant", content: text || "I couldn't generate an answer. Please try again." }]);
     } catch (e) {
-      setError("Could not reach the AI service. Ask My Business needs an internet connection and works in the deployed VISIONPOS app.");
+      setError(e.message === "ai_not_configured" ? "AI is not configured on the server. Add ANTHROPIC_API_KEY to the VPS environment and restart VISIONPOS." : "Could not reach the AI service. Check the server internet connection and AI API key.");
       setMessages((m) => m.slice(0, -1));
     }
     setLoading(false);

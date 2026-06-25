@@ -192,3 +192,16 @@ test("6. barcode catalog resolves by branch and reports unavailable branch produ
       assert.equal(res.body.message, "This product is not available in this branch.");
     });
 });
+
+test("7. AI endpoint reports missing server configuration without exposing provider calls", async () => {
+  await request(app)
+    .post("/api/ai/ask")
+    .send({
+      system: "Answer briefly.",
+      messages: [{ role: "user", content: "hello" }],
+    })
+    .expect(503)
+    .expect((res) => {
+      assert.equal(res.body.error, "ai_not_configured");
+    });
+});

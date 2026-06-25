@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import authRoutes from "./routes/auth.js";
+import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
 import syncRoutes from "./routes/sync.js";
 import { requireDevice } from "./auth.js";
@@ -53,6 +54,7 @@ app.get("/health", async (_req, res, next) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/ai", aiRoutes);
 app.use("/api/barcodes", barcodeRoutes);
 app.use("/api/sync", syncRoutes);
 
