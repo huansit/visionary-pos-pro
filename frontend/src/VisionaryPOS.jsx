@@ -3063,13 +3063,13 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       appendBarcodeScanLog({ barcode, status: "products:duplicate", productId: existing.id });
       return;
     }
-    setF({ name: "", sku: "", barcode, size: "750 ML", category: CATS[0], price: "", cost: "" });
+    setF((prev) => ({ ...prev, barcode }));
     setAdding(true);
     setBarcodeLocked(true);
     setErr("");
     appendBarcodeScanLog({ barcode, status: "products:prefilled" });
   };
-  useBarcodeScanner({ enabled: scannerOn && !adding, mode: "products", onScan: handleProductScan });
+  useBarcodeScanner({ enabled: scannerOn, mode: "products", onScan: handleProductScan });
   const add = () => {
     const price = Math.round(parseFloat(f.price) * 100);
     if (!f.name.trim()) return setErr("Add a product name.");
