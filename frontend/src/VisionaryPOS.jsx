@@ -3629,10 +3629,47 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const [adding, setAdding] = useState(false);
   const [list, setList] = useState([]); // batch of purchase lines to save at once
   const [f, setF] = useState({ supplierId: rec0 ? rec0.supplierId : (data.suppliers[0]?.id || ""), productId: initProd, branchId: branch.id, qty: "", cost: rec0 ? String(rec0.costCents / 100) : "", received: true });
+  const [scannerOn, setScannerOn] = useState(true);
+  const [scanCode, setScanCode] = useState("");
+  const [scanMsg, setScanMsg] = useState("");
+  const scanInputRef = useRef(null);
+  const qtyInputRef = useRef(null);
   const onProduct = (pid) => { const r = recommend(pid); setF((s) => ({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId, cost: r ? String(r.costCents / 100) : s.cost })); };
   const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => ({ ...s, supplierId: sid, cost: e ? String(e.costCents / 100) : s.cost })); };
   const rec = recommend(f.productId);
   const qlist = quotesFor(f.productId);
+  const focusPurchaseScan = () => window.setTimeout(() => scanInputRef.current?.focus(), 0);
+  const handlePurchaseScan = (raw) => {
+    const barcode = normalizeBarcode(raw);
+    if (!barcode) return;
+    if (!isValidBarcode(barcode)) {
+      setScanMsg("Invalid barcode: " + barcode);
+      playScanSound("error");
+      appendBarcodeScanLog({ barcode, status: "purchase:invalid" });
+      setScanCode("");
+      focusPurchaseScan();
+      return;
+    }
+    const hit = barcodeLookup(data, barcode, f.branchId || branch.id);
+    if (!hit) {
+      setScanMsg("Product not found: " + barcode);
+      playScanSound("error");
+      appendBarcodeScanLog({ barcode, status: "purchase:not_found" });
+      setScanCode("");
+      focusPurchaseScan();
+      return;
+    }
+    onProduct(hit.product.id);
+    setScanMsg("Selected " + hit.name + " for purchase.");
+    playScanSound("success");
+    appendBarcodeScanLog({ barcode, status: "purchase:selected", productId: hit.product.id });
+    setScanCode("");
+    window.setTimeout(() => qtyInputRef.current?.focus(), 0);
+  };
+  useBarcodeScanner({ enabled: adding && scannerOn, mode: "purchase", onScan: handlePurchaseScan });
+  useEffect(() => {
+    if (adding && scannerOn) focusPurchaseScan();
+  }, [adding, scannerOn]);
   const create = () => { const qty = parseInt(f.qty, 10); const cost = Math.round(parseFloat(f.cost) * 100); if (!qty || qty <= 0 || !cost) return;
     const sup = data.suppliers.find((s) => s.id === f.supplierId); const prod = data.products.find((p) => p.id === f.productId);
     const lbr = f.branchId || branch.id; const ts = now(); const received = f.received;
@@ -3738,6 +3775,14 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
         <div className="addpanel fade"><div className="grid2">
           <div><label className="label">Supplier</label><select className="select" value={f.supplierId} onChange={(e) => onSupplier(e.target.value)}>{data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
           <div><label className="label">Product</label><select className="select" value={f.productId} onChange={(e) => onProduct(e.target.value)}>{data.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
+          <div className="field" style={{ marginTop: 12 }}>
+            <label className="label">Scan product barcode</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input ref={scanInputRef} className="input" inputMode="numeric" autoComplete="off" value={scanCode} onChange={(e) => setScanCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handlePurchaseScan(e.currentTarget.value); } }} placeholder="Scan barcode to select product" />
+              <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) focusPurchaseScan(); return next; })}><Barcode /> Scanner</button>
+            </div>
+          </div>
+          {scanMsg && <div className="notice" style={{ marginTop: 10 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
           <div className="field" style={{ marginTop: 12 }}><label className="label">Branch (stock goes here)</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
           {rec && (
             <div className="notice" style={{ marginTop: 12 }}>
@@ -3751,7 +3796,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
             </div>
           )}
           <div className="grid2" style={{ marginTop: 12 }}>
-            <div><label className="label">Quantity</label><input className="input" inputMode="numeric" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value.replace(/\D/g, "") })} placeholder="24" /></div>
+            <div><label className="label">Quantity</label><input ref={qtyInputRef} className="input" inputMode="numeric" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value.replace(/\D/g, "") })} placeholder="24" /></div>
             <div><label className="label">Unit cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div></div>
           {(() => {
             const prodSel = data.products.find((p) => p.id === f.productId); const projQty = parseInt(f.qty, 10) || 0; const projCost = Math.round(parseFloat(f.cost) * 100) || 0;
