@@ -102,12 +102,18 @@ app.get("*", (req, res, next) => {
 app.use((_req, res) => res.status(404).json({ error: "not_found" }));
 app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ error: "server_error" }); });
 
-const port = parseInt(process.env.PORT || "3000", 10);
-const host = process.env.HOST || "127.0.0.1";
+// Listen on whatever the platform provides via PORT — Hostinger/LiteSpeed may pass
+// a numeric port OR a Unix socket path. Pass it through unchanged (parseInt would
+// turn a socket path into NaN and bind a random port the proxy can't reach), and do
+// NOT pin a host: that lets Node bind all interfaces for a numeric port, or the
+// socket for a path — which is what the platform proxy expects.
+const port = process.env.PORT || 3000;
 let server;
 
 if (process.env.NODE_ENV !== "test") {
-  server = app.listen(port, host, () => console.log(`Visionary POS API listening on ${host}:${port}`));
+  server = app.listen(port, () => console.log(`Visionary POS API listening on ${port}`));
+  // Surface bind failures (e.g. EADDRINUSE) to stderr so the platform logs show them.
+  server.on("error", (err) => console.error("FATAL: server failed to bind to", port, "-", err.message));
 }
 
 async function shutdown(signal) {
