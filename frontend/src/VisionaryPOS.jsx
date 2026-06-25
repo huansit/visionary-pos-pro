@@ -3241,6 +3241,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [delMsg, setDelMsg] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyFrom, setCopyFrom] = useState(data.branches.find((b) => b.id !== branch.id)?.id || "");
+  const [copyMsg, setCopyMsg] = useState("");
   const barcodeInputRef = useRef(null);
   const editBarcodeInputRef = useRef(null);
   const [editId, setEditId] = useState(null);
@@ -3301,6 +3304,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const id = window.setTimeout(() => editBarcodeInputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
   }, [editId, scannerOn]);
+  useEffect(() => {
+    if (copyFrom && copyFrom !== branch.id) return;
+    setCopyFrom(data.branches.find((b) => b.id !== branch.id)?.id || "");
+  }, [branch.id, copyFrom, data.branches]);
   const printBarcodeLabel = () => {
     const code = cleanCode(f.barcode) || generateBarcodeValue();
     const w = window.open("", "_blank", "width=420,height=320");
@@ -3321,7 +3328,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const barcode = cleanCode(f.barcode) || generateBarcodeValue();
     const extraBarcodes = String(f.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
-    if (data.products.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists.");
+    if (data.products.some((p) => isBranchProduct(p) && p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists in this branch.");
     if (barcode && data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), sku.toLowerCase()]);
     const duplicateExtra = extraBarcodes.find((code) => {
@@ -3391,6 +3398,49 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setErr("");
   };
   const [impMsg, setImpMsg] = useState("");
+  const copyBranches = data.branches.filter((b) => b.id !== branch.id);
+  const copySource = data.branches.find((b) => b.id === copyFrom) || copyBranches[0] || null;
+  const countMissingFromSource = (sourceId = copyFrom) => {
+    const targetIds = new Set(data.products.filter(isBranchProduct).flatMap((p) => barcodeCatalogIdsForProduct(p)));
+    return data.products.filter((p) => productBranchId(p, data) === sourceId)
+      .filter((p) => barcodeCatalogIdsForProduct(p).some((id) => id && !targetIds.has(id))).length;
+  };
+  const copyMissingProducts = () => {
+    const sourceId = copyFrom || copyBranches[0]?.id;
+    if (!sourceId) return;
+    const ts = now();
+    let copied = 0;
+    update((d) => {
+      let barcodeCatalog = d.barcodeCatalog || [];
+      const sourceProducts = d.products.filter((p) => productBranchId(p, d) === sourceId);
+      const targetIds = new Set(d.products.filter((p) => productBranchId(p, d) === branch.id).flatMap((p) => barcodeCatalogIdsForProduct(p)));
+      const products = [...d.products];
+      for (const source of sourceProducts) {
+        let primaryId = source.barcodeCatalogId;
+        let extraIds = [...(source.barcodeCatalogIds || [])];
+        if (!primaryId && (source.barcode || source.sku)) {
+          const ensured = ensureBarcodeEntries({ ...d, barcodeCatalog }, [source.barcode || source.sku, ...(source.barcodes || [])]);
+          barcodeCatalog = ensured.barcodeCatalog;
+          primaryId = ensured.entries[0]?.id || null;
+          extraIds = ensured.entries.slice(1).map((entry) => entry.id);
+        }
+        if (!primaryId || targetIds.has(primaryId)) continue;
+        products.push({
+          ...source,
+          id: uid("p"),
+          branchId: branch.id,
+          barcodeCatalogId: primaryId,
+          barcodeCatalogIds: extraIds,
+          synced: false,
+          updatedAt: ts,
+        });
+        targetIds.add(primaryId);
+        copied++;
+      }
+      return { ...d, products, barcodeCatalog };
+    });
+    setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Stock starts at 0; add stock through Purchases or Stock." : "No missing products to copy.");
+  };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
     const rows = data.products.filter(isBranchProduct).map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, onHand(data, p.id, branch.id), p.imageUrl || ""]);
@@ -3439,12 +3489,39 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       <PageHead title="Products" sub={data.products.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> Scanner</button>
+          <button className="btn sm btn-ghost" onClick={() => { setCopyOpen((v) => !v); setCopyMsg(""); }}><ArrowLeftRight /> Copy from branch</button>
           <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
           <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
           <button className="btn sm btn-ghost" onClick={downloadJSON}>Download</button>
           <button className="btn sm btn-ghost" onClick={emailSummary}><Mail /> Email</button>
         </div>} />
       <input id="prodimport" type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={onImport} />
+      {copyOpen && (
+        <div className="addpanel fade">
+          <div className="page-h" style={{ marginBottom: 8 }}>
+            <div>
+              <div className="section-title" style={{ margin: 0 }}>Copy products to {branch.name}</div>
+              <div className="sub">Copies missing products only. Barcodes stay shared; stock remains branch-specific and starts at 0.</div>
+            </div>
+            <button className="iconbtn" onClick={() => setCopyOpen(false)}><X /></button>
+          </div>
+          {copyBranches.length === 0 ? (
+            <div className="notice">Create another branch first.</div>
+          ) : (
+            <>
+              <div className="grid2">
+                <div><label className="label">Source branch</label><select className="select" value={copyFrom} onChange={(e) => { setCopyFrom(e.target.value); setCopyMsg(""); }}>{copyBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+                <div><label className="label">Missing in {branch.name}</label><div className="input" style={{ display: "flex", alignItems: "center" }}>{countMissingFromSource(copyFrom)} product(s)</div></div>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                <button className="btn btn-primary" disabled={!copySource || countMissingFromSource(copyFrom) === 0} onClick={copyMissingProducts}><Check /> Copy missing products</button>
+                <button className="btn btn-ghost" onClick={() => setCopyOpen(false)}>Cancel</button>
+              </div>
+              {copyMsg && <div className="notice" style={{ marginTop: 12 }}>{copyMsg}</div>}
+            </>
+          )}
+        </div>
+      )}
       {impMsg && <div className="notice" style={{ marginBottom: 12 }}>{impMsg} <button className="linknum" onClick={() => setImpMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {err && !adding && <div className="notice" style={{ marginBottom: 12 }}>{err} <button className="linknum" onClick={() => setErr("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {delMsg && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)" }}><AlertCircle style={{ width: 14, height: 14, verticalAlign: "-2px", color: "var(--danger)" }} /> {delMsg} <button className="linknum" onClick={() => setDelMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
