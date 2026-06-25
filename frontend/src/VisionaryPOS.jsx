@@ -5,6 +5,7 @@ import {
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
+  Barcode, ClipboardCheck,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -15,6 +16,8 @@ const OUTBOX_KEY = "visionary:pos:sync:outbox:v1";
 const CURSOR_KEY = "visionary:pos:sync:cursor:v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
+const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
+const BARCODE_LOG_KEY = "visionary:pos:barcode-log:v1";
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -503,6 +506,39 @@ async function loadData() {
 async function saveData(data) {
   const { _sync, ...cache } = data || {};
   await saveJson(STORE_KEY, cache);
+  await saveBarcodeCache(cache);
+}
+
+function normalizeBarcode(value) { return String(value || "").trim().replace(/\s+/g, ""); }
+function isValidBarcode(value) { return /^[A-Za-z0-9._-]{4,64}$/.test(normalizeBarcode(value)); }
+function productMatchesBarcode(product, code) {
+  const normalized = normalizeBarcode(code).toLowerCase();
+  if (!normalized || !product) return false;
+  return [product.barcode, product.sku].some((value) => normalizeBarcode(value).toLowerCase() === normalized);
+}
+function findProductByBarcode(data, code) {
+  const normalized = normalizeBarcode(code);
+  if (!normalized) return null;
+  return (data?.products || []).find((p) => productMatchesBarcode(p, normalized)) || null;
+}
+function barcodeLookup(data, code, branchId) {
+  const product = findProductByBarcode(data, code);
+  if (!product) return null;
+  return { product, name: product.name, price: product.priceCents, stockQty: onHand(data, product.id, branchId) };
+}
+function buildBarcodeCache(data) {
+  const cache = {};
+  (data?.products || []).forEach((p) => {
+    const code = normalizeBarcode(p.barcode || p.sku);
+    if (code) cache[code.toLowerCase()] = p.id;
+  });
+  return cache;
+}
+async function saveBarcodeCache(data) { await saveJson(BARCODE_CACHE_KEY, buildBarcodeCache(data)); }
+async function appendBarcodeScanLog(entry) {
+  const log = await loadJson(BARCODE_LOG_KEY, []);
+  log.unshift({ ...entry, ts: entry.ts || now() });
+  await saveJson(BARCODE_LOG_KEY, log.slice(0, 250));
 }
 
 const SYNC_APPEND = new Map([
@@ -712,6 +748,46 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
 }
 function priceFor(data, p) { return p.priceCents; }
 function reorderList(data, branchId) { return data.products.filter((p) => onHand(data, p.id, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
+function useBarcodeScanner({ enabled, mode, onScan }) {
+  const onScanRef = useRef(onScan);
+  const bufferRef = useRef("");
+  const lastKeyAtRef = useRef(0);
+  const lastScanRef = useRef({ code: "", ts: 0 });
+
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const resetBuffer = () => { bufferRef.current = ""; lastKeyAtRef.current = 0; };
+    const isTextEntry = (target) => {
+      if (!target) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      return target.isContentEditable || tag === "input" || tag === "textarea" || tag === "select";
+    };
+    const listener = (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || isTextEntry(e.target)) return;
+      const t = now();
+      if (t - lastKeyAtRef.current > 90) bufferRef.current = "";
+      lastKeyAtRef.current = t;
+      if (e.key === "Enter") {
+        const code = normalizeBarcode(bufferRef.current);
+        resetBuffer();
+        if (!code) return;
+        e.preventDefault();
+        const last = lastScanRef.current;
+        if (last.code === code && t - last.ts < 1000) {
+          appendBarcodeScanLog({ barcode: code, status: mode + ":duplicate_ignored" });
+          return;
+        }
+        lastScanRef.current = { code, ts: t };
+        onScanRef.current?.(code);
+        return;
+      }
+      if (e.key && e.key.length === 1) bufferRef.current += e.key;
+    };
+    window.addEventListener("keydown", listener, true);
+    return () => window.removeEventListener("keydown", listener, true);
+  }, [enabled, mode]);
+}
 function invOutstanding(inv) { return Math.max(0, inv.totalCents - inv.paidCents); }
 function lastEndFor(settings, branchId) { return (settings.lastEndDayByBranch && settings.lastEndDayByBranch[branchId]) || settings.lastEndDay || 0; }
 // An invoice is "recognized" — counted as credit and in profit & loss — only once its business day
@@ -1889,6 +1965,9 @@ function Register({ data, update, online, employee, branch }) {
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinVal, setPinVal] = useState("");
   const [pinErr, setPinErr] = useState(false);
+  const [scannerOn, setScannerOn] = useState(true);
+  const [scanProduct, setScanProduct] = useState(null); // { barcode, name, sku, size, category, price, cost }
+  const [scanErr, setScanErr] = useState("");
 
   const visible = data.products.filter((p) =>
     (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()));
@@ -1902,12 +1981,63 @@ function Register({ data, update, online, employee, branch }) {
   const debtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
   const shownList = showAll ? mine : openOnly;
 
-  const add = (p) => { if (!p) return; if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return; setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 })); };
+  const add = (p) => {
+    if (!p) return false;
+    if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return false;
+    setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 }));
+    return true;
+  };
   const dec = (pid) => setCart((c) => { const n = { ...c }; n[pid] = (n[pid] || 0) - 1; if (n[pid] <= 0) delete n[pid]; return n; });
   const lines = cartLines(data, cart);
   const total = lines.reduce((s, l) => s + l.priceCents * l.qty, 0);
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
   const onEnter = (e) => { if (e.key !== "Enter") return; const hit = data.products.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0]; if (hit) { add(hit); setQ(""); } };
+  const openScannedProductForm = (barcode) => {
+    setScanProduct({ barcode, name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
+    setScanErr("");
+    setPtab("products");
+  };
+  const handleSellScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setFlash("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "sell:invalid" });
+      return;
+    }
+    const hit = barcodeLookup(data, barcode, branch.id);
+    if (!hit) {
+      setFlash("Barcode not found. Add the product details to register it.");
+      appendBarcodeScanLog({ barcode, status: "sell:not_found" });
+      openScannedProductForm(barcode);
+      return;
+    }
+    const ok = add(hit.product);
+    const warn = hit.product.synced === false ? " Product is still unsynced." : "";
+    setFlash(ok ? "Scanned " + hit.name + " · " + hit.stockQty + " in stock." + warn : hit.name + " is out of stock.");
+    appendBarcodeScanLog({ barcode, status: ok ? "sell:added" : "sell:out_of_stock", productId: hit.product.id });
+    if (ok) setPtab("cart");
+  };
+  useBarcodeScanner({ enabled: scannerOn && ptab !== "invoices" && !pinPrompt && !scanProduct, mode: "sell", onScan: handleSellScan });
+  const saveScannedProduct = () => {
+    if (!scanProduct) return;
+    const barcode = normalizeBarcode(scanProduct.barcode);
+    const price = Math.round(parseFloat(scanProduct.price) * 100);
+    if (!isValidBarcode(barcode)) return setScanErr("Scan a valid barcode.");
+    if (!scanProduct.name.trim()) return setScanErr("Add a product name.");
+    if (!price || price <= 0) return setScanErr("Enter a valid price.");
+    if (data.products.some((p) => productMatchesBarcode(p, barcode))) return setScanErr("Barcode already exists.");
+    const sku = scanProduct.sku.trim() || barcode;
+    if (data.products.some((p) => normalizeBarcode(p.sku).toLowerCase() === normalizeBarcode(sku).toLowerCase())) return setScanErr("SKU already exists.");
+    update((d) => ({ ...d, products: [...d.products, {
+      id: uid("p"), name: scanProduct.name.trim(), sku, barcode, size: scanProduct.size || "750 ML",
+      category: scanProduct.category || CATS[0], priceCents: price,
+      costCents: Math.round((parseFloat(scanProduct.cost) || 0) * 100),
+      reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now(),
+    }] }));
+    appendBarcodeScanLog({ barcode, status: "sell:product_created" });
+    setFlash("Product registered. Scan again or tap it to sell.");
+    setScanProduct(null);
+  };
 
   const branchCode = ((branch.name || "BR").replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase()) || "BR";
   const receiptNo = "RCP-" + branchCode + "-" + String(data.invoices.length + 1).padStart(4, "0");
@@ -1974,6 +2104,7 @@ function Register({ data, update, online, employee, branch }) {
       <div className="postabs">
         {[["products", "Products"], ["cart", "Cart"], ["invoices", "Invoices"]].map(([k, l]) => (
           <button key={k} className={"ptab" + (ptab === k ? " on" : "")} onClick={() => setPtab(k)}>{l}{k === "cart" && itemCount ? " (" + itemCount + ")" : ""}</button>))}
+        <button className={"ptab" + (scannerOn ? " on" : "")} title="USB barcode scanner listener" onClick={() => setScannerOn((v) => !v)}><Barcode style={{ width: 16, height: 16 }} /> Scanner</button>
       </div>
       <div className="pos">
         {/* LEFT — my invoices & sales */}
@@ -2072,6 +2203,27 @@ function Register({ data, update, online, employee, branch }) {
           </div>
         </div>
       </div>
+
+      {scanProduct && (
+        <div className="scrim" onClick={() => setScanProduct(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Barcode not found</div><div className="title" style={{ fontSize: 21 }}>Register scanned product</div></div><button className="iconbtn" onClick={() => setScanProduct(null)}><X /></button></div>
+            <div className="field" style={{ marginTop: 12 }}><label className="label">Barcode</label><input className="input" readOnly value={scanProduct.barcode} /></div>
+            <div className="grid2">
+              <div><label className="label">Name</label><input className="input" value={scanProduct.name} onChange={(e) => { setScanProduct({ ...scanProduct, name: e.target.value }); setScanErr(""); }} placeholder="Product name" /></div>
+              <div><label className="label">SKU</label><input className="input" value={scanProduct.sku} onChange={(e) => { setScanProduct({ ...scanProduct, sku: e.target.value }); setScanErr(""); }} placeholder="Leave blank to use barcode" /></div>
+            </div>
+            <div className="grid3" style={{ marginTop: 12 }}>
+              <div><label className="label">Size</label><input className="input" value={scanProduct.size} onChange={(e) => setScanProduct({ ...scanProduct, size: e.target.value })} /></div>
+              <div><label className="label">Category</label><select className="select" value={scanProduct.category} onChange={(e) => setScanProduct({ ...scanProduct, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
+              <div><label className="label">Price ({cur})</label><input className="input" inputMode="decimal" value={scanProduct.price} onChange={(e) => { setScanProduct({ ...scanProduct, price: e.target.value }); setScanErr(""); }} placeholder="3000" /></div>
+            </div>
+            <div className="field"><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={scanProduct.cost} onChange={(e) => setScanProduct({ ...scanProduct, cost: e.target.value })} placeholder="2000" /></div>
+            {scanErr && <div className="alert"><AlertCircle />{scanErr}</div>}
+            <div className="grid2" style={{ marginTop: 14 }}><button className="btn btn-ghost" onClick={() => setScanProduct(null)}>Cancel</button><button className="btn btn-primary" onClick={saveScannedProduct}><Check /> Add product</button></div>
+          </div>
+        </div>
+      )}
 
       {debtsOpen && (
         <div className="scrim" onClick={() => setDebtsOpen(false)}>
@@ -2888,13 +3040,36 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [q, setQ] = useState("");
   const [catF, setCatF] = useState("All");
   const [delMsg, setDelMsg] = useState("");
+  const [scannerOn, setScannerOn] = useState(true);
+  const [barcodeLocked, setBarcodeLocked] = useState(false);
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
     return [p.sku, p.barcode].some((value) => cleanCode(value).toLowerCase() === normalized);
   };
-  const reset = () => { setF({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" }); setErr(""); setAdding(false); };
+  const reset = () => { setF({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" }); setErr(""); setAdding(false); setBarcodeLocked(false); };
+  const handleProductScan = (code) => {
+    const barcode = cleanCode(code);
+    if (!isValidBarcode(barcode)) {
+      setErr("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "products:invalid" });
+      return;
+    }
+    const existing = data.products.find((p) => productCodeMatch(p, barcode));
+    if (existing) {
+      setQ(barcode);
+      setErr("Barcode already belongs to " + existing.name + ".");
+      appendBarcodeScanLog({ barcode, status: "products:duplicate", productId: existing.id });
+      return;
+    }
+    setF({ name: "", sku: "", barcode, size: "750 ML", category: CATS[0], price: "", cost: "" });
+    setAdding(true);
+    setBarcodeLocked(true);
+    setErr("");
+    appendBarcodeScanLog({ barcode, status: "products:prefilled" });
+  };
+  useBarcodeScanner({ enabled: scannerOn && !adding, mode: "products", onScan: handleProductScan });
   const add = () => {
     const price = Math.round(parseFloat(f.price) * 100);
     if (!f.name.trim()) return setErr("Add a product name.");
@@ -2903,7 +3078,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const barcode = cleanCode(f.barcode);
     if (data.products.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists.");
     if (barcode && data.products.some((p) => productCodeMatch(p, barcode))) return setErr("Barcode already exists.");
-    update((d) => ({ ...d, products: [...d.products, { id: uid("p"), name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: Math.round((parseFloat(f.cost) || 0) * 100), barcode: barcode || sku, reorderLevel: d.settings.reorderLevel, synced: false }] }));
+    update((d) => ({ ...d, products: [...d.products, { id: uid("p"), name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: Math.round((parseFloat(f.cost) || 0) * 100), barcode: barcode || sku, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() }] }));
     reset();
   };
   const remove = (id) => {
@@ -2975,6 +3150,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     <div>
       <PageHead title="Products" sub={data.products.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> Scanner</button>
           <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
           <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
           <button className="btn sm btn-ghost" onClick={downloadJSON}>Download</button>
@@ -2982,6 +3158,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         </div>} />
       <input id="prodimport" type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={onImport} />
       {impMsg && <div className="notice" style={{ marginBottom: 12 }}>{impMsg} <button className="linknum" onClick={() => setImpMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
+      {err && !adding && <div className="notice" style={{ marginBottom: 12 }}>{err} <button className="linknum" onClick={() => setErr("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {delMsg && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)" }}><AlertCircle style={{ width: 14, height: 14, verticalAlign: "-2px", color: "var(--danger)" }} /> {delMsg} <button className="linknum" onClick={() => setDelMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add product</button> : (
         <div className="addpanel fade"><div className="section-title" style={{ margin: "0 0 12px" }}>New product</div>
@@ -2989,7 +3166,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Barcode scan</label>
-            <input className="input" inputMode="numeric" autoComplete="off" value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
+            <input className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
           </div>
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Size</label><input className="input" value={f.size} onChange={(e) => setF({ ...f, size: e.target.value })} placeholder="750 ML" /></div>
@@ -3063,6 +3240,8 @@ function StockTab({ data, update, branch }) {
   const [report, setReport] = useState(null);
   const [filter, setFilter] = useState("all");
   const [lossOpen, setLossOpen] = useState(false);
+  const [scannerOn, setScannerOn] = useState(true);
+  const [scanMsg, setScanMsg] = useState("");
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
   const cts = () => now();
@@ -3072,7 +3251,7 @@ function StockTab({ data, update, branch }) {
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const slug = bname.replace(/\s+/g, "");
   const isLow = (p) => onHand(data, p.id, bId) <= (p.reorderLevel ?? data.settings.reorderLevel);
-  const list = data.products.filter((p) => (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p))));
+  const list = data.products.filter((p) => (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase().includes(q.toLowerCase())) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p))));
   const countVar = (p) => { const raw = counts[p.id]; if (raw === undefined || raw === "") return null; const c = parseInt(raw, 10); if (Number.isNaN(c)) return null; return c - onHand(data, p.id, bId); };
   const entered = Object.keys(counts).filter((k) => counts[k] !== "" && counts[k] !== undefined).length;
   const countedRows = Object.keys(counts).filter((id) => counts[id] !== "" && counts[id] !== undefined).map((id) => {
@@ -3095,12 +3274,32 @@ function StockTab({ data, update, branch }) {
     update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, reason, ts: now(), synced: false }] }));
     setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
   };
+  const handleStockScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setScanMsg("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "stock:invalid" });
+      return;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit) {
+      setScanMsg("Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "stock:not_found" });
+      return;
+    }
+    if (hit.product.synced === false) setScanMsg("Counted " + hit.name + ". Product is still unsynced.");
+    else setScanMsg("Counted " + hit.name + " · running count " + ((parseInt(counts[hit.product.id], 10) || 0) + 1) + ".");
+    if (isCountedCycle(hit.product.id) && !amending[hit.product.id]) setAmending((s) => ({ ...s, [hit.product.id]: true }));
+    setCounts((s) => ({ ...s, [hit.product.id]: String((parseInt(s[hit.product.id], 10) || 0) + 1) }));
+    appendBarcodeScanLog({ barcode, status: "stock:counted_pending", productId: hit.product.id });
+  };
+  useBarcodeScanner({ enabled: scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
 
   const saveRow = (p) => {
     const raw = counts[p.id] !== undefined && counts[p.id] !== "" ? counts[p.id] : String(onHand(data, p.id, bId));
     const c = parseInt(raw, 10); if (Number.isNaN(c) || c < 0) return;
     const oh = onHand(data, p.id, bId); const delta = c - oh;
-    if (delta !== 0) update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: p.id, branchId: bId, qty: delta, reason: "Inventory count", ts: cts(), synced: false }] }));
+    if (delta !== 0) update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: p.id, branchId: bId, qty: delta, mode: "count", reason: "Inventory count", ts: cts(), synced: false }] }));
     setCounts((s) => { const n = { ...s }; delete n[p.id]; return n; });
   };
   const rowAction = (p, val) => { if (val === "save") saveRow(p); else if (val === "reset") setCounts((s) => { const n = { ...s }; delete n[p.id]; return n; }); };
@@ -3116,8 +3315,8 @@ function StockTab({ data, update, branch }) {
       const system = onHand(data, p.id, bId); const variance = counted - system;
       const kind = already ? "amendment" : "count";
       lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: p.costCents, kind });
-      if (variance !== 0) movements.push({ id: uid("mv"), productId: p.id, branchId: bId, qty: variance, reason: kind === "amendment" ? "Count amendment" : "Inventory count", ts, synced: false });
-      logs.push({ id: uid("cl"), productId: p.id, branchId: bId, system, counted, variance, kind, ts, synced: false });
+      if (variance !== 0) movements.push({ id: uid("mv"), productId: p.id, branchId: bId, qty: variance, mode: "count", reason: kind === "amendment" ? "Count amendment" : "Inventory count", ts, synced: false });
+      logs.push({ id: uid("cl"), productId: p.id, branchId: bId, qty: counted, mode: "count", system, counted, variance, kind, ts, synced: false });
     });
     if (lines.length === 0) return;
     const countedMap = {}; lines.forEach((l) => { countedMap[l.id] = l.counted; });
@@ -3132,7 +3331,7 @@ function StockTab({ data, update, branch }) {
       shortCost: discrepancies.filter((l) => l.variance < 0).reduce((s, l) => s + Math.abs(l.variance * l.costCents), 0),
       overCost: discrepancies.filter((l) => l.variance > 0).reduce((s, l) => s + l.variance * l.costCents, 0),
       invUnits, invCost, invRetail, applied: movements.length, amendments: lines.filter((l) => l.kind === "amendment").length, store: data.settings.store });
-    setCounts({}); setAmending({});
+    setCounts({}); setAmending({}); setScanMsg("");
   };
   const exportReport = (kind) => exportDiscrepancy(report, cur, kind);
 
@@ -3142,8 +3341,10 @@ function StockTab({ data, update, branch }) {
       <div className="ptools">
         <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => { setBId(e.target.value); setCounts({}); setReport(null); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
         <div className="possearch"><Search /><input placeholder="Search product name or SKU…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><ClipboardCheck /> Scan count</button>
         <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
       </div>
+      {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
         <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Total products</div><div className="cv">{totalProducts}</div></div></div>
         <div className="ctile"><div className="ic"><Package /></div><div><div className="cl">Total units</div><div className="cv">{totalUnits}</div></div></div>
