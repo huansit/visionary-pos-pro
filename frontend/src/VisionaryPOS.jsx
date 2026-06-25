@@ -3149,6 +3149,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const barcodeInputRef = useRef(null);
   const editBarcodeInputRef = useRef(null);
+  const [editId, setEditId] = useState(null);
+  const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
@@ -3256,8 +3258,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setDelMsg("");
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
   };
-  const [editId, setEditId] = useState(null);
-  const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
   const startEdit = (p) => { setEditId(p.id); setErr(""); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); };
   const saveEdit = (p) => {
     const price = Math.round(parseFloat(ef.price) * 100);
