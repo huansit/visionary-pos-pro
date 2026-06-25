@@ -52,6 +52,40 @@ CREATE INDEX IF NOT EXISTS records_server_ts_idx ON records (server_ts);
 CREATE INDEX IF NOT EXISTS records_type_idx ON records (type);
 CREATE INDEX IF NOT EXISTS records_branch_idx ON records (branch_id);
 
+CREATE TABLE IF NOT EXISTS barcode_catalog (
+  id           text PRIMARY KEY,
+  barcode      text NOT NULL,
+  barcode_type text NOT NULL DEFAULT 'code128',
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS barcode_catalog_barcode_unique_idx
+  ON barcode_catalog (lower(barcode));
+CREATE INDEX IF NOT EXISTS barcode_catalog_barcode_lookup_idx
+  ON barcode_catalog (barcode);
+
+CREATE TABLE IF NOT EXISTS products (
+  id                 text PRIMARY KEY,
+  branch_id          text NOT NULL,
+  barcode_catalog_id text NOT NULL REFERENCES barcode_catalog(id),
+  name               text NOT NULL,
+  category_id        text,
+  cost_price         numeric(12, 2) NOT NULL DEFAULT 0,
+  selling_price      numeric(12, 2) NOT NULL DEFAULT 0,
+  stock              integer NOT NULL DEFAULT 0,
+  reorder_level      integer NOT NULL DEFAULT 0,
+  image              text,
+  status             text NOT NULL DEFAULT 'active',
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS products_branch_barcode_catalog_unique_idx
+  ON products (branch_id, barcode_catalog_id);
+CREATE INDEX IF NOT EXISTS products_barcode_catalog_idx ON products (barcode_catalog_id);
+CREATE INDEX IF NOT EXISTS products_branch_idx ON products (branch_id);
+CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
+
 CREATE TABLE IF NOT EXISTS credentials (
   id            text PRIMARY KEY,
   kind          text NOT NULL CHECK (kind IN ('admin', 'user', 'cashier')),

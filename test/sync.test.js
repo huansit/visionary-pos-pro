@@ -147,3 +147,48 @@ test("5. product record last-write-wins keeps newer updatedAt and ignores older"
       assert.deepEqual(products[0].payload, newerProduct.payload);
     });
 });
+
+test("6. barcode catalog resolves by branch and reports unavailable branch products", async () => {
+  await request(app)
+    .post("/api/barcodes/products")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "prod-bc-001",
+      branchId: "b_sip",
+      barcode: "3245990043300",
+      name: "Hennessy VS 750ML",
+      categoryId: "Spirits",
+      costPrice: 4800,
+      sellingPrice: 6500,
+      stock: 12,
+      reorderLevel: 4,
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.barcodeCatalog.barcode, "3245990043300");
+      assert.equal(res.body.product.branchId, "b_sip");
+      assert.equal(res.body.product.barcodeCatalogId, res.body.barcodeCatalog.id);
+    });
+
+  await request(app)
+    .post("/api/barcodes/resolve")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_sip", barcode: "3245990043300" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.available, true);
+      assert.equal(res.body.product.name, "Hennessy VS 750ML");
+      assert.equal(res.body.product.sellingPrice, 6500);
+    });
+
+  await request(app)
+    .post("/api/barcodes/resolve")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_cpt", barcode: "3245990043300" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.found, true);
+      assert.equal(res.body.available, false);
+      assert.equal(res.body.message, "This product is not available in this branch.");
+    });
+});

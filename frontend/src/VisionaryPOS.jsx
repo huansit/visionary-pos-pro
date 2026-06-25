@@ -388,8 +388,9 @@ const SEED = () => {
     "SIP0181": "sip-181-hunters-dry-330ml_tctkfo",
   };
   const products = P.map(([id, name, sku, size, category, priceCents, costCents, stock]) => ({
-    id, name, sku, size, category, priceCents, costCents, imageUrl: IMAGES[sku] ? IMG_BASE + IMAGES[sku] : undefined, barcode: sku, reorderLevel: 4, synced: true, _stock: stock,
+    id, name, sku, size, category, priceCents, costCents, imageUrl: IMAGES[sku] ? IMG_BASE + IMAGES[sku] : undefined, barcode: sku, barcodeCatalogId: "bc_" + sku.toLowerCase(), branchId: "b_sip", reorderLevel: 4, synced: true, _stock: stock,
   }));
+  const barcodeCatalog = products.map((p) => ({ id: p.barcodeCatalogId, barcode: p.barcode, barcodeType: "code128", synced: true, updatedAt: t, createdAt: t }));
   const stockMovements = [];
   products.forEach((p) => {
     stockMovements.push({ id: uid("mv"), productId: p.id, branchId: "b_sip", qty: p._stock, reason: "Opening stock", ts: t, synced: true });
@@ -424,6 +425,7 @@ const SEED = () => {
       { id: "sp7", supplierId: "s3", productId: "SIP0004", costCents: 158000, synced: true },
     ],
     products,
+    barcodeCatalog,
     stockMovements,
     orders: [],
     payments: [],
@@ -455,6 +457,7 @@ const CLEAN_SETUP = () => {
     suppliers: [],
     supplierPrices: [],
     products: [],
+    barcodeCatalog: [],
     stockMovements: [],
     orders: [],
     payments: [],
@@ -494,12 +497,47 @@ async function loadJson(key, fallback) {
 }
 async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
 
+function normalizeLoadedData(data) {
+  if (!data) return data;
+  const settings = { ...(data.settings || {}) };
+  if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
+  const defaultBranchId = settings.activeBranchId || data.branches?.[0]?.id || "b_sip";
+  const catalogByCode = new Map((data.barcodeCatalog || []).map((entry) => [normalizeBarcode(entry.barcode).toLowerCase(), entry]));
+  const barcodeCatalog = [...(data.barcodeCatalog || [])];
+  const ensureEntry = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!barcode) return null;
+    const key = barcode.toLowerCase();
+    const existing = catalogByCode.get(key);
+    if (existing) return existing;
+    const entry = { id: "bc_" + key.replace(/[^a-z0-9._-]/g, "_"), barcode, barcodeType: "code128", synced: false, updatedAt: now(), createdAt: now() };
+    catalogByCode.set(key, entry);
+    barcodeCatalog.push(entry);
+    return entry;
+  };
+  const products = (data.products || []).map((product) => {
+    const primary = normalizeBarcode(product.barcode || product.sku);
+    const entry = product.barcodeCatalogId ? null : ensureEntry(primary);
+    const extraIds = [...(product.barcodeCatalogIds || [])];
+    (product.barcodes || []).forEach((code) => {
+      const extra = ensureEntry(code);
+      if (extra && !extraIds.includes(extra.id)) extraIds.push(extra.id);
+    });
+    return {
+      ...product,
+      branchId: product.branchId || defaultBranchId,
+      barcode: primary || product.barcode || product.sku,
+      barcodeCatalogId: product.barcodeCatalogId || entry?.id || null,
+      barcodeCatalogIds: extraIds,
+    };
+  });
+  return { ...data, settings, products, barcodeCatalog };
+}
+
 async function loadData() {
   const data = await loadJson(STORE_KEY, null);
   if (data) {
-    const settings = { ...(data.settings || {}) };
-    if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
-    return { ...data, settings, _sync: await syncStatus() };
+    return { ...normalizeLoadedData(data), _sync: await syncStatus() };
   }
   return null;
 }
@@ -511,24 +549,48 @@ async function saveData(data) {
 
 function normalizeBarcode(value) { return String(value || "").trim().replace(/\s+/g, ""); }
 function isValidBarcode(value) { return /^[A-Za-z0-9._-]{4,64}$/.test(normalizeBarcode(value)); }
+function productBranchId(product, data) { return product?.branchId || data?.settings?.activeBranchId || data?.branches?.[0]?.id || ""; }
+function findBarcodeCatalogEntry(data, code) {
+  const normalized = normalizeBarcode(code).toLowerCase();
+  if (!normalized) return null;
+  return (data?.barcodeCatalog || []).find((entry) => normalizeBarcode(entry.barcode).toLowerCase() === normalized) || null;
+}
+function barcodeCatalogIdsForProduct(product) {
+  return [product?.barcodeCatalogId, ...(product?.barcodeCatalogIds || [])].filter(Boolean);
+}
 function productMatchesBarcode(product, code) {
   const normalized = normalizeBarcode(code).toLowerCase();
   if (!normalized || !product) return false;
   return [product.barcode, product.sku, ...(product.barcodes || [])].some((value) => normalizeBarcode(value).toLowerCase() === normalized);
 }
-function findProductByBarcode(data, code) {
+function productMatchesCatalog(product, catalogEntry) {
+  return !!catalogEntry && barcodeCatalogIdsForProduct(product).includes(catalogEntry.id);
+}
+function findProductByBarcode(data, code, branchId) {
   const normalized = normalizeBarcode(code);
   if (!normalized) return null;
-  return (data?.products || []).find((p) => productMatchesBarcode(p, normalized)) || null;
+  const catalogEntry = findBarcodeCatalogEntry(data, normalized);
+  const branchProducts = (data?.products || []).filter((p) => !branchId || productBranchId(p, data) === branchId);
+  return branchProducts.find((p) => productMatchesCatalog(p, catalogEntry)) || branchProducts.find((p) => productMatchesBarcode(p, normalized)) || null;
 }
 function barcodeLookup(data, code, branchId) {
-  const product = findProductByBarcode(data, code);
-  if (!product) return null;
-  return { product, name: product.name, price: product.priceCents, stockQty: onHand(data, product.id, branchId) };
+  const catalogEntry = findBarcodeCatalogEntry(data, code);
+  const product = findProductByBarcode(data, code, branchId);
+  if (!product) {
+    if (catalogEntry) return { product: null, unavailable: true, message: "This product is not available in this branch.", barcodeCatalog: catalogEntry };
+    return null;
+  }
+  return { product, name: product.name, price: product.priceCents, stockQty: onHand(data, product.id, branchId), barcodeCatalog: catalogEntry || null };
 }
 function buildBarcodeCache(data) {
   const cache = {};
+  const catalogById = new Map((data?.barcodeCatalog || []).map((entry) => [entry.id, entry]));
   (data?.products || []).forEach((p) => {
+    barcodeCatalogIdsForProduct(p).forEach((id) => {
+      const entry = catalogById.get(id);
+      const code = normalizeBarcode(entry?.barcode);
+      if (code) cache[code.toLowerCase()] = p.id;
+    });
     [p.barcode || p.sku, ...(p.barcodes || [])].forEach((value) => {
       const code = normalizeBarcode(value);
       if (code) cache[code.toLowerCase()] = p.id;
@@ -576,6 +638,7 @@ const SYNC_APPEND = new Map([
   ["countLog", "countLog"],
 ]);
 const SYNC_MUTABLE = new Map([
+  ["barcodeCatalog", "barcodeCatalog"],
   ["products", "product"],
   ["customers", "customer"],
   ["employees", "user"],
@@ -773,6 +836,24 @@ function reorderList(data, branchId) { return data.products.filter((p) => onHand
 function generateBarcodeValue() {
   return "VP" + String(Date.now()).slice(-8) + Math.floor(1000 + Math.random() * 9000);
 }
+function ensureBarcodeEntries(data, codes, barcodeType = "code128") {
+  const catalog = [...(data?.barcodeCatalog || [])];
+  const byCode = new Map(catalog.map((entry) => [normalizeBarcode(entry.barcode).toLowerCase(), entry]));
+  const entries = [];
+  for (const raw of codes || []) {
+    const barcode = normalizeBarcode(raw);
+    if (!barcode) continue;
+    const key = barcode.toLowerCase();
+    let entry = byCode.get(key);
+    if (!entry) {
+      entry = { id: uid("bc"), barcode, barcodeType, createdAt: now(), updatedAt: now(), synced: false };
+      byCode.set(key, entry);
+      catalog.push(entry);
+    }
+    entries.push(entry);
+  }
+  return { barcodeCatalog: catalog, entries };
+}
 function useBarcodeScanner({ enabled, mode, onScan }) {
   const onScanRef = useRef(onScan);
   const bufferRef = useRef("");
@@ -841,7 +922,7 @@ function countPending(data) {
   const u = (a) => (a || []).filter((x) => x && x.synced === false).length;
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
-    + u(data.cashMovements) + u(data.borrowings) + u(data.branches) + u(data.endOfDays) + u(data.countLog);
+    + u(data.cashMovements) + u(data.borrowings) + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
@@ -849,7 +930,7 @@ function markSynced(data) {
     products: m(data.products), employees: m(data.employees), invoices: m(data.invoices), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
-    countLog: m(data.countLog), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0 } };
+    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0 } };
 }
 
 /* ================================================================== */
@@ -1999,7 +2080,8 @@ function Register({ data, update, online, employee, branch }) {
   const scanFocus = () => window.setTimeout(() => searchInputRef.current?.focus(), 0);
 
   const visible = data.products.filter((p) =>
-    (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()));
+    productBranchId(p, data) === branch.id &&
+    (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))));
 
   const mine = data.invoices.filter((i) => i.cashierId === employee.id);
   const myOpen = mine.filter((i) => invOutstanding(i) > 0);
@@ -2052,6 +2134,13 @@ function Register({ data, update, online, employee, branch }) {
     if (!hit) {
       notifyScan("Product not found: " + barcode, "error");
       appendBarcodeScanLog({ barcode, status: "sell:not_found" });
+      setQ("");
+      scanFocus();
+      return true;
+    }
+    if (hit.unavailable) {
+      notifyScan(hit.message || "This product is not available in this branch.", "error");
+      appendBarcodeScanLog({ barcode, status: "sell:branch_unavailable", barcodeCatalogId: hit.barcodeCatalog?.id });
       setQ("");
       scanFocus();
       return true;
@@ -2129,15 +2218,20 @@ function Register({ data, update, online, employee, branch }) {
     if (!isValidBarcode(barcode)) return setScanErr("Scan a valid barcode.");
     if (!scanProduct.name.trim()) return setScanErr("Add a product name.");
     if (!price || price <= 0) return setScanErr("Enter a valid price.");
-    if (data.products.some((p) => productMatchesBarcode(p, barcode))) return setScanErr("Barcode already exists.");
+    const existingInBranch = data.products.some((p) => productBranchId(p, data) === branch.id && (productMatchesBarcode(p, barcode) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, barcode))));
+    if (existingInBranch) return setScanErr("Barcode already exists in this branch.");
     const sku = scanProduct.sku.trim() || barcode;
     if (data.products.some((p) => normalizeBarcode(p.sku).toLowerCase() === normalizeBarcode(sku).toLowerCase())) return setScanErr("SKU already exists.");
-    update((d) => ({ ...d, products: [...d.products, {
+    update((d) => {
+      const catalogResult = ensureBarcodeEntries(d, [barcode]);
+      const catalogEntry = catalogResult.entries[0];
+      return { ...d, barcodeCatalog: catalogResult.barcodeCatalog, products: [...d.products, {
       id: uid("p"), name: scanProduct.name.trim(), sku, barcode, size: scanProduct.size || "750 ML",
       category: scanProduct.category || CATS[0], priceCents: price,
       costCents: Math.round((parseFloat(scanProduct.cost) || 0) * 100),
-      reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now(),
-    }] }));
+      barcodeCatalogId: catalogEntry?.id || null, branchId: branch.id, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now(),
+    }] };
+    });
     appendBarcodeScanLog({ barcode, status: "sell:product_created" });
     setFlash("Product registered. Scan again or tap it to sell.");
     setScanProduct(null);
@@ -3152,10 +3246,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
+  const isBranchProduct = (p) => productBranchId(p, data) === branch.id;
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
-    return [p.sku, p.barcode, ...(p.barcodes || [])].some((value) => cleanCode(value).toLowerCase() === normalized);
+    const catalogEntry = findBarcodeCatalogEntry(data, normalized);
+    return productMatchesCatalog(p, catalogEntry) || [p.sku, p.barcode, ...(p.barcodes || [])].some((value) => cleanCode(value).toLowerCase() === normalized);
   };
   const reset = () => { setF(blankProductForm()); setErr(""); setAdding(false); setBarcodeLocked(false); };
   const handleProductScan = (code) => {
@@ -3166,7 +3262,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       return;
     }
     if (editId) {
-      const existing = data.products.find((p) => p.id !== editId && productCodeMatch(p, barcode));
+      const existing = data.products.find((p) => p.id !== editId && isBranchProduct(p) && productCodeMatch(p, barcode));
       if (existing) {
         setErr("Barcode already belongs to " + existing.name + ".");
         appendBarcodeScanLog({ barcode, status: "products:edit_duplicate", productId: existing.id });
@@ -3178,7 +3274,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       window.setTimeout(() => editBarcodeInputRef.current?.focus(), 0);
       return;
     }
-    const existing = data.products.find((p) => productCodeMatch(p, barcode));
+    const existing = data.products.find((p) => isBranchProduct(p) && productCodeMatch(p, barcode));
     if (existing) {
       reset();
       startEdit(existing);
@@ -3187,11 +3283,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       appendBarcodeScanLog({ barcode, status: "products:found_existing", productId: existing.id });
       return;
     }
+    const catalogEntry = findBarcodeCatalogEntry(data, barcode);
     setF((prev) => ({ ...prev, barcode }));
     setAdding(true);
     setBarcodeLocked(true);
-    setErr("");
-    appendBarcodeScanLog({ barcode, status: "products:prefilled" });
+    setErr(catalogEntry ? "Barcode exists in the shared catalog. Add this branch's product details to link it." : "");
+    appendBarcodeScanLog({ barcode, status: catalogEntry ? "products:catalog_found" : "products:prefilled" });
   };
   useBarcodeScanner({ enabled: scannerOn, mode: "products", onScan: handleProductScan });
   useEffect(() => {
@@ -3225,20 +3322,26 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const extraBarcodes = String(f.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
     if (data.products.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists.");
-    if (barcode && data.products.some((p) => productCodeMatch(p, barcode))) return setErr("Barcode already exists.");
+    if (barcode && data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), sku.toLowerCase()]);
     const duplicateExtra = extraBarcodes.find((code) => {
       const normalized = code.toLowerCase();
       if (seenCodes.has(normalized)) return true;
       seenCodes.add(normalized);
-      return data.products.some((p) => productCodeMatch(p, code));
+      return data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, code));
     });
     if (duplicateExtra) return setErr("Duplicate barcode: " + duplicateExtra);
     const ts = now();
     const productId = uid("p");
-    const product = { id: productId, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: cost, barcode, barcodes: extraBarcodes, taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
+    const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
+    const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
+    const product = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: cost, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
-    update((d) => ({ ...d, products: [...d.products, product], stockMovements: [...d.stockMovements, ...movement] }));
+    update((d) => {
+      const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
+      const [primary, ...extras] = result.entries;
+      return { ...d, barcodeCatalog: result.barcodeCatalog, products: [...d.products, { ...product, barcodeCatalogId: primary?.id || product.barcodeCatalogId, barcodeCatalogIds: extras.map((entry) => entry.id) }], stockMovements: [...d.stockMovements, ...movement] };
+    });
     reset();
   };
   const remove = (id) => {
@@ -3270,30 +3373,34 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
     if (price < (Number.isNaN(cost) ? p.costCents : cost)) return setErr("Selling price cannot be below cost.");
     const otherProducts = data.products.filter((x) => x.id !== p.id);
-    if (otherProducts.some((x) => productCodeMatch(x, barcode))) return setErr("Barcode already exists.");
+    if (otherProducts.some((x) => productBranchId(x, data) === productBranchId(p, data) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), p.sku.toLowerCase()]);
     const duplicateExtra = extraBarcodes.find((code) => {
       const normalized = code.toLowerCase();
       if (seenCodes.has(normalized)) return true;
       seenCodes.add(normalized);
-      return otherProducts.some((x) => productCodeMatch(x, code));
+      return otherProducts.some((x) => productBranchId(x, data) === productBranchId(p, data) && productCodeMatch(x, code));
     });
     if (duplicateExtra) return setErr("Duplicate barcode: " + duplicateExtra);
-    update((d) => ({ ...d, products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, costCents: Number.isNaN(cost) ? x.costCents : cost, barcode, barcodes: extraBarcodes, synced: false, updatedAt: now() } : x) }));
+    update((d) => {
+      const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
+      const [primary, ...extras] = result.entries;
+      return { ...d, barcodeCatalog: result.barcodeCatalog, products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, costCents: Number.isNaN(cost) ? x.costCents : cost, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() } : x) };
+    });
     setEditId(null);
     setErr("");
   };
   const [impMsg, setImpMsg] = useState("");
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
-    const rows = data.products.map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, onHand(data, p.id, branch.id), p.imageUrl || ""]);
+    const rows = data.products.filter(isBranchProduct).map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, onHand(data, p.id, branch.id), p.imageUrl || ""]);
     downloadFile("visionary-products.csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
   };
-  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(data.products.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: p.costCents, priceCents: p.priceCents, onHand: onHand(data, p.id, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
+  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(data.products.filter(isBranchProduct).map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: p.costCents, priceCents: p.priceCents, onHand: onHand(data, p.id, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
   const emailSummary = () => {
-    const totalVal = data.products.reduce((s, p) => s + onHand(data, p.id, branch.id) * p.costCents, 0);
+    const totalVal = data.products.filter(isBranchProduct).reduce((s, p) => s + onHand(data, p.id, branch.id) * p.costCents, 0);
     const subject = encodeURIComponent("Product catalog · " + branch.name);
-    const body = encodeURIComponent("Products: " + data.products.length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
+    const body = encodeURIComponent("Products: " + data.products.filter(isBranchProduct).length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
     try { window.open("mailto:?subject=" + subject + "&body=" + body, "_blank"); } catch (_) {}
   };
   const splitCsv = (line) => { const out = []; let curr = "", q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') { if (q && line[i + 1] === '"') { curr += '"'; i++; } else q = !q; } else if (ch === "," && !q) { out.push(curr); curr = ""; } else curr += ch; } out.push(curr); return out; };
@@ -3309,12 +3416,20 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     let added = 0, updated = 0;
     update((d) => {
       const products = d.products.slice();
+      let barcodeCatalog = d.barcodeCatalog || [];
       parsed.forEach((r) => {
         const i = r.sku ? products.findIndex((p) => p.sku && p.sku.toLowerCase() === r.sku.toLowerCase()) : -1;
         if (i >= 0) { products[i] = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, costCents: r.cost || products[i].costCents, priceCents: r.price || products[i].priceCents, synced: false }; updated++; }
-        else { const sku = r.sku || ("SIP" + Math.floor(1000 + Math.random() * 9000)); products.push({ id: uid("p"), name: r.name || sku, sku, size: r.size, category: r.category, priceCents: r.price, costCents: r.cost, barcode: sku, reorderLevel: d.settings.reorderLevel, synced: false }); added++; }
+        else {
+          const sku = r.sku || ("SIP" + Math.floor(1000 + Math.random() * 9000));
+          const result = ensureBarcodeEntries({ ...d, barcodeCatalog }, [sku]);
+          const entry = result.entries[0];
+          barcodeCatalog = result.barcodeCatalog;
+          products.push({ id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: r.price, costCents: r.cost, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false });
+          added++;
+        }
       });
-      return { ...d, products };
+      return { ...d, products, barcodeCatalog };
     });
     setImpMsg(added + " added · " + updated + " updated.");
   };
@@ -3339,7 +3454,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Barcode scan</label>
-            <input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
+            <input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, code))) setErr("Barcode already exists in this branch."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
           </div>
           <div className="grid2" style={{ marginTop: 12 }}>
             <div><label className="label">Additional barcodes</label><input className="input" value={f.extraBarcodes} onChange={(e) => setF({ ...f, extraBarcodes: e.target.value })} placeholder="Comma separated" /></div>
@@ -3367,12 +3482,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       <div className="ptools">
         <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => setCatF(e.target.value)}>
-          {["All", ...Array.from(new Set(data.products.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
+          {["All", ...Array.from(new Set(data.products.filter(isBranchProduct).map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
       </div>
       {(() => {
         const reorder = data.settings.reorderLevel || 4;
         const query = q.trim();
-        const list = data.products.filter((p) => (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase()))));
+        const list = data.products.filter((p) => isBranchProduct(p) && (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase()))));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
@@ -3441,7 +3556,7 @@ function StockTab({ data, update, branch }) {
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const slug = bname.replace(/\s+/g, "");
   const isLow = (p) => onHand(data, p.id, bId) <= (p.reorderLevel ?? data.settings.reorderLevel);
-  const list = data.products.filter((p) => (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase().includes(q.toLowerCase())) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p))));
+  const list = data.products.filter((p) => productBranchId(p, data) === bId && (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p))));
   const countVar = (p) => { const raw = counts[p.id]; if (raw === undefined || raw === "") return null; const c = parseInt(raw, 10); if (Number.isNaN(c)) return null; return c - onHand(data, p.id, bId); };
   const entered = Object.keys(counts).filter((k) => counts[k] !== "" && counts[k] !== undefined).length;
   const countedRows = Object.keys(counts).filter((id) => counts[id] !== "" && counts[id] !== undefined).map((id) => {
@@ -3475,6 +3590,11 @@ function StockTab({ data, update, branch }) {
     if (!hit) {
       setScanMsg("Barcode not found: " + barcode);
       appendBarcodeScanLog({ barcode, status: "stock:not_found" });
+      return;
+    }
+    if (hit.unavailable) {
+      setScanMsg(hit.message || "This product is not available in this branch.");
+      appendBarcodeScanLog({ barcode, status: "stock:branch_unavailable", barcodeCatalogId: hit.barcodeCatalog?.id });
       return;
     }
     if (hit.product.synced === false) setScanMsg("Counted " + hit.name + ". Product is still unsynced.");
@@ -3663,7 +3783,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
-  const initProd = data.products[0]?.id || "";
+  const initProd = data.products.find((p) => productBranchId(p, data) === branch.id)?.id || data.products[0]?.id || "";
   const rec0 = recommend(initProd);
   const [adding, setAdding] = useState(false);
   const [list, setList] = useState([]); // batch of purchase lines to save at once
@@ -3677,6 +3797,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => ({ ...s, supplierId: sid, cost: e ? String(e.costCents / 100) : s.cost })); };
   const rec = recommend(f.productId);
   const qlist = quotesFor(f.productId);
+  const purchaseProducts = data.products.filter((p) => productBranchId(p, data) === (f.branchId || branch.id));
   const focusPurchaseScan = () => window.setTimeout(() => scanInputRef.current?.focus(), 0);
   const handlePurchaseScan = (raw) => {
     const barcode = normalizeBarcode(raw);
@@ -3694,6 +3815,14 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
       setScanMsg("Product not found: " + barcode);
       playScanSound("error");
       appendBarcodeScanLog({ barcode, status: "purchase:not_found" });
+      setScanCode("");
+      focusPurchaseScan();
+      return;
+    }
+    if (hit.unavailable) {
+      setScanMsg(hit.message || "This product is not available in this branch.");
+      playScanSound("error");
+      appendBarcodeScanLog({ barcode, status: "purchase:branch_unavailable", barcodeCatalogId: hit.barcodeCatalog?.id });
       setScanCode("");
       focusPurchaseScan();
       return;
@@ -3813,7 +3942,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
       ) : (
         <div className="addpanel fade"><div className="grid2">
           <div><label className="label">Supplier</label><select className="select" value={f.supplierId} onChange={(e) => onSupplier(e.target.value)}>{data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-          <div><label className="label">Product</label><select className="select" value={f.productId} onChange={(e) => onProduct(e.target.value)}>{data.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
+          <div><label className="label">Product</label><select className="select" value={f.productId} onChange={(e) => onProduct(e.target.value)}>{purchaseProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Scan product barcode</label>
             <div style={{ display: "flex", gap: 8 }}>
@@ -3822,7 +3951,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
             </div>
           </div>
           {scanMsg && <div className="notice" style={{ marginTop: 10 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
-          <div className="field" style={{ marginTop: 12 }}><label className="label">Branch (stock goes here)</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <div className="field" style={{ marginTop: 12 }}><label className="label">Branch (stock goes here)</label><select className="select" value={f.branchId} onChange={(e) => { const nextBranch = e.target.value; const nextProduct = data.products.find((p) => productBranchId(p, data) === nextBranch)?.id || ""; setF({ ...f, branchId: nextBranch, productId: nextProduct }); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
           {rec && (
             <div className="notice" style={{ marginTop: 12 }}>
               Recommended: <b>{rec.supplier.name}</b> at {fmt(rec.costCents, cur)}{qlist.length > 1 ? " · cheapest of " + qlist.length + " quotes" : ""}.{" "}

@@ -40,6 +40,38 @@ CREATE INDEX records_server_ts_idx ON records (server_ts);
 CREATE INDEX records_type_idx ON records (type);
 CREATE INDEX records_branch_idx ON records (branch_id);
 
+CREATE TABLE IF NOT EXISTS barcode_catalog (
+  id           varchar(191) PRIMARY KEY,
+  barcode      varchar(191) NOT NULL UNIQUE,
+  barcode_type varchar(80) NOT NULL DEFAULT 'code128',
+  created_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX barcode_catalog_barcode_lookup_idx
+  ON barcode_catalog (barcode);
+
+CREATE TABLE IF NOT EXISTS products (
+  id                 varchar(191) PRIMARY KEY,
+  branch_id          varchar(191) NOT NULL,
+  barcode_catalog_id varchar(191) NOT NULL,
+  name               varchar(255) NOT NULL,
+  category_id        varchar(191),
+  cost_price         decimal(12, 2) NOT NULL DEFAULT 0,
+  selling_price      decimal(12, 2) NOT NULL DEFAULT 0,
+  stock              int NOT NULL DEFAULT 0,
+  reorder_level      int NOT NULL DEFAULT 0,
+  image              text,
+  status             varchar(40) NOT NULL DEFAULT 'active',
+  created_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT products_barcode_catalog_fk FOREIGN KEY (barcode_catalog_id) REFERENCES barcode_catalog(id),
+  CONSTRAINT products_branch_barcode_catalog_unique UNIQUE (branch_id, barcode_catalog_id)
+);
+
+CREATE INDEX products_barcode_catalog_idx ON products (barcode_catalog_id);
+CREATE INDEX products_branch_idx ON products (branch_id);
+CREATE INDEX products_status_idx ON products (status);
+
 CREATE TABLE IF NOT EXISTS credentials (
   id            varchar(191) PRIMARY KEY,
   kind          enum('admin', 'user', 'cashier') NOT NULL,

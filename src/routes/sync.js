@@ -19,6 +19,9 @@ const EVENT_TYPES = new Set([
 ]);
 
 const RECORD_TYPE_ALIASES = new Map([
+  ["barcodeCatalog", "barcodeCatalog"],
+  ["barcode_catalog", "barcodeCatalog"],
+  ["barcodes", "barcodeCatalog"],
   ["product", "product"],
   ["products", "product"],
   ["customer", "customer"],
