@@ -1968,6 +1968,7 @@ function Register({ data, update, online, employee, branch }) {
   const [scannerOn, setScannerOn] = useState(true);
   const [scanProduct, setScanProduct] = useState(null); // { barcode, name, sku, size, category, price, cost }
   const [scanErr, setScanErr] = useState("");
+  const lastSearchBarcodeRef = useRef({ code: "", ts: 0 });
 
   const visible = data.products.filter((p) =>
     (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()));
@@ -2018,6 +2019,28 @@ function Register({ data, update, online, employee, branch }) {
     if (ok) setPtab("cart");
   };
   useBarcodeScanner({ enabled: scannerOn && ptab !== "invoices" && !pinPrompt && !scanProduct, mode: "sell", onScan: handleSellScan });
+  useEffect(() => {
+    if (!scannerOn || ptab !== "products" || pinPrompt || scanProduct) return undefined;
+    const barcode = normalizeBarcode(q);
+    if (!isValidBarcode(barcode)) return undefined;
+    const timer = window.setTimeout(() => {
+      const hit = barcodeLookup(data, barcode, branch.id);
+      if (!hit) return;
+      const t = now();
+      const last = lastSearchBarcodeRef.current;
+      if (last.code === barcode && t - last.ts < 1000) return;
+      lastSearchBarcodeRef.current = { code: barcode, ts: t };
+      const ok = add(hit.product);
+      const warn = hit.product.synced === false ? " Product is still unsynced." : "";
+      setFlash(ok ? "Scanned " + hit.name + " · " + hit.stockQty + " in stock." + warn : hit.name + " is out of stock.");
+      appendBarcodeScanLog({ barcode, status: ok ? "sell:added_from_search" : "sell:out_of_stock", productId: hit.product.id });
+      if (ok) {
+        setQ("");
+        setPtab("cart");
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [q, scannerOn, ptab, pinPrompt, scanProduct, data, branch.id]);
   const saveScannedProduct = () => {
     if (!scanProduct) return;
     const barcode = normalizeBarcode(scanProduct.barcode);
