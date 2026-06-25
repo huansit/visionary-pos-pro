@@ -514,7 +514,7 @@ function isValidBarcode(value) { return /^[A-Za-z0-9._-]{4,64}$/.test(normalizeB
 function productMatchesBarcode(product, code) {
   const normalized = normalizeBarcode(code).toLowerCase();
   if (!normalized || !product) return false;
-  return [product.barcode, product.sku].some((value) => normalizeBarcode(value).toLowerCase() === normalized);
+  return [product.barcode, product.sku, ...(product.barcodes || [])].some((value) => normalizeBarcode(value).toLowerCase() === normalized);
 }
 function findProductByBarcode(data, code) {
   const normalized = normalizeBarcode(code);
@@ -529,8 +529,10 @@ function barcodeLookup(data, code, branchId) {
 function buildBarcodeCache(data) {
   const cache = {};
   (data?.products || []).forEach((p) => {
-    const code = normalizeBarcode(p.barcode || p.sku);
-    if (code) cache[code.toLowerCase()] = p.id;
+    [p.barcode || p.sku, ...(p.barcodes || [])].forEach((value) => {
+      const code = normalizeBarcode(value);
+      if (code) cache[code.toLowerCase()] = p.id;
+    });
   });
   return cache;
 }
@@ -539,6 +541,26 @@ async function appendBarcodeScanLog(entry) {
   const log = await loadJson(BARCODE_LOG_KEY, []);
   log.unshift({ ...entry, ts: entry.ts || now() });
   await saveJson(BARCODE_LOG_KEY, log.slice(0, 250));
+}
+function playScanSound(kind = "success") {
+  try {
+    if (typeof window === "undefined") return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const gain = ctx.createGain();
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = kind === "success" ? 880 : 220;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (kind === "success" ? 0.09 : 0.18));
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + (kind === "success" ? 0.1 : 0.2));
+    window.setTimeout(() => ctx.close?.(), 250);
+  } catch (_) {}
 }
 
 const SYNC_APPEND = new Map([
@@ -748,6 +770,9 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
 }
 function priceFor(data, p) { return p.priceCents; }
 function reorderList(data, branchId) { return data.products.filter((p) => onHand(data, p.id, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
+function generateBarcodeValue() {
+  return "VP" + String(Date.now()).slice(-8) + Math.floor(1000 + Math.random() * 9000);
+}
 function useBarcodeScanner({ enabled, mode, onScan }) {
   const onScanRef = useRef(onScan);
   const bufferRef = useRef("");
@@ -768,7 +793,7 @@ function useBarcodeScanner({ enabled, mode, onScan }) {
       const t = now();
       if (t - lastKeyAtRef.current > 90) bufferRef.current = "";
       lastKeyAtRef.current = t;
-      if (e.key === "Enter") {
+      if (e.key === "Enter" || e.key === "Tab") {
         const code = normalizeBarcode(bufferRef.current);
         resetBuffer();
         if (!code) return;
@@ -1969,6 +1994,9 @@ function Register({ data, update, online, employee, branch }) {
   const [scanProduct, setScanProduct] = useState(null); // { barcode, name, sku, size, category, price, cost }
   const [scanErr, setScanErr] = useState("");
   const lastSearchBarcodeRef = useRef({ code: "", ts: 0 });
+  const searchInputRef = useRef(null);
+  const lastSearchKeyAtRef = useRef(0);
+  const scanFocus = () => window.setTimeout(() => searchInputRef.current?.focus(), 0);
 
   const visible = data.products.filter((p) =>
     (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()));
@@ -1992,13 +2020,60 @@ function Register({ data, update, online, employee, branch }) {
   const lines = cartLines(data, cart);
   const total = lines.reduce((s, l) => s + l.priceCents * l.qty, 0);
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
-  const onEnter = (e) => { if (e.key !== "Enter") return; const hit = data.products.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0]; if (hit) { add(hit); setQ(""); } };
+  const notifyScan = (message, kind = "success") => {
+    setFlash(message);
+    playScanSound(kind);
+  };
+  const addScannedProduct = (hit, barcode, status = "sell:added") => {
+    const ok = add(hit.product);
+    const warn = hit.product.synced === false ? " Product is still unsynced." : "";
+    notifyScan(ok ? "Scanned " + hit.name + " - " + hit.stockQty + " in stock." + warn : hit.name + " is out of stock.", ok ? "success" : "error");
+    appendBarcodeScanLog({ barcode, status: ok ? status : "sell:out_of_stock", productId: hit.product.id });
+    setQ("");
+    setPtab("products");
+    scanFocus();
+    return ok;
+  };
+  const processCashierBarcode = (raw, source = "input") => {
+    const barcode = normalizeBarcode(raw);
+    if (!barcode) return false;
+    if (!isValidBarcode(barcode)) {
+      notifyScan("Invalid barcode: " + barcode, "error");
+      appendBarcodeScanLog({ barcode, status: "sell:invalid" });
+      setQ("");
+      scanFocus();
+      return true;
+    }
+    const t = now();
+    const last = lastSearchBarcodeRef.current;
+    if (last.code === barcode && t - last.ts < 180) return true;
+    lastSearchBarcodeRef.current = { code: barcode, ts: t };
+    const hit = barcodeLookup(data, barcode, branch.id);
+    if (!hit) {
+      notifyScan("Product not found: " + barcode, "error");
+      appendBarcodeScanLog({ barcode, status: "sell:not_found" });
+      setQ("");
+      scanFocus();
+      return true;
+    }
+    addScannedProduct(hit, barcode, source === "input" ? "sell:added_from_search" : "sell:added");
+    return true;
+  };
+  const onEnter = (e) => {
+    if (e.key !== "Enter" && e.key !== "Tab") return;
+    if (e.key === "Tab") e.preventDefault();
+    if (processCashierBarcode(e.currentTarget.value, "input")) return;
+    const hit = data.products.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0];
+    if (hit) { add(hit); setQ(""); scanFocus(); }
+  };
   const openScannedProductForm = (barcode) => {
     setScanProduct({ barcode, name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
     setScanErr("");
     setPtab("products");
   };
   const handleSellScan = (code) => {
+    processCashierBarcode(code, "listener");
+    return;
     const barcode = normalizeBarcode(code);
     if (!isValidBarcode(barcode)) {
       setFlash("Invalid barcode: " + barcode);
@@ -2020,10 +2095,16 @@ function Register({ data, update, online, employee, branch }) {
   };
   useBarcodeScanner({ enabled: scannerOn && ptab !== "invoices" && !pinPrompt && !scanProduct, mode: "sell", onScan: handleSellScan });
   useEffect(() => {
+    if (ptab === "products" && scannerOn && !pinPrompt && !scanProduct) scanFocus();
+  }, [ptab, scannerOn, pinPrompt, scanProduct]);
+  useEffect(() => {
     if (!scannerOn || ptab !== "products" || pinPrompt || scanProduct) return undefined;
     const barcode = normalizeBarcode(q);
     if (!isValidBarcode(barcode)) return undefined;
+    if (now() - lastSearchKeyAtRef.current > 160) return undefined;
     const timer = window.setTimeout(() => {
+      processCashierBarcode(barcode, "input");
+      return;
       const hit = barcodeLookup(data, barcode, branch.id);
       if (!hit) return;
       const t = now();
@@ -2127,7 +2208,7 @@ function Register({ data, update, online, employee, branch }) {
       <div className="postabs">
         {[["products", "Products"], ["cart", "Cart"], ["invoices", "Invoices"]].map(([k, l]) => (
           <button key={k} className={"ptab" + (ptab === k ? " on" : "")} onClick={() => setPtab(k)}>{l}{k === "cart" && itemCount ? " (" + itemCount + ")" : ""}</button>))}
-        <button className={"ptab" + (scannerOn ? " on" : "")} title="USB barcode scanner listener" onClick={() => setScannerOn((v) => !v)}><Barcode style={{ width: 16, height: 16 }} /> Scanner</button>
+        <button className={"ptab" + (scannerOn ? " on" : "")} title="USB barcode scanner listener" onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(); return next; })}><Barcode style={{ width: 16, height: 16 }} /> Scanner</button>
       </div>
       <div className="pos">
         {/* LEFT — my invoices & sales */}
@@ -2176,7 +2257,7 @@ function Register({ data, update, online, employee, branch }) {
 
         {/* CENTER — products (search-first, minimal) */}
         <div className={"poscol" + (ptab === "products" ? " active" : "")}>
-          <div className="possearch"><Search /><input autoFocus placeholder="Scan barcode or search product…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onEnter} /></div>
+          <div className="possearch"><Search /><input ref={searchInputRef} autoFocus placeholder="Scan barcode or search product..." value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key.length === 1) lastSearchKeyAtRef.current = now(); onEnter(e); }} onBlur={() => { if (scannerOn && ptab === "products" && !pinPrompt && !scanProduct) scanFocus(); }} /></div>
           <div className="posgridwrap">
             {q.trim() === "" ? (
               <div className="possearch-empty"><Search /><div className="pse-t">Search to find products</div><div className="pse-s">Scan a barcode or type a product name or SKU to add it to the sale.</div></div>
@@ -3058,7 +3139,8 @@ const CATS = ["Whisky", "Gin", "Vodka", "Rum", "Cognac", "Wine", "Beer", "Spirit
 function ProductsTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
+  const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", cost: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4), imageUrl: "" });
+  const [f, setF] = useState(blankProductForm());
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [catF, setCatF] = useState("All");
@@ -3070,9 +3152,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
-    return [p.sku, p.barcode].some((value) => cleanCode(value).toLowerCase() === normalized);
+    return [p.sku, p.barcode, ...(p.barcodes || [])].some((value) => cleanCode(value).toLowerCase() === normalized);
   };
-  const reset = () => { setF({ name: "", sku: "", barcode: "", size: "750 ML", category: CATS[0], price: "", cost: "" }); setErr(""); setAdding(false); setBarcodeLocked(false); };
+  const reset = () => { setF(blankProductForm()); setErr(""); setAdding(false); setBarcodeLocked(false); };
   const handleProductScan = (code) => {
     const barcode = cleanCode(code);
     if (!isValidBarcode(barcode)) {
@@ -3099,15 +3181,41 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const id = window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
   }, [adding, scannerOn]);
+  const printBarcodeLabel = () => {
+    const code = cleanCode(f.barcode) || generateBarcodeValue();
+    const w = window.open("", "_blank", "width=420,height=320");
+    if (!w) return;
+    w.document.write("<html><head><title>Barcode label</title><style>body{font-family:Arial,sans-serif;padding:24px}.label{border:1px solid #111;width:260px;padding:14px;text-align:center}.name{font-weight:700;font-size:14px;margin-bottom:8px}.bars{font-family:monospace;font-size:42px;letter-spacing:2px;line-height:1}.code{font-family:monospace;font-weight:700;margin-top:8px}</style></head><body><div class='label'><div class='name'>" + (f.name || "VISIONPOS").replace(/[<>&]/g, "") + "</div><div class='bars'>||||||||||||</div><div class='code'>" + code + "</div></div><script>print()</script></body></html>");
+    w.document.close();
+  };
   const add = () => {
     const price = Math.round(parseFloat(f.price) * 100);
+    const cost = Math.round((parseFloat(f.cost) || 0) * 100);
+    const initialStock = parseInt(f.initialStock, 10) || 0;
+    const reorderLevel = parseInt(f.lowStockAlert, 10) || data.settings.reorderLevel;
     if (!f.name.trim()) return setErr("Add a product name.");
     if (!price || price <= 0) return setErr("Enter a valid price.");
+    if (price < cost) return setErr("Selling price cannot be below cost.");
+    if (initialStock < 0) return setErr("Initial stock cannot be negative.");
     const sku = f.sku.trim() || "SIP" + Math.floor(1000 + Math.random() * 9000);
-    const barcode = cleanCode(f.barcode);
+    const barcode = cleanCode(f.barcode) || generateBarcodeValue();
+    const extraBarcodes = String(f.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
+    if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
     if (data.products.some((p) => p.sku.toLowerCase() === sku.toLowerCase())) return setErr("SKU already exists.");
     if (barcode && data.products.some((p) => productCodeMatch(p, barcode))) return setErr("Barcode already exists.");
-    update((d) => ({ ...d, products: [...d.products, { id: uid("p"), name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: Math.round((parseFloat(f.cost) || 0) * 100), barcode: barcode || sku, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() }] }));
+    const seenCodes = new Set([barcode.toLowerCase(), sku.toLowerCase()]);
+    const duplicateExtra = extraBarcodes.find((code) => {
+      const normalized = code.toLowerCase();
+      if (seenCodes.has(normalized)) return true;
+      seenCodes.add(normalized);
+      return data.products.some((p) => productCodeMatch(p, code));
+    });
+    if (duplicateExtra) return setErr("Duplicate barcode: " + duplicateExtra);
+    const ts = now();
+    const productId = uid("p");
+    const product = { id: productId, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: cost, barcode, barcodes: extraBarcodes, taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
+    const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
+    update((d) => ({ ...d, products: [...d.products, product], stockMovements: [...d.stockMovements, ...movement] }));
     reset();
   };
   const remove = (id) => {
@@ -3197,11 +3305,25 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <label className="label">Barcode scan</label>
             <input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => productCodeMatch(p, code))) setErr("Barcode already exists."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
           </div>
+          <div className="grid2" style={{ marginTop: 12 }}>
+            <div><label className="label">Additional barcodes</label><input className="input" value={f.extraBarcodes} onChange={(e) => setF({ ...f, extraBarcodes: e.target.value })} placeholder="Comma separated" /></div>
+            <div><label className="label">Barcode preview</label><div className="input" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "var(--font-mono)", fontWeight: 800 }}><span>{cleanCode(f.barcode) || "Auto-generate"}</span><button className="btn xs btn-ghost" onClick={printBarcodeLabel}><Printer /> Print</button></div></div>
+          </div>
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Size</label><input className="input" value={f.size} onChange={(e) => setF({ ...f, size: e.target.value })} placeholder="750 ML" /></div>
             <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
             <div><label className="label">Price ({cur})</label><input className="input" inputMode="decimal" value={f.price} onChange={(e) => { setF({ ...f, price: e.target.value }); setErr(""); }} placeholder="3000" /></div></div>
-          <div className="field"><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div>
+          <div className="grid3" style={{ marginTop: 12 }}>
+            <div><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div>
+            <div><label className="label">Tax (%)</label><input className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" /></div>
+            <div><label className="label">Unit</label><input className="input" value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} placeholder="bottle" /></div>
+          </div>
+          <div className="grid3" style={{ marginTop: 12 }}>
+            <div><label className="label">Supplier</label><select className="select" value={f.supplierId} onChange={(e) => setF({ ...f, supplierId: e.target.value })}><option value="">No supplier</option>{(data.suppliers || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+            <div><label className="label">Initial stock</label><input className="input" inputMode="numeric" value={f.initialStock} onChange={(e) => setF({ ...f, initialStock: e.target.value.replace(/\D/g, "") })} placeholder="0" /></div>
+            <div><label className="label">Low stock alert</label><input className="input" inputMode="numeric" value={f.lowStockAlert} onChange={(e) => setF({ ...f, lowStockAlert: e.target.value.replace(/\D/g, "") })} placeholder="4" /></div>
+          </div>
+          <div className="field"><label className="label">Product image</label><input className="input" value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="Image URL" /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Add product</button></div>
         </div>
