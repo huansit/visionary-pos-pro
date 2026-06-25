@@ -3180,9 +3180,11 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     }
     const existing = data.products.find((p) => productCodeMatch(p, barcode));
     if (existing) {
+      reset();
+      startEdit(existing);
       setQ(barcode);
-      setErr("Barcode already belongs to " + existing.name + ".");
-      appendBarcodeScanLog({ barcode, status: "products:duplicate", productId: existing.id });
+      setErr("Found " + existing.name + ". You can update its barcode below.");
+      appendBarcodeScanLog({ barcode, status: "products:found_existing", productId: existing.id });
       return;
     }
     setF((prev) => ({ ...prev, barcode }));
@@ -3258,7 +3260,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setDelMsg("");
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
   };
-  const startEdit = (p) => { setEditId(p.id); setErr(""); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); };
+  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
   const saveEdit = (p) => {
     const price = Math.round(parseFloat(ef.price) * 100);
     if (!price || price <= 0) return;
@@ -3369,7 +3371,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       </div>
       {(() => {
         const reorder = data.settings.reorderLevel || 4;
-        const list = data.products.filter((p) => (catF === "All" || p.category === catF) && (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || (p.barcode || "").toLowerCase().includes(q.toLowerCase())));
+        const query = q.trim();
+        const list = data.products.filter((p) => (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase()))));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
