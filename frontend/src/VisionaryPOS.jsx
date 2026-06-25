@@ -3431,6 +3431,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           branchId: branch.id,
           barcodeCatalogId: primaryId,
           barcodeCatalogIds: extraIds,
+          costCents: 0,
+          priceCents: 0,
           synced: false,
           updatedAt: ts,
         });
@@ -3439,7 +3441,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       }
       return { ...d, products, barcodeCatalog };
     });
-    setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Stock starts at 0; add stock through Purchases or Stock." : "No missing products to copy.");
+    setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Cost, selling price, margin, and stock start at 0; set branch pricing before selling." : "No missing products to copy.");
   };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
@@ -3501,7 +3503,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           <div className="page-h" style={{ marginBottom: 8 }}>
             <div>
               <div className="section-title" style={{ margin: 0 }}>Copy products to {branch.name}</div>
-              <div className="sub">Copies missing products only. Barcodes stay shared; stock remains branch-specific and starts at 0.</div>
+              <div className="sub">Copies missing products only. Barcodes stay shared; cost, selling price, margin, and stock start at 0 for this branch.</div>
             </div>
             <button className="iconbtn" onClick={() => setCopyOpen(false)}><X /></button>
           </div>
