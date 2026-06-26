@@ -1677,18 +1677,32 @@ const css = `
 .postabs{display:none}
 
 /* cashier workstation */
-.cashier-app{background:#eef4f5}
+.cashier-app{background:#e8f0f2}
 .cashier-app .shell{max-width:1664px}
 .cashier-app .topbar{background:#111827;color:#eef6f7;border-bottom:none;box-shadow:0 18px 42px -30px rgba(4,9,20,.9)}
 .cashier-app .brand .name,.cashier-app .who .nm{color:#f8fafc}
 .cashier-app .who .rl{color:#9fb2bd}
 .cashier-app .branchsel.locked{border-color:rgba(45,212,222,.28);background:rgba(45,212,222,.12);color:#f8fafc}
 .cashier-app .iconbtn{background:#1f2937;border-color:#334155;color:#cbd5e1}
-.cashier-app .content{padding:14px 18px;background:linear-gradient(135deg,#f5f9fa,#eef5f6)}
-.cashier-workstation .pos{grid-template-columns:260px minmax(0,1fr) 420px;height:calc(100dvh - 98px);gap:16px}
+.cashier-app .content{padding:14px 18px;background:radial-gradient(circle at 50% 0%,rgba(45,212,222,.16),transparent 34%),linear-gradient(135deg,#f7fafb,#e9f2f4)}
+.cashier-workstation .pos{grid-template-columns:300px minmax(0,1fr) 420px;height:calc(100dvh - 98px);gap:16px}
 .cashier-workstation .poscol{gap:12px}
-.cashier-rail,.cashier-products,.checkout-panel{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 18px 45px -36px rgba(15,23,42,.5)}
-.cashier-rail{padding:14px;display:flex;flex-direction:column;gap:12px}
+.cashier-rail,.cashier-products,.checkout-panel{background:rgba(255,255,255,.94);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 18px 45px -36px rgba(15,23,42,.5)}
+.cashier-rail{padding:16px;display:flex;flex-direction:column;gap:12px}
+.cashier-rail.dark{background:linear-gradient(180deg,#101820,#141f26);border-color:rgba(148,163,184,.16);color:#f8fafc;box-shadow:0 22px 50px -34px rgba(2,6,23,.9)}
+.cashier-rail.dark .sectit{color:#8da1b2}
+.cashier-rail.dark .cust-meta{color:#91a6b8}
+.cashier-open-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.cashier-open-total{font-family:var(--font-mono);font-size:20px;font-weight:950;color:#f8fafc}
+.cashier-open-list{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0;padding-right:2px}
+.cashier-open-card{border:1px solid rgba(148,163,184,.16);background:rgba(255,255,255,.035);border-radius:16px;padding:12px;color:#f8fafc;text-align:left;font-family:inherit;cursor:pointer;transition:.12s}
+.cashier-open-card:hover{border-color:rgba(45,212,222,.5);background:rgba(45,212,222,.08)}
+.co-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.co-no{font-size:15px;font-weight:900;letter-spacing:.01em}
+.co-amt{font-family:var(--font-mono);font-size:15px;font-weight:950;color:#7dd3fc;white-space:nowrap}
+.co-cust{margin-top:5px;font-size:13px;font-weight:750;color:#d7e5eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.co-meta{margin-top:8px;display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#8da1b2}
+.cashier-open-empty{margin:auto 0;padding:28px 12px;border:1px dashed rgba(148,163,184,.22);border-radius:18px;text-align:center;color:#91a6b8}
 .cashier-rail.grow{flex:1;min-height:0}
 .rail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .rail-title{font-size:19px;font-weight:850;letter-spacing:-.03em}
@@ -1714,7 +1728,7 @@ const css = `
 .cashier-cat.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 12px 24px -18px var(--accent)}
 .cashier-cat b{font-family:var(--font-mono);font-size:12px}
 .cashier-flash{font-size:12px;line-height:1.4;color:var(--accent);background:rgba(14,165,181,.09);border:1px solid rgba(14,165,181,.22);border-radius:12px;padding:10px}
-.cashier-products{display:flex;flex-direction:column;min-height:0;padding:14px}
+.cashier-products{display:flex;flex-direction:column;min-height:0;padding:16px}
 .cashier-searchbar{display:grid;grid-template-columns:minmax(0,1fr) 132px;gap:10px;align-items:center}
 .cashier-workstation .possearch{height:58px;border-radius:18px;background:#fff}
 .cashier-workstation .possearch input{font-size:17px;font-weight:600}
@@ -1725,17 +1739,17 @@ const css = `
 .product-strip b{font-family:var(--font-mono);color:var(--text)}
 .desktop-shortcuts{margin-left:auto;color:var(--muted-2);font-size:11px}
 .cashier-workstation .posgridwrap{flex:1;min-height:0;overflow-y:auto;padding-right:5px}
-.workstation-grid{grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px;align-content:start}
-.cashier-product{min-height:202px;border:1px solid var(--border-soft);border-radius:18px;background:#fff;color:var(--text);padding:10px;display:flex;flex-direction:column;gap:9px;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 14px 34px -30px rgba(15,23,42,.65);transition:.12s}
+.workstation-grid{grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:14px;align-content:start}
+.cashier-product{min-height:224px;border:1px solid rgba(15,23,42,.08);border-radius:20px;background:linear-gradient(180deg,#fff,#f8fbfc);color:var(--text);padding:12px;display:flex;flex-direction:column;gap:10px;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 18px 40px -32px rgba(15,23,42,.7);transition:.12s}
 .cashier-product:hover:not(:disabled){transform:translateY(-1px);border-color:rgba(14,165,181,.55);box-shadow:0 18px 42px -30px rgba(14,165,181,.7)}
 .cashier-product:disabled{opacity:.55;cursor:not-allowed}
-.cp-img{height:86px;border-radius:14px;background:linear-gradient(150deg,#eef8fa,#f7fbfc);display:grid;place-items:center;overflow:hidden}
+.cp-img{height:96px;border-radius:16px;background:linear-gradient(150deg,#eef8fa,#f7fbfc);display:grid;place-items:center;overflow:hidden}
 .cp-img svg{width:36px;height:36px;color:var(--accent)}
-.cp-body{display:flex;flex-direction:column;gap:4px;min-height:54px}
-.cp-name{font-size:13.5px;font-weight:850;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.cp-meta{font-family:var(--font-mono);font-size:10.5px;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cp-body{display:flex;flex-direction:column;gap:5px;min-height:62px}
+.cp-name{font-size:16px;font-weight:950;line-height:1.18;letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cp-meta{font-family:var(--font-mono);font-size:11.5px;font-weight:800;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cp-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:8px}
-.cp-price{font-family:var(--font-mono);font-weight:900;font-size:14px}
+.cp-price{font-family:var(--font-mono);font-weight:950;font-size:18px;letter-spacing:-.02em;color:#0f172a}
 .cp-stock{font-size:10.5px;font-weight:850;border-radius:999px;padding:4px 7px;background:rgba(21,168,107,.1);color:var(--ok);white-space:nowrap}
 .cp-stock.low{background:rgba(217,138,28,.12);color:var(--warn)}
 .cp-stock.out{background:rgba(229,72,77,.12);color:var(--danger)}
@@ -1753,10 +1767,12 @@ const css = `
 .invoice-panel{max-height:230px;overflow:auto}
 @media (max-width:1500px) and (min-width:981px){
   .cashier-app .shell{max-width:100%}
-  .cashier-workstation .pos{grid-template-columns:226px minmax(0,1fr) 360px;gap:12px}
-  .workstation-grid{grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:10px}
-  .cashier-product{min-height:178px;border-radius:15px}
-  .cp-img{height:70px}
+  .cashier-workstation .pos{grid-template-columns:260px minmax(0,1fr) 360px;gap:12px}
+  .workstation-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .cashier-product{min-height:194px;border-radius:16px;padding:10px}
+  .cp-img{height:76px}
+  .cp-name{font-size:14.5px}
+  .cp-price{font-size:16px}
   .cashier-workstation .possearch,.scanner-toggle{height:52px;border-radius:15px}
   .checkout-panel .paytotal .amt{font-size:29px}
   .complete.enterprise{height:54px;font-size:16px}
@@ -2816,12 +2832,12 @@ function Register({ data, update, online, employee, branch }) {
 
   const mine = data.invoices.filter((i) => i.cashierId === employee.id);
   const myDebts = mine.filter((i) => i.carriedOver && invOutstanding(i) > 0);
-  const myOpen = myDebts;
-  const openOnly = [];
+  const myOpen = mine.filter((i) => !i.carriedOver && invOutstanding(i) > 0);
+  const openOnly = myOpen;
   const openTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
-  const openOnlyTotal = 0;
+  const openOnlyTotal = openOnly.reduce((s, i) => s + invOutstanding(i), 0);
   const debtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
-  const shownList = myDebts;
+  const shownList = openOnly;
 
   const add = (p) => {
     if (!p) return false;
@@ -3087,60 +3103,38 @@ function Register({ data, update, online, employee, branch }) {
       <div className="pos">
         {/* LEFT — my invoices & sales */}
         <div className={"poscol" + (ptab === "invoices" ? " active" : "")}>
-          <div className="cashier-rail">
-            <div className="rail-head">
-              <div><div className="sectit">Workstation</div><div className="rail-title">{branch.name}</div></div>
+          <div className="cashier-rail dark grow">
+            <div className="cashier-open-head">
+              <div><div className="sectit">Open invoices</div><div className="rail-title">{branch.name}</div></div>
               <span className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode /> {scannerOn ? "On" : "Off"}</span>
             </div>
-            <div className="cashier-metrics">
-              <div><span>Debts</span><b>{myDebts.length}</b></div>
-              <div><span>Owed</span><b>{fmt(debtTotal, cur)}</b></div>
+            <div className="cashier-open-head">
+              <div className="cust-meta">{openOnly.length} unpaid invoice{openOnly.length === 1 ? "" : "s"}</div>
+              <div className="cashier-open-total">{fmt(openOnlyTotal, cur)}</div>
             </div>
-            <div className="cashier-actions">
-              <CashierQuickButton icon={<Search />} label="Focus search" shortcut="F2" onClick={() => { setPtab("products"); scanFocus(true); }} />
-              <CashierQuickButton icon={<Receipt />} label="Hold sale" shortcut="F6" disabled={lines.length === 0} onClick={holdSale} />
-              <CashierQuickButton icon={<Trash2 />} label="Clear cart" shortcut="Del" tone="danger" disabled={lines.length === 0} onClick={() => { setCart({}); scanFocus(true); }} />
-            </div>
-          </div>
-          <div className="cashier-rail grow">
-            <div className="sectit">Categories</div>
-            <div className="cashier-cats">
-              <CashierCategoryButton label="All products" count={branchProducts.length} active={catFilter === "All"} onClick={() => { setCatFilter("All"); scanFocus(true); }} />
-              {categoryCounts.map((c) => <CashierCategoryButton key={c.cat} label={c.cat} count={c.count} active={catFilter === c.cat} onClick={() => { setCatFilter(c.cat); scanFocus(true); }} />)}
-            </div>
-          </div>
-          <div className="poscard invoice-panel">
-            <div className="sectit" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span>Debt Tracker</span>
-              <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
-            </div>
-            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Carried-over debts</span><span className="v">{fmt(debtTotal, cur)}</span></div>
-            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} unpaid carried-over invoice{myDebts.length === 1 ? "" : "s"}</div>
             {shownList.length === 0 ? (
-              <div className="cust-meta" style={{ padding: "8px 2px" }}>No carried-over debts for your login.</div>
+              <div className="cashier-open-empty">
+                <FileText style={{ width: 28, height: 28, marginBottom: 8, opacity: .75 }} />
+                <div style={{ fontWeight: 850, color: "#d7e5eb" }}>No open invoices</div>
+                <div style={{ marginTop: 4 }}>Paid and closed invoices stay out of the cashier workspace.</div>
+              </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: "46vh", overflowY: "auto" }}>
+              <div className="cashier-open-list">
                 {shownList.slice(0, 20).map((i) => (
-                  <button className="qabtn" key={i.id} onClick={() => setDetail(i)} style={{ justifyContent: "space-between" }}>
+                  <button className="cashier-open-card" key={i.id} onClick={() => setDetail(i)}>
                     <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
-                      <span style={{ fontWeight: 700 }}>{i.number.slice(-8)}</span>
+                      <span className="co-no">{i.number.slice(-10)}</span>
                       <span className="cust-meta" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{i.customerName}{i.trackingNote ? " · noted" : ""}</span>
                     </span>
                     <span style={{ textAlign: "right" }}>
-                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12, display: "block" }}>{fmt(invOutstanding(i) || i.totalCents, cur)}</span>
+                      <span className="co-amt">{fmt(invOutstanding(i), cur)}</span>
                       <span className={"ist " + invStatus(i)} style={{ fontSize: 10 }}>{invStatus(i)}</span>
                     </span>
                   </button>))}
               </div>
             )}
           </div>
-          <div className="poscard">
-            <div className="sectit">Quick Actions</div>
-            <div className="qa">
-              <button className="qabtn" onClick={() => setExp({ category: QEXP[0], amount: "", note: "" })}><Wallet /> Expense</button>
-              <button className="qabtn" onClick={holdSale}><Receipt /> Hold Sale</button>
-              <button className="qabtn" onClick={() => setDebtsOpen(true)}><AlertCircle /> My Debts{debtTotal > 0 ? " · " + fmt(debtTotal, cur) : ""}</button>
-            </div>
+          {(holds.length > 0 || flash) && <div className="poscard">
             {holds.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <div className="cust-meta" style={{ fontWeight: 600, marginBottom: 6 }}>Held sales ({holds.length})</div>
@@ -3148,7 +3142,7 @@ function Register({ data, update, online, employee, branch }) {
               </div>
             )}
             {flash && <div className="notice" style={{ marginTop: 10, fontSize: 12 }}>{flash}</div>}
-          </div>
+          </div>}
         </div>
 
         {/* CENTER — products (search-first, minimal) */}
