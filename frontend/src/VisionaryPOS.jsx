@@ -2221,8 +2221,9 @@ export default function VisionPOS() {
       {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
   }
-  const adminBranch = data.branches.find((b) => b.id === data.settings.activeBranchId) || data.branches[0];
-  const cashierBranch = session ? (data.branches.find((b) => b.id === session.branchId) || data.branches[0]) : adminBranch;
+  const branches = Array.isArray(data.branches) ? data.branches : [];
+  const adminBranch = branches.find((b) => b.id === data.settings.activeBranchId) || branches[0] || null;
+  const cashierBranch = session ? (branches.find((b) => b.id === session.branchId) || adminBranch) : adminBranch;
   return (
     <div className={"vpos app" + themeCls + (view === "register" ? " cashier-app" : "")}><style>{css}</style>
       <div className="shell">
@@ -2231,12 +2232,12 @@ export default function VisionPOS() {
           <div className="right">
             {view === "register" ? (
               <div className="branchsel locked" title="This cashier is locked to one branch">
-                <Building2 /><span>{cashierBranch.name}</span><Lock style={{ width: 13, height: 13, opacity: .7 }} />
+                <Building2 /><span>{cashierBranch?.name || session?.branchId || "Loading branch"}</span><Lock style={{ width: 13, height: 13, opacity: .7 }} />
               </div>
             ) : (
               <div className="branchsel"><Building2 />
-                <select value={data.settings.activeBranchId} onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: e.target.value } }))}>
-                  {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+                <select value={data.settings.activeBranchId || adminBranch?.id || ""} onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: e.target.value } }))}>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
             )}
             {view === "register" && session && <div className="who"><span className="nm">{session.name}</span><span className="rl">{session.role}</span></div>}
             {view === "admin" && <div className="who"><span className="nm">{session ? session.name : "Admin"}</span><span className="rl">{session ? session.role : data.admin.email}</span></div>}
@@ -2256,8 +2257,12 @@ export default function VisionPOS() {
           </div>
         </div>
         <div className="content">
-          {view === "register" && <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />}
-          {view === "admin" && <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} />}
+          {view === "register" && (session && cashierBranch
+            ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />
+            : <CloudDataRecovery title="Cashier data is still loading" message="This device has a valid login, but the branch catalog has not finished loading from the cloud. Sync now, then try again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
+          {view === "admin" && (adminBranch
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} />
+            : <CloudDataRecovery title="Cloud data is unavailable" message="This device could not load branches from the cloud yet. Sync now or sign out and log in again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
     </div>
@@ -3540,6 +3545,22 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
   );
 }
 function PageHead({ title, sub, right }) { return (<div className="page-h"><div><div className="title" style={{ fontSize: 19 }}>{title}</div>{sub && <div className="sub">{sub}</div>}</div>{right}</div>); }
+
+function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
+  return (
+    <div className="fade" style={{ minHeight: "calc(100dvh - 170px)", display: "grid", placeItems: "center", padding: 24 }}>
+      <div className="poscard" style={{ maxWidth: 560, padding: 24, textAlign: "center" }}>
+        <div className="title" style={{ fontSize: 22 }}>{title}</div>
+        <div className="sub" style={{ marginTop: 8 }}>{message}</div>
+        {syncError && <div className="alert" style={{ marginTop: 16, textAlign: "left" }}><AlertCircle />{syncError}</div>}
+        <div className="grid2" style={{ marginTop: 18 }}>
+          <button className="btn btn-primary" onClick={onSync}><RefreshCw />Sync now</button>
+          <button className="btn btn-ghost" onClick={onSignOut}><LogOut />Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
 function InvoicesTab({ data, update, branch, user }) {
