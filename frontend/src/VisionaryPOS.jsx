@@ -4604,8 +4604,13 @@ function PricingTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [bId, setBId] = useState(branch.id);
   const [q, setQ] = useState("");
+  useEffect(() => { setBId(branch.id); }, [branch.id]);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
-  const list = sortProductsAZ(data.products.filter((p) => q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())));
+  const query = q.trim().toLowerCase();
+  const list = sortProductsAZ(data.products.filter((p) =>
+    productBranchId(p, data) === bId &&
+    (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productCodeMatch(p, query))
+  ));
   return (
     <div>
       <PageHead title="Branch Pricing" sub="Read-only overview · selling prices are set in the Products module." />
@@ -4632,7 +4637,7 @@ function PricingTab({ data, update, branch }) {
             <td style={{ color: markup != null && markup < 0 ? "var(--danger)" : "var(--text)", fontWeight: 650 }}>{markup == null ? "—" : markup + "%"}</td>
           </tr>);
         })}
-        {list.length === 0 && <tr><td colSpan="5"><div className="notice">No products match.</div></td></tr>}</tbody></table></div>
+        {list.length === 0 && <tr><td colSpan="5"><div className="notice">No products match for {bname}.</div></td></tr>}</tbody></table></div>
     </div>
   );
 }
