@@ -68,8 +68,8 @@ function installDesktopChrome() {
     #visionpos-desktop-titlebar .vp-monogram{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(135deg,#2dd4de,#7c7dff);color:#061018;font-weight:950;font-size:16px;letter-spacing:-.08em;box-shadow:0 0 18px rgba(45,212,222,.34)}
     #visionpos-desktop-titlebar .vp-name{font-weight:850;color:#f8fafc}
     #visionpos-desktop-titlebar .vp-sub{color:#8aa0ad;font-weight:700;letter-spacing:.02em;text-transform:none}
-    #visionpos-desktop-titlebar .vp-controls{display:flex;height:100%;-webkit-app-region:no-drag}
-    #visionpos-desktop-titlebar button{width:48px;height:42px;border:0;background:transparent;color:#dbeafe;font:700 15px system-ui,Segoe UI,sans-serif;cursor:pointer;display:grid;place-items:center}
+    #visionpos-desktop-titlebar .vp-controls{display:flex;height:100%;-webkit-app-region:no-drag;app-region:no-drag;pointer-events:auto}
+    #visionpos-desktop-titlebar button{width:48px;height:42px;border:0;background:transparent;color:#dbeafe;font:700 15px system-ui,Segoe UI,sans-serif;cursor:pointer;display:grid;place-items:center;-webkit-app-region:no-drag;app-region:no-drag;pointer-events:auto;position:relative;z-index:1}
     #visionpos-desktop-titlebar button:hover{background:rgba(148,163,184,.14)}
     #visionpos-desktop-titlebar button[data-window-close]:hover{background:#dc2626;color:#fff}
     #visionpos-desktop-connection{bottom:18px!important}
@@ -99,9 +99,19 @@ function installDesktopChrome() {
   };
   window.visionposDesktop.isWindowMaximized().then(setMaximized).catch(() => {});
   window.visionposDesktop.onWindowMaximized(setMaximized);
-  bar.querySelector("[data-window-minimize]").addEventListener("click", () => window.visionposDesktop.minimizeWindow());
-  maxButton.addEventListener("click", () => window.visionposDesktop.toggleMaximizeWindow().then(setMaximized).catch(() => {}));
-  bar.querySelector("[data-window-close]").addEventListener("click", () => window.visionposDesktop.closeWindow());
+  const wireControl = (selector, action) => {
+    const button = bar.querySelector(selector);
+    button.addEventListener("pointerdown", (event) => event.stopPropagation());
+    button.addEventListener("mousedown", (event) => event.stopPropagation());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    });
+  };
+  wireControl("[data-window-minimize]", () => window.visionposDesktop.minimizeWindow());
+  wireControl("[data-window-maximize]", () => window.visionposDesktop.toggleMaximizeWindow().then(setMaximized).catch(() => {}));
+  wireControl("[data-window-close]", () => window.visionposDesktop.closeWindow());
 }
 
 function installConnectionBadge() {
