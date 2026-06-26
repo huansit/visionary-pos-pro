@@ -1056,12 +1056,17 @@ async function runSyncClient(currentData) {
     await saveOutbox(outbox);
     data = markAcceptedSynced(data, body.accepted || []);
   }
-  const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor), { headers });
-  if (!pulled.ok) throw new Error("pull_failed_" + pulled.status);
-  const body = await pulled.json();
-  cursor = Number(body.cursor || cursor || 0);
-  await saveCursor(cursor);
-  data = mergeSyncEvents(data, body.events || []);
+  let hasMore = true;
+  while (hasMore) {
+    const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor), { headers });
+    if (!pulled.ok) throw new Error("pull_failed_" + pulled.status);
+    const body = await pulled.json();
+    data = mergeSyncEvents(data, body.events || []);
+    const nextCursor = Number(body.cursor || cursor || 0);
+    hasMore = !!body.hasMore && nextCursor > cursor;
+    cursor = nextCursor;
+    await saveCursor(cursor);
+  }
   const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
   const credentialText = credentialProvision.failed ? `${credentialProvision.failed} staff login(s) could not be updated in cloud.` : "";
   data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [rejectedText, credentialText].filter(Boolean).join(" ") } };
@@ -1069,7 +1074,7 @@ async function runSyncClient(currentData) {
   return { data, status: data._sync };
 }
 async function cloudBootstrapData(localData) {
-  const base = localData || { ...SEED(), _sync: await syncStatus() };
+  const base = localData || { ...CLEAN_SETUP(), _sync: await syncStatus() };
   try {
     return (await runSyncClient(base)).data;
   } catch (error) {
@@ -2635,13 +2640,13 @@ function Register({ data, update, online, employee, branch }) {
     (qNorm === "" || p.name.toLowerCase().includes(qNorm) || p.sku.toLowerCase().includes(qNorm) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))));
 
   const mine = data.invoices.filter((i) => i.cashierId === employee.id);
-  const myOpen = mine.filter((i) => invOutstanding(i) > 0);
-  const myDebts = myOpen.filter((i) => i.carriedOver);
-  const openOnly = myOpen.filter((i) => !i.carriedOver);
-  const openTotal = myOpen.reduce((s, i) => s + invOutstanding(i), 0);
-  const openOnlyTotal = openOnly.reduce((s, i) => s + invOutstanding(i), 0);
+  const myDebts = mine.filter((i) => i.carriedOver && invOutstanding(i) > 0);
+  const myOpen = myDebts;
+  const openOnly = [];
+  const openTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
+  const openOnlyTotal = 0;
   const debtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
-  const shownList = showAll ? mine : openOnly;
+  const shownList = myDebts;
 
   const add = (p) => {
     if (!p) return false;
@@ -2913,8 +2918,8 @@ function Register({ data, update, online, employee, branch }) {
               <span className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode /> {scannerOn ? "On" : "Off"}</span>
             </div>
             <div className="cashier-metrics">
-              <div><span>Open</span><b>{fmt(openOnlyTotal, cur)}</b></div>
-              <div><span>Debt</span><b>{fmt(debtTotal, cur)}</b></div>
+              <div><span>Debts</span><b>{myDebts.length}</b></div>
+              <div><span>Owed</span><b>{fmt(debtTotal, cur)}</b></div>
             </div>
             <div className="cashier-actions">
               <CashierQuickButton icon={<Search />} label="Focus search" shortcut="F2" onClick={() => { setPtab("products"); scanFocus(true); }} />
@@ -2931,13 +2936,13 @@ function Register({ data, update, online, employee, branch }) {
           </div>
           <div className="poscard invoice-panel">
             <div className="sectit" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span>My Invoices</span>
-              <button className="linkc" onClick={() => setShowAll((s) => !s)}>{showAll ? "Open only" : "Show all"}</button>
+              <span>Debt Tracker</span>
+              <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
             </div>
-            <div className="debtbig"><span>Open invoices</span><span className="v">{fmt(openOnlyTotal, cur)}</span></div>
-            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{openOnly.length} open{myDebts.length ? " · " + myDebts.length + " in debts" : ""} · {mine.length} total</div>
+            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Carried-over debts</span><span className="v">{fmt(debtTotal, cur)}</span></div>
+            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} unpaid carried-over invoice{myDebts.length === 1 ? "" : "s"}</div>
             {shownList.length === 0 ? (
-              <div className="cust-meta" style={{ padding: "8px 2px" }}>No {showAll ? "" : "open "}invoices for your login yet.</div>
+              <div className="cust-meta" style={{ padding: "8px 2px" }}>No carried-over debts for your login.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: "46vh", overflowY: "auto" }}>
                 {shownList.slice(0, 20).map((i) => (
