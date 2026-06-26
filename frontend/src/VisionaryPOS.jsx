@@ -866,6 +866,14 @@ async function runSyncClient(currentData) {
   await saveData(data);
   return { data, status: data._sync };
 }
+async function cloudBootstrapData(localData) {
+  const base = localData || { ...SEED(), _sync: await syncStatus() };
+  try {
+    return (await runSyncClient(base)).data;
+  } catch (error) {
+    return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };
+  }
+}
 
 /* ================================================================== */
 /*  Helpers                                                           */
@@ -1773,11 +1781,13 @@ export default function VisionPOS() {
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [syncing, setSyncing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const didInitialSync = useRef(false);
+  const syncRequestRef = useRef(false);
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { (async () => {
     const l = await loadData();
-    const loaded = l || { ...SEED(), _sync: await syncStatus() };
-    if (!l) saveData(loaded);
+    const loaded = await cloudBootstrapData(l);
+    saveData(loaded);
     const savedSession = await loadSessionState();
     if (savedSession?.view === "register" && savedSession.employeeId) {
       const emp = (loaded.employees || []).find((e) => e.id === savedSession.employeeId);
@@ -1811,7 +1821,11 @@ export default function VisionPOS() {
   const update = (fn) => setData((prev) => {
     const next = { ...fn(prev), _sync: prev?._sync || { outboxLength: 0, cursor: 0 } };
     saveData(next);
-    enqueueChanges(prev, next).then((status) => setData((cur) => cur ? { ...cur, _sync: status } : cur));
+    enqueueChanges(prev, next).then((status) => {
+      setData((cur) => cur ? { ...cur, _sync: { ...status, error: "" } } : cur);
+      syncRequestRef.current = true;
+      if (typeof navigator === "undefined" || navigator.onLine) setTimeout(runSync, 250);
+    });
     return next;
   });
   const cleanReset = () => {
@@ -1820,6 +1834,7 @@ export default function VisionPOS() {
   };
   const runSync = async () => {
     if (!navigator.onLine || syncing || !dataRef.current) return;
+    syncRequestRef.current = false;
     setSyncing(true);
     try {
       const result = await runSyncClient(dataRef.current);
@@ -1840,6 +1855,16 @@ export default function VisionPOS() {
     const id = setInterval(() => { if (navigator.onLine) runSync(); }, 20000);
     return () => clearInterval(id);
   }, []); // eslint-disable-line
+  useEffect(() => {
+    if (!data || didInitialSync.current) return;
+    didInitialSync.current = true;
+    if (navigator.onLine) setTimeout(runSync, 300);
+  }, [data]); // eslint-disable-line
+  useEffect(() => {
+    if (!data || syncing || !syncRequestRef.current || !navigator.onLine) return;
+    const id = setTimeout(runSync, 300);
+    return () => clearTimeout(id);
+  }, [data, syncing]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
