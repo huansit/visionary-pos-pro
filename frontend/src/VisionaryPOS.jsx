@@ -737,6 +737,7 @@ async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
   const candidates = employees.filter((emp) => {
     if (!emp?.id || !emp?.name || !emp?.role) return false;
+    if (emp.status === "deleted" || emp.status === "inactive") return false;
     if (emp.role === "Cashier") return /^\d{4}$/.test(String(emp.pin || ""));
     return !!emp.email && !!emp.password;
   });
@@ -5734,6 +5735,7 @@ function UsersTab({ data, update, isAdmin }) {
   const [credEdit, setCredEdit] = useState(null); // employee id whose PIN/password is being changed
   const [credVal, setCredVal] = useState(""); const [credErr, setCredErr] = useState("");
   const [adminCred, setAdminCred] = useState(false); const [adminPw, setAdminPw] = useState(""); const [adminErr, setAdminErr] = useState("");
+  const visibleEmployees = (data.employees || []).filter((e) => e.status !== "deleted");
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
       await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
@@ -5745,7 +5747,7 @@ function UsersTab({ data, update, isAdmin }) {
   const saveCred = (emp) => {
     if (emp.role === "Cashier") {
       if (!/^\d{4}$/.test(credVal)) return setCredErr("PIN must be 4 digits.");
-      if (data.employees.some((e) => e.id !== emp.id && e.pin === credVal)) return setCredErr("That PIN's already in use.");
+      if (visibleEmployees.some((e) => e.id !== emp.id && e.pin === credVal)) return setCredErr("That PIN's already in use.");
       update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, pin: credVal, synced: false } : e) }));
       saveCloudCredential(emp, { pin: credVal });
     } else {
@@ -5768,8 +5770,8 @@ function UsersTab({ data, update, isAdmin }) {
     if (f.role === "Cashier") {
       if (!f.branchId) return setErr("Cashiers must be assigned to a branch.");
       if (!/^\d{4}$/.test(f.pin)) return setErr("Cashiers sign in with a 4-digit PIN.");
-      if (data.employees.some((e) => e.pin === f.pin)) return setErr("That PIN's taken.");
-      const emp = { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, synced: false };
+      if (visibleEmployees.some((e) => e.pin === f.pin)) return setErr("That PIN's taken.");
+      const emp = { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
       update((d) => ({ ...d, employees: [...d.employees, emp] }));
       saveCloudCredential(emp, { pin: f.pin });
       reset(); return;
@@ -5778,8 +5780,8 @@ function UsersTab({ data, update, isAdmin }) {
     const em = f.email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
     const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
-    if (em === data.admin.email.toLowerCase() || data.employees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
-    const emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, synced: false };
+    if (em === data.admin.email.toLowerCase() || visibleEmployees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
+    const emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
     update((d) => ({ ...d, employees: [...d.employees, emp] }));
     saveCloudCredential(emp, { password: f.password });
     reset();
@@ -5789,7 +5791,10 @@ function UsersTab({ data, update, isAdmin }) {
     const pendInv = data.invoices.filter((i) => i.cashierId === id && invOutstanding(i) > 0);
     if (pendInv.length) { setDelMsg(emp.name + " can't be deleted — " + pendInv.length + " pending invoice(s) are still outstanding under this user. Clear them first."); return; }
     setDelMsg("");
-    update((d) => ({ ...d, employees: d.employees.filter((e) => e.id !== id) }));
+    update((d) => ({ ...d, employees: d.employees.map((e) => e.id === id ? { ...e, status: "deleted", synced: false, updatedAt: now() } : e) }));
+    authApi("/api/auth/users/" + encodeURIComponent(id) + "/delete", {}, { device: true }).catch((error) => {
+      setDelMsg("User hidden locally, but cloud deletion was not completed: " + error.message);
+    });
   };
   const toggleRight = (id, r) => update((d) => ({ ...d, employees: d.employees.map((e) => { if (e.id !== id) return e; const cur = e.rights || []; const rights = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]; return { ...e, rights, synced: false }; }) }));
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -5832,7 +5837,7 @@ function UsersTab({ data, update, isAdmin }) {
             <RightsGrid selected={f.rights} onToggle={toggleNew} /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Create user</button></div></div>)}
-      <div className="list">{data.employees.map((e) => (
+      <div className="list">{visibleEmployees.map((e) => (
         <div key={e.id}>
           <div className="row"><div className="avatar">{e.name.charAt(0)}</div>
             <div className="meta"><div className="nm">{e.name} {e.role === "Supervisor" && <span className="roletag sup">{e.branchId ? "Supervisor · " + bn(e.branchId) : "Supervisor"}</span>}</div><div className="mt2">{e.role} · {e.branchId ? bn(e.branchId) : "All branches"} · {(e.rights || []).length} rights</div></div>

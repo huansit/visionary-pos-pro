@@ -343,3 +343,34 @@ test("11. cloud login sessions can be validated and revoked", async () => {
     .send({ sessionToken: token })
     .expect(401);
 });
+
+test("12. deleted users are inactive immediately and cannot log in again", async () => {
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "delete-me-cashier",
+      name: "Delete Me",
+      role: "Cashier",
+      pin: "8899",
+      branchId: "b_sip",
+      rights: ["sell"],
+    })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/login")
+    .send({ pin: "8899", branchId: "b_sip" })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/users/delete-me-cashier/delete")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({})
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/login")
+    .send({ pin: "8899", branchId: "b_sip" })
+    .expect(401);
+});

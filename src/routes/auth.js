@@ -361,6 +361,27 @@ router.post("/users", requireDevice, async (req, res) => {
   }
 });
 
+router.post("/users/:id/delete", requireDevice, async (req, res) => {
+  await ensureAuthSchema();
+  const id = String(req.params.id || "").trim();
+  if (!id || id === "admin") return res.status(400).json({ error: "invalid_user_id" });
+  try {
+    await q(
+      `UPDATE credentials
+          SET status = 'deleted',
+              updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [id]
+    );
+    await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [id]);
+    await audit("user_deleted", req, id, { byDevice: req.deviceId });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("delete user failed:", error);
+    res.status(500).json({ error: "delete_user_failed" });
+  }
+});
+
 router.post("/login", async (req, res) => {
   await ensureAuthSchema();
   const { identifier, password, pin, branchId } = req.body || {};
