@@ -374,3 +374,38 @@ test("12. deleted users are inactive immediately and cannot log in again", async
     .send({ pin: "8899", branchId: "b_sip" })
     .expect(401);
 });
+
+test("13. fingerprint templates are encrypted at rest and can issue cloud sessions", async () => {
+  const template = "SECUGEN_TEMPLATE_BASE64_SAMPLE";
+  await request(app)
+    .post("/api/auth/fingerprints/enroll")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ userId: "cashier-cloud-001", template, deviceSerial: "HAMSTER-001" })
+    .expect(200);
+
+  const stored = await pool.query("SELECT finger_template, device_serial FROM user_fingerprints WHERE user_id = 'cashier-cloud-001'");
+  assert.equal(stored.rows[0].device_serial, "HAMSTER-001");
+  assert.notEqual(stored.rows[0].finger_template, template);
+  assert.match(stored.rows[0].finger_template, /^v1:/);
+
+  await request(app)
+    .post("/api/auth/fingerprints/templates")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({})
+    .expect(200)
+    .expect((res) => {
+      const hit = res.body.templates.find((row) => row.userId === "cashier-cloud-001");
+      assert.equal(hit.template, template);
+    });
+
+  const login = await request(app)
+    .post("/api/auth/fingerprints/login")
+    .send({ userId: "cashier-cloud-001", deviceSerial: "HAMSTER-001" })
+    .expect(200);
+  assert.ok(login.body.sessionToken);
+
+  await request(app)
+    .post("/api/auth/fingerprints/checkout")
+    .send({ userId: "cashier-cloud-001", sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .expect(200);
+});

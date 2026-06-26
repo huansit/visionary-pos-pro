@@ -11,6 +11,7 @@ const ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
 const SESSION_DAYS = Math.max(1, Math.min(90, parseInt(process.env.AUTH_SESSION_DAYS || "14", 10)));
 const SINGLE_SESSION = process.env.AUTH_SINGLE_SESSION === "1";
 let authSchemaReady = null;
+const FINGERPRINT_ALGO = "aes-256-gcm";
 
 function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
@@ -21,6 +22,33 @@ function requestMeta(req) {
     deviceName: String(req.body?.deviceName || req.headers["x-device-name"] || "Web POS").slice(0, 255),
     ipAddress: String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim().slice(0, 80),
   };
+}
+
+function fingerprintKey() {
+  const configured = process.env.FINGERPRINT_ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.DEVICE_TOKEN_SECRET || "visionpos-local-fingerprint-key";
+  if (/^[a-f0-9]{64}$/i.test(configured)) return Buffer.from(configured, "hex");
+  return crypto.createHash("sha256").update(String(configured)).digest();
+}
+
+function encryptFingerprintTemplate(template) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(FINGERPRINT_ALGO, fingerprintKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(String(template), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return "v1:" + [iv, tag, ciphertext].map((part) => part.toString("base64")).join(":");
+}
+
+function decryptFingerprintTemplate(value) {
+  const raw = String(value || "");
+  if (!raw.startsWith("v1:")) return raw;
+  const [, iv64, tag64, data64] = raw.split(":");
+  const decipher = crypto.createDecipheriv(FINGERPRINT_ALGO, fingerprintKey(), Buffer.from(iv64, "base64"));
+  decipher.setAuthTag(Buffer.from(tag64, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(data64, "base64")), decipher.final()]).toString("utf8");
+}
+
+function fingerprintTemplateHash(template) {
+  return crypto.createHash("sha256").update(String(template || "")).digest("hex");
 }
 
 async function ensureAuthSchema() {
@@ -57,6 +85,18 @@ async function ensureAuthSchema() {
            )`,
           "CREATE INDEX auth_audit_log_user_idx ON auth_audit_log (user_id)",
           "CREATE INDEX auth_audit_log_created_idx ON auth_audit_log (created_at)",
+          `CREATE TABLE IF NOT EXISTS user_fingerprints (
+             id varchar(191) PRIMARY KEY,
+             user_id varchar(191) NOT NULL,
+             finger_template longtext NOT NULL,
+             finger_template_hash varchar(64) NOT NULL,
+             device_serial varchar(191),
+             created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             CONSTRAINT user_fingerprints_user_fk FOREIGN KEY (user_id) REFERENCES credentials(id) ON DELETE CASCADE
+           )`,
+          "CREATE UNIQUE INDEX user_fingerprints_user_idx ON user_fingerprints (user_id)",
+          "CREATE INDEX user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash)",
         ]
       : [
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
@@ -110,6 +150,27 @@ async function ensureAuthSchema() {
              )`,
           "CREATE INDEX IF NOT EXISTS auth_audit_log_user_idx ON auth_audit_log (user_id)",
           "CREATE INDEX IF NOT EXISTS auth_audit_log_created_idx ON auth_audit_log (created_at)",
+          pgMem
+            ? `CREATE TABLE IF NOT EXISTS user_fingerprints (
+               id text,
+               user_id text,
+               finger_template text,
+               finger_template_hash text,
+               device_serial text,
+               created_at timestamptz,
+               updated_at timestamptz
+             )`
+            : `CREATE TABLE IF NOT EXISTS user_fingerprints (
+               id text PRIMARY KEY,
+               user_id text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+               finger_template text NOT NULL,
+               finger_template_hash text NOT NULL,
+               device_serial text,
+               created_at timestamptz NOT NULL DEFAULT now(),
+               updated_at timestamptz NOT NULL DEFAULT now()
+             )`,
+          "CREATE UNIQUE INDEX IF NOT EXISTS user_fingerprints_user_idx ON user_fingerprints (user_id)",
+          "CREATE INDEX IF NOT EXISTS user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash)",
         ];
     for (const sql of statements) {
       try {
@@ -380,6 +441,166 @@ router.post("/users/:id/delete", requireDevice, async (req, res) => {
     console.error("delete user failed:", error);
     res.status(500).json({ error: "delete_user_failed" });
   }
+});
+
+router.post("/fingerprints/enroll", requireDevice, async (req, res) => {
+  await ensureAuthSchema();
+  const userId = String(req.body?.userId || "").trim();
+  const template = String(req.body?.template || "").trim();
+  const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
+  if (!userId || !template) return res.status(400).json({ error: "user_and_template_required" });
+
+  try {
+    const user = await q("SELECT id, status FROM credentials WHERE id = $1 AND status = 'active'", [userId]);
+    if (!user.rows[0]) return res.status(404).json({ error: "active_user_not_found" });
+    const id = "fp_" + (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+    const encrypted = encryptFingerprintTemplate(template);
+    const hash = fingerprintTemplateHash(template);
+    if (isMySql) {
+      await q(
+        `INSERT INTO user_fingerprints (id, user_id, finger_template, finger_template_hash, device_serial, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,NOW(),NOW())
+         ON DUPLICATE KEY UPDATE
+           finger_template = VALUES(finger_template),
+           finger_template_hash = VALUES(finger_template_hash),
+           device_serial = VALUES(device_serial),
+           updated_at = NOW()`,
+        [id, userId, encrypted, hash, deviceSerial]
+      );
+    } else if (process.env.PG_MEM === "1") {
+      await q("DELETE FROM user_fingerprints WHERE user_id = $1", [userId]);
+      await q(
+        `INSERT INTO user_fingerprints (id, user_id, finger_template, finger_template_hash, device_serial, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,now(),now())`,
+        [id, userId, encrypted, hash, deviceSerial]
+      );
+    } else {
+      await q(
+        `INSERT INTO user_fingerprints (id, user_id, finger_template, finger_template_hash, device_serial, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,now(),now())
+         ON CONFLICT (user_id) DO UPDATE SET
+           finger_template = EXCLUDED.finger_template,
+           finger_template_hash = EXCLUDED.finger_template_hash,
+           device_serial = EXCLUDED.device_serial,
+           updated_at = now()`,
+        [id, userId, encrypted, hash, deviceSerial]
+      );
+    }
+    await audit("fingerprint_enrollment", req, userId, { deviceSerial });
+    res.json({ ok: true, userId, deviceSerial });
+  } catch (error) {
+    console.error("fingerprint enroll failed:", error);
+    res.status(500).json({ error: "fingerprint_enroll_failed" });
+  }
+});
+
+router.post("/fingerprints/remove", requireDevice, async (req, res) => {
+  await ensureAuthSchema();
+  const userId = String(req.body?.userId || "").trim();
+  if (!userId) return res.status(400).json({ error: "user_required" });
+  try {
+    await q("DELETE FROM user_fingerprints WHERE user_id = $1", [userId]);
+    await audit("fingerprint_removed", req, userId, { byDevice: req.deviceId });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("fingerprint remove failed:", error);
+    res.status(500).json({ error: "fingerprint_remove_failed" });
+  }
+});
+
+router.post("/fingerprints/templates", requireDevice, async (_req, res) => {
+  await ensureAuthSchema();
+  try {
+    const result = await q(
+      isMySql
+        ? `SELECT f.user_id AS userId, f.finger_template AS fingerTemplate, f.device_serial AS deviceSerial,
+                  c.kind, c.name, c.email, c.phone, c.branch_id AS branchId, c.rights, c.status
+             FROM user_fingerprints f
+             JOIN credentials c ON c.id = f.user_id
+            WHERE c.status = 'active'`
+        : `SELECT f.user_id AS "userId", f.finger_template AS "fingerTemplate", f.device_serial AS "deviceSerial",
+                  c.kind, c.name, c.email, c.phone, c.branch_id AS "branchId", c.rights, c.status
+             FROM user_fingerprints f
+             JOIN credentials c ON c.id = f.user_id
+            WHERE c.status = 'active'`,
+      []
+    );
+    const templates = result.rows.map((row) => ({
+      userId: row.userId,
+      template: decryptFingerprintTemplate(row.fingerTemplate),
+      deviceSerial: row.deviceSerial || "",
+      account: publicAccount({ ...row, id: row.userId, branch_id: row.branchId }),
+    }));
+    res.json({ ok: true, templates });
+  } catch (error) {
+    console.error("fingerprint template list failed:", error);
+    res.status(500).json({ error: "fingerprint_templates_failed" });
+  }
+});
+
+router.post("/fingerprints/login", async (req, res) => {
+  await ensureAuthSchema();
+  const userId = String(req.body?.userId || "").trim();
+  const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
+  if (!userId) return res.status(400).json({ error: "user_required" });
+  try {
+    const result = await q(
+      `SELECT c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status
+         FROM credentials c
+         JOIN user_fingerprints f ON f.user_id = c.id
+        WHERE c.id = $1 AND c.status = 'active'
+        LIMIT 1`,
+      [userId]
+    );
+    const row = result.rows[0];
+    if (!row) {
+      await audit("fingerprint_failed", req, userId || null, { reason: "user_or_template_not_found", deviceSerial });
+      return res.status(401).json({ error: "fingerprint_not_recognized" });
+    }
+    const account = publicAccount(row);
+    const session = await issueSession(req, account);
+    await audit("fingerprint_login", req, account.id, { deviceSerial, sessionId: session.id });
+    res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
+  } catch (error) {
+    console.error("fingerprint login failed:", error);
+    res.status(500).json({ error: "fingerprint_login_failed" });
+  }
+});
+
+router.post("/fingerprints/checkout", async (req, res) => {
+  await ensureAuthSchema();
+  const token = req.body?.sessionToken || req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  const userId = String(req.body?.userId || "").trim();
+  const branchId = req.body?.branchId || null;
+  const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
+  if (!token || !userId) return res.status(401).json({ error: "session_and_user_required" });
+  try {
+    const active = await accountForSessionToken(token);
+    if (!active || active.account.id !== userId || active.account.status !== "active") {
+      await audit("fingerprint_failed", req, userId || null, { reason: "invalid_session", deviceSerial, branchId });
+      return res.status(401).json({ error: "invalid_session" });
+    }
+    const fp = await q("SELECT user_id FROM user_fingerprints WHERE user_id = $1", [userId]);
+    if (!fp.rows[0]) {
+      await audit("fingerprint_failed", req, userId, { reason: "template_missing", deviceSerial, branchId });
+      return res.status(403).json({ error: "fingerprint_template_missing" });
+    }
+    await audit("fingerprint_checkout", req, userId, { deviceSerial, branchId });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("fingerprint checkout failed:", error);
+    res.status(500).json({ error: "fingerprint_checkout_failed" });
+  }
+});
+
+router.post("/fingerprints/failed", async (req, res) => {
+  await ensureAuthSchema();
+  const userId = String(req.body?.userId || "").trim() || null;
+  const reason = String(req.body?.reason || "not_recognized").slice(0, 120);
+  const branchId = req.body?.branchId || null;
+  const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
+  await audit("fingerprint_failed", req, userId, { reason, branchId, deviceSerial });
+  res.json({ ok: true });
 });
 
 router.post("/login", async (req, res) => {

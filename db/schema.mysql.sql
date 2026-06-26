@@ -121,6 +121,20 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 CREATE INDEX auth_audit_log_user_idx ON auth_audit_log (user_id);
 CREATE INDEX auth_audit_log_created_idx ON auth_audit_log (created_at);
 
+CREATE TABLE IF NOT EXISTS user_fingerprints (
+  id                       varchar(191) PRIMARY KEY,
+  user_id                  varchar(191) NOT NULL,
+  finger_template          longtext NOT NULL,
+  finger_template_hash     varchar(64) NOT NULL,
+  device_serial            varchar(191),
+  created_at               datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at               datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT user_fingerprints_user_fk FOREIGN KEY (user_id) REFERENCES credentials(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX user_fingerprints_user_idx ON user_fingerprints (user_id);
+CREATE INDEX user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash);
+
 CREATE TABLE IF NOT EXISTS auth_verification_codes (
   id bigint PRIMARY KEY AUTO_INCREMENT,
   channel enum('email', 'phone') NOT NULL,

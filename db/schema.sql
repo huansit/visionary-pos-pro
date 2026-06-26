@@ -139,6 +139,19 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 CREATE INDEX IF NOT EXISTS auth_audit_log_user_idx ON auth_audit_log (user_id);
 CREATE INDEX IF NOT EXISTS auth_audit_log_created_idx ON auth_audit_log (created_at);
 
+CREATE TABLE IF NOT EXISTS user_fingerprints (
+  id                       text PRIMARY KEY,
+  user_id                  text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+  finger_template          text NOT NULL,
+  finger_template_hash     text NOT NULL,
+  device_serial            text,
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  updated_at               timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_fingerprints_user_idx ON user_fingerprints (user_id);
+CREATE INDEX IF NOT EXISTS user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash);
+
 CREATE TABLE IF NOT EXISTS auth_verification_codes (
   id bigserial PRIMARY KEY,
   channel text NOT NULL CHECK (channel IN ('email', 'phone')),

@@ -5,7 +5,7 @@ import {
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
-  Barcode, ClipboardCheck, Download,
+  Barcode, ClipboardCheck, Download, Fingerprint,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -721,6 +721,127 @@ async function cloudLogout(sessionToken) {
   if (!sessionToken) return;
   try { await authApi("/api/auth/logout", { sessionToken }); } catch (_) {}
 }
+const SECUGEN_BASES = ["https://localhost:8443", "http://localhost:8080"];
+const SECUGEN_CAPTURE_PATH = "/SGIFPCapture";
+const SECUGEN_MATCH_PATH = "/SGIMatchScore";
+const SECUGEN_TEMPLATE_FORMAT = "ISO";
+const SECUGEN_MATCH_THRESHOLD = 80;
+
+function secugenMessage(error) {
+  const msg = String(error?.message || error || "");
+  if (msg.includes("not_connected")) return "Fingerprint reader not detected. Connect the SecuGen Hamster reader and try again.";
+  if (msg.includes("low_quality")) return "Fingerprint quality was too low. Wipe the reader, place the finger flat, and scan again.";
+  if (msg.includes("match_service")) return "SecuGen match service is not responding. Start the official SecuGen WebAPI Client.";
+  if (msg.includes("webapi_unreachable") || msg.includes("Failed to fetch")) return "SecuGen WebAPI Client is not running, blocked, or its local certificate is not trusted. Start the SecuGen WebAPI Client, then open https://localhost:8443 once and trust the SecuGen certificate.";
+  return msg || "SecuGen fingerprint service is not available.";
+}
+
+async function secugenPost(path, params, timeoutMs = 12000) {
+  const body = new URLSearchParams(params);
+  let lastError = null;
+  for (const base of SECUGEN_BASES) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(base + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: controller.signal,
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error("webapi_http_" + response.status);
+      try { return JSON.parse(text); } catch (_) { return Object.fromEntries(new URLSearchParams(text)); }
+    } catch (error) {
+      lastError = error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+  throw new Error(lastError?.name === "AbortError" ? "webapi_unreachable_timeout" : "webapi_unreachable");
+}
+
+function secugenErrorCode(data) {
+  const raw = data?.ErrorCode ?? data?.errorCode ?? data?.error_code ?? 0;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function secugenCapture({ timeout = 10000, quality = 50 } = {}) {
+  const data = await secugenPost(SECUGEN_CAPTURE_PATH, {
+    Timeout: String(timeout),
+    Quality: String(quality),
+    licstr: "",
+    templateFormat: SECUGEN_TEMPLATE_FORMAT,
+  }, timeout + 3000);
+  const code = secugenErrorCode(data);
+  if (code !== 0) {
+    if ([54, 55, 56, 57].includes(code)) throw new Error("not_connected");
+    if ([51, 52, 53].includes(code)) throw new Error("low_quality");
+    throw new Error("secugen_error_" + code);
+  }
+  const template = data?.TemplateBase64 || data?.templateBase64 || data?.Template || data?.template || "";
+  if (!template) throw new Error("low_quality");
+  return {
+    template,
+    deviceSerial: data?.SerialNumber || data?.DeviceSerial || data?.deviceSerial || data?.DeviceID || "",
+    quality: data?.ImageQuality || data?.Quality || "",
+  };
+}
+
+async function secugenMatchScore(templateA, templateB) {
+  const data = await secugenPost(SECUGEN_MATCH_PATH, {
+    template1: templateA,
+    template2: templateB,
+    Template1: templateA,
+    Template2: templateB,
+    templateFormat: SECUGEN_TEMPLATE_FORMAT,
+  }, 8000);
+  const code = secugenErrorCode(data);
+  if (code !== 0) throw new Error("match_service_" + code);
+  const raw = data?.MatchingScore ?? data?.Score ?? data?.score ?? data?.matchScore ?? 0;
+  const score = parseInt(raw, 10);
+  return Number.isFinite(score) ? score : 0;
+}
+
+async function secugenVerify(templateA, templateB) {
+  const score = await secugenMatchScore(templateA, templateB);
+  return { ok: score >= SECUGEN_MATCH_THRESHOLD, score };
+}
+
+async function loadFingerprintTemplates(branchId = null) {
+  const data = await authApi("/api/auth/fingerprints/templates", { branchId }, { device: true });
+  return Array.isArray(data.templates) ? data.templates : [];
+}
+
+async function identifyFingerprint(capture, branchId = null, preferredUserId = null) {
+  const templates = await loadFingerprintTemplates(branchId);
+  const pool = preferredUserId ? templates.filter((t) => t.userId === preferredUserId) : templates;
+  if (!pool.length) throw new Error(preferredUserId ? "No fingerprint is enrolled for this user." : "No fingerprints are enrolled yet.");
+  let best = null;
+  for (const entry of pool) {
+    try {
+      const match = await secugenVerify(capture.template, entry.template);
+      if (!best || match.score > best.score) best = { ...entry, score: match.score };
+      if (match.ok) return { ...entry, score: match.score };
+    } catch (error) {
+      if (!String(error.message || "").startsWith("match_service_")) throw error;
+      throw new Error("match_service");
+    }
+  }
+  return best && best.score >= SECUGEN_MATCH_THRESHOLD ? best : null;
+}
+
+async function fingerprintLogin(branchId = null, deviceName = "Web POS") {
+  const capture = await secugenCapture();
+  const match = await identifyFingerprint(capture, branchId);
+  if (!match) {
+    await authApi("/api/auth/fingerprints/failed", { branchId, deviceSerial: capture.deviceSerial, reason: "login_not_recognized", deviceName }).catch(() => {});
+    throw new Error("Fingerprint not recognized.");
+  }
+  return await authApi("/api/auth/fingerprints/login", { userId: match.userId, branchId, deviceSerial: capture.deviceSerial, deviceName });
+}
+
 function accountToSession(account, fallbackBranchId = "") {
   if (!account) return null;
   return {
@@ -2074,6 +2195,8 @@ function OnScreenKeyboard({ onKey, onBackspace, onEnter }) {
 }
 function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
   const [pin, setPin] = useState(""); const [err, setErr] = useState(false);
+  const [fpBusy, setFpBusy] = useState(false);
+  const [fpErr, setFpErr] = useState("");
   const press = (d) => { if (!err) setPin((p) => (p.length < 4 ? p + d : p)); };
   const back = () => { setErr(false); setPin((p) => p.slice(0, -1)); };
   const submit = async () => {
@@ -2095,6 +2218,19 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
     if (m) { setTimeout(() => onSuccess(m), 140); return; }
     setErr(true); setTimeout(() => { setErr(false); setPin(""); }, 600);
   };
+  const scanFingerprint = async () => {
+    setFpErr("");
+    setFpBusy(true);
+    try {
+      const cloud = await fingerprintLogin(branchId, "VISIONPOS login");
+      const emp = accountToSession(cloud.account, branchId) || employees.find((e) => e.id === cloud.account.id);
+      setTimeout(() => onSuccess({ ...emp, sessionToken: cloud.sessionToken }), 80);
+    } catch (error) {
+      setFpErr(error.message === "Fingerprint not recognized." ? error.message : secugenMessage(error));
+    } finally {
+      setFpBusy(false);
+    }
+  };
   useEffect(() => { if (pin.length === 4) submit(); }, [pin]); // eslint-disable-line
   useEffect(() => { const k = (e) => { if (e.key >= "0" && e.key <= "9") press(e.key); else if (e.key === "Backspace") back(); else if (e.key === "Enter") submit(); };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }); // eslint-disable-line
@@ -2106,6 +2242,10 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
         <button className="arrow" onClick={submit} disabled={pin.length !== 4} aria-label="Sign in"><ArrowRight /></button>
       </div>
       <div className="authforgot" onClick={onAdmin}>Admin / Supervisor sign-in</div>
+      <div className="field" style={{ margin: "12px 0 0" }}>
+        <button className="btn btn-primary" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button>
+      </div>
+      {fpErr && <div className="alert"><AlertCircle />{fpErr}</div>}
       <div className="authkb">
         <div className="authkrow">{["1", "2", "3", "4", "5"].map((n) => <button key={n} className="authk" onClick={() => press(n)}>{n}</button>)}</div>
         <div className="authkrow">{["6", "7", "8", "9", "0"].map((n) => <button key={n} className="authk" onClick={() => press(n)}>{n}</button>)}</div>
@@ -2122,6 +2262,7 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
 function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [email, setEmail] = useState(""), [pw, setPw] = useState(""), [show, setShow] = useState(false), [err, setErr] = useState(""), [forgot, setForgot] = useState(false);
   const [focusField, setFocusField] = useState("email");
+  const [fpBusy, setFpBusy] = useState(false);
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     const raw = email.trim();
@@ -2140,6 +2281,22 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     const emp = (employees || []).find((e) => e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
     if (emp) return onSignedIn(emp);
     setErr("Those credentials don't match.");
+  };
+  const scanFingerprint = async () => {
+    setErr("");
+    setFpBusy(true);
+    try {
+      const cloud = await fingerprintLogin(null, "VISIONPOS admin login");
+      if (cloud?.account) {
+        const emp = accountToSession(cloud.account, "");
+        if (emp) emp.sessionToken = cloud.sessionToken;
+        return onSignedIn(emp);
+      }
+    } catch (error) {
+      setErr(error.message === "Fingerprint not recognized." ? error.message : secugenMessage(error));
+    } finally {
+      setFpBusy(false);
+    }
   };
   const kbKey = (k) => { setErr(""); if (focusField === "email") setEmail((v) => v + k); else setPw((v) => v + k); };
   const kbBack = () => { setErr(""); if (focusField === "email") setEmail((v) => v.slice(0, -1)); else setPw((v) => v.slice(0, -1)); };
@@ -2165,6 +2322,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
           <button className="toggle-eye" onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
         {err && <div className="alert"><AlertCircle />{err}</div>}
         <div className="field"><button className="btn btn-primary" onClick={submit}><ShieldCheck /> Sign in</button></div>
+        <div className="field"><button className="btn btn-ghost" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button></div>
         <div className="authforgot" onClick={() => { setForgot(true); setErr(""); }}>Forgot password?</div>
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
         <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>
@@ -2294,6 +2452,8 @@ function Register({ data, update, online, employee, branch }) {
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinVal, setPinVal] = useState("");
   const [pinErr, setPinErr] = useState(false);
+  const [fpBusy, setFpBusy] = useState(false);
+  const [fpErr, setFpErr] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
   const [scanProduct, setScanProduct] = useState(null); // { barcode, name, sku, size, category, price, cost }
   const [scanErr, setScanErr] = useState("");
@@ -2465,12 +2625,12 @@ function Register({ data, update, online, employee, branch }) {
 
   useEffect(() => {
     if (!pinPrompt) return;
-    const k = (e) => { if (e.key >= "0" && e.key <= "9") pinPush(e.key); else if (e.key === "Backspace") pinPush("del"); else if (e.key === "Escape") { setPinPrompt(false); setPinVal(""); setPinErr(false); } };
+    const k = (e) => { if (e.key === "Escape") { setPinPrompt(false); setPinVal(""); setPinErr(false); setFpErr(""); } };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
   }); // eslint-disable-line
   const startCheckout = () => {
     if (lines.length === 0 || ident.trim() === "") return;
-    setPinVal(""); setPinErr(false); setPinPrompt(true);
+    setPinVal(""); setPinErr(false); setFpErr(""); setPinPrompt(true);
   };
   const pinPush = (d) => {
     if (pinErr) return;
@@ -2484,6 +2644,26 @@ function Register({ data, update, online, employee, branch }) {
       }
       return nv;
     });
+  };
+  const verifyCheckoutFingerprint = async () => {
+    setFpErr("");
+    setFpBusy(true);
+    try {
+      if (!employee?.sessionToken) throw new Error("Sign in again before completing a fingerprint sale.");
+      const capture = await secugenCapture();
+      const match = await identifyFingerprint(capture, branch.id, employee.id);
+      if (!match) {
+        await authApi("/api/auth/fingerprints/failed", { userId: employee.id, branchId: branch.id, deviceSerial: capture.deviceSerial, reason: "checkout_not_recognized" }).catch(() => {});
+        throw new Error("Fingerprint verification failed.");
+      }
+      await authApi("/api/auth/fingerprints/checkout", { sessionToken: employee.sessionToken, userId: employee.id, branchId: branch.id, deviceSerial: capture.deviceSerial });
+      setPinPrompt(false);
+      doComplete();
+    } catch (error) {
+      setFpErr(error.message === "Fingerprint verification failed." ? error.message : secugenMessage(error));
+    } finally {
+      setFpBusy(false);
+    }
   };
   const doComplete = () => {
     if (lines.length === 0) return;
@@ -2677,6 +2857,19 @@ function Register({ data, update, online, employee, branch }) {
         </div>
       )}
       {pinPrompt && (
+        <div className="scrim" onClick={() => { setPinPrompt(false); setPinVal(""); setPinErr(false); setFpErr(""); }}>
+          <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Fingerprint style={{ width: 18, height: 18 }} /> Verify fingerprint</div>
+              <button className="iconbtn" onClick={() => { setPinPrompt(false); setPinVal(""); setPinErr(false); setFpErr(""); }}><X /></button></div>
+            <div className="sub" style={{ margin: "2px 0 4px" }}>{employee.name} must verify this sale with the enrolled SecuGen fingerprint.</div>
+            <div style={{ textAlign: "center", fontWeight: 800, fontSize: 20, color: "var(--text)", marginBottom: 6 }}>{fmt(total, cur)}</div>
+            <div className="notice" style={{ marginTop: 10, fontSize: 12 }}>Place the cashier's finger on the SecuGen Hamster reader, then scan. No fingerprint image is stored.</div>
+            {fpErr && <div className="alert" style={{ marginBottom: 12 }}><AlertCircle /> {fpErr}</div>}
+            <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={fpBusy} onClick={verifyCheckoutFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan & Complete Sale"}</button>
+          </div>
+        </div>
+      )}
+      {pinPrompt && false && (
         <div className="scrim" onClick={() => { setPinPrompt(false); setPinVal(""); setPinErr(false); }}>
           <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Lock style={{ width: 18, height: 18 }} /> Authorize sale</div>
@@ -5735,6 +5928,11 @@ function UsersTab({ data, update, isAdmin }) {
   const [credEdit, setCredEdit] = useState(null); // employee id whose PIN/password is being changed
   const [credVal, setCredVal] = useState(""); const [credErr, setCredErr] = useState("");
   const [adminCred, setAdminCred] = useState(false); const [adminPw, setAdminPw] = useState(""); const [adminErr, setAdminErr] = useState("");
+  const [fpEnroll, setFpEnroll] = useState(null);
+  const [fpFirst, setFpFirst] = useState(null);
+  const [fpBusy, setFpBusy] = useState(false);
+  const [fpErr, setFpErr] = useState("");
+  const [fpMsg, setFpMsg] = useState("");
   const visibleEmployees = (data.employees || []).filter((e) => e.status !== "deleted");
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
@@ -5796,6 +5994,60 @@ function UsersTab({ data, update, isAdmin }) {
       setDelMsg("User hidden locally, but cloud deletion was not completed: " + error.message);
     });
   };
+  const openFingerprintEnroll = (emp) => {
+    setFpEnroll(emp);
+    setFpFirst(null);
+    setFpErr("");
+    setFpMsg("Capture 1 of 2. Ask the user to place their finger on the SecuGen Hamster reader.");
+  };
+  const closeFingerprintEnroll = () => {
+    setFpEnroll(null);
+    setFpFirst(null);
+    setFpErr("");
+    setFpMsg("");
+  };
+  const captureFingerprintEnrollment = async () => {
+    if (!fpEnroll) return;
+    setFpBusy(true);
+    setFpErr("");
+    try {
+      const capture = await secugenCapture();
+      if (!fpFirst) {
+        setFpFirst(capture);
+        setFpMsg("Capture 2 of 2. Lift the finger, place it again, then scan.");
+        return;
+      }
+      const match = await secugenVerify(fpFirst.template, capture.template);
+      if (!match.ok) {
+        setFpFirst(null);
+        setFpMsg("The two captures did not match. Start again with capture 1 of 2.");
+        setFpErr("Fingerprint verification failed.");
+        return;
+      }
+      await authApi("/api/auth/fingerprints/enroll", { userId: fpEnroll.id, template: capture.template, deviceSerial: capture.deviceSerial }, { device: true });
+      setFpMsg("Fingerprint enrolled for " + fpEnroll.name + ".");
+      setFpFirst(null);
+      setTimeout(closeFingerprintEnroll, 900);
+    } catch (error) {
+      setFpErr(secugenMessage(error));
+    } finally {
+      setFpBusy(false);
+    }
+  };
+  const removeFingerprintEnrollment = async () => {
+    if (!fpEnroll) return;
+    setFpBusy(true);
+    setFpErr("");
+    try {
+      await authApi("/api/auth/fingerprints/remove", { userId: fpEnroll.id }, { device: true });
+      setFpMsg("Fingerprint removed for " + fpEnroll.name + ".");
+      setTimeout(closeFingerprintEnroll, 700);
+    } catch (error) {
+      setFpErr(error.message || "Could not remove fingerprint.");
+    } finally {
+      setFpBusy(false);
+    }
+  };
   const toggleRight = (id, r) => update((d) => ({ ...d, employees: d.employees.map((e) => { if (e.id !== id) return e; const cur = e.rights || []; const rights = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]; return { ...e, rights, synced: false }; }) }));
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const RightsGrid = ({ selected, onToggle }) => (
@@ -5844,6 +6096,7 @@ function UsersTab({ data, update, isAdmin }) {
             <span className="pill plain" title="Branch is fixed once a user is created" style={{ fontSize: 11 }}><Building2 style={{ width: 12, height: 12, verticalAlign: "-2px", marginRight: 4 }} />{e.branchId ? bn(e.branchId) : "All branches"}</span>
             <button className="btn xs btn-ghost" onClick={() => setEditRights(editRights === e.id ? null : e.id)}><ShieldCheck /> Rights</button>
             <button className="btn xs btn-ghost" onClick={() => openCred(credEdit === e.id ? null : e.id)}><Lock /> {e.role === "Cashier" ? "PIN" : "Password"}</button>
+            <button className="btn xs btn-ghost" onClick={() => openFingerprintEnroll(e)}><Fingerprint /> Enroll</button>
             {e.role === "Cashier"
               ? <button className="pill" onClick={() => setReveal((r) => ({ ...r, [e.id]: !r[e.id] }))}>{reveal[e.id] ? <EyeOff /> : <Eye />}{reveal[e.id] ? e.pin : "••••"}</button>
               : <span className="pill plain" style={{ fontSize: 11 }}>{e.email || "no email"}</span>}
@@ -5868,6 +6121,23 @@ function UsersTab({ data, update, isAdmin }) {
             </div>
           )}
         </div>))}</div>
+      {fpEnroll && (
+        <div className="scrim" onClick={closeFingerprintEnroll}>
+          <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>SecuGen Hamster</div><div className="title" style={{ fontSize: 21, display: "flex", alignItems: "center", gap: 8 }}><Fingerprint style={{ width: 20, height: 20 }} /> Enroll Fingerprint</div></div><button className="iconbtn" onClick={closeFingerprintEnroll}><X /></button></div>
+            <div className="notice" style={{ marginTop: 12, textAlign: "left" }}>
+              <b>{fpEnroll.name}</b><br />
+              {fpMsg || "Capture fingerprint twice to verify it belongs to this user. Only the encrypted fingerprint template is stored."}
+            </div>
+            {fpErr && <div className="alert"><AlertCircle />{fpErr}</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+              <button className="btn btn-primary" style={{ flex: 1, minWidth: 190 }} disabled={fpBusy} onClick={captureFingerprintEnrollment}><Fingerprint /> {fpBusy ? "Scanning..." : fpFirst ? "Capture second scan" : "Capture first scan"}</button>
+              <button className="btn btn-ghost" style={{ flex: 1, minWidth: 160 }} disabled={fpBusy} onClick={removeFingerprintEnrollment}><Trash2 /> Remove fingerprint</button>
+            </div>
+            <div className="cust-meta" style={{ marginTop: 12 }}>If scanning fails, install the official SecuGen driver and WebAPI Client, connect the reader, and trust the local SecuGen certificate.</div>
+          </div>
+        </div>
+      )}
       <div className="notice" style={{ marginTop: 12 }}>Rights determine which areas a user can open. The owner admin always has full access.</div>
     </div>
   );
