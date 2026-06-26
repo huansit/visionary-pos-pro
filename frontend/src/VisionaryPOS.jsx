@@ -539,7 +539,7 @@ function normalizeLoadedData(data) {
       barcodeCatalogIds: extraIds,
     };
   });
-  return { ...data, settings, products, barcodeCatalog };
+  return reconcileInvoicePayments({ ...data, settings, products, barcodeCatalog });
 }
 
 async function loadData() {
@@ -960,6 +960,30 @@ function mergeById(list, record) {
   next[idx] = { ...next[idx], ...record };
   return next;
 }
+function paymentInvoiceId(payment) {
+  return payment?.orderId || payment?.invoiceId || null;
+}
+function invoicePaymentTotals(data) {
+  const totals = {};
+  (data?.payments || []).forEach((payment) => {
+    if (payment?.status && payment.status !== "captured") return;
+    const id = paymentInvoiceId(payment);
+    if (!id) return;
+    totals[id] = (totals[id] || 0) + (Number(payment.amountCents) || 0);
+  });
+  return totals;
+}
+function reconcileInvoicePayments(data) {
+  const totals = invoicePaymentTotals(data);
+  return {
+    ...data,
+    invoices: (data?.invoices || []).map((inv) => {
+      const total = Number(inv.totalCents) || 0;
+      const paid = Math.min(total, Math.max(Number(inv.paidCents) || 0, totals[inv.id] || 0));
+      return { ...inv, paidCents: paid, carriedOver: paid >= total ? false : inv.carriedOver };
+    }),
+  };
+}
 function collectionForType(type) {
   for (const [collection, t] of SYNC_APPEND) if (t === type) return collection;
   for (const [collection, t] of SYNC_MUTABLE) if (t === type) return collection;
@@ -983,7 +1007,7 @@ function mergeSyncEvents(data, events) {
     else record.ts = record.ts || ev.clientTs || ev.serverTs || now();
     next = { ...next, [collection]: mergeById(next[collection], record) };
   }
-  return next;
+  return reconcileInvoicePayments(next);
 }
 function markAcceptedSynced(data, acceptedIds) {
   const ids = new Set(acceptedIds || []);
@@ -3456,10 +3480,14 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const closeDay = () => {
     const ts = now();
     const record = { id: uid("eod"), ...d, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
-    update((dd) => ({ ...dd,
-      endOfDays: [record, ...(dd.endOfDays || [])],
-      invoices: dd.invoices.map((i) => (i.branchId === d.branchId && invOutstanding(i) > 0 ? { ...i, carriedOver: true, synced: false } : i)),
-      settings: { ...dd.settings, lastEndDay: ts, lastEndDayByBranch: { ...(dd.settings.lastEndDayByBranch || {}), [d.branchId]: ts } } }));
+    update((dd) => {
+      const current = reconcileInvoicePayments(dd);
+      const since = (current.settings.lastEndDayByBranch && current.settings.lastEndDayByBranch[d.branchId]) || current.settings.lastEndDay || 0;
+      return { ...current,
+        endOfDays: [record, ...(current.endOfDays || [])],
+        invoices: current.invoices.map((i) => (i.branchId === d.branchId && i.ts > since && i.ts <= ts && invOutstanding(i) > 0 ? { ...i, carriedOver: true, synced: false } : i)),
+        settings: { ...current.settings, lastEndDay: ts, lastEndDayByBranch: { ...(current.settings.lastEndDayByBranch || {}), [d.branchId]: ts } } };
+    });
     onClose();
   };
 
@@ -3531,7 +3559,11 @@ function InvoiceRow({ inv, cur, update, onOpen }) {
   const apply = (full) => {
     const pay = full ? out : Math.min(out, Math.round(parseFloat(amount) * 100) || 0); if (pay <= 0) return;
     update((d) => ({ ...d,
-      invoices: d.invoices.map((x) => x.id === inv.id ? { ...x, paidCents: x.paidCents + pay, method, synced: false } : x),
+      invoices: d.invoices.map((x) => {
+        if (x.id !== inv.id) return x;
+        const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + pay);
+        return { ...x, paidCents, carriedOver: paidCents >= x.totalCents ? false : x.carriedOver, method, synced: false };
+      }),
       payments: [...d.payments, { id: uid("pay"), orderId: inv.id, method: method.toLowerCase(), amountCents: pay, status: "captured", ts: now(), synced: false }] }));
     setAmount("");
   };
