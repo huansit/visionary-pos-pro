@@ -1,0 +1,251 @@
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+  }
+}
+
+.print-report {
+  color: #111827;
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11px;
+  line-height: 1.35;
+  width: 100%;
+}
+
+.print-landscape {
+  min-width: 1020px;
+}
+
+.print-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #111827;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  gap: 20px;
+}
+
+.print-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.print-logo {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+}
+
+.print-logo-mark {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #111827;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.print-header h1,
+.print-title-block h2 {
+  margin: 0;
+  color: #111827;
+}
+
+.print-header h1 {
+  font-size: 20px;
+}
+
+.print-header p,
+.print-meta span,
+.print-facts span,
+.print-filters span {
+  margin: 2px 0;
+  color: #475569;
+}
+
+.print-meta {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.print-title-block {
+  margin-bottom: 12px;
+}
+
+.print-title-block h2 {
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.print-facts,
+.print-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.print-filters {
+  border: 1px solid #cbd5e1;
+  padding: 8px;
+  margin-bottom: 12px;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  page-break-inside: auto;
+}
+
+.print-table thead {
+  display: table-header-group;
+}
+
+.print-table tfoot {
+  display: table-footer-group;
+}
+
+.print-table tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.print-table th,
+.print-table td {
+  border: 1px solid #d1d5db;
+  padding: 6px 7px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.print-table th {
+  background: #eef2f7;
+  color: #111827;
+  font-weight: 800;
+}
+
+.print-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.print-empty {
+  text-align: center;
+  color: #64748b;
+  padding: 18px;
+}
+
+.print-totals {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.print-totals div {
+  border: 1px solid #cbd5e1;
+  padding: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.print-footer {
+  margin-top: 18px;
+  padding-top: 8px;
+  border-top: 1px solid #cbd5e1;
+  color: #64748b;
+  display: flex;
+  justify-content: space-between;
+}
+
+.page-number::after {
+  content: "Page " counter(page);
+}
+
+.report-preview-modal {
+  width: min(1120px, calc(100vw - 40px));
+  max-height: 92vh;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px -30px rgba(20, 30, 70, .4);
+  display: flex;
+  flex-direction: column;
+}
+
+.report-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-preview-page {
+  overflow: auto;
+  background: #e5e7eb;
+  padding: 24px;
+}
+
+.report-preview-page .print-report {
+  max-width: 920px;
+  min-height: 1120px;
+  margin: 0 auto;
+  padding: 42px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, .16);
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  #print-root,
+  #print-root *,
+  .report-preview-page,
+  .report-preview-page * {
+    visibility: visible !important;
+  }
+
+  .no-print,
+  .no-print *,
+  .sidebar,
+  nav,
+  button,
+  input,
+  select,
+  textarea,
+  .menu,
+  .dropdown,
+  .pagination,
+  .floating,
+  .report-preview-toolbar {
+    display: none !important;
+  }
+
+  #print-root,
+  .report-preview-page {
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+
+  .report-preview-page .print-report {
+    max-width: none;
+    min-height: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+}
