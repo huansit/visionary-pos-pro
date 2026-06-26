@@ -19,6 +19,7 @@ const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
 const BARCODE_LOG_KEY = "visionary:pos:barcode-log:v1";
+const REALTIME_SYNC_MS = 5000;
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -1862,11 +1863,18 @@ export default function VisionPOS() {
   useEffect(() => {
     const goOn = () => { setOnline(true); setTimeout(runSync, 400); };
     const goOff = () => setOnline(false);
+    const syncVisible = () => { if (!document.hidden && navigator.onLine) setTimeout(() => runSync({ force: true }), 150); };
     window.addEventListener("online", goOn); window.addEventListener("offline", goOff);
-    return () => { window.removeEventListener("online", goOn); window.removeEventListener("offline", goOff); };
+    window.addEventListener("focus", syncVisible);
+    document.addEventListener("visibilitychange", syncVisible);
+    return () => {
+      window.removeEventListener("online", goOn); window.removeEventListener("offline", goOff);
+      window.removeEventListener("focus", syncVisible);
+      document.removeEventListener("visibilitychange", syncVisible);
+    };
   }, []); // eslint-disable-line
   useEffect(() => {
-    const id = setInterval(() => { if (navigator.onLine) runSync(); }, 20000);
+    const id = setInterval(() => { if (navigator.onLine && !document.hidden) runSync(); }, REALTIME_SYNC_MS);
     return () => clearInterval(id);
   }, []); // eslint-disable-line
   useEffect(() => {
