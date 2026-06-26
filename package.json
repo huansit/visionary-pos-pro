@@ -12,7 +12,10 @@
     "migrate": "node db/migrate.js",
     "seed:device": "node db/make-device.js",
     "hash": "node db/hash-credential.js",
-    "test:sync": "node --test test/sync.test.js"
+    "test:sync": "node --test test/sync.test.js",
+    "desktop:start": "npm --prefix desktop start",
+    "desktop:dist:win": "npm --prefix desktop run dist:win",
+    "desktop:pack:win": "npm --prefix desktop run pack:win"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -1,0 +1,62 @@
+{
+  "name": "visionpos-desktop",
+  "version": "2.0.0",
+  "description": "VISIONPOS desktop client for the cloud POS",
+  "private": true,
+  "main": "src/main.js",
+  "author": "VISIONPOS",
+  "homepage": "https://visionarypos.cloud/downloads.html",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis",
+    "pack:win": "electron-builder --win --dir"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "cloud.visionarypos.desktop",
+    "productName": "VISIONPOS",
+    "artifactName": "VISIONPOS-Setup-${version}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "assets/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://visionarypos.cloud/downloads/"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "publisherName": "VISIONPOS"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VISIONPOS",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

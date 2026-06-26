@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "platform": "windows",
+  "installer": "/downloads/VISIONPOS-Setup-2.0.0.exe",
+  "size": 78637653,
+  "sha512": "3KQfR4cVKFGMPgfKKYjaA4TArLXamVvM9b+a/NBarm+P1f7Uvq3zlBBhA/IRqHTA2evdNK2yjSkgUPWjB1Ax4w==",
+  "releaseNotes": [
+    "Desktop shell for the cloud POS.",
+    "Windows printer selection and persisted settings.",
+    "USB barcode scanner friendly focus handling.",
+    "Cash drawer trigger support for compatible ESC/POS network printers.",
+    "Automatic update checks on startup."
+  ]
+}
