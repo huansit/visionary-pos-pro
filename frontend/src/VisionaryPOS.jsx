@@ -1318,16 +1318,31 @@ function useBarcodeScanner({ enabled, mode, onScan }) {
 }
 function invOutstanding(inv) { return Math.max(0, inv.totalCents - inv.paidCents); }
 function lastEndFor(settings, branchId) { return (settings.lastEndDayByBranch && settings.lastEndDayByBranch[branchId]) || settings.lastEndDay || 0; }
-// An invoice is "recognized" — counted as credit and in profit & loss — only once its business day
-// has been closed at end-of-day. Pending (same-day, pre-close) invoices are excluded until then.
-function invRecognized(inv, settings) { return inv.carriedOver === true || inv.ts <= lastEndFor(settings, inv.branchId); }
+// P&L recognition is intentionally conservative: an invoice must be cleared and its
+// business day must have been closed. Open invoices stay out of profit/margin.
+function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.ts <= lastEndFor(settings, inv.branchId); }
+function invIsDebt(inv, refTs = now()) {
+  if (invOutstanding(inv) <= 0) return false;
+  if (!inv.carriedOver) return false;
+  return refTs - (inv.ts || 0) >= 86400000;
+}
+function saleMoveInvoice(data, move) {
+  const reason = String(move?.reason || "");
+  if (!reason.startsWith("Sale ")) return null;
+  const invoiceNo = reason.slice(5).trim();
+  return (data?.invoices || []).find((i) => i.number === invoiceNo) || null;
+}
+function saleMoveRecognized(data, move) {
+  const inv = saleMoveInvoice(data, move);
+  return inv ? invRecognized(inv, data.settings) : move.ts <= lastEndFor(data.settings, move.branchId);
+}
 // Identifier validation (format only — no network verification in the offline prototype).
 function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").trim()); }
 function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").replace(/[\s-]/g, "")); }
 function normPhone(v) { return (v || "").replace(/[\s-]/g, ""); }
 function invStatus(inv) {
   if (invOutstanding(inv) <= 0) return "paid";
-  if (inv.carriedOver) return "debt";
+  if (invIsDebt(inv)) return "debt";
   return inv.paidCents > 0 ? "partial" : "open";
 }
 const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
@@ -2832,7 +2847,7 @@ function Register({ data, update, online, employee, branch }) {
     (qNorm === "" || p.name.toLowerCase().includes(qNorm) || p.sku.toLowerCase().includes(qNorm) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))));
 
   const mine = data.invoices.filter((i) => i.cashierId === employee.id);
-  const myDebts = mine.filter((i) => i.carriedOver && invOutstanding(i) > 0);
+  const myDebts = mine.filter((i) => invIsDebt(i));
   const myOpen = mine.filter((i) => !i.carriedOver && invOutstanding(i) > 0);
   const openOnly = myOpen;
   const openTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
@@ -3623,12 +3638,12 @@ function InsightsTab({ data, online }) {
   const local = (question) => {
     const Q = question.toLowerCase();
     if (Q.includes("low-stock") || Q.includes("reorder")) { const l = reorderList(data); return l.length ? "Items at or below reorder level:\n" + l.slice(0, 12).map((p) => "• " + p.name + " — " + onHand(data, p.id) + " left (reorder " + (p.reorderLevel ?? data.settings.reorderLevel) + ")").join("\n") : "All products are above their reorder level."; }
-    if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) { const by = {}; data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale")) { const p = data.products.find((x) => x.id === m.productId); if (p) by[p.id] = (by[p.id] || 0) + (-m.qty); } }); const rows = Object.entries(by).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { p, qty, rev: qty * (p ? p.priceCents : 0) }; }).filter((r) => r.p); const byRev = Q.includes("fast") ? rows.sort((a, b) => b.qty - a.qty) : rows.sort((a, b) => b.rev - a.rev); return byRev.length ? "Top products:\n" + byRev.slice(0, 5).map((r, i) => (i + 1) + ". " + r.p.name + " — " + r.qty + " sold · " + f(r.rev)).join("\n") : "No sales recorded yet."; }
-    if (Q.includes("outstanding debts per cashier") || Q.includes("debts per cashier")) { const by = {}; data.invoices.forEach((i) => { const o = invOutstanding(i); if (o > 0) by[i.cashier] = (by[i.cashier] || 0) + o; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]); return rows.length ? "Outstanding by cashier:\n" + rows.map(([n, v]) => "• " + n + " — " + f(v)).join("\n") : "No outstanding credit."; }
+    if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) { const by = {}; data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) by[p.id] = (by[p.id] || 0) + (-m.qty); } }); const rows = Object.entries(by).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { p, qty, rev: qty * (p ? p.priceCents : 0) }; }).filter((r) => r.p); const byRev = Q.includes("fast") ? rows.sort((a, b) => b.qty - a.qty) : rows.sort((a, b) => b.rev - a.rev); return byRev.length ? "Top products:\n" + byRev.slice(0, 5).map((r, i) => (i + 1) + ". " + r.p.name + " — " + r.qty + " sold · " + f(r.rev)).join("\n") : "No cleared sales recorded yet."; }
+    if (Q.includes("outstanding debts per cashier") || Q.includes("debts per cashier")) { const by = {}; data.invoices.filter((i) => invIsDebt(i)).forEach((i) => { const o = invOutstanding(i); if (o > 0) by[i.cashier] = (by[i.cashier] || 0) + o; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]); return rows.length ? "Overdue debts by cashier:\n" + rows.map(([n, v]) => "• " + n + " — " + f(v)).join("\n") : "No overdue cashier debts."; }
     if (Q.includes("invoices cleared per cashier") || Q.includes("cashier performance")) { const by = {}; data.invoices.forEach((i) => { const k = i.cashier || "—"; by[k] = by[k] || { n: 0, sales: 0, owed: 0 }; by[k].n++; by[k].sales += i.totalCents; by[k].owed += invOutstanding(i); }); const rows = Object.entries(by).sort((a, b) => b[1].sales - a[1].sales); return rows.length ? "Cashier summary:\n" + rows.map(([n, v]) => "• " + n + " — " + v.n + " invoices · " + f(v.sales) + " sold · " + f(v.owed) + " owed").join("\n") : "No invoices yet."; }
     if (Q.includes("average invoice")) { const inv = data.invoices; const tot = inv.reduce((s, i) => s + i.totalCents, 0); return inv.length ? "Average invoice value: " + f(Math.round(tot / inv.length)) + " across " + inv.length + " invoices." : "No invoices yet."; }
     if (Q.includes("daily sales") || Q.includes("sales trend")) { const days = []; for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const st = d.getTime(); const tot = data.invoices.filter((x) => x.ts >= st && x.ts < st + 864e5).reduce((s, x) => s + x.totalCents, 0); days.push([d.toLocaleDateString(undefined, { weekday: "short" }), tot]); } return "Sales, last 7 days:\n" + days.map(([l, v]) => "• " + l + " — " + f(v)).join("\n"); }
-    if (Q.includes("overdue") || Q.includes("credit recovery")) { const carried = data.invoices.filter((i) => i.carriedOver); const pend = carried.filter((i) => invOutstanding(i) > 0); const rec = carried.filter((i) => invOutstanding(i) <= 0); const rate = carried.length ? Math.round(rec.length / carried.length * 100) : 0; return carried.length ? "Carried-over (debt) invoices: " + carried.length + "\n• Outstanding: " + pend.length + " · " + f(pend.reduce((s, i) => s + invOutstanding(i), 0)) + "\n• Recovered: " + rec.length + " (" + rate + "% recovery rate)" : "No carried-over debts yet."; }
+    if (Q.includes("overdue") || Q.includes("credit recovery")) { const carried = data.invoices.filter((i) => i.carriedOver); const pend = carried.filter((i) => invIsDebt(i)); const rec = carried.filter((i) => invOutstanding(i) <= 0); const rate = carried.length ? Math.round(rec.length / carried.length * 100) : 0; return carried.length ? "Carried-over invoices: " + carried.length + "\n• Overdue debts: " + pend.length + " · " + f(pend.reduce((s, i) => s + invOutstanding(i), 0)) + "\n• Recovered: " + rec.length + " (" + rate + "% recovery rate)" : "No carried-over invoices yet."; }
     if (Q.includes("top customers")) { const by = {}; data.invoices.forEach((i) => { const k = i.customerName || "Walk-in"; by[k] = (by[k] || 0) + i.totalCents; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5); return rows.length ? "Top customers by spend:\n" + rows.map(([n, v], i) => (i + 1) + ". " + n + " — " + f(v)).join("\n") : "No invoices yet."; }
     if (Q.includes("end-of-day") || Q.includes("end of day")) { const e = (data.endOfDays || []).slice(-1)[0]; return e ? "Last end-of-day close:\n• " + e.date + " · " + (e.branchId ? (data.branches.find((b) => b.id === e.branchId)?.name || "") : "") + "\n• Total: " + f(e.totalCents ?? e.totalSalesCents ?? 0) : "No end-of-day closings saved yet."; }
     if (Q.includes("offline transactions") || Q.includes("sync")) { const p = countPending(data); const err = data?._sync?.error; return (online ? "Online. " : "Offline. ") + (err ? "Last sync error: " + err + ". " : "") + (p ? p + " change(s) are queued locally and not yet synced." : "Everything is synced — nothing queued."); }
@@ -3760,7 +3775,7 @@ function InvoicesTab({ data, update, branch, user }) {
   const cashierOptions = activeCashiers(data);
   const invoices = data.invoices;
   const open = invoices.filter((i) => invOutstanding(i) > 0);
-  const overdue = invoices.filter((i) => invStatus(i) === "overdue" || invStatus(i) === "debt");
+  const overdue = invoices.filter((i) => invIsDebt(i));
   const balanceDue = invoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = invoices.reduce((s, i) => s + i.totalCents, 0);
   const sinceEndDay = invoices.filter((i) => i.ts > data.settings.lastEndDay);
@@ -3770,8 +3785,8 @@ function InvoicesTab({ data, update, branch, user }) {
     (fCust.trim() === "" || i.customerName.toLowerCase().includes(fCust.toLowerCase())) &&
     (fDate === "" || i.date === fDate));
 
-  // cashier debts = carried-over still-open invoices, grouped by cashier
-  const debts = open.filter((i) => i.carriedOver);
+  // cashier debts = overdue carried-over invoices, grouped by cashier.
+  const debts = open.filter((i) => invIsDebt(i));
   const byCashier = {};
   debts.forEach((i) => { byCashier[i.cashier] = (byCashier[i.cashier] || 0) + invOutstanding(i); });
   const debtRows = Object.entries(byCashier);
@@ -4047,10 +4062,12 @@ function DashboardTab({ data, update, branch, online }) {
 
   const todayInv = data.invoices.filter((i) => isToday(i.ts));
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
-  const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts))
+  const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
+  const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
+  const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts) && saleMoveRecognized(data, m))
     .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * p.costCents : 0); }, 0);
-  const todayProfit = todaySales - todayCOGS;
-  const creditTotal = data.invoices.reduce((s, i) => s + (invRecognized(i, data.settings) ? invOutstanding(i) : 0), 0);
+  const todayProfit = recognizedTodaySales - todayCOGS;
+  const creditTotal = data.invoices.reduce((s, i) => s + invOutstanding(i), 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
   const fastReorders = (() => {
     const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
@@ -4072,15 +4089,15 @@ function DashboardTab({ data, update, branch, online }) {
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
   const since7 = Date.now() - 7 * 864e5; const catRev = {};
-  data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= since7) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
+  data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
   const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
-  const openInv = data.invoices.filter((i) => invRecognized(i, data.settings) && invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
+  const openInv = data.invoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
 
   const localSummary = () => {
-    const margin = todaySales > 0 ? Math.round((todayProfit / todaySales) * 100) : 0;
-    let s = "Today's sales are " + fmt(todaySales, cur) + " with an estimated profit of " + fmt(todayProfit, cur) + " (" + margin + "% margin). ";
+    const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;
+    let s = "Today's sales are " + fmt(todaySales, cur) + " with recognized profit of " + fmt(todayProfit, cur) + " (" + margin + "% margin after clearing and End of Day). ";
     s += creditTotal > 0 ? "Outstanding credit stands at " + fmt(creditTotal, cur) + ". " : "No outstanding credit. ";
     s += fastReorders.length > 0 ? fastReorders.length + " fast-moving product(s) need reordering — prioritise the lowest cover." : "Fast movers are well stocked.";
     return s;
@@ -4101,7 +4118,7 @@ function DashboardTab({ data, update, branch, online }) {
       <PageHead title="Dashboard" sub={"Overview · " + branch.name} />
       <div className="cashtiles" style={{ marginBottom: 0 }}>
         <div className="ctile"><div className="ic"><Receipt /></div><div><div className="cl">Sales (today)</div><div className="cv">{fmt(todaySales, cur)}</div><div className="cs">{todayInv.length} invoices</div></div></div>
-        <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Profit (today)</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{todaySales > 0 ? Math.round(todayProfit / todaySales * 100) + "% margin" : "—"}</div></div></div>
+        <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Profit (today)</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{recognizedTodaySales > 0 ? Math.round(todayProfit / recognizedTodaySales * 100) + "% margin" : "after EOD & clearing"}</div></div></div>
         <div className={"ctile " + (creditTotal > 0 ? "warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Credit outstanding</div><div className="cv">{fmt(creditTotal, cur)}</div><div className="cs">{openInv.length ? openInv.length + "+ open" : "all clear"}</div></div></div>
         <div className={"ctile " + (fastReorders.length ? "warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Reorders</div><div className="cv">{fastReorders.length}</div><div className="cs">fast movers low</div></div></div>
       </div>
@@ -5184,7 +5201,7 @@ function BranchesTab({ data, update }) {
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
     const recInvs = data.invoices.filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
-    const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && m.ts <= lastEndFor(data.settings, b.id));
+    const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
     const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
     const expenses = data.expenses.filter((e) => e.status !== "pending" && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
     const grossProfit = grossSales - cogs;
@@ -5557,17 +5574,18 @@ function aiDigest(data) {
     const iy = data.invoices.filter((i) => i.branchId === b.id && i.ts >= startYest && i.ts < startToday);
     const i7 = data.invoices.filter((i) => i.branchId === b.id && i.ts >= start7);
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
-    const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday);
+    const recognizedSalesToday = it.filter((i) => invRecognized(i, data.settings)).reduce((s, i) => s + i.totalCents, 0);
+    const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveRecognized(data, m));
     const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
-    return { branch: b.name, salesTodayKES: k(salesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(salesToday - cogs), marginPct: salesToday > 0 ? Math.round((salesToday - cogs) / salesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
+    return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(recognizedSalesToday - cogs), marginPct: recognizedSalesToday > 0 ? Math.round((recognizedSalesToday - cogs) / recognizedSalesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
   });
-  const byProd = {}; saleMv((m) => m.ts >= startToday).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
+  const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveRecognized(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
   const topProducts = Object.entries(byProd).map(([id, u]) => { const p = prod(id); return p ? { product: p.name, sku: p.sku, units: u, revenueKES: k(u * p.priceCents) } : null; }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
   const payT = {}, pay7 = {}; data.payments.filter((p) => p.status === "captured").forEach((p) => { if (p.ts >= startToday) payT[p.method] = (payT[p.method] || 0) + p.amountCents; if (p.ts >= start7) pay7[p.method] = (pay7[p.method] || 0) + p.amountCents; });
   const lowStock = []; data.branches.forEach((b) => { reorderList(data, b.id).forEach((p) => { lowStock.push({ branch: b.name, product: p.name, sku: p.sku, onHand: onHand(data, p.id, b.id), reorderLevel: p.reorderLevel ?? data.settings.reorderLevel }); }); });
   const cBy = {}; data.invoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
   const cashiers = Object.entries(cBy).map(([name, v]) => ({ cashier: name, transactions: v.transactions, salesKES: k(v.sales), avgBasketKES: v.transactions ? k(v.sales / v.transactions) : 0 }));
-  const debt = {}; data.invoices.filter((i) => i.carriedOver && invOutstanding(i) > 0).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
+  const debt = {}; data.invoices.filter((i) => invIsDebt(i)).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
   const expT = data.expenses.filter((e) => e.status !== "pending" && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
   const shrink = data.stockMovements.filter((m) => m.ts >= startToday && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); return { branch: bname(m.branchId), product: p ? p.name : "?", unitsLost: Math.abs(m.qty) }; });
   const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
@@ -5855,9 +5873,8 @@ function ReportsTab({ data, initialTab }) {
   const prod = (id) => data.products.find((p) => p.id === id);
 
   const invs = data.invoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
-  const recInvs = invs.filter((i) => invRecognized(i, data.settings)); // counted in P&L only after end-of-day
-  const recEndFor = (m) => m.ts <= lastEndFor(data.settings, m.branchId);
-  const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && recEndFor(m));
+  const recInvs = invs.filter((i) => invRecognized(i, data.settings)); // counted in P&L only after payment and end-of-day
+  const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
   const pays = data.payments.filter((p) => p.status === "captured" && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
   const periodExp = data.expenses.filter((e) => e.status !== "pending" && inRange(e.ts));
@@ -5893,14 +5910,14 @@ function ReportsTab({ data, initialTab }) {
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
   const openInv = data.invoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
-  const debtByCashier = {}; openInv.filter((i) => i.carriedOver).forEach((i) => { debtByCashier[i.cashier] = (debtByCashier[i.cashier] || 0) + invOutstanding(i); });
+  const debtByCashier = {}; openInv.filter((i) => invIsDebt(i)).forEach((i) => { debtByCashier[i.cashier] = (debtByCashier[i.cashier] || 0) + invOutstanding(i); });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
-  // credit recovery — cashier credit on carried-over (uncleared) invoices
+  // credit recovery — unpaid carried-over invoices become debts only after overdue.
   const carried = data.invoices.filter((i) => i.carriedOver && inBranch(i.branchId));
   const recoveredList = carried.filter((i) => invOutstanding(i) <= 0);
-  const pendingList = carried.filter((i) => invOutstanding(i) > 0);
-  const partialCount = carried.filter((i) => i.paidCents > 0 && invOutstanding(i) > 0).length;
+  const pendingList = carried.filter((i) => invIsDebt(i));
+  const partialCount = carried.filter((i) => i.paidCents > 0 && invIsDebt(i)).length;
   const pendingTotal = pendingList.reduce((s, i) => s + invOutstanding(i), 0);
   const recoveredTotal = recoveredList.reduce((s, i) => s + i.totalCents, 0);
   const carriedIds = new Set(carried.map((i) => i.id));
@@ -5923,7 +5940,7 @@ function ReportsTab({ data, initialTab }) {
     }
     if (sub === "cashier") return { name: "cashier-credit", headers: ["Cashier", "Owed"], rows: Object.entries(debtByCashier).map(([n, v]) => [n, m(v)]) };
     if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, i.cashier, i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
-    if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, i.cashier, i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial" : "pending")]) };
+    if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, i.cashier, i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "Qty", "Date", "Status"], rows: transfers.map((t) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), t.productName, t.qty, new Date(t.ts).toLocaleString(), t.status || "completed"]) };
     return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared", m(cleared)]] };
@@ -6165,10 +6182,10 @@ function ReportsTab({ data, initialTab }) {
       })()}
 
       {sub === "cashier" && (
-        Object.keys(debtByCashier).length === 0 ? <div className="notice">No carried-over cashier credit outstanding.</div> : (
+        Object.keys(debtByCashier).length === 0 ? <div className="notice">No overdue cashier debts.</div> : (
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
-            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => i.cashier === n && i.carriedOver).length} carried-over invoice(s)</div></div>
+            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => i.cashier === n && invIsDebt(i)).length} overdue invoice(s)</div></div>
             <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span></div>))}</div>)
       )}
 
@@ -6188,7 +6205,7 @@ function ReportsTab({ data, initialTab }) {
           </div>
           <div className="stats">
             <Stat l="Recovered Credits" v={recoveredList.length} sub2={fmt(recoveredTotal, cur)} />
-            <Stat l="Pending Recovery" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
+            <Stat l="Overdue Recovery" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
             <Stat l="Partial Credits" v={partialCount} />
             <Stat l="Cleared Today" v={clearedTodayCount} />
           </div>
@@ -6203,8 +6220,8 @@ function ReportsTab({ data, initialTab }) {
             </div>
             <div className="panel">
               <div className="sub" style={{ marginBottom: 2 }}>Recovery</div>
-              <div className="section-title" style={{ marginTop: 0 }}>Pending Recovery Queue</div>
-              {pendingList.length === 0 ? <div className="notice">No pending cashier credit records.</div> : (
+              <div className="section-title" style={{ marginTop: 0 }}>Overdue Recovery Queue</div>
+              {pendingList.length === 0 ? <div className="notice">No overdue cashier debt records.</div> : (
                 <div className="list">{pendingList.map((i) => (<div className="row" key={i.id}>
                   <div className="meta"><div className="nm innum">{i.number.slice(-12)}</div><div className="mt2">{i.cashier} · {i.customerName} · {dt(i.ts)}</div></div>
                   <span className={"ist " + invStatus(i)}>{invStatus(i)}</span><span className="pill plain" style={{ color: "#C23A56" }}>{fmt(invOutstanding(i), cur)} owed</span></div>))}</div>)}
