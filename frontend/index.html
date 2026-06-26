@@ -6,7 +6,7 @@
     <title>VISIONPOS</title>
     <script>
       window.VISIONARY_SYNC_CONFIG = {
-        apiBaseUrl: "http://127.0.0.1:3000",
+        apiBaseUrl: window.location.origin,
         deviceToken: localStorage.getItem("visionary:sync:deviceToken") || ""
       };
       localStorage.setItem("visionary:sync:apiBaseUrl", window.VISIONARY_SYNC_CONFIG.apiBaseUrl);

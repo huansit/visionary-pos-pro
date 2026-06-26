@@ -655,10 +655,47 @@ const SYNC_ARRAYS = [...SYNC_APPEND.keys(), ...SYNC_MUTABLE.keys()];
 function syncConfig() {
   const cfg = (typeof window !== "undefined" && window.VISIONARY_SYNC_CONFIG) || {};
   const ls = typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  const origin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://127.0.0.1:3000";
   return {
-    apiBaseUrl: String(cfg.apiBaseUrl || (ls && ls.getItem(API_BASE_KEY)) || "http://127.0.0.1:3000").replace(/\/$/, ""),
+    apiBaseUrl: String(cfg.apiBaseUrl || (ls && ls.getItem(API_BASE_KEY)) || origin).replace(/\/$/, ""),
     deviceToken: cfg.deviceToken || (ls && ls.getItem(DEVICE_TOKEN_KEY)) || "",
   };
+}
+function getOrCreateDeviceId() {
+  const ls = typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  if (!ls) return "device-" + Math.random().toString(36).slice(2);
+  let id = ls.getItem("visionary:sync:deviceId");
+  if (!id) {
+    const random = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now();
+    id = "web-" + random;
+    ls.setItem("visionary:sync:deviceId", id);
+  }
+  return id;
+}
+async function ensureDeviceToken(branchId = null) {
+  const cfg = syncConfig();
+  if (cfg.deviceToken) return cfg.deviceToken;
+  const ls = typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
+  const deviceId = getOrCreateDeviceId();
+  const response = await fetch(cfg.apiBaseUrl + "/api/auth/device", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      deviceId,
+      branchId,
+      name: "VISIONPOS Web " + deviceId.slice(-8)
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.token) throw new Error(data.error || "device_registration_failed");
+  if (ls) {
+    ls.setItem(DEVICE_TOKEN_KEY, data.token);
+    ls.setItem(API_BASE_KEY, cfg.apiBaseUrl);
+  }
+  if (typeof window !== "undefined") {
+    window.VISIONARY_SYNC_CONFIG = { ...(window.VISIONARY_SYNC_CONFIG || {}), apiBaseUrl: cfg.apiBaseUrl, deviceToken: data.token };
+  }
+  return data.token;
 }
 async function authApi(path, body) {
   const cfg = syncConfig();
@@ -806,11 +843,11 @@ async function enqueueChanges(prev, next) {
 }
 async function runSyncClient(currentData) {
   const cfg = syncConfig();
-  if (!cfg.deviceToken) return { data: currentData, status: { ...(currentData?._sync || await syncStatus()), error: "missing_device_token" } };
+  const token = cfg.deviceToken || await ensureDeviceToken(currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null);
   let data = currentData;
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
-  const headers = { "Content-Type": "application/json", Authorization: "Bearer " + cfg.deviceToken };
+  const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token };
   if (outbox.length) {
     const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, body: JSON.stringify({ events: outbox }) });
     if (!pushed.ok) throw new Error("push_failed_" + pushed.status);
@@ -1806,10 +1843,11 @@ export default function VisionPOS() {
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
-  const syncState = !online ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
+  const syncError = data?._sync?.error || "";
+  const syncState = !online || syncError ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
   const syncCls = syncState === "ok" ? "" : syncState === "err" ? " err" : " warn";
-  const syncLabel = !online ? "Offline" : syncing ? "Syncing…" : pending > 0 ? pending + " to sync" : "Synced";
-  const syncTitle = !online ? "Offline — changes are saved locally and will sync when you reconnect" : syncing ? "Syncing your data to the cloud…" : pending > 0 ? pending + " change(s) waiting to sync" : "All data synced to the cloud";
+  const syncLabel = !online ? "Offline" : syncError ? "Sync error" : syncing ? "Syncing…" : pending > 0 ? pending + " to sync" : "Synced";
+  const syncTitle = !online ? "Offline — changes are saved locally and will sync when you reconnect" : syncError ? "Sync failed: " + syncError : syncing ? "Syncing your data to the cloud…" : pending > 0 ? pending + " change(s) waiting to sync" : "All data synced to the cloud";
 
   if (view === "pin" || view === "adminLogin" || view === "signup") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
@@ -2841,7 +2879,7 @@ function InsightsTab({ data, online }) {
     if (Q.includes("overdue") || Q.includes("credit recovery")) { const carried = data.invoices.filter((i) => i.carriedOver); const pend = carried.filter((i) => invOutstanding(i) > 0); const rec = carried.filter((i) => invOutstanding(i) <= 0); const rate = carried.length ? Math.round(rec.length / carried.length * 100) : 0; return carried.length ? "Carried-over (debt) invoices: " + carried.length + "\n• Outstanding: " + pend.length + " · " + f(pend.reduce((s, i) => s + invOutstanding(i), 0)) + "\n• Recovered: " + rec.length + " (" + rate + "% recovery rate)" : "No carried-over debts yet."; }
     if (Q.includes("top customers")) { const by = {}; data.invoices.forEach((i) => { const k = i.customerName || "Walk-in"; by[k] = (by[k] || 0) + i.totalCents; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5); return rows.length ? "Top customers by spend:\n" + rows.map(([n, v], i) => (i + 1) + ". " + n + " — " + f(v)).join("\n") : "No invoices yet."; }
     if (Q.includes("end-of-day") || Q.includes("end of day")) { const e = (data.endOfDays || []).slice(-1)[0]; return e ? "Last end-of-day close:\n• " + e.date + " · " + (e.branchId ? (data.branches.find((b) => b.id === e.branchId)?.name || "") : "") + "\n• Total: " + f(e.totalCents ?? e.totalSalesCents ?? 0) : "No end-of-day closings saved yet."; }
-    if (Q.includes("offline transactions") || Q.includes("sync")) { const p = countPending(data); return (online ? "Online. " : "Offline. ") + (p ? p + " change(s) are queued locally and not yet synced." : "Everything is synced — nothing queued."); }
+    if (Q.includes("offline transactions") || Q.includes("sync")) { const p = countPending(data); const err = data?._sync?.error; return (online ? "Online. " : "Offline. ") + (err ? "Last sync error: " + err + ". " : "") + (p ? p + " change(s) are queued locally and not yet synced." : "Everything is synced — nothing queued."); }
     if (Q.includes("discrepanc")) return "Stock discrepancies are flagged during inventory counts (Stock module). No automatic variance is recorded outside a count.";
     return online ? "Couldn't generate this insight just now — try again." : "This insight needs an internet connection. Reconnect to generate it.";
   };
