@@ -698,16 +698,21 @@ async function ensureDeviceToken(branchId = null) {
   }
   return data.token;
 }
-async function authApi(path, body) {
+async function authApi(path, body, options = {}) {
   const cfg = syncConfig();
+  const headers = { "Content-Type": "application/json" };
+  if (options.device) headers.Authorization = "Bearer " + (cfg.deviceToken || await ensureDeviceToken(body?.branchId || null));
   const response = await fetch(cfg.apiBaseUrl + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "request_failed");
   return data;
+}
+async function cloudLogin(payload) {
+  return await authApi("/api/auth/login", payload);
 }
 async function aiComplete({ system, messages, maxTokens = 400 }) {
   const cfg = syncConfig();
@@ -1898,7 +1903,7 @@ export default function VisionPOS() {
 
   if (view === "pin" || view === "adminLogin" || view === "signup") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
-      {view === "pin" && <PinScreen employees={data.employees} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
+      {view === "pin" && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
       {view === "adminLogin" && <AdminLogin admin={data.admin} employees={data.employees} onBack={() => setView("pin")} onSignup={() => setView("signup")} onSignedIn={(emp) => { if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); signInSession("admin", emp || null); }} />}
       {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
@@ -2023,13 +2028,21 @@ function OnScreenKeyboard({ onKey, onBackspace, onEnter }) {
     </div>
   );
 }
-function PinScreen({ employees, onAdmin, onSuccess }) {
+function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
   const [pin, setPin] = useState(""); const [err, setErr] = useState(false);
   const press = (d) => { if (!err) setPin((p) => (p.length < 4 ? p + d : p)); };
   const back = () => { setErr(false); setPin((p) => p.slice(0, -1)); };
-  const submit = () => {
+  const submit = async () => {
     if (pin.length !== 4) return;
-    const m = employees.find((e) => e.role === "Cashier" && e.pin === pin);
+    try {
+      const cloud = await cloudLogin({ pin, branchId });
+      if (cloud?.account) {
+        const emp = employees.find((e) => e.id === cloud.account.id) || { id: cloud.account.id, name: cloud.account.name, role: "Cashier", branchId: cloud.account.branchId || branchId, rights: cloud.account.rights?.rights || cloud.account.rights || ["sell", "customers"] };
+        setTimeout(() => onSuccess(emp), 80);
+        return;
+      }
+    } catch (_) {}
+    const m = employees.find((e) => e.role === "Cashier" && e.pin === pin && (!branchId || e.branchId === branchId));
     if (m) { setTimeout(() => onSuccess(m), 140); return; }
     setErr(true); setTimeout(() => { setErr(false); setPin(""); }, 600);
   };
@@ -2060,11 +2073,18 @@ function PinScreen({ employees, onAdmin, onSuccess }) {
 function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [email, setEmail] = useState(""), [pw, setPw] = useState(""), [show, setShow] = useState(false), [err, setErr] = useState(""), [forgot, setForgot] = useState(false);
   const [focusField, setFocusField] = useState("email");
-  const submit = () => {
+  const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     const raw = email.trim();
     const em = raw.toLowerCase();
     const ph = normPhone(raw);
+    try {
+      const cloud = await cloudLogin({ identifier: raw, password: pw });
+      if (cloud?.account) {
+        const emp = cloud.account.kind === "admin" ? null : (employees || []).find((e) => e.id === cloud.account.id) || { id: cloud.account.id, name: cloud.account.name, role: "Supervisor", branchId: cloud.account.branchId, rights: cloud.account.rights?.rights || cloud.account.rights || [] };
+        return onSignedIn(emp);
+      }
+    } catch (_) {}
     const ownerMatch = ((admin.email && em === admin.email.toLowerCase()) || (admin.phone && ph === normPhone(admin.phone))) && pw === admin.password;
     if (ownerMatch) return onSignedIn(null); // owner admin
     const emp = (employees || []).find((e) => e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
@@ -5665,15 +5685,24 @@ function UsersTab({ data, update, isAdmin }) {
   const [credEdit, setCredEdit] = useState(null); // employee id whose PIN/password is being changed
   const [credVal, setCredVal] = useState(""); const [credErr, setCredErr] = useState("");
   const [adminCred, setAdminCred] = useState(false); const [adminPw, setAdminPw] = useState(""); const [adminErr, setAdminErr] = useState("");
+  const saveCloudCredential = async (emp, secret = {}) => {
+    try {
+      await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
+    } catch (error) {
+      setErr("User saved locally, but cloud login was not updated: " + error.message);
+    }
+  };
   const openCred = (id) => { setCredEdit(id); setCredVal(""); setCredErr(""); setEditRights(null); };
   const saveCred = (emp) => {
     if (emp.role === "Cashier") {
       if (!/^\d{4}$/.test(credVal)) return setCredErr("PIN must be 4 digits.");
       if (data.employees.some((e) => e.id !== emp.id && e.pin === credVal)) return setCredErr("That PIN's already in use.");
       update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, pin: credVal, synced: false } : e) }));
+      saveCloudCredential(emp, { pin: credVal });
     } else {
       const issue = passwordIssue(credVal); if (issue) return setCredErr(issue);
       update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, password: credVal, synced: false } : e) }));
+      saveCloudCredential(emp, { password: credVal });
     }
     setCredEdit(null); setCredVal(""); setCredErr("");
   };
@@ -5691,14 +5720,20 @@ function UsersTab({ data, update, isAdmin }) {
       if (!f.branchId) return setErr("Cashiers must be assigned to a branch.");
       if (!/^\d{4}$/.test(f.pin)) return setErr("Cashiers sign in with a 4-digit PIN.");
       if (data.employees.some((e) => e.pin === f.pin)) return setErr("That PIN's taken.");
-      update((d) => ({ ...d, employees: [...d.employees, { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, synced: false }] })); reset(); return;
+      const emp = { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, synced: false };
+      update((d) => ({ ...d, employees: [...d.employees, emp] }));
+      saveCloudCredential(emp, { pin: f.pin });
+      reset(); return;
     }
     // Supervisor / Manager sign in with email + password
     const em = f.email.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
     const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
     if (em === data.admin.email.toLowerCase() || data.employees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
-    update((d) => ({ ...d, employees: [...d.employees, { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, synced: false }] })); reset();
+    const emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, synced: false };
+    update((d) => ({ ...d, employees: [...d.employees, emp] }));
+    saveCloudCredential(emp, { password: f.password });
+    reset();
   };
   const remove = (id) => {
     const emp = data.employees.find((e) => e.id === id); if (!emp) return;

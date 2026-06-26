@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { isMySql, q } from "../db.js";
+import { requireDevice } from "../auth.js";
 import { signDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendVerificationCode, validTarget } from "../verification.js";
 
@@ -130,6 +131,59 @@ router.post("/register-owner", async (req, res) => {
   } catch (error) {
     console.error("register-owner failed:", error);
     res.status(error.statusCode || 500).json({ error: error.message || "register_owner_failed" });
+  }
+});
+
+router.post("/users", requireDevice, async (req, res) => {
+  const { id, name, role, email, password, pin, branchId, rights = [] } = req.body || {};
+  if (!id || !name || !role) return res.status(400).json({ error: "id_name_role_required" });
+  const isCashier = role === "Cashier";
+  if (isCashier && !/^\d{4}$/.test(String(pin || ""))) return res.status(400).json({ error: "cashier_pin_required" });
+  if (!isCashier && (!email || !password)) return res.status(400).json({ error: "email_password_required" });
+
+  try {
+    const kind = isCashier ? "cashier" : "user";
+    const pinHash = isCashier ? await bcrypt.hash(String(pin), ROUNDS) : null;
+    const passwordHash = !isCashier ? await bcrypt.hash(String(password), ROUNDS) : null;
+    const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
+    const rightsPayload = Array.isArray(rights) ? { rights } : rights;
+
+    if (isMySql) {
+      await q(
+        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
+         VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8)
+         ON DUPLICATE KEY UPDATE
+           kind = VALUES(kind),
+           name = VALUES(name),
+           email = VALUES(email),
+           pin_hash = VALUES(pin_hash),
+           password_hash = VALUES(password_hash),
+           branch_id = VALUES(branch_id),
+           rights = VALUES(rights),
+           updated_at = NOW()`,
+        [id, kind, String(name).trim(), normalizedEmail, pinHash, passwordHash, branchId || null, rightsPayload]
+      );
+    } else {
+      await q(
+        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
+         VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8)
+         ON CONFLICT (id) DO UPDATE SET
+           kind = EXCLUDED.kind,
+           name = EXCLUDED.name,
+           email = EXCLUDED.email,
+           pin_hash = EXCLUDED.pin_hash,
+           password_hash = EXCLUDED.password_hash,
+           branch_id = EXCLUDED.branch_id,
+           rights = EXCLUDED.rights,
+           updated_at = now()`,
+        [id, kind, String(name).trim(), normalizedEmail, pinHash, passwordHash, branchId || null, rightsPayload]
+      );
+    }
+    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights FROM credentials WHERE id = $1", [id]);
+    res.json({ ok: true, account: publicAccount(result.rows[0]) });
+  } catch (error) {
+    console.error("upsert user credential failed:", error);
+    res.status(error.statusCode || 500).json({ error: error.message || "upsert_user_failed" });
   }
 });
 

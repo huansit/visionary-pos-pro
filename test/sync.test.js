@@ -265,3 +265,51 @@ test("9. sync push reports rejected invalid events so clients can clear non-retr
       assert.equal(res.body.rejected[0].reason, "unknown_type");
     });
 });
+
+test("10. user credentials created on one device work for login on another device", async () => {
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "cashier-cloud-001",
+      name: "Cloud Cashier",
+      role: "Cashier",
+      pin: "7788",
+      branchId: "b_sip",
+      rights: ["sell", "customers"],
+    })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/login")
+    .send({ pin: "7788", branchId: "b_sip" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.account.id, "cashier-cloud-001");
+      assert.equal(res.body.account.name, "Cloud Cashier");
+      assert.equal(res.body.account.branchId, "b_sip");
+    });
+
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "manager-cloud-001",
+      name: "Cloud Manager",
+      role: "Manager",
+      email: "cloud.manager@example.com",
+      password: "Manager@123",
+      branchId: "b_sip",
+      rights: ["sell", "users"],
+    })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "cloud.manager@example.com", password: "Manager@123" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.account.id, "manager-cloud-001");
+      assert.equal(res.body.account.name, "Cloud Manager");
+    });
+});
