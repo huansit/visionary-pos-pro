@@ -82,11 +82,44 @@ CREATE TABLE IF NOT EXISTS credentials (
   password_hash varchar(255),
   branch_id     varchar(191),
   rights        json NOT NULL,
+  status        enum('active', 'inactive', 'deleted') NOT NULL DEFAULT 'active',
+  last_login    datetime,
+  created_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE UNIQUE INDEX credentials_email_idx ON credentials (email);
 CREATE INDEX credentials_phone_idx ON credentials (phone);
+CREATE INDEX credentials_status_idx ON credentials (status);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id           varchar(191) PRIMARY KEY,
+  user_id      varchar(191) NOT NULL,
+  token_hash   varchar(255) NOT NULL UNIQUE,
+  device_name  varchar(255),
+  ip_address   varchar(80),
+  login_time   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at   datetime NOT NULL,
+  is_active    boolean NOT NULL DEFAULT true,
+  CONSTRAINT user_sessions_user_fk FOREIGN KEY (user_id) REFERENCES credentials(id) ON DELETE CASCADE
+);
+
+CREATE INDEX user_sessions_user_active_idx ON user_sessions (user_id, is_active);
+CREATE INDEX user_sessions_expires_idx ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_audit_log (
+  id          bigint PRIMARY KEY AUTO_INCREMENT,
+  user_id     varchar(191),
+  event       varchar(80) NOT NULL,
+  device_name varchar(255),
+  ip_address  varchar(80),
+  detail      json NOT NULL,
+  created_at  datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX auth_audit_log_user_idx ON auth_audit_log (user_id);
+CREATE INDEX auth_audit_log_created_idx ON auth_audit_log (created_at);
 
 CREATE TABLE IF NOT EXISTS auth_verification_codes (
   id bigint PRIMARY KEY AUTO_INCREMENT,

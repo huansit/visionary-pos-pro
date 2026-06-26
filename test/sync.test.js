@@ -288,6 +288,7 @@ test("10. user credentials created on one device work for login on another devic
       assert.equal(res.body.account.id, "cashier-cloud-001");
       assert.equal(res.body.account.name, "Cloud Cashier");
       assert.equal(res.body.account.branchId, "b_sip");
+      assert.ok(res.body.sessionToken);
     });
 
   await request(app)
@@ -311,5 +312,34 @@ test("10. user credentials created on one device work for login on another devic
     .expect((res) => {
       assert.equal(res.body.account.id, "manager-cloud-001");
       assert.equal(res.body.account.name, "Cloud Manager");
+      assert.ok(res.body.sessionToken);
     });
+});
+
+test("11. cloud login sessions can be validated and revoked", async () => {
+  const login = await request(app)
+    .post("/api/auth/login")
+    .send({ pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
+    .expect(200);
+  const token = login.body.sessionToken;
+  assert.ok(token);
+
+  await request(app)
+    .post("/api/auth/session")
+    .send({ sessionToken: token })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.account.id, "cashier-cloud-001");
+      assert.equal(res.body.account.status, "active");
+    });
+
+  await request(app)
+    .post("/api/auth/logout")
+    .send({ sessionToken: token })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/session")
+    .send({ sessionToken: token })
+    .expect(401);
 });

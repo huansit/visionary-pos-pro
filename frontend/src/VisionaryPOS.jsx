@@ -714,6 +714,25 @@ async function authApi(path, body, options = {}) {
 async function cloudLogin(payload) {
   return await authApi("/api/auth/login", payload);
 }
+async function cloudSession(sessionToken) {
+  return await authApi("/api/auth/session", { sessionToken });
+}
+async function cloudLogout(sessionToken) {
+  if (!sessionToken) return;
+  try { await authApi("/api/auth/logout", { sessionToken }); } catch (_) {}
+}
+function accountToSession(account, fallbackBranchId = "") {
+  if (!account) return null;
+  return {
+    id: account.id,
+    name: account.name || (account.kind === "admin" ? "Admin" : "User"),
+    role: account.role || (account.kind === "admin" ? "Admin" : account.kind === "cashier" ? "Cashier" : "Supervisor"),
+    branchId: account.branchId || fallbackBranchId || "",
+    rights: account.rights?.rights || account.rights || [],
+    kind: account.kind,
+    status: account.status || "active",
+  };
+}
 async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
   const candidates = employees.filter((emp) => {
@@ -1823,30 +1842,30 @@ export default function VisionPOS() {
     const loaded = await cloudBootstrapData(l);
     saveData(loaded);
     const savedSession = await loadSessionState();
-    if (savedSession?.view === "register" && savedSession.employeeId) {
-      const emp = (loaded.employees || []).find((e) => e.id === savedSession.employeeId);
-      if (emp) {
-        setSession(emp);
-        setView("register");
-      } else {
+    if (savedSession?.sessionToken) {
+      try {
+        const active = await cloudSession(savedSession.sessionToken);
+        const restored = accountToSession(active.account, loaded.settings.activeBranchId);
+        if (restored?.status === "active") {
+          setSession({ ...restored, sessionToken: savedSession.sessionToken });
+          setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
+        } else {
+          await clearSessionState();
+        }
+      } catch (_) {
         await clearSessionState();
-      }
-    } else if (savedSession?.view === "admin") {
-      const emp = savedSession.employeeId ? (loaded.employees || []).find((e) => e.id === savedSession.employeeId) : null;
-      if (savedSession.employeeId && !emp) await clearSessionState();
-      else {
-        setSession(emp || null);
-        setView("admin");
       }
     }
     setData(loaded);
   })(); }, []);
-  const signInSession = (nextView, emp = null) => {
-    setSession(emp || null);
+  const signInSession = (nextView, emp = null, sessionToken = "") => {
+    const signedIn = emp || null;
+    setSession(signedIn);
     setView(nextView);
-    saveSessionState({ view: nextView, employeeId: emp?.id || null, ts: now() });
+    saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: now() });
   };
   const signOutSession = () => {
+    cloudLogout(session?.sessionToken);
     setMenuOpen(false);
     setSession(null);
     setView("pin");
@@ -2066,8 +2085,8 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
         cloud = await cloudLogin({ pin });
       }
       if (cloud?.account) {
-        const emp = employees.find((e) => e.id === cloud.account.id) || { id: cloud.account.id, name: cloud.account.name, role: "Cashier", branchId: cloud.account.branchId || branchId, rights: cloud.account.rights?.rights || cloud.account.rights || ["sell", "customers"] };
-        setTimeout(() => onSuccess(emp), 80);
+        const emp = accountToSession(cloud.account, branchId) || employees.find((e) => e.id === cloud.account.id);
+        setTimeout(() => onSuccess({ ...emp, sessionToken: cloud.sessionToken }), 80);
         return;
       }
     } catch (_) {}
@@ -2110,7 +2129,8 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     try {
       const cloud = await cloudLogin({ identifier: raw, password: pw });
       if (cloud?.account) {
-        const emp = cloud.account.kind === "admin" ? null : (employees || []).find((e) => e.id === cloud.account.id) || { id: cloud.account.id, name: cloud.account.name, role: "Supervisor", branchId: cloud.account.branchId, rights: cloud.account.rights?.rights || cloud.account.rights || [] };
+        const emp = accountToSession(cloud.account, "");
+        if (emp) emp.sessionToken = cloud.sessionToken;
         return onSignedIn(emp);
       }
     } catch (_) {}

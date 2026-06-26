@@ -96,7 +96,11 @@ CREATE TABLE IF NOT EXISTS credentials (
   password_hash text,
   branch_id     text,
   rights        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status        text NOT NULL DEFAULT 'active',
+  last_login    timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT credential_status_valid CHECK (status IN ('active', 'inactive', 'deleted')),
   CONSTRAINT credential_has_auth_secret CHECK (pin_hash IS NOT NULL OR password_hash IS NOT NULL),
   CONSTRAINT credential_pin_hash_is_bcrypt CHECK (pin_hash IS NULL OR pin_hash ~ '^\$2[aby]\$'),
   CONSTRAINT credential_password_hash_is_bcrypt CHECK (password_hash IS NULL OR password_hash ~ '^\$2[aby]\$')
@@ -104,6 +108,36 @@ CREATE TABLE IF NOT EXISTS credentials (
 
 CREATE UNIQUE INDEX IF NOT EXISTS credentials_email_idx ON credentials (lower(email)) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS credentials_phone_idx ON credentials (phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS credentials_status_idx ON credentials (status);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id           text PRIMARY KEY,
+  user_id      text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+  token_hash   text NOT NULL,
+  device_name  text,
+  ip_address   text,
+  login_time   timestamptz NOT NULL DEFAULT now(),
+  last_seen    timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL,
+  is_active    boolean NOT NULL DEFAULT true
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_sessions_token_hash_idx ON user_sessions (token_hash);
+CREATE INDEX IF NOT EXISTS user_sessions_user_active_idx ON user_sessions (user_id, is_active);
+CREATE INDEX IF NOT EXISTS user_sessions_expires_idx ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_audit_log (
+  id          bigserial PRIMARY KEY,
+  user_id     text,
+  event       text NOT NULL,
+  device_name text,
+  ip_address  text,
+  detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS auth_audit_log_user_idx ON auth_audit_log (user_id);
+CREATE INDEX IF NOT EXISTS auth_audit_log_created_idx ON auth_audit_log (created_at);
 
 CREATE TABLE IF NOT EXISTS auth_verification_codes (
   id bigserial PRIMARY KEY,
