@@ -22,7 +22,16 @@ const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
 const BARCODE_LOG_KEY = "visionary:pos:barcode-log:v1";
+const MAINTENANCE_META_KEY = "visionary:maintenance:meta:v1";
+const MAINTENANCE_LOG_KEY = "visionary:maintenance:audit:v1";
+const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visionary:tmp:", "visionary:image-cache:"];
+const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, "visionary:sync:deviceId"];
+const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
+const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY];
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
+const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
+const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -495,6 +504,13 @@ async function kvSet(key, value) {
     else if (window.localStorage) window.localStorage.setItem(key, value);
   } catch (_) {}
 }
+async function kvRemove(key) {
+  try {
+    if (typeof window === "undefined") return;
+    if (window.storage?.remove) await window.storage.remove(key);
+    else if (window.localStorage) window.localStorage.removeItem(key);
+  } catch (_) {}
+}
 async function loadJson(key, fallback) {
   const raw = await kvGet(key);
   if (!raw) return fallback;
@@ -504,6 +520,126 @@ async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
 async function loadSessionState() { return await loadJson(SESSION_KEY, null); }
 async function saveSessionState(value) { await saveJson(SESSION_KEY, value); }
 async function clearSessionState() { await kvSet(SESSION_KEY, ""); }
+
+function storageKeys() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return [];
+    return Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)).filter(Boolean);
+  } catch (_) { return []; }
+}
+function byteSize(value) {
+  try { return new Blob([String(value || "")]).size; } catch (_) { return String(value || "").length * 2; }
+}
+function storageUsageSnapshot() {
+  const keys = storageKeys();
+  const groups = { cache: 0, settings: 0, syncQueue: 0, auth: 0, protectedData: 0, maintenance: 0, other: 0, total: 0 };
+  try {
+    for (const key of keys) {
+      const raw = window.localStorage.getItem(key) || "";
+      const size = byteSize(key) + byteSize(raw);
+      groups.total += size;
+      if (key === STORE_KEY) groups.protectedData += size;
+      else if (key === MAINTENANCE_META_KEY || key === MAINTENANCE_LOG_KEY) groups.maintenance += size;
+      else if (key === BARCODE_CACHE_KEY || key === BARCODE_LOG_KEY || CACHE_KEY_PREFIXES.some((p) => key.startsWith(p))) groups.cache += size;
+      else if (SYNC_QUEUE_KEYS.includes(key)) groups.syncQueue += size;
+      else if (AUTH_KEYS.includes(key)) groups.auth += size;
+      else if (SETTINGS_KEYS.includes(key)) groups.settings += size;
+      else groups.other += size;
+    }
+  } catch (_) {}
+  return { keys: keys.length, ...groups };
+}
+function fmtBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+async function appendMaintenanceAudit(action, detail = {}) {
+  const log = await loadJson(MAINTENANCE_LOG_KEY, []);
+  const entry = { id: uid("maint"), ts: now(), action, detail };
+  const next = [entry, ...(Array.isArray(log) ? log : [])].slice(0, 200);
+  await saveJson(MAINTENANCE_LOG_KEY, next);
+  return entry;
+}
+async function maintenanceSnapshot(data) {
+  const meta = await loadJson(MAINTENANCE_META_KEY, {});
+  const outbox = await loadOutbox();
+  const audit = await loadJson(MAINTENANCE_LOG_KEY, []);
+  const usage = storageUsageSnapshot();
+  return {
+    ...meta,
+    storage: usage,
+    audit: Array.isArray(audit) ? audit.slice(0, 12) : [],
+    syncStatus: data?._sync?.error ? "error" : outbox.length ? "pending" : "ok",
+    pendingUploads: outbox.length,
+    lastSyncedAt: data?.lastSyncedAt || 0,
+    deviceId: typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("visionary:sync:deviceId") || "" : "",
+    protectedKeys: { businessData: STORE_KEY, auth: AUTH_KEYS, syncQueue: SYNC_QUEUE_KEYS, settings: SETTINGS_KEYS },
+  };
+}
+async function runMaintenanceService({ data, mode = "light", runSync } = {}) {
+  const startedAt = now();
+  const actions = [];
+  const removed = [];
+  const rebuilt = [];
+  const usageBefore = storageUsageSnapshot();
+  const removeCacheKey = async (key, reason) => {
+    if (!key || PROTECTED_STORAGE_KEYS.has(key)) return;
+    await kvRemove(key);
+    removed.push({ key, reason });
+  };
+  try {
+    const keys = storageKeys();
+    const staleCutoff = now() - (mode === "deep" ? 7 : 2) * 24 * 60 * 60 * 1000;
+    for (const key of keys) {
+      if (PROTECTED_STORAGE_KEYS.has(key)) continue;
+      if (key.startsWith("visionary:tmp:")) await removeCacheKey(key, "expired temporary file");
+      else if (key.startsWith("visionary:api-cache:") || key.startsWith("visionary:cache:")) {
+        const entry = await loadJson(key, null);
+        const ts = Number(entry?.ts || entry?.createdAt || entry?.updatedAt || 0);
+        if (!ts || ts < staleCutoff) await removeCacheKey(key, "stale cache entry");
+      } else if (mode === "deep" && key.startsWith("visionary:image-cache:")) {
+        const entry = await loadJson(key, null);
+        const ts = Number(entry?.ts || entry?.createdAt || entry?.updatedAt || 0);
+        if (!ts || ts < staleCutoff) await removeCacheKey(key, "old cached image");
+      }
+    }
+    const barcodeCache = await loadJson(BARCODE_CACHE_KEY, null);
+    if (!barcodeCache || Array.isArray(barcodeCache) || typeof barcodeCache !== "object") {
+      await saveBarcodeCache(data || {});
+      rebuilt.push(BARCODE_CACHE_KEY);
+      actions.push("rebuilt barcode/search cache");
+    }
+    if (mode === "deep") {
+      const scanLog = await loadJson(BARCODE_LOG_KEY, []);
+      if (Array.isArray(scanLog) && scanLog.length > 250) {
+        await saveJson(BARCODE_LOG_KEY, scanLog.slice(0, 250));
+        actions.push("compressed barcode scan log");
+      }
+      const audit = await loadJson(MAINTENANCE_LOG_KEY, []);
+      if (Array.isArray(audit) && audit.length > 200) {
+        await saveJson(MAINTENANCE_LOG_KEY, audit.slice(0, 200));
+        actions.push("compressed maintenance audit log");
+      }
+    }
+    const outbox = await loadOutbox();
+    if (outbox.length && typeof runSync === "function") {
+      actions.push("retrying failed sync tasks");
+      await runSync({ force: true, source: "maintenance" });
+    }
+    const usageAfter = storageUsageSnapshot();
+    const meta = { lastCleanupAt: now(), lastMode: mode, lastDurationMs: now() - startedAt, lastRemoved: removed.length, lastRebuilt: rebuilt, storage: usageAfter };
+    await saveJson(MAINTENANCE_META_KEY, meta);
+    await appendMaintenanceAudit("maintenance_" + mode, { removed, rebuilt, actions, beforeBytes: usageBefore.total, afterBytes: usageAfter.total });
+    return meta;
+  } catch (error) {
+    const meta = { lastCleanupAt: now(), lastMode: mode, lastError: error.message, storage: storageUsageSnapshot() };
+    await saveJson(MAINTENANCE_META_KEY, meta);
+    await appendMaintenanceAudit("maintenance_failed", { mode, error: error.message, removed, rebuilt });
+    return meta;
+  }
+}
 
 function normalizeLoadedData(data) {
   if (!data) return data;
@@ -2086,6 +2222,7 @@ export default function VisionPOS() {
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [syncing, setSyncing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [maintenance, setMaintenance] = useState(null);
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -2137,34 +2274,6 @@ export default function VisionPOS() {
     const empty = { ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } };
     saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
   };
-  const clearLocalCache = async () => {
-    const ok = window.confirm("Refresh this device from cloud? This signs you out, clears temporary sync state, and keeps the current data if cloud refresh fails.");
-    if (!ok) return;
-    const backup = dataRef.current;
-    setMenuOpen(false);
-    setSyncing(true);
-    try {
-      await saveOutbox([]);
-      await saveCursor(0);
-      await clearSessionState();
-      const fresh = await cloudBootstrapData({ ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } });
-      if (!fresh?.branches?.length && !fresh?.employees?.length && !fresh?.products?.length) throw new Error(fresh?._sync?.error || "cloud_refresh_returned_empty");
-      setSession(null);
-      setView("pin");
-      setData(fresh);
-      await saveData(fresh);
-    } catch (error) {
-      if (backup) {
-        const restored = { ...backup, _sync: { ...(backup._sync || {}), error: "Cache refresh failed: " + error.message } };
-        setData(restored);
-        await saveData(restored);
-      } else {
-        setData({ ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0, error: "Cache refresh failed: " + error.message } });
-      }
-    } finally {
-      setSyncing(false);
-    }
-  };
   const runSync = async (opts = {}) => {
     if (!navigator.onLine || (!opts.force && syncing) || !dataRef.current) return;
     syncRequestRef.current = false;
@@ -2177,6 +2286,12 @@ export default function VisionPOS() {
     } finally {
       setSyncing(false);
     }
+  };
+  const refreshMaintenance = async () => setMaintenance(await maintenanceSnapshot(dataRef.current));
+  const runMaintenance = async (mode = "light") => {
+    const meta = await runMaintenanceService({ data: dataRef.current, mode, runSync });
+    setMaintenance(await maintenanceSnapshot(dataRef.current || { _sync: meta }));
+    return meta;
   };
   useEffect(() => {
     const goOn = () => { setOnline(true); setTimeout(runSync, 400); };
@@ -2198,8 +2313,16 @@ export default function VisionPOS() {
   useEffect(() => {
     if (!data || didInitialSync.current) return;
     didInitialSync.current = true;
+    setTimeout(() => runMaintenance("startup"), 150);
     if (navigator.onLine) setTimeout(runSync, 300);
   }, [data]); // eslint-disable-line
+  useEffect(() => {
+    if (!data) return;
+    refreshMaintenance();
+    const light = setInterval(() => runMaintenance("light"), LIGHT_MAINTENANCE_MS);
+    const deep = setInterval(() => runMaintenance("deep"), DEEP_MAINTENANCE_MS);
+    return () => { clearInterval(light); clearInterval(deep); };
+  }, [!!data]); // eslint-disable-line
   useEffect(() => {
     if (!data || syncing || !syncRequestRef.current || !navigator.onLine) return;
     const id = setTimeout(runSync, 300);
@@ -2248,7 +2371,6 @@ export default function VisionPOS() {
                 <div className="topmenu">
                   <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ force: true }); }}>Sync now</button>}</div>
                   <button className="topmenu-row" onClick={() => update((d) => ({ ...d, settings: { ...d.settings, theme: d.settings.theme === "dark" ? "light" : "dark" } }))}>{data.settings.theme === "dark" ? <Sun /> : <Moon />}<span>{data.settings.theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
-                  <button className="topmenu-row" onClick={clearLocalCache}><RefreshCw /><span>Clear cache</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
                 </div>
@@ -2261,7 +2383,7 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />
             : <CloudDataRecovery title="Cashier data is still loading" message="This device has a valid login, but the branch catalog has not finished loading from the cloud. Sync now, then try again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} />
             : <CloudDataRecovery title="Cloud data is unavailable" message="This device could not load branches from the cloud yet. Sync now or sign out and log in again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -3388,7 +3510,7 @@ const TAB_RIGHT = {
   cash: "cash", expenses: "expenses", financials: "financials",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
-  users: "users", settings: "settings",
+  users: "users", settings: "settings", system: "__admin_only",
 };
 const NAV_GROUPS = [
   { id: "salesgrp", label: "Sales & Customers", icon: Receipt, items: [
@@ -3418,6 +3540,7 @@ const NAV_GROUPS = [
   ] },
   { id: "admgrp", label: "Administration", icon: ShieldCheck, items: [
     { id: "users", label: "Users & Security", icon: ShieldCheck },
+    { id: "system", label: "System Health", icon: RefreshCw },
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ] },
 ];
@@ -3476,12 +3599,12 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, online, onCleanReset }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, online, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const isAdmin = role === "Admin";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; return !req || (rights || []).includes(req); };
+  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || (rights || []).includes(req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
@@ -3519,6 +3642,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" />;
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
+      case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
       default: return <DashboardTab data={data} update={update} branch={branch} online={online} />;
     }
@@ -6539,6 +6663,80 @@ function UsersTab({ data, update, isAdmin }) {
         </div>
       )}
       <div className="notice" style={{ marginTop: 12 }}>Rights determine which areas a user can open. The owner admin always has full access.</div>
+    </div>
+  );
+}
+
+/* ---- System Health ---- */
+function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenance }) {
+  const [busy, setBusy] = useState("");
+  const m = maintenance || {};
+  const storage = m.storage || storageUsageSnapshot();
+  const lastCleanup = m.lastCleanupAt ? new Date(m.lastCleanupAt).toLocaleString() : "Not yet";
+  const lastSync = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "Not yet";
+  const syncText = m.syncStatus === "error" ? "Sync error" : m.pendingUploads > 0 ? "Pending uploads" : "Synced";
+  const run = async (mode) => {
+    setBusy(mode);
+    try { await onRunMaintenance?.(mode); }
+    finally { setBusy(""); await onRefresh?.(); }
+  };
+  const storageRows = [
+    ["Cache", storage.cache, "Product images, barcode/search indexes, stale API responses"],
+    ["Settings", storage.settings, "Printer, scanner, API, and device configuration"],
+    ["Sync Queue", storage.syncQueue, "Unsynced sales, stock updates, and offline transactions"],
+    ["Authentication", storage.auth, "Current session/device token, preserved until logout"],
+    ["Protected POS Data", storage.protectedData, "Sales, payments, inventory, customers, products"],
+    ["Maintenance Logs", storage.maintenance, "Cleanup audit history"],
+    ["Other", storage.other, "Browser-managed app data"],
+  ];
+  return (
+    <div>
+      <PageHead title="System Health" sub="Automatic maintenance, sync queue, and device storage."
+        right={<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="btn sm" onClick={onRefresh}><RefreshCw /> Refresh</button>
+          <button className="btn sm btn-primary" disabled={!!busy} onClick={() => run("light")}><RefreshCw /> {busy === "light" ? "Running..." : "Run cleanup"}</button>
+          <button className="btn sm btn-ghost" disabled={!!busy} onClick={() => run("deep")}><Boxes /> {busy === "deep" ? "Running..." : "Deep maintenance"}</button>
+        </div>} />
+      <div className="stats compact">
+        <div className="stat"><div className="sl">Device status</div><div className={"sv" + (online ? "" : " warn")}>{online ? "Online" : "Offline"}</div></div>
+        <div className="stat"><div className="sl">Sync status</div><div className={"sv" + (m.syncStatus === "error" ? " warn" : "")}>{syncText}</div></div>
+        <div className="stat"><div className="sl">Pending uploads</div><div className="sv">{m.pendingUploads || 0}</div></div>
+        <div className="stat"><div className="sl">Storage used</div><div className="sv">{fmtBytes(storage.total)}</div></div>
+      </div>
+      <div className="notice" style={{ marginTop: 12 }}>
+        Automatic maintenance runs at startup, hourly for lightweight cleanup, and daily for deep maintenance. It never deletes sales, payments, inventory transactions, user settings, authentication data, or the sync queue.
+      </div>
+      {data?._sync?.error && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{data._sync.error}</div>}
+      <div className="grid2" style={{ marginTop: 14 }}>
+        <div className="addpanel">
+          <div className="section-title" style={{ marginTop: 0 }}>Maintenance Schedule</div>
+          <div className="kv"><span>Last cleanup</span><b>{lastCleanup}</b></div>
+          <div className="kv"><span>Last mode</span><b>{m.lastMode || "startup pending"}</b></div>
+          <div className="kv"><span>Last sync</span><b>{lastSync}</b></div>
+          <div className="kv"><span>Device ID</span><b className="mono">{m.deviceId ? m.deviceId.slice(-12) : "browser"}</b></div>
+          {m.lastError && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{m.lastError}</div>}
+        </div>
+        <div className="addpanel">
+          <div className="section-title" style={{ marginTop: 0 }}>Protected Areas</div>
+          <div className="notice">Business data, sync queue, settings, and auth tokens are protected. Logout is the only flow that removes authentication state.</div>
+          <div className="kv"><span>Business store</span><b>{STORE_KEY}</b></div>
+          <div className="kv"><span>Sync queue</span><b>{OUTBOX_KEY}</b></div>
+          <div className="kv"><span>Session</span><b>{SESSION_KEY}</b></div>
+        </div>
+      </div>
+      <div className="tablewrap" style={{ marginTop: 14 }}>
+        <table><thead><tr><th>Storage area</th><th>Size</th><th>Purpose</th></tr></thead><tbody>
+          {storageRows.map(([label, size, purpose]) => <tr key={label}><td><b>{label}</b></td><td>{fmtBytes(size)}</td><td>{purpose}</td></tr>)}
+        </tbody></table>
+      </div>
+      <div className="section-title" style={{ margin: "18px 0 8px" }}>Maintenance Audit Log</div>
+      <div className="tablewrap">
+        <table><thead><tr><th>Time</th><th>Action</th><th>Details</th></tr></thead><tbody>
+          {(m.audit || []).length === 0 ? <tr><td colSpan="3">No maintenance actions recorded yet.</td></tr> : (m.audit || []).map((row) => (
+            <tr key={row.id}><td>{new Date(row.ts).toLocaleString()}</td><td>{row.action}</td><td>{(row.detail?.actions || []).join(", ") || `${row.detail?.removed?.length || 0} cache item(s) removed`}</td></tr>
+          ))}
+        </tbody></table>
+      </div>
     </div>
   );
 }
