@@ -2243,18 +2243,17 @@ function Logo({ size = 40 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <defs>
-        <linearGradient id="vCloud" x1="9" y1="14" x2="33" y2="33" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#A6D8FF" /><stop offset="1" stopColor="#6E86FF" /></linearGradient>
-        <linearGradient id="vCheck" x1="11" y1="36" x2="42" y2="8" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#5AA6FF" /><stop offset=".5" stopColor="#7C7DFF" /><stop offset="1" stopColor="#B074FF" /></linearGradient>
-        <filter id="vGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="1.1" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        <linearGradient id="vMarkBg" x1="7" y1="6" x2="41" y2="42" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#2DD4DE" /><stop offset=".55" stopColor="#6E86FF" /><stop offset="1" stopColor="#A66BFF" /></linearGradient>
+        <linearGradient id="vMarkStroke" x1="13" y1="13" x2="35" y2="35" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#FFFFFF" /><stop offset="1" stopColor="#DFFBFF" /></linearGradient>
+        <filter id="vMarkGlow" x="-45%" y="-45%" width="190%" height="190%"><feGaussianBlur stdDeviation="2.4" result="b" /><feColorMatrix in="b" type="matrix" values="0 0 0 0 0.18 0 0 0 0 0.84 0 0 0 0 0.87 0 0 0 .55 0" /><feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge></filter>
       </defs>
-      <path d="M30 31 H14 a7 7 0 0 1 -2 -13.6 a9 9 0 0 1 17 -2.2 a6 6 0 0 1 1 15.8 Z" fill="url(#vCloud)" opacity="0.95" />
-      <path d="M12 26 L21 35 L41 11" stroke="#FFFFFF" strokeWidth="10.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <path d="M12 26 L21 35 L41 11" stroke="url(#vCheck)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" fill="none" filter="url(#vGlow)" />
-      <path d="M43 6.5 l.8 2 2 .8 -2 .8 -.8 2 -.8 -2 -2 -.8 2 -.8 Z" fill="#D9C7FF" opacity="0.9" />
+      <rect x="5" y="5" width="38" height="38" rx="14" fill="url(#vMarkBg)" filter="url(#vMarkGlow)" />
+      <path d="M14 14.5L23.3 34L34 14.5" stroke="url(#vMarkStroke)" strokeWidth="6.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 14.5L23.3 34L34 14.5" stroke="#071018" strokeOpacity=".14" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
-function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><div className="mark"><Logo size={sm ? 40 : 52} /></div><div className="name">Visionary<span> POS</span></div></div>); }
+function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><div className="mark"><Logo size={sm ? 40 : 52} /></div><div className="name">Vision<span> POS</span></div></div>); }
 
 /* ================================================================== */
 /*  App                                                               */

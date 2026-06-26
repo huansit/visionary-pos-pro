@@ -56,16 +56,20 @@ function installDesktopChrome() {
   document.documentElement.classList.add("visionpos-desktop-host");
   const style = document.createElement("style");
   style.textContent = `
-    html.visionpos-desktop-host body{padding-top:38px!important;background:#0f172a!important;overflow:hidden}
-    html.visionpos-desktop-host .vpos.app{min-height:calc(100dvh - 38px)!important}
-    html.visionpos-desktop-host .vpos.app .shell{height:calc(100dvh - 38px)!important}
-    html.visionpos-desktop-host .cashier-workstation .pos{height:calc(100dvh - 136px)!important}
-    #visionpos-desktop-titlebar{position:fixed;top:0;left:0;right:0;height:38px;z-index:2147483647;display:flex;align-items:center;justify-content:space-between;background:#0f172a;color:#e5eef4;font:600 12px system-ui,Segoe UI,sans-serif;user-select:none;-webkit-app-region:drag;border-bottom:1px solid rgba(148,163,184,.22)}
-    #visionpos-desktop-titlebar .vp-title{display:flex;align-items:center;gap:10px;height:100%;padding:0 14px;letter-spacing:.08em;text-transform:uppercase}
-    #visionpos-desktop-titlebar .vp-dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,#38b6c5,#7c7dff);box-shadow:0 0 14px rgba(56,182,197,.7)}
-    #visionpos-desktop-titlebar .vp-sub{color:#8aa0ad;font-weight:700;letter-spacing:.04em;text-transform:none}
+    html.visionpos-desktop-host body{padding-top:42px!important;background:#0b1117!important;overflow:hidden}
+    html.visionpos-desktop-host .vpos.app{min-height:calc(100dvh - 42px)!important}
+    html.visionpos-desktop-host .vpos.app .shell{height:calc(100dvh - 42px)!important}
+    html.visionpos-desktop-host .cashier-workstation .pos{height:calc(100dvh - 140px)!important}
+    html.visionpos-desktop-host .brand.sm .name{display:none!important}
+    html.visionpos-desktop-host .brand.sm .mark svg{width:36px!important;height:36px!important}
+    html.visionpos-desktop-host .topbar{border-radius:0!important}
+    #visionpos-desktop-titlebar{position:fixed;top:0;left:0;right:0;height:42px;z-index:2147483647;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(90deg,#071018,#101923 58%,#121c29);color:#e5eef4;font:600 12px system-ui,Segoe UI,sans-serif;user-select:none;-webkit-app-region:drag;border-bottom:1px solid rgba(45,212,222,.16);box-shadow:0 14px 34px rgba(2,6,23,.32)}
+    #visionpos-desktop-titlebar .vp-title{display:flex;align-items:center;gap:10px;height:100%;padding:0 14px;letter-spacing:.06em;text-transform:uppercase}
+    #visionpos-desktop-titlebar .vp-monogram{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(135deg,#2dd4de,#7c7dff);color:#061018;font-weight:950;font-size:16px;letter-spacing:-.08em;box-shadow:0 0 18px rgba(45,212,222,.34)}
+    #visionpos-desktop-titlebar .vp-name{font-weight:850;color:#f8fafc}
+    #visionpos-desktop-titlebar .vp-sub{color:#8aa0ad;font-weight:700;letter-spacing:.02em;text-transform:none}
     #visionpos-desktop-titlebar .vp-controls{display:flex;height:100%;-webkit-app-region:no-drag}
-    #visionpos-desktop-titlebar button{width:46px;height:38px;border:0;background:transparent;color:#dbeafe;font:700 14px system-ui,Segoe UI,sans-serif;cursor:pointer;display:grid;place-items:center}
+    #visionpos-desktop-titlebar button{width:48px;height:42px;border:0;background:transparent;color:#dbeafe;font:700 15px system-ui,Segoe UI,sans-serif;cursor:pointer;display:grid;place-items:center}
     #visionpos-desktop-titlebar button:hover{background:rgba(148,163,184,.14)}
     #visionpos-desktop-titlebar button[data-window-close]:hover{background:#dc2626;color:#fff}
     #visionpos-desktop-connection{bottom:18px!important}
@@ -76,7 +80,7 @@ function installDesktopChrome() {
   const bar = document.createElement("div");
   bar.id = "visionpos-desktop-titlebar";
   bar.innerHTML = `
-    <div class="vp-title"><span class="vp-dot"></span><span>VISIONPOS</span><span class="vp-sub">Retail Workstation</span></div>
+    <div class="vp-title"><span class="vp-monogram">V</span><span class="vp-name">VISIONPOS</span><span class="vp-sub">Retail Workstation</span></div>
     <div class="vp-controls">
       <button type="button" title="Minimize" data-window-minimize>−</button>
       <button type="button" title="Maximize" data-window-maximize>□</button>
@@ -84,11 +88,14 @@ function installDesktopChrome() {
     </div>
   `;
   document.body.appendChild(bar);
+  bar.querySelector("[data-window-minimize]").textContent = "-";
+  bar.querySelector("[data-window-maximize]").textContent = "□";
+  bar.querySelector("[data-window-close]").textContent = "×";
 
   const maxButton = bar.querySelector("[data-window-maximize]");
   const setMaximized = (isMaximized) => {
-    maxButton.textContent = isMaximized ? "❐" : "□";
     maxButton.title = isMaximized ? "Restore" : "Maximize";
+    maxButton.textContent = isMaximized ? "❐" : "□";
   };
   window.visionposDesktop.isWindowMaximized().then(setMaximized).catch(() => {});
   window.visionposDesktop.onWindowMaximized(setMaximized);
