@@ -1,6 +1,6 @@
 {
   "name": "visionpos-desktop",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "VISIONPOS desktop client for the cloud POS",
   "private": true,
   "main": "src/main.js",

@@ -8,7 +8,8 @@ const DEFAULT_POS_URL = "https://visionarypos.cloud/";
 const DEFAULT_SETTINGS = {
   posUrl: process.env.VISIONPOS_URL || DEFAULT_POS_URL,
   kiosk: process.env.VISIONPOS_KIOSK === "1",
-  fullscreen: process.env.VISIONPOS_FULLSCREEN !== "0",
+  fullscreen: process.env.VISIONPOS_FULLSCREEN === "1",
+  startMaximized: process.env.VISIONPOS_START_MAXIMIZED !== "0",
   printerName: "",
   cashDrawer: {
     mode: "disabled",
@@ -130,12 +131,15 @@ function startConnectionMonitor() {
 function createWindow() {
   const settings = readSettings();
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1440,
+    height: 900,
+    minWidth: 1180,
+    minHeight: 720,
     fullscreen: Boolean(settings.fullscreen || settings.kiosk),
     kiosk: Boolean(settings.kiosk),
+    frame: false,
     title: "VISIONPOS",
-    backgroundColor: "#f6f9fb",
+    backgroundColor: "#0f172a",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,
@@ -147,6 +151,7 @@ function createWindow() {
   });
 
   Menu.setApplicationMenu(null);
+  if (!settings.fullscreen && !settings.kiosk && settings.startMaximized) mainWindow.maximize();
   mainWindow.loadURL(settings.posUrl || DEFAULT_POS_URL);
   startConnectionMonitor();
 
@@ -164,7 +169,10 @@ function createWindow() {
 
   mainWindow.webContents.on("did-finish-load", () => {
     sendConnectionState(lastConnectionState);
+    mainWindow.webContents.send("window:maximized", mainWindow.isMaximized());
   });
+  mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized", true));
+  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized", false));
 
   mainWindow.on("close", async (event) => {
     if (!activeSale) return;
@@ -204,6 +212,23 @@ ipcMain.handle("user:setLast", (_event, user) => setLastUser(user || {}));
 ipcMain.handle("sale:setActive", (_event, value) => {
   activeSale = Boolean(value);
   return activeSale;
+});
+ipcMain.handle("window:minimize", () => {
+  mainWindow?.minimize();
+  return true;
+});
+ipcMain.handle("window:toggleMaximize", () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+  return mainWindow.isMaximized();
+});
+ipcMain.handle("window:close", () => {
+  mainWindow?.close();
+  return true;
+});
+ipcMain.handle("window:isMaximized", () => {
+  return !!mainWindow?.isMaximized();
 });
 
 ipcMain.handle("printers:list", async () => {
