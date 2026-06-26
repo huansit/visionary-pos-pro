@@ -2342,6 +2342,13 @@ export default function VisionPOS() {
     const id = setTimeout(() => runSync({ force: true, source: "cashier-recovery" }), 500);
     return () => clearTimeout(id);
   }, [data, view, session?.id, session?.branchId, syncing]); // eslint-disable-line
+  useEffect(() => {
+    if (!data || view !== "admin" || syncing || !navigator.onLine) return;
+    const branches = Array.isArray(data.branches) ? data.branches : [];
+    if (branches.length) return;
+    const id = setTimeout(() => runSync({ force: true, source: "admin-recovery" }), 500);
+    return () => clearTimeout(id);
+  }, [data, view, syncing]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
@@ -2398,7 +2405,7 @@ export default function VisionPOS() {
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
             ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} />
-            : <CloudDataRecovery title="Cloud data is unavailable" message="This device could not load branches from the cloud yet. Sync now or sign out and log in again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
+            : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
     </div>
