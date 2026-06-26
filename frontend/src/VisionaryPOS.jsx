@@ -5,7 +5,7 @@ import {
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
-  Barcode, ClipboardCheck,
+  Barcode, ClipboardCheck, Download,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -1118,6 +1118,10 @@ const css = `
 .authback svg{width:14px;height:14px}
 .authmake{margin-top:14px;width:100%;background:none;border:1px solid #3a3f47;color:#cfd4db;font-size:12.5px;font-weight:600;cursor:pointer;padding:11px;border-radius:5px;font-family:inherit;transition:.12s}
 .authmake:hover{border-color:#2bb6c4;color:#fff}
+.authdownload{margin-top:18px;width:min(300px,100%);display:flex;align-items:center;justify-content:center;gap:9px;text-decoration:none;color:#cfd4db;background:#363b43;border:1px solid #3a3f47;border-radius:6px;padding:12px 14px;font-size:13px;font-weight:650;transition:.12s}
+.authdownload:hover{color:#fff;border-color:#2bb6c4;background:#3a414a}
+.authdownload svg{width:17px;height:17px;color:#2bb6c4}
+.authdownload span{color:#8d96a3;font-size:12px;font-weight:500}
 .segrow{display:flex;gap:8px}
 .segbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:5px;border:1px solid #4a5059;background:transparent;color:#9aa1ab;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.12s}
 .segbtn svg{width:15px;height:15px}
@@ -1899,6 +1903,14 @@ function AuthShellV3({ children }) {
     </div>
   );
 }
+function DesktopDownloadLink() {
+  return (
+    <a className="authdownload" href="/downloads.html">
+      <Download />
+      <div>Download Windows POS <span>Version 2.0.0</span></div>
+    </a>
+  );
+}
 function OnScreenKeyboard({ onKey, onBackspace, onEnter }) {
   const [shift, setShift] = useState(false);
   const [sym, setSym] = useState(false);
@@ -1955,6 +1967,7 @@ function PinScreen({ employees, onAdmin, onSuccess }) {
           <button className="authk fn" onClick={submit} style={{ flex: 2 }}>enter</button>
         </div>
       </div>
+      <DesktopDownloadLink />
     </AuthShellV3>
   );
 }
@@ -2000,6 +2013,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
         <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>
       </div>
+      <DesktopDownloadLink />
       <OnScreenKeyboard onKey={kbKey} onBackspace={kbBack} onEnter={submit} />
     </AuthShellV3>
   );
