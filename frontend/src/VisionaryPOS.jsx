@@ -1520,6 +1520,92 @@ const css = `
 .aifoot{display:flex;gap:8px;padding:11px;border-top:1px solid var(--border-soft)}
 .aifoot input{flex:1;border:1px solid var(--border);border-radius:10px;padding:0 12px;height:40px;background:var(--surface-2);outline:none;font-family:inherit;font-size:13px;color:var(--text)}
 .postabs{display:none}
+
+/* cashier workstation */
+.cashier-app{background:#eef4f5}
+.cashier-app .shell{max-width:1664px}
+.cashier-app .topbar{background:#111827;color:#eef6f7;border-bottom:none;box-shadow:0 18px 42px -30px rgba(4,9,20,.9)}
+.cashier-app .brand .name,.cashier-app .who .nm{color:#f8fafc}
+.cashier-app .who .rl{color:#9fb2bd}
+.cashier-app .branchsel.locked{border-color:rgba(45,212,222,.28);background:rgba(45,212,222,.12);color:#f8fafc}
+.cashier-app .iconbtn{background:#1f2937;border-color:#334155;color:#cbd5e1}
+.cashier-app .content{padding:14px 18px;background:linear-gradient(135deg,#f5f9fa,#eef5f6)}
+.cashier-workstation .pos{grid-template-columns:260px minmax(0,1fr) 420px;height:calc(100dvh - 98px);gap:16px}
+.cashier-workstation .poscol{gap:12px}
+.cashier-rail,.cashier-products,.checkout-panel{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 18px 45px -36px rgba(15,23,42,.5)}
+.cashier-rail{padding:14px;display:flex;flex-direction:column;gap:12px}
+.cashier-rail.grow{flex:1;min-height:0}
+.rail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.rail-title{font-size:19px;font-weight:850;letter-spacing:-.03em}
+.scanner-pill{height:34px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);font-size:11.5px;font-weight:800;color:var(--muted);cursor:pointer;white-space:nowrap}
+.scanner-pill svg{width:14px;height:14px}
+.scanner-pill.on{background:rgba(14,165,181,.13);border-color:rgba(14,165,181,.4);color:var(--accent)}
+.cashier-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cashier-metrics div{background:linear-gradient(160deg,var(--surface-2),var(--surface));border:1px solid var(--border-soft);border-radius:13px;padding:10px}
+.cashier-metrics span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.11em;color:var(--muted-2);font-weight:800}
+.cashier-metrics b{display:block;margin-top:4px;font-family:var(--font-mono);font-size:13px}
+.cashier-actions{display:flex;flex-direction:column;gap:8px}
+.cashier-quick{min-height:46px;border-radius:13px;border:1px solid var(--border-soft);background:var(--surface);color:var(--text);display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:8px;padding:8px 10px;font-family:inherit;font-weight:750;cursor:pointer;text-align:left;transition:.12s}
+.cashier-quick:hover:not(:disabled){border-color:var(--accent);background:rgba(14,165,181,.07)}
+.cashier-quick:disabled{opacity:.45;cursor:not-allowed}
+.cashier-quick.danger .cq-ic{color:var(--danger);background:rgba(229,72,77,.1)}
+.cq-ic{width:30px;height:30px;border-radius:10px;background:rgba(14,165,181,.1);color:var(--accent);display:grid;place-items:center}
+.cq-ic svg{width:16px;height:16px}
+.cq-label{font-size:13px}
+.shortcut{font-size:10.5px;font-weight:850;color:var(--muted-2);background:var(--surface-2);border:1px solid var(--border-soft);border-radius:8px;padding:4px 7px}
+.cashier-cats{display:flex;flex-direction:column;gap:7px;overflow-y:auto;padding-right:2px}
+.cashier-cat{min-height:42px;border-radius:12px;border:1px solid transparent;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;font-family:inherit;font-weight:750;cursor:pointer;text-align:left}
+.cashier-cat:hover{background:var(--surface-2);color:var(--text)}
+.cashier-cat.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 12px 24px -18px var(--accent)}
+.cashier-cat b{font-family:var(--font-mono);font-size:12px}
+.cashier-flash{font-size:12px;line-height:1.4;color:var(--accent);background:rgba(14,165,181,.09);border:1px solid rgba(14,165,181,.22);border-radius:12px;padding:10px}
+.cashier-products{display:flex;flex-direction:column;min-height:0;padding:14px}
+.cashier-searchbar{display:grid;grid-template-columns:minmax(0,1fr) 132px;gap:10px;align-items:center}
+.cashier-workstation .possearch{height:58px;border-radius:18px;background:#fff}
+.cashier-workstation .possearch input{font-size:17px;font-weight:600}
+.scanner-toggle{height:58px;border-radius:18px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;font-family:inherit;font-weight:850;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.scanner-toggle:not(.on){background:var(--surface-3);color:var(--muted)}
+.scanner-toggle svg{width:18px;height:18px}
+.product-strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 2px 12px;color:var(--muted);font-size:12px;font-weight:750}
+.product-strip b{font-family:var(--font-mono);color:var(--text)}
+.desktop-shortcuts{margin-left:auto;color:var(--muted-2);font-size:11px}
+.cashier-workstation .posgridwrap{flex:1;min-height:0;overflow-y:auto;padding-right:5px}
+.workstation-grid{grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px;align-content:start}
+.cashier-product{min-height:202px;border:1px solid var(--border-soft);border-radius:18px;background:#fff;color:var(--text);padding:10px;display:flex;flex-direction:column;gap:9px;text-align:left;cursor:pointer;font-family:inherit;box-shadow:0 14px 34px -30px rgba(15,23,42,.65);transition:.12s}
+.cashier-product:hover:not(:disabled){transform:translateY(-1px);border-color:rgba(14,165,181,.55);box-shadow:0 18px 42px -30px rgba(14,165,181,.7)}
+.cashier-product:disabled{opacity:.55;cursor:not-allowed}
+.cp-img{height:86px;border-radius:14px;background:linear-gradient(150deg,#eef8fa,#f7fbfc);display:grid;place-items:center;overflow:hidden}
+.cp-img svg{width:36px;height:36px;color:var(--accent)}
+.cp-body{display:flex;flex-direction:column;gap:4px;min-height:54px}
+.cp-name{font-size:13.5px;font-weight:850;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cp-meta{font-family:var(--font-mono);font-size:10.5px;color:var(--muted-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cp-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cp-price{font-family:var(--font-mono);font-weight:900;font-size:14px}
+.cp-stock{font-size:10.5px;font-weight:850;border-radius:999px;padding:4px 7px;background:rgba(21,168,107,.1);color:var(--ok);white-space:nowrap}
+.cp-stock.low{background:rgba(217,138,28,.12);color:var(--warn)}
+.cp-stock.out{background:rgba(229,72,77,.12);color:var(--danger)}
+.checkout-panel{padding:16px}
+.checkout-panel .sectit{letter-spacing:.16em}
+.checkout-panel .cartlines2{margin:12px 0;gap:10px}
+.checkout-panel .cline{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:14px;padding:9px}
+.checkout-panel .field{margin-top:12px}
+.checkout-panel .input{height:52px;border-radius:14px;font-size:15px}
+.checkout-panel .paytotal{margin-top:8px;padding:14px 0}
+.checkout-panel .paytotal .amt{font-size:34px}
+.complete.enterprise{height:62px;border-radius:17px;font-size:18px;letter-spacing:-.01em;box-shadow:0 18px 30px -18px var(--accent)}
+.complete.enterprise span{font-size:11px;background:rgba(255,255,255,.2);border-radius:999px;padding:4px 8px}
+.cart-actions .btn{height:48px;border-radius:14px}
+.invoice-panel{max-height:230px;overflow:auto}
+@media (max-width:1500px) and (min-width:981px){
+  .cashier-app .shell{max-width:100%}
+  .cashier-workstation .pos{grid-template-columns:226px minmax(0,1fr) 360px;gap:12px}
+  .workstation-grid{grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:10px}
+  .cashier-product{min-height:178px;border-radius:15px}
+  .cp-img{height:70px}
+  .cashier-workstation .possearch,.scanner-toggle{height:52px;border-radius:15px}
+  .checkout-panel .paytotal .amt{font-size:29px}
+  .complete.enterprise{height:54px;font-size:16px}
+}
 @media (max-height:820px) and (min-width:981px){
   .topbar{padding:10px 18px}
   .content{padding:14px 18px}
@@ -2115,7 +2201,7 @@ export default function VisionPOS() {
   const adminBranch = data.branches.find((b) => b.id === data.settings.activeBranchId) || data.branches[0];
   const cashierBranch = session ? (data.branches.find((b) => b.id === session.branchId) || data.branches[0]) : adminBranch;
   return (
-    <div className={"vpos app" + themeCls}><style>{css}</style>
+    <div className={"vpos app" + themeCls + (view === "register" ? " cashier-app" : "")}><style>{css}</style>
       <div className="shell">
         <div className="topbar">
           <Brand sm />
@@ -2471,6 +2557,39 @@ function ProductImage({ src, alt, fit }) {
   if (!src || bad) return <Wine />;
   return <img src={src} alt={alt || ""} onError={() => setBad(true)} style={{ width: "100%", height: "100%", objectFit: fit || "contain", borderRadius: 10 }} />;
 }
+function CashierCategoryButton({ label, count, active, onClick }) {
+  return (
+    <button className={"cashier-cat" + (active ? " on" : "")} onClick={onClick}>
+      <span>{label}</span>
+      <b>{count}</b>
+    </button>
+  );
+}
+function CashierQuickButton({ icon, label, shortcut, tone, disabled, onClick }) {
+  return (
+    <button className={"cashier-quick " + (tone || "")} disabled={disabled} onClick={onClick}>
+      <span className="cq-ic">{icon}</span>
+      <span className="cq-label">{label}</span>
+      {shortcut && <span className="shortcut">{shortcut}</span>}
+    </button>
+  );
+}
+function CashierProductCard({ product, stock, price, cur, onAdd }) {
+  const unavailable = stock.cls === "out";
+  return (
+    <button className={"cashier-product " + stock.cls} disabled={unavailable} onClick={onAdd}>
+      <span className="cp-img"><ProductImage src={product.imageUrl || product.image} alt={product.name} /></span>
+      <span className="cp-body">
+        <span className="cp-name">{product.name}</span>
+        <span className="cp-meta">{product.sku}{product.size ? " - " + product.size : ""}</span>
+      </span>
+      <span className="cp-foot">
+        <span className="cp-price">{fmt(price, cur)}</span>
+        <span className={"cp-stock " + stock.cls}>{unavailable ? "Out" : stock.left + " left"}</span>
+      </span>
+    </button>
+  );
+}
 const QEXP = ["Police", "Utilities", "Other"];
 const APPROVAL_LIMIT = 50000; // KES 500 — above this a till expense needs admin approval
 function Register({ data, update, online, employee, branch }) {
@@ -2495,6 +2614,7 @@ function Register({ data, update, online, employee, branch }) {
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
+  const [catFilter, setCatFilter] = useState("All");
   const [scanProduct, setScanProduct] = useState(null); // { barcode, name, sku, size, category, price, cost }
   const [scanErr, setScanErr] = useState("");
   const lastSearchBarcodeRef = useRef({ code: "", ts: 0 });
@@ -2507,9 +2627,12 @@ function Register({ data, update, online, employee, branch }) {
     if (force || !isEditing || active === searchInputRef.current) searchInputRef.current?.focus();
   }, 0);
 
-  const visible = sortProductsAZ(data.products.filter((p) =>
-    productBranchId(p, data) === branch.id &&
-    (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q)))));
+  const branchProducts = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === branch.id));
+  const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
+  const qNorm = q.trim().toLowerCase();
+  const visible = branchProducts.filter((p) =>
+    (catFilter === "All" || (p.category || "Other") === catFilter) &&
+    (qNorm === "" || p.name.toLowerCase().includes(qNorm) || p.sku.toLowerCase().includes(qNorm) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))));
 
   const mine = data.invoices.filter((i) => i.cashierId === employee.id);
   const myOpen = mine.filter((i) => invOutstanding(i) > 0);
@@ -2524,6 +2647,7 @@ function Register({ data, update, online, employee, branch }) {
     if (!p) return false;
     if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return false;
     setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 }));
+    scanFocus(true);
     return true;
   };
   const dec = (pid) => setCart((c) => { const n = { ...c }; n[pid] = (n[pid] || 0) - 1; if (n[pid] <= 0) delete n[pid]; return n; });
@@ -2738,6 +2862,20 @@ function Register({ data, update, online, employee, branch }) {
   };
   const holdSale = () => { if (lines.length === 0) return; setHolds((h) => [...h, { id: uid("hold"), cart, ident, ts: now(), count: itemCount, total }]); setCart({}); setIdent(""); setFlash("Sale held."); };
   const resume = (h) => { setCart(h.cart); setIdent(h.ident || ""); setHolds((hs) => hs.filter((x) => x.id !== h.id)); setPtab("cart"); };
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = String(document.activeElement?.tagName || "").toLowerCase();
+      const isEditing = document.activeElement?.isContentEditable || tag === "input" || tag === "textarea" || tag === "select";
+      if (pinPrompt || scanProduct || receipt || debtsOpen || exp) return;
+      if (e.key === "F2") { e.preventDefault(); setPtab("products"); scanFocus(true); }
+      if (e.key === "F4") { e.preventDefault(); startCheckout(); }
+      if (e.key === "F6") { e.preventDefault(); holdSale(); scanFocus(true); }
+      if (e.key === "Delete" && !isEditing) { e.preventDefault(); setCart({}); scanFocus(true); }
+      if (e.key === "Escape" && !isEditing) { e.preventDefault(); setQ(""); setPtab("products"); scanFocus(true); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pinPrompt, scanProduct, receipt, debtsOpen, exp, lines.length, ident, cart, total]); // eslint-disable-line
   const saveExp = () => {
     const c = Math.round(parseFloat(exp.amount) * 100); if (!c || c <= 0) return;
     const status = c > APPROVAL_LIMIT ? "pending" : "approved";
@@ -2760,7 +2898,7 @@ function Register({ data, update, online, employee, branch }) {
   );
 
   return (
-    <div className="fade">
+    <div className="fade cashier-workstation">
       <div className="postabs">
         {[["products", "Products"], ["cart", "Cart"], ["invoices", "Invoices"]].map(([k, l]) => (
           <button key={k} className={"ptab" + (ptab === k ? " on" : "")} onClick={() => setPtab(k)}>{l}{k === "cart" && itemCount ? " (" + itemCount + ")" : ""}</button>))}
@@ -2769,7 +2907,29 @@ function Register({ data, update, online, employee, branch }) {
       <div className="pos">
         {/* LEFT — my invoices & sales */}
         <div className={"poscol" + (ptab === "invoices" ? " active" : "")}>
-          <div className="poscard">
+          <div className="cashier-rail">
+            <div className="rail-head">
+              <div><div className="sectit">Workstation</div><div className="rail-title">{branch.name}</div></div>
+              <span className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode /> {scannerOn ? "On" : "Off"}</span>
+            </div>
+            <div className="cashier-metrics">
+              <div><span>Open</span><b>{fmt(openOnlyTotal, cur)}</b></div>
+              <div><span>Debt</span><b>{fmt(debtTotal, cur)}</b></div>
+            </div>
+            <div className="cashier-actions">
+              <CashierQuickButton icon={<Search />} label="Focus search" shortcut="F2" onClick={() => { setPtab("products"); scanFocus(true); }} />
+              <CashierQuickButton icon={<Receipt />} label="Hold sale" shortcut="F6" disabled={lines.length === 0} onClick={holdSale} />
+              <CashierQuickButton icon={<Trash2 />} label="Clear cart" shortcut="Del" tone="danger" disabled={lines.length === 0} onClick={() => { setCart({}); scanFocus(true); }} />
+            </div>
+          </div>
+          <div className="cashier-rail grow">
+            <div className="sectit">Categories</div>
+            <div className="cashier-cats">
+              <CashierCategoryButton label="All products" count={branchProducts.length} active={catFilter === "All"} onClick={() => { setCatFilter("All"); scanFocus(true); }} />
+              {categoryCounts.map((c) => <CashierCategoryButton key={c.cat} label={c.cat} count={c.count} active={catFilter === c.cat} onClick={() => { setCatFilter(c.cat); scanFocus(true); }} />)}
+            </div>
+          </div>
+          <div className="poscard invoice-panel">
             <div className="sectit" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span>My Invoices</span>
               <button className="linkc" onClick={() => setShowAll((s) => !s)}>{showAll ? "Open only" : "Show all"}</button>
@@ -2813,20 +2973,23 @@ function Register({ data, update, online, employee, branch }) {
 
         {/* CENTER — products (search-first, minimal) */}
         <div className={"poscol" + (ptab === "products" ? " active" : "")}>
-          <div className="possearch"><Search /><input ref={searchInputRef} autoFocus placeholder="Scan barcode or search product..." value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key.length === 1) lastSearchKeyAtRef.current = now(); onEnter(e); }} /></div>
+          <div className="cashier-searchbar">
+            <div className="possearch"><Search /><input ref={searchInputRef} autoFocus placeholder="Scan barcode or search product, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key.length === 1) lastSearchKeyAtRef.current = now(); onEnter(e); }} /></div>
+            <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode /> Scanner</button>
+          </div>
+          <div className="product-strip">
+            <div><b>{visible.length}</b> products</div>
+            <span>{catFilter === "All" ? "All categories" : catFilter}</span>
+            <span className="desktop-shortcuts">F2 Search - F4 Checkout - F6 Hold - Esc Clear search</span>
+          </div>
           <div className="posgridwrap">
-            {q.trim() === "" ? (
-              <div className="possearch-empty"><Search /><div className="pse-t">Search to find products</div><div className="pse-s">Scan a barcode or type a product name or SKU to add it to the sale.</div></div>
+            {visible.length === 0 ? (
+              <div className="possearch-empty"><Search /><div className="pse-t">No products match</div><div className="pse-s">Scan another barcode, change category, or type a product name.</div></div>
             ) : (
-              <div className="poslist">
-                {visible.slice(0, 5).map((p) => { const s = stock(p); return (
-                  <button className="prow" key={p.id} disabled={s.cls === "out"} onClick={() => { add(p); }}>
-                    <span className="prow-m"><span className="prow-n">{p.name}</span><span className="prow-s">{p.sku} · <span className={"dot " + s.cls} /> {s.cls === "out" ? "Out of stock" : s.left + " in stock"}</span></span>
-                    <span className="prow-p">{fmt(priceFor(data, p), cur)}</span>
-                    <span className="prow-add">{s.cls === "out" ? "—" : <Plus />}</span>
-                  </button>); })}
-                {visible.length === 0 && <div className="notice">No products match “{q}”.</div>}
-                {visible.length > 5 && <div className="prow-more">Showing 5 of {visible.length} matches — keep typing to narrow it down.</div>}
+              <div className="posgrid workstation-grid">
+                {visible.map((p) => { const s = stock(p); return (
+                  <CashierProductCard key={p.id} product={p} stock={s} price={priceFor(data, p)} cur={cur} onAdd={() => add(p)} />
+                ); })}
               </div>
             )}
           </div>
@@ -2834,7 +2997,7 @@ function Register({ data, update, online, employee, branch }) {
 
         {/* RIGHT — cart & payment */}
         <div className={"poscol" + (ptab === "cart" ? " active" : "")}>
-          <div className="posright">
+          <div className="posright checkout-panel">
             <div className="sectit" style={{ marginBottom: 2 }}>Current Sale</div>
             <div className="cust-meta">{itemCount} item{itemCount === 1 ? "" : "s"} · {branch.name}</div>
             <div className="cartlines2">
@@ -2853,10 +3016,10 @@ function Register({ data, update, online, employee, branch }) {
               <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional receipt note" /></div>
             <div className="calc"><div className="calcrow"><span>Subtotal</span><span className="v">{fmt(total, cur)}</span></div></div>
             <div className="paytotal"><span className="lbl">Total</span><span className="amt">{fmt(total, cur)}</span></div>
-            <button className="complete" disabled={lines.length === 0 || ident.trim() === ""} onClick={startCheckout}><Check /> Complete Sale</button>
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button className="complete enterprise" disabled={lines.length === 0 || ident.trim() === ""} onClick={startCheckout}><Check /> Complete Sale <span>F4</span></button>
+            <div className="cart-actions" style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={holdSale}>Hold</button>
-              <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={() => setCart({})}>Clear</button>
+              <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={() => { setCart({}); scanFocus(true); }}>Clear</button>
             </div>
             {(ident.trim() === "" && lines.length > 0) && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>Enter a customer name / identifier to complete.</div>}
             <div className="cust-meta" style={{ textAlign: "center", marginTop: 8 }}>Issues an open invoice ({receiptNo}) cleared by admin or supervisor.</div>
