@@ -1352,7 +1352,7 @@ const css = `
 .segbtn.on{background:#2bb6c4;color:#0c1418;border-color:#2bb6c4}
 
 
-.shell{width:100%;max-width:1320px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
+.shell{width:100%;max-width:1500px;margin:0 auto;height:100dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px;border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30}
 .topbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .who{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}
@@ -1397,7 +1397,7 @@ const css = `
 .sync.syncing .led{animation:syncpulse 1s ease-in-out infinite}
 @keyframes syncpulse{50%{opacity:.3}}
 .sync svg{width:15px;height:15px}
-.content{flex:1;padding:22px}
+.content{flex:1;min-height:0;padding:18px;overflow:auto}
 
 /* register 3-col */
 .regwrap{display:grid;grid-template-columns:224px 1fr 336px;gap:16px;align-items:stretch;height:calc(100dvh - 112px);overflow:hidden}
@@ -1413,9 +1413,9 @@ const css = `
 .linknum:hover{filter:brightness(1.1)}
 .noteflag{color:var(--accent-2);font-size:18px;line-height:0;margin-left:6px;vertical-align:middle}
 /* ===== modern POS ===== */
-.pos{display:grid;grid-template-columns:minmax(200px,2fr) minmax(0,5fr) minmax(300px,3fr);gap:14px;height:calc(100dvh - 112px)}
+.pos{display:grid;grid-template-columns:minmax(190px,1.05fr) minmax(320px,2.55fr) minmax(300px,1.45fr);gap:14px;height:calc(100dvh - 124px);min-height:0}
 .poscol{display:flex;flex-direction:column;min-height:0;gap:12px}
-.poscard{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:14px}
+.poscard{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:12px}
 .sectit{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-2);font-weight:700;margin-bottom:10px}
 .cust-sel{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface-2);margin:2px 0 10px}
 .cust-sel .av{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;font-weight:700;flex:none}
@@ -1428,7 +1428,7 @@ const css = `
 .qabtn{display:flex;align-items:center;gap:9px;padding:11px 13px;border-radius:11px;border:1px solid var(--border-soft);background:var(--surface);color:var(--text);font-weight:650;font-size:13px;cursor:pointer;text-align:left;font-family:inherit;transition:.13s}
 .qabtn:hover{background:var(--surface-2);border-color:var(--accent)}
 .qabtn svg{width:16px;height:16px;color:var(--accent);flex:none}
-.possearch{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:0 14px;height:52px;flex:none}
+.possearch{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:0 14px;height:50px;flex:none}
 .possearch:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px rgba(14,165,181,.14)}
 .possearch svg{width:19px;height:19px;color:var(--muted-2)}
 .possearch input{flex:1;border:none;background:none;outline:none;font-size:15px;color:var(--text);font-family:inherit}
@@ -1459,7 +1459,7 @@ const css = `
 .possearch-empty > svg{width:34px;height:34px;opacity:.5}
 .possearch-empty .pse-t{font-size:15px;font-weight:650;color:var(--muted)}
 .possearch-empty .pse-s{font-size:13px;line-height:1.5;max-width:280px}
-.posright{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;padding:16px;display:flex;flex-direction:column;min-height:0;height:100%}
+.posright{background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;padding:16px;display:flex;flex-direction:column;min-height:0;height:100%;overflow-y:auto}
 .cartlines2{flex:1;min-height:60px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin:8px 0;padding-right:2px}
 .cline{display:flex;align-items:center;gap:10px}
 .cline .nm{flex:1;font-size:13px;font-weight:600;line-height:1.2}
@@ -1496,6 +1496,18 @@ const css = `
 .aifoot{display:flex;gap:8px;padding:11px;border-top:1px solid var(--border-soft)}
 .aifoot input{flex:1;border:1px solid var(--border);border-radius:10px;padding:0 12px;height:40px;background:var(--surface-2);outline:none;font-family:inherit;font-size:13px;color:var(--text)}
 .postabs{display:none}
+@media (max-height:820px) and (min-width:981px){
+  .topbar{padding:10px 18px}
+  .content{padding:14px 18px}
+  .pos{height:calc(100dvh - 96px);gap:12px;grid-template-columns:minmax(180px,.95fr) minmax(300px,2.5fr) minmax(290px,1.35fr)}
+  .possearch{height:46px}
+  .poscard,.posright{padding:12px}
+  .field{margin-top:10px}
+  .input,.select{height:42px}
+  .complete{height:46px}
+  .paytotal{padding:8px 0}
+  .paytotal .amt{font-size:25px}
+}
 @media (max-width:980px){
   .pos{grid-template-columns:1fr;height:auto}
   .poscol{display:none}
@@ -2463,7 +2475,12 @@ function Register({ data, update, online, employee, branch }) {
   const lastSearchBarcodeRef = useRef({ code: "", ts: 0 });
   const searchInputRef = useRef(null);
   const lastSearchKeyAtRef = useRef(0);
-  const scanFocus = () => window.setTimeout(() => searchInputRef.current?.focus(), 0);
+  const scanFocus = (force = false) => window.setTimeout(() => {
+    const active = document.activeElement;
+    const tag = String(active?.tagName || "").toLowerCase();
+    const isEditing = active?.isContentEditable || tag === "input" || tag === "textarea" || tag === "select";
+    if (force || !isEditing || active === searchInputRef.current) searchInputRef.current?.focus();
+  }, 0);
 
   const visible = sortProductsAZ(data.products.filter((p) =>
     productBranchId(p, data) === branch.id &&
@@ -2499,7 +2516,7 @@ function Register({ data, update, online, employee, branch }) {
     appendBarcodeScanLog({ barcode, status: ok ? status : "sell:out_of_stock", productId: hit.product.id });
     setQ("");
     setPtab("products");
-    scanFocus();
+    scanFocus(true);
     return ok;
   };
   const processCashierBarcode = (raw, source = "input") => {
@@ -2509,7 +2526,7 @@ function Register({ data, update, online, employee, branch }) {
       notifyScan("Invalid barcode: " + barcode, "error");
       appendBarcodeScanLog({ barcode, status: "sell:invalid" });
       setQ("");
-      scanFocus();
+      scanFocus(true);
       return true;
     }
     const t = now();
@@ -2521,14 +2538,14 @@ function Register({ data, update, online, employee, branch }) {
       notifyScan("Product not found: " + barcode, "error");
       appendBarcodeScanLog({ barcode, status: "sell:not_found" });
       setQ("");
-      scanFocus();
+      scanFocus(true);
       return true;
     }
     if (hit.unavailable) {
       notifyScan(hit.message || "This product is not available in this branch.", "error");
       appendBarcodeScanLog({ barcode, status: "sell:branch_unavailable", barcodeCatalogId: hit.barcodeCatalog?.id });
       setQ("");
-      scanFocus();
+      scanFocus(true);
       return true;
     }
     addScannedProduct(hit, barcode, source === "input" ? "sell:added_from_search" : "sell:added");
@@ -2539,7 +2556,7 @@ function Register({ data, update, online, employee, branch }) {
     if (e.key === "Tab") e.preventDefault();
     if (processCashierBarcode(e.currentTarget.value, "input")) return;
     const hit = data.products.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0];
-    if (hit) { add(hit); setQ(""); scanFocus(); }
+    if (hit) { add(hit); setQ(""); scanFocus(true); }
   };
   const openScannedProductForm = (barcode) => {
     setScanProduct({ barcode, name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
@@ -2708,7 +2725,7 @@ function Register({ data, update, online, employee, branch }) {
       <div className="postabs">
         {[["products", "Products"], ["cart", "Cart"], ["invoices", "Invoices"]].map(([k, l]) => (
           <button key={k} className={"ptab" + (ptab === k ? " on" : "")} onClick={() => setPtab(k)}>{l}{k === "cart" && itemCount ? " (" + itemCount + ")" : ""}</button>))}
-        <button className={"ptab" + (scannerOn ? " on" : "")} title="USB barcode scanner listener" onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(); return next; })}><Barcode style={{ width: 16, height: 16 }} /> Scanner</button>
+        <button className={"ptab" + (scannerOn ? " on" : "")} title="USB barcode scanner listener" onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode style={{ width: 16, height: 16 }} /> Scanner</button>
       </div>
       <div className="pos">
         {/* LEFT — my invoices & sales */}
@@ -2757,7 +2774,7 @@ function Register({ data, update, online, employee, branch }) {
 
         {/* CENTER — products (search-first, minimal) */}
         <div className={"poscol" + (ptab === "products" ? " active" : "")}>
-          <div className="possearch"><Search /><input ref={searchInputRef} autoFocus placeholder="Scan barcode or search product..." value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key.length === 1) lastSearchKeyAtRef.current = now(); onEnter(e); }} onBlur={() => { if (scannerOn && ptab === "products" && !pinPrompt && !scanProduct) scanFocus(); }} /></div>
+          <div className="possearch"><Search /><input ref={searchInputRef} autoFocus placeholder="Scan barcode or search product..." value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key.length === 1) lastSearchKeyAtRef.current = now(); onEnter(e); }} /></div>
           <div className="posgridwrap">
             {q.trim() === "" ? (
               <div className="possearch-empty"><Search /><div className="pse-t">Search to find products</div><div className="pse-s">Scan a barcode or type a product name or SKU to add it to the sale.</div></div>
