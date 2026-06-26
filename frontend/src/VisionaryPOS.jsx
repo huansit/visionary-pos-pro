@@ -714,6 +714,28 @@ async function authApi(path, body, options = {}) {
 async function cloudLogin(payload) {
   return await authApi("/api/auth/login", payload);
 }
+async function provisionCloudEmployeeCredentials(data) {
+  const employees = Array.isArray(data?.employees) ? data.employees : [];
+  const candidates = employees.filter((emp) => {
+    if (!emp?.id || !emp?.name || !emp?.role) return false;
+    if (emp.role === "Cashier") return /^\d{4}$/.test(String(emp.pin || ""));
+    return !!emp.email && !!emp.password;
+  });
+  if (!candidates.length) return { ok: 0, failed: 0 };
+
+  let ok = 0;
+  let failed = 0;
+  for (const emp of candidates) {
+    try {
+      const secret = emp.role === "Cashier" ? { pin: String(emp.pin) } : { password: emp.password };
+      await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
+      ok += 1;
+    } catch (_) {
+      failed += 1;
+    }
+  }
+  return { ok, failed };
+}
 async function aiComplete({ system, messages, maxTokens = 400 }) {
   const cfg = syncConfig();
   const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
@@ -851,6 +873,7 @@ async function runSyncClient(currentData) {
   const cfg = syncConfig();
   const token = cfg.deviceToken || await ensureDeviceToken(currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null);
   let data = currentData;
+  const credentialProvision = await provisionCloudEmployeeCredentials(data);
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
   const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token };
@@ -872,7 +895,8 @@ async function runSyncClient(currentData) {
   await saveCursor(cursor);
   data = mergeSyncEvents(data, body.events || []);
   const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
-  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: rejectedText } };
+  const credentialText = credentialProvision.failed ? `${credentialProvision.failed} staff login(s) could not be updated in cloud.` : "";
+  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [rejectedText, credentialText].filter(Boolean).join(" ") } };
   await saveData(data);
   return { data, status: data._sync };
 }
