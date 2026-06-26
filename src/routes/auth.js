@@ -370,51 +370,57 @@ router.post("/register-owner", async (req, res) => {
 
 router.post("/users", requireDevice, async (req, res) => {
   await ensureAuthSchema();
-  const { id, name, role, email, password, pin, branchId, rights = [] } = req.body || {};
+  const { id, name, role, email, phone, password, pin, branchId, rights = [] } = req.body || {};
   if (!id || !name || !role) return res.status(400).json({ error: "id_name_role_required" });
-  const isCashier = role === "Cashier";
+  const isAdmin = role === "Admin" || id === "admin";
+  const isCashier = role === "Cashier" && !isAdmin;
   if (isCashier && !/^\d{4}$/.test(String(pin || ""))) return res.status(400).json({ error: "cashier_pin_required" });
   if (!isCashier && (!email || !password)) return res.status(400).json({ error: "email_password_required" });
 
   try {
-    const kind = isCashier ? "cashier" : "user";
+    const credentialId = isAdmin ? "admin" : id;
+    const kind = isAdmin ? "admin" : isCashier ? "cashier" : "user";
     const pinHash = isCashier ? await bcrypt.hash(String(pin), ROUNDS) : null;
     const passwordHash = !isCashier ? await bcrypt.hash(String(password), ROUNDS) : null;
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
-    const rightsPayload = Array.isArray(rights) ? { rights } : rights;
+    const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
+    const rightsPayload = isAdmin ? { admin: true } : Array.isArray(rights) ? { rights } : rights;
+    const credentialBranchId = isAdmin ? null : branchId || null;
 
     if (isMySql) {
       await q(
         `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
-         VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON DUPLICATE KEY UPDATE
            kind = VALUES(kind),
            name = VALUES(name),
            email = VALUES(email),
+           phone = VALUES(phone),
            pin_hash = VALUES(pin_hash),
            password_hash = VALUES(password_hash),
            branch_id = VALUES(branch_id),
            rights = VALUES(rights),
            updated_at = NOW()`,
-        [id, kind, String(name).trim(), normalizedEmail, pinHash, passwordHash, branchId || null, rightsPayload]
+        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, passwordHash, credentialBranchId, rightsPayload]
       );
     } else {
       await q(
         `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
-         VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (id) DO UPDATE SET
            kind = EXCLUDED.kind,
            name = EXCLUDED.name,
            email = EXCLUDED.email,
+           phone = EXCLUDED.phone,
            pin_hash = EXCLUDED.pin_hash,
            password_hash = EXCLUDED.password_hash,
            branch_id = EXCLUDED.branch_id,
            rights = EXCLUDED.rights,
            updated_at = now()`,
-        [id, kind, String(name).trim(), normalizedEmail, pinHash, passwordHash, branchId || null, rightsPayload]
+        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, passwordHash, credentialBranchId, rightsPayload]
       );
     }
-    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [id]);
+    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [credentialId]);
     res.json({ ok: true, account: publicAccount(result.rows[0]) });
   } catch (error) {
     console.error("upsert user credential failed:", error);

@@ -995,17 +995,22 @@ function accountToSession(account, fallbackBranchId = "") {
 }
 async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
+  const admin = data?.admin;
+  const owner = admin?.password && (admin?.email || admin?.phone)
+    ? [{ id: "admin", name: admin.name || "Owner", role: "Admin", email: admin.email || "", phone: admin.phone || "", password: admin.password, rights: { admin: true } }]
+    : [];
   const candidates = employees.filter((emp) => {
     if (!emp?.id || !emp?.name || !emp?.role) return false;
     if (emp.status === "deleted" || emp.status === "inactive") return false;
     if (emp.role === "Cashier") return /^\d{4}$/.test(String(emp.pin || ""));
     return !!emp.email && !!emp.password;
   });
-  if (!candidates.length) return { ok: 0, failed: 0 };
+  const allCandidates = [...owner, ...candidates];
+  if (!allCandidates.length) return { ok: 0, failed: 0 };
 
   let ok = 0;
   let failed = 0;
-  for (const emp of candidates) {
+  for (const emp of allCandidates) {
     try {
       const secret = emp.role === "Cashier" ? { pin: String(emp.pin) } : { password: emp.password };
       await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });

@@ -314,6 +314,33 @@ test("10. user credentials created on one device work for login on another devic
       assert.equal(res.body.account.name, "Cloud Manager");
       assert.ok(res.body.sessionToken);
     });
+
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "admin",
+      name: "Owner Admin",
+      role: "Admin",
+      email: "admin.cloud@example.com",
+      password: "Admin@123",
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.account.id, "admin");
+      assert.equal(res.body.account.kind, "admin");
+      assert.equal(res.body.account.role, "Admin");
+    });
+
+  await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "admin.cloud@example.com", password: "Admin@123" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.account.id, "admin");
+      assert.equal(res.body.account.role, "Admin");
+      assert.ok(res.body.sessionToken);
+    });
 });
 
 test("11. cloud login sessions can be validated and revoked", async () => {
