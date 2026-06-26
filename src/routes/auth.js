@@ -194,11 +194,12 @@ router.post("/login", async (req, res) => {
       const result = await q(
         `SELECT id, kind, name, branch_id, rights, pin_hash
            FROM credentials
-          WHERE pin_hash IS NOT NULL
-            AND ($1 IS NULL OR branch_id = $1 OR branch_id IS NULL)`,
-        [branchId ?? null]
+          WHERE pin_hash IS NOT NULL`,
+        []
       );
       for (const row of result.rows) {
+        const rowBranchId = row.branch_id ?? row.branchId ?? null;
+        if (branchId && rowBranchId && rowBranchId !== branchId) continue;
         if (await bcrypt.compare(pin, row.pin_hash)) {
           return res.json({ ok: true, account: publicAccount(row) });
         }
@@ -212,13 +213,15 @@ router.post("/login", async (req, res) => {
 
     const normalized = String(identifier).trim().toLowerCase();
     const result = await q(
-      `SELECT id, kind, name, branch_id, rights, password_hash
+      `SELECT id, kind, name, email, phone, branch_id, rights, password_hash
          FROM credentials
-        WHERE password_hash IS NOT NULL
-          AND (lower(email) = $1 OR phone = $2)`,
-      [normalized, String(identifier).trim()]
+        WHERE password_hash IS NOT NULL`,
+      []
     );
     for (const row of result.rows) {
+      const rowEmail = String(row.email || "").trim().toLowerCase();
+      const rowPhone = String(row.phone || "").trim();
+      if (rowEmail !== normalized && rowPhone !== String(identifier).trim()) continue;
       if (await bcrypt.compare(password, row.password_hash)) {
         return res.json({ ok: true, account: publicAccount(row) });
       }
@@ -235,7 +238,7 @@ function publicAccount(row) {
     id: row.id,
     kind: row.kind,
     name: row.name,
-    branchId: row.branch_id,
+    branchId: row.branch_id ?? row.branchId ?? null,
     rights: row.rights ?? {}
   };
 }
