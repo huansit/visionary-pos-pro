@@ -12,6 +12,7 @@
     "migrate": "node db/migrate.js",
     "seed:device": "node db/make-device.js",
     "seed:staff-logins": "node db/provision-staff-logins.js",
+    "repair:branches": "node db/repair-cloud-branches.js",
     "hash": "node db/hash-credential.js",
     "test:sync": "node --test test/sync.test.js",
     "desktop:start": "npm --prefix desktop start",
