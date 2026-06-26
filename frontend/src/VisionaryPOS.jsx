@@ -2795,6 +2795,7 @@ function Register({ data, update, online, employee, branch }) {
   const [q, setQ] = useState("");
   const [ident, setIdent] = useState("");
   const [note, setNote] = useState("");
+  const [saleErr, setSaleErr] = useState("");
   const [receipt, setReceipt] = useState(null);
   const [detail, setDetail] = useState(null);
   const [holds, setHolds] = useState([]);
@@ -2843,6 +2844,7 @@ function Register({ data, update, online, employee, branch }) {
     if (!p) return false;
     if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return false;
     setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 }));
+    setSaleErr("");
     scanFocus(true);
     return true;
   };
@@ -2850,6 +2852,11 @@ function Register({ data, update, online, employee, branch }) {
   const lines = cartLines(data, cart);
   const total = lines.reduce((s, l) => s + l.priceCents * l.qty, 0);
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
+  const belowCostLines = lines.filter((l) => {
+    const p = data.products.find((x) => x.id === l.productId);
+    return p && l.priceCents < p.costCents;
+  });
+  const saleBlocked = belowCostLines.length > 0;
   const notifyScan = (message, kind = "success") => {
     setFlash(message);
     playScanSound(kind);
@@ -2995,6 +3002,12 @@ function Register({ data, update, online, employee, branch }) {
   }); // eslint-disable-line
   const startCheckout = () => {
     if (lines.length === 0 || ident.trim() === "") return;
+    if (saleBlocked) {
+      const first = belowCostLines[0];
+      setSaleErr("Cannot complete sale: " + first.name + " is priced below cost. Edit the selling price first.");
+      notifyScan("Sale blocked: selling price is below cost.", "error");
+      return;
+    }
     setPinVal(""); setPinErr(false); setPinBusy(false); setFpErr(""); setPinPrompt(true);
   };
   const verifyCheckoutPin = async (pin) => {
@@ -3047,6 +3060,11 @@ function Register({ data, update, online, employee, branch }) {
   const doComplete = () => {
     if (lines.length === 0) return;
     if (ident.trim() === "") return;
+    if (saleBlocked) {
+      const first = belowCostLines[0];
+      setSaleErr("Cannot complete sale: " + first.name + " is priced below cost. Edit the selling price first.");
+      return;
+    }
     const ts = now(); const synced = online;
     const inv = { id: uid("inv"), number: receiptNo, customerId: null, customerName: ident.trim(), note: note.trim(),
       cashierId: employee.id, cashier: employee.name, branchId: branch.id, date: todayStr(), totalCents: total, paidCents: 0,
@@ -3211,12 +3229,14 @@ function Register({ data, update, online, employee, branch }) {
               <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional receipt note" /></div>
             <div className="calc"><div className="calcrow"><span>Subtotal</span><span className="v">{fmt(total, cur)}</span></div></div>
             <div className="paytotal"><span className="lbl">Total</span><span className="amt">{fmt(total, cur)}</span></div>
-            <button className="complete enterprise" disabled={lines.length === 0 || ident.trim() === ""} onClick={startCheckout}><Check /> Complete Sale <span>F4</span></button>
+            <button className="complete enterprise" disabled={lines.length === 0 || ident.trim() === "" || saleBlocked} onClick={startCheckout}><Check /> Complete Sale <span>F4</span></button>
             <div className="cart-actions" style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={holdSale}>Hold</button>
               <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={() => { setCart({}); scanFocus(true); }}>Clear</button>
             </div>
             {(ident.trim() === "" && lines.length > 0) && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>Enter a customer name / identifier to complete.</div>}
+            {saleBlocked && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>Selling price is below cost for {belowCostLines[0]?.name}. Edit price before checkout.</div>}
+            {saleErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{saleErr}</div>}
             <div className="cust-meta" style={{ textAlign: "center", marginTop: 8 }}>Issues an open invoice ({receiptNo}) cleared by admin or supervisor.</div>
           </div>
         </div>
@@ -5354,7 +5374,7 @@ function PricingTab({ data, update, branch }) {
   const query = q.trim().toLowerCase();
   const list = sortProductsAZ(data.products.filter((p) =>
     productBranchId(p, data) === bId &&
-    (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productCodeMatch(p, query))
+    (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
   return (
     <div>
