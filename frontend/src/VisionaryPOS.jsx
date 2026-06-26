@@ -2138,14 +2138,32 @@ export default function VisionPOS() {
     saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
   };
   const clearLocalCache = async () => {
-    const ok = window.confirm("Clear only this browser's local cache? Make sure sync is complete first. This will sign you out and reload cloud data.");
+    const ok = window.confirm("Refresh this device from cloud? This signs you out, clears temporary sync state, and keeps the current data if cloud refresh fails.");
     if (!ok) return;
-    await saveOutbox([]);
-    await saveCursor(0);
-    await clearSessionState();
-    await kvSet(STORE_KEY, "");
+    const backup = dataRef.current;
     setMenuOpen(false);
-    window.location.reload();
+    setSyncing(true);
+    try {
+      await saveOutbox([]);
+      await saveCursor(0);
+      await clearSessionState();
+      const fresh = await cloudBootstrapData({ ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } });
+      if (!fresh?.branches?.length && !fresh?.employees?.length && !fresh?.products?.length) throw new Error(fresh?._sync?.error || "cloud_refresh_returned_empty");
+      setSession(null);
+      setView("pin");
+      setData(fresh);
+      await saveData(fresh);
+    } catch (error) {
+      if (backup) {
+        const restored = { ...backup, _sync: { ...(backup._sync || {}), error: "Cache refresh failed: " + error.message } };
+        setData(restored);
+        await saveData(restored);
+      } else {
+        setData({ ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0, error: "Cache refresh failed: " + error.message } });
+      }
+    } finally {
+      setSyncing(false);
+    }
   };
   const runSync = async (opts = {}) => {
     if (!navigator.onLine || (!opts.force && syncing) || !dataRef.current) return;
