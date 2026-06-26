@@ -2491,6 +2491,7 @@ function Register({ data, update, online, employee, branch }) {
   const [pinPrompt, setPinPrompt] = useState(false);
   const [pinVal, setPinVal] = useState("");
   const [pinErr, setPinErr] = useState(false);
+  const [pinBusy, setPinBusy] = useState(false);
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
@@ -2674,18 +2675,32 @@ function Register({ data, update, online, employee, branch }) {
   }); // eslint-disable-line
   const startCheckout = () => {
     if (lines.length === 0 || ident.trim() === "") return;
-    setPinVal(""); setPinErr(false); setFpErr(""); setPinPrompt(true);
+    setPinVal(""); setPinErr(false); setPinBusy(false); setFpErr(""); setPinPrompt(true);
+  };
+  const verifyCheckoutPin = async (pin) => {
+    setPinBusy(true);
+    try {
+      if (online) {
+        const cloud = await cloudLogin({ pin, branchId: branch.id });
+        if (cloud?.account?.id !== employee.id) throw new Error("wrong_cashier_pin");
+      } else if (employee.pin !== pin) {
+        throw new Error("wrong_cashier_pin");
+      }
+      setTimeout(() => { setPinPrompt(false); setPinVal(""); setPinErr(false); doComplete(); }, 120);
+    } catch (_) {
+      setPinErr(true);
+      setTimeout(() => { setPinErr(false); setPinVal(""); }, 650);
+    } finally {
+      setPinBusy(false);
+    }
   };
   const pinPush = (d) => {
-    if (pinErr) return;
+    if (pinErr || pinBusy) return;
     if (d === "del") { setPinVal((v) => v.slice(0, -1)); return; }
     setPinVal((v) => {
       if (v.length >= 4) return v;
       const nv = v + d;
-      if (nv.length === 4) {
-        if (nv === employee.pin) { setTimeout(() => { setPinPrompt(false); setPinVal(""); doComplete(); }, 120); }
-        else { setPinErr(true); setTimeout(() => { setPinErr(false); setPinVal(""); }, 650); }
-      }
+      if (nv.length === 4) verifyCheckoutPin(nv);
       return nv;
     });
   };
@@ -2903,13 +2918,16 @@ function Register({ data, update, online, employee, branch }) {
       {pinPrompt && (
         <div className="scrim" onClick={() => { setPinPrompt(false); setPinVal(""); setPinErr(false); setFpErr(""); }}>
           <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Fingerprint style={{ width: 18, height: 18 }} /> Verify fingerprint</div>
+            <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Lock style={{ width: 18, height: 18 }} /> Authorize sale</div>
               <button className="iconbtn" onClick={() => { setPinPrompt(false); setPinVal(""); setPinErr(false); setFpErr(""); }}><X /></button></div>
-            <div className="sub" style={{ margin: "2px 0 4px" }}>{employee.name} must verify this sale with the enrolled SecuGen fingerprint.</div>
+            <div className="sub" style={{ margin: "2px 0 4px" }}>{employee.name} · enter your PIN to confirm this sale.</div>
             <div style={{ textAlign: "center", fontWeight: 800, fontSize: 20, color: "var(--text)", marginBottom: 6 }}>{fmt(total, cur)}</div>
-            <div className="notice" style={{ marginTop: 10, fontSize: 12 }}>Place the cashier's finger on the SecuGen Hamster reader, then scan. No fingerprint image is stored.</div>
+            <div className={"dots" + (pinErr ? " shake" : "")} style={{ margin: "10px 0 16px" }}>{[0, 1, 2, 3].map((i) => <span key={i} className={"dot" + (i < pinVal.length ? (pinErr ? " err" : " on") : "")} />)}</div>
+            {pinErr && <div className="alert" style={{ marginBottom: 12 }}><AlertCircle /> Incorrect PIN — try again.</div>}
+            <div className="pad">{["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((n) => <button key={n} className="key" disabled={pinBusy} onClick={() => pinPush(n)}>{n}</button>)}
+              <span className="key ghost" /><button className="key" disabled={pinBusy} onClick={() => pinPush("0")}>0</button><button className="key util" disabled={pinBusy} onClick={() => pinPush("del")}><Delete /></button></div>
             {fpErr && <div className="alert" style={{ marginBottom: 12 }}><AlertCircle /> {fpErr}</div>}
-            <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={fpBusy} onClick={verifyCheckoutFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan & Complete Sale"}</button>
+            <button className="btn btn-ghost" style={{ width: "100%", marginTop: 14 }} disabled={fpBusy || pinBusy} onClick={verifyCheckoutFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Use fingerprint instead"}</button>
           </div>
         </div>
       )}
