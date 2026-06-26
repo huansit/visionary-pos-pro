@@ -2333,6 +2333,15 @@ export default function VisionPOS() {
     const id = setTimeout(runSync, 300);
     return () => clearTimeout(id);
   }, [data, syncing]); // eslint-disable-line
+  useEffect(() => {
+    if (!data || view !== "register" || !session || syncing || !navigator.onLine) return;
+    const branches = Array.isArray(data.branches) ? data.branches : [];
+    const products = Array.isArray(data.products) ? data.products : [];
+    const hasCashierBranch = branches.some((b) => b.id === session.branchId);
+    if (hasCashierBranch && products.length) return;
+    const id = setTimeout(() => runSync({ force: true, source: "cashier-recovery" }), 500);
+    return () => clearTimeout(id);
+  }, [data, view, session?.id, session?.branchId, syncing]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
@@ -2386,7 +2395,7 @@ export default function VisionPOS() {
         <div className="content">
           {view === "register" && (session && cashierBranch
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />
-            : <CloudDataRecovery title="Cashier data is still loading" message="This device has a valid login, but the branch catalog has not finished loading from the cloud. Sync now, then try again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
+            : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
             ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} />
             : <CloudDataRecovery title="Cloud data is unavailable" message="This device could not load branches from the cloud yet. Sync now or sign out and log in again." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
@@ -6784,3 +6793,4 @@ function SettingsTab({ data, update, isAdmin, onCleanReset }) {
     </div>
   );
 }
+
