@@ -1832,8 +1832,18 @@ export default function VisionPOS() {
     const empty = { ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } };
     saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
   };
-  const runSync = async () => {
-    if (!navigator.onLine || syncing || !dataRef.current) return;
+  const clearLocalCache = async () => {
+    const ok = window.confirm("Clear only this browser's local cache? Make sure sync is complete first. This will sign you out and reload cloud data.");
+    if (!ok) return;
+    await saveOutbox([]);
+    await saveCursor(0);
+    await clearSessionState();
+    await kvSet(STORE_KEY, "");
+    setMenuOpen(false);
+    window.location.reload();
+  };
+  const runSync = async (opts = {}) => {
+    if (!navigator.onLine || (!opts.force && syncing) || !dataRef.current) return;
     syncRequestRef.current = false;
     setSyncing(true);
     try {
@@ -1905,8 +1915,9 @@ export default function VisionPOS() {
               {menuOpen && (<>
                 <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
-                  <div className="topmenu-row status"><span className={"led" + syncCls} />{syncLabel}{online && pending > 0 && !syncing && <button className="topmenu-mini" onClick={() => { runSync(); }}>Sync now</button>}</div>
+                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ force: true }); }}>Sync now</button>}</div>
                   <button className="topmenu-row" onClick={() => update((d) => ({ ...d, settings: { ...d.settings, theme: d.settings.theme === "dark" ? "light" : "dark" } }))}>{data.settings.theme === "dark" ? <Sun /> : <Moon />}<span>{data.settings.theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
+                  <button className="topmenu-row" onClick={clearLocalCache}><RefreshCw /><span>Clear cache</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
                 </div>

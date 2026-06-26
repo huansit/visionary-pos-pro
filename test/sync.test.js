@@ -108,7 +108,53 @@ test("4. pushing the same event again is idempotent with no duplicate", async ()
     });
 });
 
-test("5. product record last-write-wins keeps newer updatedAt and ignores older", async () => {
+test("5. two devices sync a complete transaction sale across invoice, payment, and stock movement", async () => {
+  const saleEvents = [
+    {
+      id: "inv-two-device-001",
+      type: "invoice",
+      branchId: "b_sip",
+      clientTs: 3000,
+      payload: { totalCents: 120000, paidCents: 120000, customerId: null, lines: [{ productId: "prod-two-device-001", qty: 2, priceCents: 60000 }] },
+    },
+    {
+      id: "pay-two-device-001",
+      type: "payment",
+      branchId: "b_sip",
+      clientTs: 3001,
+      payload: { invoiceId: "inv-two-device-001", method: "cash", amountCents: 120000 },
+    },
+    {
+      id: "stock-two-device-001",
+      type: "stockMovement",
+      branchId: "b_sip",
+      clientTs: 3002,
+      payload: { productId: "prod-two-device-001", qty: -2, reason: "sale", invoiceId: "inv-two-device-001" },
+    },
+  ];
+
+  const pushed = await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: saleEvents })
+    .expect(200);
+  assert.deepEqual(pushed.body.accepted.sort(), saleEvents.map((event) => event.id).sort());
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const byId = new Map(res.body.events.map((event) => [event.id, event]));
+      for (const event of saleEvents) {
+        assert.ok(byId.has(event.id), `${event.id} should be pulled by device B`);
+        assert.equal(byId.get(event.id).type, event.type);
+        assert.deepEqual(byId.get(event.id).payload, event.payload);
+      }
+    });
+});
+
+test("6. product record last-write-wins keeps newer updatedAt and ignores older", async () => {
   const newerProduct = {
     id: "prod-001",
     type: "product",
@@ -148,7 +194,7 @@ test("5. product record last-write-wins keeps newer updatedAt and ignores older"
     });
 });
 
-test("6. barcode catalog resolves by branch and reports unavailable branch products", async () => {
+test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {
   await request(app)
     .post("/api/barcodes/products")
     .set("Authorization", `Bearer ${state.tokenA}`)
@@ -193,7 +239,7 @@ test("6. barcode catalog resolves by branch and reports unavailable branch produ
     });
 });
 
-test("7. AI endpoint reports missing server configuration without exposing provider calls", async () => {
+test("8. AI endpoint reports missing server configuration without exposing provider calls", async () => {
   await request(app)
     .post("/api/ai/ask")
     .send({
