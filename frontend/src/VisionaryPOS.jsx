@@ -848,11 +848,14 @@ async function runSyncClient(currentData) {
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
   const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token };
+  let rejected = [];
   if (outbox.length) {
     const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, body: JSON.stringify({ events: outbox }) });
     if (!pushed.ok) throw new Error("push_failed_" + pushed.status);
     const body = await pushed.json();
-    outbox = outbox.filter((ev) => !(body.accepted || []).includes(ev.id));
+    rejected = Array.isArray(body.rejected) ? body.rejected : [];
+    const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
+    outbox = outbox.filter((ev) => !done.has(ev.id));
     await saveOutbox(outbox);
     data = markAcceptedSynced(data, body.accepted || []);
   }
@@ -862,7 +865,8 @@ async function runSyncClient(currentData) {
   cursor = Number(body.cursor || cursor || 0);
   await saveCursor(cursor);
   data = mergeSyncEvents(data, body.events || []);
-  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor } };
+  const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
+  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: rejectedText } };
   await saveData(data);
   return { data, status: data._sync };
 }

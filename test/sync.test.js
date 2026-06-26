@@ -251,3 +251,17 @@ test("8. AI endpoint reports missing server configuration without exposing provi
       assert.equal(res.body.error, "ai_not_configured");
     });
 });
+
+test("9. sync push reports rejected invalid events so clients can clear non-retryable queue items", async () => {
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [{ id: "bad-sync-001", type: "notARealType", payload: { value: true } }] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected.length, 1);
+      assert.equal(res.body.rejected[0].id, "bad-sync-001");
+      assert.equal(res.body.rejected[0].reason, "unknown_type");
+    });
+});
