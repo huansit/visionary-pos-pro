@@ -2059,7 +2059,12 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
   const submit = async () => {
     if (pin.length !== 4) return;
     try {
-      const cloud = await cloudLogin({ pin, branchId });
+      let cloud = null;
+      try {
+        cloud = await cloudLogin({ pin, branchId });
+      } catch (_) {
+        cloud = await cloudLogin({ pin });
+      }
       if (cloud?.account) {
         const emp = employees.find((e) => e.id === cloud.account.id) || { id: cloud.account.id, name: cloud.account.name, role: "Cashier", branchId: cloud.account.branchId || branchId, rights: cloud.account.rights?.rights || cloud.account.rights || ["sell", "customers"] };
         setTimeout(() => onSuccess(emp), 80);
