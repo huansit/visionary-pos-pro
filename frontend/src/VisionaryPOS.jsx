@@ -993,6 +993,15 @@ function accountToSession(account, fallbackBranchId = "") {
     status: account.status || "active",
   };
 }
+function isActiveEmployee(emp) {
+  return !!emp && emp.status !== "deleted" && emp.status !== "inactive";
+}
+function activeEmployees(data) {
+  return (data?.employees || []).filter(isActiveEmployee);
+}
+function activeCashiers(data) {
+  return activeEmployees(data).filter((e) => e.role === "Cashier");
+}
 async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
   const admin = data?.admin;
@@ -2510,7 +2519,7 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
         return;
       }
     } catch (_) {}
-    const m = employees.find((e) => e.role === "Cashier" && e.pin === pin && (!branchId || e.branchId === branchId));
+    const m = (employees || []).find((e) => isActiveEmployee(e) && e.role === "Cashier" && e.pin === pin && (!branchId || e.branchId === branchId));
     if (m) { setTimeout(() => onSuccess(m), 140); return; }
     setErr(true); setTimeout(() => { setErr(false); setPin(""); }, 600);
   };
@@ -2574,7 +2583,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     } catch (_) {}
     const ownerMatch = ((admin.email && em === admin.email.toLowerCase()) || (admin.phone && ph === normPhone(admin.phone))) && pw === admin.password;
     if (ownerMatch) return onSignedIn(null); // owner admin
-    const emp = (employees || []).find((e) => e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
+    const emp = (employees || []).find((e) => isActiveEmployee(e) && e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
     if (emp) return onSignedIn(emp);
     setErr("Those credentials don't match.");
   };
@@ -3713,6 +3722,7 @@ function InvoicesTab({ data, update, branch, user }) {
   const [fCashier, setFCashier] = useState("All"), [fCust, setFCust] = useState(""), [fDate, setFDate] = useState("");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
+  const cashierOptions = activeCashiers(data);
   const invoices = data.invoices;
   const open = invoices.filter((i) => invOutstanding(i) > 0);
   const overdue = invoices.filter((i) => invStatus(i) === "overdue" || invStatus(i) === "debt");
@@ -3748,7 +3758,7 @@ function InvoicesTab({ data, update, branch, user }) {
       <div className="section-title lead">Credit Control · Pending Invoice Management <span style={{ float: "right", fontWeight: 750 }}>{fmt(pendingTotal, cur)}</span></div>
       <div className="filters">
         <div><label className="label">Cashier</label><select className="select" value={fCashier} onChange={(e) => setFCashier(e.target.value)}>
-          <option value="All">All cashiers</option>{data.employees.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}</select></div>
+          <option value="All">All active cashiers</option>{cashierOptions.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}</select></div>
         <div><label className="label">Customer</label><input className="input" placeholder="Search customer" value={fCust} onChange={(e) => setFCust(e.target.value)} /></div>
         <div><label className="label">Date</label><input className="input" type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} /></div>
       </div>
@@ -5172,7 +5182,7 @@ function BranchesTab({ data, update }) {
           <div className="grid2" style={{ marginTop: 12 }}>
             <div><label className="label">Location</label><input className="input" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Shop location" /></div>
             <div><label className="label">Manager</label><select className="select" value={f.managerId} onChange={(e) => setF({ ...f, managerId: e.target.value })}>
-              <option value="">No manager</option>{data.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+              <option value="">No manager</option>{activeEmployees(data).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
           </div>
           <div className="field" style={{ marginTop: 12 }}><label className="label">M-Pesa Buy Goods Till (this branch)</label><input className="input" inputMode="numeric" value={f.mpesaTill} onChange={(e) => setF({ ...f, mpesaTill: e.target.value })} placeholder="e.g. 5204512" /></div>
           <label className="checkrow"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Branch active</label>
@@ -6478,7 +6488,7 @@ function UsersTab({ data, update, isAdmin }) {
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const [fpMsg, setFpMsg] = useState("");
-  const visibleEmployees = (data.employees || []).filter((e) => e.status !== "deleted");
+  const visibleEmployees = activeEmployees(data);
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
       await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
