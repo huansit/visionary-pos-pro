@@ -3134,7 +3134,28 @@ function Register({ data, update, online, employee, branch }) {
               </div>
             )}
           </div>
-          {(holds.length > 0 || flash) && <div className="poscard">
+          <div className="poscard invoice-panel">
+            <div className="sectit" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>Debt Tracker</span>
+              <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
+            </div>
+            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Carried-over debts</span><span className="v">{fmt(debtTotal, cur)}</span></div>
+            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} unpaid carried-over invoice{myDebts.length === 1 ? "" : "s"}</div>
+            {myDebts.length === 0 ? (
+              <div className="cust-meta" style={{ padding: "8px 2px" }}>No carried-over debts for your login.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 160, overflowY: "auto" }}>
+                {myDebts.slice(0, 6).map((i) => invRow(i))}
+              </div>
+            )}
+          </div>
+          <div className="poscard">
+            <div className="sectit">Quick Actions</div>
+            <div className="qa">
+              <button className="qabtn" onClick={() => setExp({ category: QEXP[0], amount: "", note: "" })}><Wallet /> Expense</button>
+              <button className="qabtn" onClick={holdSale}><Receipt /> Hold Sale</button>
+              <button className="qabtn" onClick={() => setDebtsOpen(true)}><AlertCircle /> My Debts{debtTotal > 0 ? " · " + fmt(debtTotal, cur) : ""}</button>
+            </div>
             {holds.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <div className="cust-meta" style={{ fontWeight: 600, marginBottom: 6 }}>Held sales ({holds.length})</div>
@@ -3142,7 +3163,7 @@ function Register({ data, update, online, employee, branch }) {
               </div>
             )}
             {flash && <div className="notice" style={{ marginTop: 10, fontSize: 12 }}>{flash}</div>}
-          </div>}
+          </div>
         </div>
 
         {/* CENTER — products (search-first, minimal) */}
