@@ -70,7 +70,7 @@ export type Receipt = {
   branchName: string;
   cashierName: string;
   customerName: string;
-  method: string;
+  note?: string;
   totalCents: number;
   items: Array<{ productId: string; name: string; qty: number; priceCents: number }>;
   ts: number;

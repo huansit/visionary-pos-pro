@@ -246,29 +246,17 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
         id: invoiceId,
         number: receipt.number,
         customerName: receipt.customerName,
+        note: receipt.note || "",
         cashierId: account.id,
         cashier: account.name,
         branchId: terminal.branchId,
         date: new Date(ts).toISOString().slice(0, 10),
         totalCents: receipt.totalCents,
-        paidCents: receipt.totalCents,
+        paidCents: 0,
         items: receipt.items,
-        method: receipt.method,
-        status: "paid",
-        ts
-      }
-    },
-    {
-      id: uid("pay"),
-      type: "payment",
-      branchId: terminal.branchId,
-      clientTs: ts,
-      payload: {
-        orderId: invoiceId,
-        invoiceId,
-        method: receipt.method.toLowerCase(),
-        amountCents: receipt.totalCents,
-        status: "captured",
+        method: "Invoice",
+        status: "open",
+        carriedOver: false,
         ts
       }
     },

@@ -103,8 +103,8 @@ export default function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
-  const [customerName, setCustomerName] = useState("Walk-in");
-  const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [customerName, setCustomerName] = useState("");
+  const [saleNote, setSaleNote] = useState("");
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
   const [error, setError] = useState("");
   const [cashSession, setCashSession] = useState<CashSession | null>(() => loadCashSession());
@@ -227,15 +227,15 @@ export default function App() {
   }
 
   async function completeSale() {
-    if (!terminal || !account || !cashSession || !cartLines.length) return;
+    if (!terminal || !account || !cartLines.length || !customerName.trim()) return;
     setError("");
     const receiptNumber = `RCP-${terminal.branchId.toUpperCase()}-${Date.now().toString().slice(-6)}`;
     const nextReceipt: Receipt = {
       number: receiptNumber,
       branchName: branch?.name || terminal.branchId,
       cashierName: account.name,
-      customerName: customerName.trim() || "Walk-in",
-      method: paymentMethod,
+      customerName: customerName.trim(),
+      note: saleNote.trim(),
       totalCents,
       ts: Date.now(),
       items: cartLines.map((line) => ({
@@ -249,8 +249,9 @@ export default function App() {
       await pushCheckout(terminal, account, nextReceipt);
       setReceipt(nextReceipt);
       setCart({});
-      setCustomerName("Walk-in");
-      setStatus("Sale completed.");
+      setCustomerName("");
+      setSaleNote("");
+      setStatus(`Open invoice ${receiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
       setError(`Checkout failed: ${String(err)}`);
@@ -437,15 +438,12 @@ export default function App() {
             ))}
           </div>
           <label>Customer</label>
-          <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Walk-in" />
-          <label>Payment</label>
-          <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
-            <option>Cash</option>
-            <option>M-Pesa</option>
-            <option>Card</option>
-          </select>
-          <button className="checkout" disabled={!cashSession || !cartLines.length} onClick={completeSale}>Complete Sale</button>
-          {!cashSession && <p className="hint">Open a cash session before checkout.</p>}
+          <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
+          <label>Sale note</label>
+          <input value={saleNote} onChange={(event) => setSaleNote(event.target.value)} placeholder="Optional receipt note" />
+          <button className="checkout" disabled={!cartLines.length || !customerName.trim()} onClick={completeSale}>Complete Sale</button>
+          {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
+          <p className="hint muted">Issues an open invoice cleared by admin or supervisor.</p>
         </aside>
       </section>
 
@@ -587,6 +585,7 @@ function ReceiptPreview({ receipt, onClose }: { receipt: Receipt; onClose: () =>
           <p>Receipt: {receipt.number}</p>
           <p>Cashier: {receipt.cashierName}</p>
           <p>Customer: {receipt.customerName}</p>
+          {receipt.note && <p>Note: {receipt.note}</p>}
           <hr />
           {receipt.items.map((item) => (
             <div className="receipt-line" key={item.name + item.qty}>
@@ -596,7 +595,7 @@ function ReceiptPreview({ receipt, onClose }: { receipt: Receipt; onClose: () =>
           ))}
           <hr />
           <div className="receipt-total"><span>Total</span><b>{money(receipt.totalCents)}</b></div>
-          <p>Paid by {receipt.method}</p>
+          <p>Open invoice - not paid at checkout.</p>
           <p>Thank you.</p>
         </div>
         <div className="receipt-actions">
