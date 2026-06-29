@@ -6,3 +6,5 @@ npm-debug.log*
 frontend/dist/
 desktop/dist/
 desktop/release/
+cashier-tauri/dist/
+cashier-tauri/src-tauri/target/

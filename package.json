@@ -17,7 +17,10 @@
     "test:sync": "node --test test/sync.test.js",
     "desktop:start": "npm --prefix desktop start",
     "desktop:dist:win": "npm --prefix desktop run dist:win",
-    "desktop:pack:win": "npm --prefix desktop run pack:win"
+    "desktop:pack:win": "npm --prefix desktop run pack:win",
+    "cashier-tauri:dev": "npm --prefix cashier-tauri run tauri:dev",
+    "cashier-tauri:build": "npm --prefix cashier-tauri run build",
+    "cashier-tauri:dist:win": "npm --prefix cashier-tauri run tauri:build"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
