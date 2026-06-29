@@ -39,6 +39,19 @@ export type Product = {
   stockQty: number;
 };
 
+export type Invoice = {
+  id: string;
+  number: string;
+  branchId: string;
+  cashierId?: string;
+  customerName?: string;
+  totalCents: number;
+  paidCents: number;
+  carriedOver?: boolean;
+  status?: string;
+  ts?: number;
+};
+
 export type CartLine = {
   product: Product;
   qty: number;

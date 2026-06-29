@@ -9,7 +9,7 @@ import {
   resolveBarcode
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, CashSession, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, CashSession, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const CASH_SESSION_KEY = "visionpos:cashier:cash-session:v1";
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
@@ -41,19 +41,23 @@ function saveCashSession(session: CashSession | null) {
   else localStorage.setItem(CASH_SESSION_KEY, JSON.stringify(session));
 }
 
-function saveCatalog(branches: Branch[], products: Product[]) {
-  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products, savedAt: Date.now() }));
+function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
+  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products, invoices, savedAt: Date.now() }));
 }
 
-function loadCatalog(): { branches: Branch[]; products: Product[] } {
+function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[] } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [] };
+    if (!raw) return { branches: [], products: [], invoices: [] };
     const parsed = JSON.parse(raw);
-    return { branches: parsed.branches || [], products: parsed.products || [] };
+    return { branches: parsed.branches || [], products: parsed.products || [], invoices: parsed.invoices || [] };
   } catch {
-    return { branches: [], products: [] };
+    return { branches: [], products: [], invoices: [] };
   }
+}
+
+function outstanding(invoice: Invoice) {
+  return Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
 }
 
 function useScanner(onScan: (barcode: string) => void, enabled = true) {
@@ -96,6 +100,7 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
   const [customerName, setCustomerName] = useState("Walk-in");
@@ -110,6 +115,10 @@ export default function App() {
   const cartLines = Object.values(cart);
   const totalCents = cartLines.reduce((sum, line) => sum + line.qty * line.product.priceCents, 0);
   const itemCount = cartLines.reduce((sum, line) => sum + line.qty, 0);
+  const openInvoices = useMemo(() => invoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [invoices]);
+  const carriedDebts = useMemo(() => invoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [invoices]);
+  const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
+  const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
 
   const filteredProducts = useMemo(() => {
     const q = normalize(query);
@@ -127,6 +136,7 @@ export default function App() {
       const cached = loadCatalog();
       setBranches(cached.branches);
       setProducts(cached.products);
+      setInvoices(cached.invoices);
       if (stored) {
         setTerminal(stored);
         setStatus("Terminal registered.");
@@ -150,8 +160,9 @@ export default function App() {
       const pulled = await pullCatalog(nextTerminal);
       setBranches(pulled.branches);
       setProducts(pulled.products);
-      saveCatalog(pulled.branches, pulled.products);
-      setStatus("Connected.");
+      setInvoices(pulled.invoices);
+      saveCatalog(pulled.branches, pulled.products, pulled.invoices);
+      setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
     } catch (err) {
       if (String(err).includes("terminal_not_authorized")) {
         await clearTerminalCredentials();
@@ -328,6 +339,42 @@ export default function App() {
 
       <section className="layout">
         <aside className="left-panel">
+          <div className="card dark open-invoices">
+            <div className="card-head">
+              <div>
+                <h3>Open invoices</h3>
+                <strong>{branch?.name || terminal.branchId}</strong>
+              </div>
+              <span className="scanner-pill">On</span>
+            </div>
+            <div className="invoice-total">
+              <span>{openInvoices.length} unpaid invoice{openInvoices.length === 1 ? "" : "s"}</span>
+              <b>{money(openInvoiceTotal)}</b>
+            </div>
+            {openInvoices.length === 0 ? (
+              <div className="invoice-empty">
+                <b>No open invoices</b>
+                <span>Paid and closed invoices stay out of the cashier workspace.</span>
+              </div>
+            ) : (
+              <div className="invoice-list">
+                {openInvoices.slice(0, 8).map((invoice) => (
+                  <button key={invoice.id} className="invoice-row" onClick={() => setCustomerName(invoice.customerName || "Walk-in")}>
+                    <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
+                    <strong>{money(outstanding(invoice))}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="card dark debt-card">
+            <div className="card-head">
+              <h3>Debt tracker</h3>
+              <b>{money(carriedDebtTotal)}</b>
+            </div>
+            <div className="debt-line"><span>Carried-over debts</span><b>{money(carriedDebtTotal)}</b></div>
+            <p>{carriedDebts.length} unpaid carried-over invoice{carriedDebts.length === 1 ? "" : "s"}</p>
+          </div>
           <CashSessionCard
             cashSession={cashSession}
             openCashSession={openCashSession}
