@@ -3729,6 +3729,7 @@ const NAV_GROUPS = [
   ] },
   { id: "admgrp", label: "Administration", icon: ShieldCheck, items: [
     { id: "users", label: "Users & Security", icon: ShieldCheck },
+    { id: "terminals", label: "Terminals", icon: KeyRound },
     { id: "system", label: "System Health", icon: RefreshCw },
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ] },
@@ -3831,6 +3832,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" />;
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
+      case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
       default: return <DashboardTab data={data} update={update} branch={branch} online={online} />;
@@ -6635,6 +6637,89 @@ function passwordIssue(pw) {
   if (!/[0-9]/.test(pw)) return "Password needs at least one number.";
   if (!/[^A-Za-z0-9]/.test(pw)) return "Password needs at least one special character.";
   return null;
+}
+function TerminalsTab({ data, isAdmin }) {
+  const [terminals, setTerminals] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [activation, setActivation] = useState({ terminalName: "", branchId: data.branches[0]?.id || "", code: "" });
+  const loadTerminals = async () => {
+    if (!isAdmin) return;
+    setBusy(true);
+    try {
+      const result = await authGet("/api/auth/terminals", { device: true });
+      setTerminals(result.terminals || []);
+      setMsg("");
+    } catch (error) {
+      setMsg("Could not load terminals: " + error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const generateActivation = async () => {
+    if (!activation.terminalName.trim() || !activation.branchId) return setMsg("Enter terminal name and branch.");
+    setBusy(true);
+    try {
+      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim(), branchId: activation.branchId }, { device: true });
+      setActivation((p) => ({ ...p, code: result.code || "" }));
+      setMsg("Activation code generated. Open VISIONPOS Cashier and enter this code once.");
+    } catch (error) {
+      setMsg("Could not generate activation code: " + error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const updateTerminal = async (terminal, patch) => {
+    setBusy(true);
+    try {
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), patch, { device: true });
+      await loadTerminals();
+    } catch (error) {
+      setMsg("Terminal update failed: " + error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => { loadTerminals(); }, [isAdmin]); // eslint-disable-line
+  if (!isAdmin) return <div><PageHead title="Terminals" sub="Only the owner admin can manage cashier terminals." /><div className="notice">Sign in as the owner admin to generate terminal activation codes.</div></div>;
+  return (
+    <div>
+      <PageHead title="Terminals" sub="Register cashier desktop apps, assign them to branches, and revoke lost devices." />
+      <div className="addpanel fade" style={{ marginBottom: 14 }}>
+        <div className="section-title" style={{ marginTop: 0 }}>Generate activation code</div>
+        <div className="grid3">
+          <div><label className="label">Terminal name</label><input className="input" value={activation.terminalName} onChange={(e) => setActivation({ ...activation, terminalName: e.target.value, code: "" })} placeholder="SIPCITY Till 1" /></div>
+          <div><label className="label">Branch</label><select className="select" value={activation.branchId} onChange={(e) => setActivation({ ...activation, branchId: e.target.value, code: "" })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" disabled={busy} onClick={generateActivation}><KeyRound /> Generate code</button></div>
+        </div>
+        {activation.code && (
+          <div className="notice" style={{ marginTop: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0 }}>Enter this code in the VISIONPOS Cashier app</div>
+            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: ".1em", marginTop: 6 }}>{activation.code}</div>
+          </div>
+        )}
+        {msg && <div className="notice" style={{ marginTop: 12 }}>{msg}</div>}
+      </div>
+      <div className="tablewrap">
+        <table><thead><tr><th>Terminal</th><th>Branch</th><th>Status</th><th>Version</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>
+          {terminals.length === 0 ? <tr><td colSpan="6">No activated terminals yet. Generate a code, then activate the desktop app.</td></tr> : terminals.map((t) => (
+            <tr key={t.uuid}>
+              <td><b>{t.terminalName}</b><div className="muted mono">{String(t.uuid || "").slice(0, 8)}...</div></td>
+              <td><select className="select" value={t.branchId || ""} onChange={(e) => updateTerminal(t, { branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
+              <td><span className={"ist " + (t.status === "ACTIVE" ? "paid" : t.status === "DISABLED" ? "hold" : "bad")}>{t.status}</span></td>
+              <td>{t.appVersion || "-"}</td>
+              <td>{t.lastSeen ? new Date(t.lastSeen).toLocaleString() : "Never"}</td>
+              <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="btn xs btn-ghost" disabled={busy} onClick={() => { const name = prompt("Rename terminal", t.terminalName || ""); if (name) updateTerminal(t, { terminalName: name }); }}><Edit /> Rename</button>
+                {t.status === "ACTIVE" ? <button className="btn xs btn-ghost" disabled={busy} onClick={() => updateTerminal(t, { action: "disable" })}><X /> Disable</button> : <button className="btn xs btn-ghost" disabled={busy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "activate" })}><Check /> Enable</button>}
+                <button className="btn xs btn-ghost" disabled={busy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "revoke" })}><Trash2 /> Revoke</button>
+              </td>
+            </tr>
+          ))}
+        </tbody></table>
+      </div>
+    </div>
+  );
 }
 function UsersTab({ data, update, isAdmin }) {
   const [adding, setAdding] = useState(false);
