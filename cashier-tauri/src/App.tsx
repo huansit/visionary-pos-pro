@@ -1,5 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Barcode, Building2, Check, FileText, Menu, Search, WalletCards, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Barcode,
+  Building2,
+  Check,
+  FileText,
+  KeyRound,
+  Lock,
+  Menu,
+  MonitorCheck,
+  PackageCheck,
+  RefreshCw,
+  Search,
+  Server,
+  ShieldCheck,
+  UserRound,
+  WalletCards,
+  Wifi,
+  X
+} from "lucide-react";
 import {
   activateTerminal,
   loginCashier,
@@ -24,18 +42,29 @@ function normalize(value: string) {
 }
 
 function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
-  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products, invoices, savedAt: Date.now() }));
+  const savedAt = Date.now();
+  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products, invoices, savedAt }));
+  return savedAt;
 }
 
-function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[] } {
+function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; savedAt?: number } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
     if (!raw) return { branches: [], products: [], invoices: [] };
     const parsed = JSON.parse(raw);
-    return { branches: parsed.branches || [], products: parsed.products || [], invoices: parsed.invoices || [] };
+    return { branches: parsed.branches || [], products: parsed.products || [], invoices: parsed.invoices || [], savedAt: parsed.savedAt };
   } catch {
     return { branches: [], products: [], invoices: [] };
   }
+}
+
+function syncLabel(ts?: number) {
+  if (!ts) return "Not synced yet";
+  const seconds = Math.max(1, Math.round((Date.now() - ts) / 1000));
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minutes ago`;
+  return new Date(ts).toLocaleString();
 }
 
 function outstanding(invoice: Invoice) {
@@ -93,6 +122,7 @@ export default function App() {
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
@@ -125,6 +155,7 @@ export default function App() {
       setBranches(cached.branches);
       setProducts(cached.products);
       setInvoices(cached.invoices);
+      setLastSyncAt(cached.savedAt);
       if (stored) {
         setTerminal(stored);
         setStatus("Terminal registered.");
@@ -179,7 +210,7 @@ export default function App() {
       setBranches(pulled.branches);
       setProducts(pulled.products);
       setInvoices(pulled.invoices);
-      saveCatalog(pulled.branches, pulled.products, pulled.invoices);
+      setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
       setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
     } catch (err) {
       if (String(err).includes("terminal_not_authorized")) {
@@ -287,7 +318,16 @@ export default function App() {
   }
 
   if (!terminal) {
-    return <ActivationScreen onActivated={(next) => { setTerminal(next); refreshCatalog(next); }} error={error} />;
+    return (
+      <ActivationScreen
+        onActivated={(next) => { setTerminal(next); refreshCatalog(next); }}
+        error={error}
+        status={status}
+        productCount={products.length}
+        invoiceCount={invoices.length}
+        lastSyncAt={lastSyncAt}
+      />
+    );
   }
 
   if (!account) {
@@ -295,6 +335,9 @@ export default function App() {
       <LoginScreen
         terminal={terminal}
         branch={branch}
+        productCount={products.length}
+        invoiceCount={invoices.length}
+        lastSyncAt={lastSyncAt}
         status={status}
         error={error}
         onLogin={async (employeeNumber, pin) => {
@@ -548,7 +591,153 @@ function DebtsModal({ debts, totalCents, onClose }: { debts: Invoice[]; totalCen
   );
 }
 
-function ActivationScreen({ onActivated, error }: { onActivated: (terminal: TerminalCredentials) => void; error: string }) {
+function ConnectionIndicator({ label, state = "online" }: { label: string; state?: "online" | "warning" | "muted" }) {
+  return (
+    <div className={`connection-indicator ${state}`}>
+      <span className="pulse-dot" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function BrandSection() {
+  return (
+    <section className="auth-brand">
+      <div className="brand-mark">V</div>
+      <div>
+        <h1>VisionPOS</h1>
+        <p>Business in Focus</p>
+      </div>
+      <div className="auth-visual" aria-hidden="true">
+        <span className="orb orb-one" />
+        <span className="orb orb-two" />
+        <span className="orb orb-three" />
+        <div className="glass-terminal">
+          <div className="terminal-top"><span /><span /><span /></div>
+          <div className="terminal-grid"><b /><b /><b /><b /></div>
+          <div className="terminal-line" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StatusPanel({
+  terminal,
+  branch,
+  productCount,
+  invoiceCount,
+  lastSyncAt,
+  status,
+  activationMode = false
+}: {
+  terminal?: TerminalCredentials | null;
+  branch?: Branch | null;
+  productCount: number;
+  invoiceCount: number;
+  lastSyncAt?: number;
+  status: string;
+  activationMode?: boolean;
+}) {
+  const online = !/cached|failed|error/i.test(status);
+  return (
+    <section className="status-panel">
+      <div className="status-title">
+        <span>System Status</span>
+        <ConnectionIndicator label={online ? "Online" : "Attention"} state={online ? "online" : "warning"} />
+      </div>
+      <div className="status-checks">
+        <div><ShieldCheck size={17} />Secure Connection</div>
+        <div><MonitorCheck size={17} />{activationMode ? "Activation Required" : "Terminal Registered"}</div>
+        <div><Server size={17} />Connected to Server</div>
+        <div><PackageCheck size={17} />Products Loaded</div>
+        <div><RefreshCw size={17} />Inventory Synced</div>
+      </div>
+      <div className="status-cards">
+        <div><span>Branch Name</span><b>{branch?.name || terminal?.branchId || "Pending activation"}</b></div>
+        <div><span>Terminal Name</span><b>{terminal?.terminalName || "Not registered"}</b></div>
+        <div><span>Inventory</span><b>{productCount.toLocaleString()} Products</b></div>
+        <div><span>Invoices</span><b>{invoiceCount.toLocaleString()} Records</b></div>
+        <div><span>Last Synchronization</span><b>{syncLabel(lastSyncAt)}</b></div>
+        <div><span>Current Version</span><b>v0.1.0</b></div>
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="auth-footer">
+      <span>VisionPOS</span>
+      <span>Business in Focus</span>
+      <span>Version 0.1.0</span>
+      <span>Copyright {new Date().getFullYear()}</span>
+    </footer>
+  );
+}
+
+function AuthShell({
+  children,
+  terminal,
+  branch,
+  productCount,
+  invoiceCount,
+  lastSyncAt,
+  status,
+  activationMode = false
+}: {
+  children: ReactNode;
+  terminal?: TerminalCredentials | null;
+  branch?: Branch | null;
+  productCount: number;
+  invoiceCount: number;
+  lastSyncAt?: number;
+  status: string;
+  activationMode?: boolean;
+}) {
+  return (
+    <main className="auth premium-auth">
+      <div className="auth-left">
+        <BrandSection />
+        <StatusPanel
+          terminal={terminal}
+          branch={branch}
+          productCount={productCount}
+          invoiceCount={invoiceCount}
+          lastSyncAt={lastSyncAt}
+          status={status}
+          activationMode={activationMode}
+        />
+        <Footer />
+      </div>
+      <div className="auth-right">{children}</div>
+    </main>
+  );
+}
+
+function LoginCard({ eyebrow, title, subtitle, children }: { eyebrow: string; title: string; subtitle: string; children: ReactNode }) {
+  return (
+    <section className="auth-card login-panel">
+      <div className="panel-eyebrow">{eyebrow}</div>
+      <h1>{title}</h1>
+      <p>{subtitle}</p>
+      {children}
+      <div className="assist-line">
+        <span>Need assistance?</span>
+        <b>Contact your administrator.</b>
+      </div>
+    </section>
+  );
+}
+
+function ActivationScreen({ onActivated, error, status, productCount, invoiceCount, lastSyncAt }: {
+  onActivated: (terminal: TerminalCredentials) => void;
+  error: string;
+  status: string;
+  productCount: number;
+  invoiceCount: number;
+  lastSyncAt?: number;
+}) {
   const [code, setCode] = useState("");
   const [terminalName, setTerminalName] = useState(`Till ${new Date().toLocaleDateString()}`);
   const [busy, setBusy] = useState(false);
@@ -569,25 +758,25 @@ function ActivationScreen({ onActivated, error }: { onActivated: (terminal: Term
   }
 
   return (
-    <main className="auth">
-      <div className="auth-card">
-        <div className="logo">V</div>
-        <h1>Register Terminal</h1>
-        <p>Enter the activation code generated by an admin. This computer will become a registered cashier terminal.</p>
+    <AuthShell productCount={productCount} invoiceCount={invoiceCount} lastSyncAt={lastSyncAt} status={status} activationMode>
+      <LoginCard eyebrow="Terminal Setup" title="Register Terminal" subtitle="Activate this computer as a trusted cashier workstation.">
         <label>Terminal name</label>
-        <input value={terminalName} onChange={(event) => setTerminalName(event.target.value)} />
+        <div className="premium-input"><MonitorCheck size={20} /><input value={terminalName} onChange={(event) => setTerminalName(event.target.value)} /></div>
         <label>Activation code</label>
-        <input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCD-1234-EFGH" />
+        <div className="premium-input"><KeyRound size={20} /><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCD-1234-EFGH" /></div>
         {message && <div className="error">{message}</div>}
-        <button disabled={busy || code.length < 8} onClick={submit}>{busy ? "Registering..." : "Activate Terminal"}</button>
-      </div>
-    </main>
+        <button className="premium-primary" disabled={busy || code.length < 8} onClick={submit}>{busy ? <span className="spinner" /> : <ShieldCheck size={20} />}{busy ? "Registering..." : "Activate Terminal"}</button>
+      </LoginCard>
+    </AuthShell>
   );
 }
 
 function LoginScreen({
   terminal,
   branch,
+  productCount,
+  invoiceCount,
+  lastSyncAt,
   status,
   error,
   onLogin,
@@ -595,6 +784,9 @@ function LoginScreen({
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
+  productCount: number;
+  invoiceCount: number;
+  lastSyncAt?: number;
   status: string;
   error: string;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
@@ -618,20 +810,22 @@ function LoginScreen({
   }
 
   return (
-    <main className="auth">
-      <div className="auth-card">
-        <div className="logo">V</div>
-        <h1>Cashier Login</h1>
+    <AuthShell terminal={terminal} branch={branch} productCount={productCount} invoiceCount={invoiceCount} lastSyncAt={lastSyncAt} status={status}>
+      <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
+        <div className="terminal-summary">
+          <ConnectionIndicator label="Terminal Registered" />
+          <span>{branch?.name || terminal.branchId} / {terminal.terminalName}</span>
+        </div>
         <p>{branch?.name || terminal.branchId} · {terminal.terminalName}</p>
         <label>Employee number</label>
-        <input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} autoFocus />
+        <div className="premium-input"><UserRound size={20} /><input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} autoFocus /></div>
         <label>PIN</label>
-        <input value={pin} onChange={(event) => setPin(event.target.value)} type="password" inputMode="numeric" />
+        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} type="password" inputMode="numeric" /></div>
         {(message || status) && <div className={message ? "error" : "notice"}>{message || status}</div>}
-        <button disabled={busy || !employeeNumber.trim() || pin.length < 4} onClick={submit}>{busy ? "Signing in..." : "Sign In"}</button>
-        <button className="ghost" onClick={onResetTerminal}>Reset terminal registration</button>
-      </div>
-    </main>
+        <button className="premium-primary" disabled={busy || !employeeNumber.trim() || pin.length < 4} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
+        <button className="premium-secondary" onClick={onResetTerminal}>Reset Terminal Registration</button>
+      </LoginCard>
+    </AuthShell>
   );
 }
 
