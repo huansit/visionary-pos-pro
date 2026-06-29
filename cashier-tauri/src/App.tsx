@@ -37,8 +37,87 @@ function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function normalize(value: string) {
   return value.trim().toLowerCase();
+}
+
+function receiptPrintHtml(receipt: Receipt) {
+  const lines = receipt.items.map((item) => `
+    <div class="line">
+      <span>${escapeHtml(String(item.qty))} x ${escapeHtml(item.name)}</span>
+      <b>${escapeHtml(money(item.qty * item.priceCents))}</b>
+    </div>
+  `).join("");
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Receipt ${escapeHtml(receipt.number)}</title>
+  <style>
+    @page { size: 76mm auto; margin: 4mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 68mm;
+      color: #111827;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    h1 { margin: 0 0 8px; text-align: center; font-size: 17px; }
+    p { margin: 4px 0; text-align: center; }
+    hr { border: 0; border-top: 1px dashed #9CA3AF; margin: 10px 0; }
+    .line, .total { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; break-inside: avoid; }
+    .line span { max-width: 42mm; }
+    .total { font-size: 15px; font-weight: 900; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(receipt.branchName)}</h1>
+  <p>${escapeHtml(new Date(receipt.ts).toLocaleString())}</p>
+  <p>Receipt: ${escapeHtml(receipt.number)}</p>
+  <p>Cashier: ${escapeHtml(receipt.cashierName)}</p>
+  <p>Customer: ${escapeHtml(receipt.customerName)}</p>
+  ${receipt.note ? `<p>Note: ${escapeHtml(receipt.note)}</p>` : ""}
+  <hr />
+  ${lines}
+  <hr />
+  <div class="total"><span>Total</span><b>${escapeHtml(money(receipt.totalCents))}</b></div>
+  <p>Open invoice - not paid at checkout.</p>
+  <p>Thank you.</p>
+  <script>window.onload = () => { window.focus(); window.print(); setTimeout(() => window.close(), 500); };</script>
+</body>
+</html>`;
+}
+
+function printReceipt(receipt: Receipt) {
+  const frame = document.createElement("iframe");
+  frame.title = "Receipt print";
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.onload = () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+    window.setTimeout(() => frame.remove(), 1000);
+  };
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write(receiptPrintHtml(receipt));
+  doc.close();
 }
 
 function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
@@ -230,8 +309,7 @@ export default function App() {
       return codes.includes(normalize(barcode));
     });
     if (local) {
-      addToCart(local);
-      setStatus(`Added ${local.name}`);
+      if (addToCart(local)) setStatus(`Added ${local.name}`);
       focusSearch();
       return;
     }
@@ -244,8 +322,7 @@ export default function App() {
         return;
       }
       setProducts((current) => [...current.filter((item) => item.id !== remote.id), remote].sort((a, b) => a.name.localeCompare(b.name)));
-      addToCart(remote);
-      setStatus(`Added ${remote.name}`);
+      if (addToCart(remote)) setStatus(`Added ${remote.name}`);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -254,11 +331,29 @@ export default function App() {
   }
 
   function addToCart(product: Product) {
+    const stockQty = Number(product.stockQty || 0);
+    const currentQty = cart[product.id]?.qty || 0;
+    if (stockQty <= 0) {
+      setError(`${product.name} is out of stock and cannot be added.`);
+      setStatus("Out of stock.");
+      setQuery("");
+      focusSearch();
+      return false;
+    }
+    if (currentQty >= stockQty) {
+      setError(`Only ${stockQty} available for ${product.name}.`);
+      setStatus("Stock limit reached.");
+      setQuery("");
+      focusSearch();
+      return false;
+    }
     setCart((current) => ({
       ...current,
       [product.id]: { product, qty: (current[product.id]?.qty || 0) + 1 }
     }));
     setQuery("");
+    setError("");
+    return true;
   }
 
   function changeQty(productId: string, delta: number) {
@@ -278,6 +373,13 @@ export default function App() {
   async function completeSale() {
     if (!terminal || !account || !cartLines.length || !customerName.trim()) return;
     setError("");
+    const unavailable = cartLines.find((line) => line.product.stockQty <= 0 || line.qty > line.product.stockQty);
+    if (unavailable) {
+      setError(`${unavailable.product.name} has insufficient stock for this sale.`);
+      setStatus("Sale blocked by stock control.");
+      focusSearch();
+      return;
+    }
     const receiptNumber = `RCP-${terminal.branchId.toUpperCase()}-${Date.now().toString().slice(-6)}`;
     const nextReceipt: Receipt = {
       number: receiptNumber,
@@ -438,7 +540,7 @@ export default function App() {
           </div>
           <div className="product-grid">
             {filteredProducts.map((product) => (
-              <button className="product-card" key={product.id} onClick={() => addToCart(product)}>
+              <button className="product-card" key={product.id} disabled={product.stockQty <= 0} onClick={() => addToCart(product)}>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
                 <span className="product-name">{product.name}</span>
                 <span className="product-code">{[product.sku || product.barcode || "No code", product.size].filter(Boolean).join(" - ")}</span>
@@ -860,7 +962,7 @@ function ReceiptPreview({ receipt, onClose }: { receipt: Receipt; onClose: () =>
           <p>Thank you.</p>
         </div>
         <div className="receipt-actions">
-          <button onClick={() => window.print()}>Print receipt</button>
+          <button onClick={() => printReceipt(receipt)}>Print receipt</button>
           <button className="ghost" onClick={onClose}>Close</button>
         </div>
       </div>

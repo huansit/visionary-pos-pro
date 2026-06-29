@@ -1530,6 +1530,15 @@ button.ghost, .ghost {
   box-shadow: none;
   background: #FBFDFF;
 }
+.product-card:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+  transform: none;
+}
+.product-card:disabled:hover {
+  border-color: #E5E7EB;
+  background: #fff;
+}
 .product-image {
   height: 108px;
   border-radius: 10px;
