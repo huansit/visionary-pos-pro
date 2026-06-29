@@ -50,6 +50,30 @@ function normalize(value: string) {
   return value.trim().toLowerCase();
 }
 
+function productStock(product: Product) {
+  const stock = Number(product.stockQty ?? 0);
+  return Number.isFinite(stock) ? stock : 0;
+}
+
+function productSaleBlockReason(product: Product, currentQty = 0) {
+  const stock = productStock(product);
+  if (stock <= 0) return `${product.name} is out of stock and cannot be added.`;
+  if (currentQty >= stock) return `Only ${stock} available for ${product.name}.`;
+  if (product.priceCents <= 0) return `${product.name} has no selling price set.`;
+  if (product.costCents > 0 && product.priceCents < product.costCents) {
+    return `${product.name} selling price is below buying price. Edit price before selling.`;
+  }
+  return "";
+}
+
+function productStatusText(product: Product) {
+  const stock = productStock(product);
+  if (stock <= 0) return "Out";
+  if (product.priceCents <= 0) return "No price";
+  if (product.costCents > 0 && product.priceCents < product.costCents) return "Below cost";
+  return `${stock} in`;
+}
+
 function receiptPrintHtml(receipt: Receipt) {
   const lines = receipt.items.map((item) => `
     <div class="line">
@@ -331,18 +355,11 @@ export default function App() {
   }
 
   function addToCart(product: Product) {
-    const stockQty = Number(product.stockQty || 0);
     const currentQty = cart[product.id]?.qty || 0;
-    if (stockQty <= 0) {
-      setError(`${product.name} is out of stock and cannot be added.`);
-      setStatus("Out of stock.");
-      setQuery("");
-      focusSearch();
-      return false;
-    }
-    if (currentQty >= stockQty) {
-      setError(`Only ${stockQty} available for ${product.name}.`);
-      setStatus("Stock limit reached.");
+    const blocked = productSaleBlockReason(product, currentQty);
+    if (blocked) {
+      setError(blocked);
+      setStatus("Sale blocked.");
       setQuery("");
       focusSearch();
       return false;
@@ -373,9 +390,9 @@ export default function App() {
   async function completeSale() {
     if (!terminal || !account || !cartLines.length || !customerName.trim()) return;
     setError("");
-    const unavailable = cartLines.find((line) => line.product.stockQty <= 0 || line.qty > line.product.stockQty);
+    const unavailable = cartLines.find((line) => productSaleBlockReason(line.product, line.qty - 1));
     if (unavailable) {
-      setError(`${unavailable.product.name} has insufficient stock for this sale.`);
+      setError(productSaleBlockReason(unavailable.product, unavailable.qty - 1));
       setStatus("Sale blocked by stock control.");
       focusSearch();
       return;
@@ -540,11 +557,11 @@ export default function App() {
           </div>
           <div className="product-grid">
             {filteredProducts.map((product) => (
-              <button className="product-card" key={product.id} disabled={product.stockQty <= 0} onClick={() => addToCart(product)}>
+              <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
                 <span className="product-name">{product.name}</span>
                 <span className="product-code">{[product.sku || product.barcode || "No code", product.size].filter(Boolean).join(" - ")}</span>
-                <span className="product-foot"><b>{money(product.priceCents)}</b><small>{product.priceCents > 0 ? "In" : "Out"}</small></span>
+                <span className="product-foot"><b>{money(product.priceCents)}</b><small>{productStatusText(product)}</small></span>
               </button>
             ))}
           </div>

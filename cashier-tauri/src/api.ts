@@ -202,7 +202,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
         priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
         costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
-        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "qty", "quantity", "onHand"], 0)
+        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0)
       };
       const current = productDeduped.get(productDedupeKey(product));
       if (!current || (product.priceCents > 0 && current.priceCents <= 0) || product.id > current.id) {
@@ -234,13 +234,15 @@ export async function resolveBarcode(terminal: TerminalCredentials, barcode: str
     id: data.product.id,
     branchId: data.product.branchId,
     name: data.product.name,
-    sku: "",
+    sku: data.product.sku || "",
+    size: data.product.size || "",
     barcode,
+    barcodes: Array.isArray(data.product.barcodes) ? data.product.barcodes : [],
     categoryId: data.product.categoryId,
-    image: data.product.image || "",
-    priceCents: centsFromPayload(data.product, ["priceCents", "sellingPriceCents"], moneyToCentsFromPayload(data.product, ["sellingPrice", "price"])),
-    costCents: centsFromPayload(data.product, ["costCents", "costPriceCents"], moneyToCentsFromPayload(data.product, ["costPrice", "cost"])),
-    stockQty: Number(data.product.stock || 0)
+    image: data.product.image || data.product.imageUrl || data.product.image_url || "",
+    priceCents: centsFromPayload(data.product, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(data.product, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
+    costCents: centsFromPayload(data.product, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(data.product, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
+    stockQty: numberFromPayload(data.product, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0)
   };
 }
 
