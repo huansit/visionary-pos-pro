@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
@@ -226,7 +227,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
         category: payload.category || payload.categoryId || "Uncategorised",
         categoryId: payload.categoryId || payload.category || "",
-        image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
+        image: productDisplayImage({
+          sku: payload.sku || "",
+          barcode: payload.barcode || "",
+          image: payload.image || payload.imageUrl || payload.image_url || payload.photo || ""
+        }),
         priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
         costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
         stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0),
@@ -270,7 +275,11 @@ export async function resolveBarcode(terminal: TerminalCredentials, barcode: str
     barcode,
     barcodes: Array.isArray(data.product.barcodes) ? data.product.barcodes : [],
     categoryId: data.product.categoryId,
-    image: data.product.image || data.product.imageUrl || data.product.image_url || "",
+    image: productDisplayImage({
+      sku: data.product.sku || "",
+      barcode,
+      image: data.product.image || data.product.imageUrl || data.product.image_url || ""
+    }),
     priceCents: centsFromPayload(data.product, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(data.product, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
     costCents: centsFromPayload(data.product, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(data.product, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
     stockQty: numberFromPayload(data.product, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0)

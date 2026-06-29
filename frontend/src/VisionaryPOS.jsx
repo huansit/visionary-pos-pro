@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { buildReportDocument, ReportPreviewDialog } from "./components/reports/ReportEngine.jsx";
 import { printReport, downloadPDF } from "./services/PrintService.js";
+import { productDisplayImage } from "./productImages.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -403,7 +404,7 @@ const SEED = () => {
     "SIP0181": "sip-181-hunters-dry-330ml_tctkfo",
   };
   const products = P.map(([id, name, sku, size, category, priceCents, costCents, stock]) => ({
-    id, name, sku, size, category, priceCents, costCents, imageUrl: IMAGES[sku] ? IMG_BASE + IMAGES[sku] : undefined, barcode: sku, barcodeCatalogId: "bc_" + sku.toLowerCase(), branchId: "b_sip", reorderLevel: 4, synced: true, _stock: stock,
+    id, name, sku, size, category, priceCents, costCents, imageUrl: productDisplayImage({ sku }) || undefined, barcode: sku, barcodeCatalogId: "bc_" + sku.toLowerCase(), branchId: "b_sip", reorderLevel: 4, synced: true, _stock: stock,
   }));
   const barcodeCatalog = products.map((p) => ({ id: p.barcodeCatalogId, barcode: p.barcode, barcodeType: "code128", synced: true, updatedAt: t, createdAt: t }));
   const stockMovements = [];
@@ -2941,7 +2942,7 @@ function CashierProductCard({ product, stock, price, cur, onAdd }) {
   const unavailable = stock.cls === "out";
   return (
     <button className={"cashier-product " + stock.cls} disabled={unavailable} onClick={onAdd}>
-      <span className="cp-img"><ProductImage src={product.imageUrl || product.image} alt={product.name} /></span>
+      <span className="cp-img"><ProductImage src={productDisplayImage(product)} alt={product.name} /></span>
       <span className="cp-body">
         <span className="cp-name">{product.name}</span>
         <span className="cp-meta">{product.sku}{product.size ? " - " + product.size : ""}</span>
@@ -4672,7 +4673,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   );
                   return (
                     <tr key={p.id}>
-                      <td><div className="ptimg"><ProductImage src={p.imageUrl} alt="" fit="cover" /></div></td>
+                      <td><div className="ptimg"><ProductImage src={productDisplayImage(p)} alt="" fit="cover" /></div></td>
                       <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div></td>
                       <td><span className="ptcat">{p.category}</span></td>
                       <td className="num"><span className="ptstk"><span className={"dot " + cls} /> {left}</span></td>
