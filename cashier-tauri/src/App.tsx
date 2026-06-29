@@ -451,7 +451,7 @@ export default function App() {
         <aside className="cart-panel">
           <div className="cart-head">
             <div>
-              <h2>Current Sale</h2>
+              <h2>Current Invoice</h2>
               <span>{itemCount} item(s) · {branch?.name || terminal.branchId}</span>
             </div>
           </div>
