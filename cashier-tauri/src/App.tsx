@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Barcode,
   Building2,
@@ -481,6 +482,11 @@ export default function App() {
     setStatus("Signed out.");
   }
 
+  async function handleCloseApp() {
+    if (cartLines.length && !window.confirm("Close VISIONPOS Cashier and discard the current sale?")) return;
+    await getCurrentWindow().close();
+  }
+
   if (!terminal) {
     return (
       <ActivationScreen
@@ -519,6 +525,7 @@ export default function App() {
         <div className="topmeta">
           <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
           <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
+          <button className="window-close-button" onClick={handleCloseApp} title="Close app" aria-label="Close app"><X size={20} /></button>
         </div>
       </header>
 

@@ -476,6 +476,28 @@ button.ghost, .ghost {
 .topmeta { display: flex; align-items: center; gap: 16px; }
 .topmeta span { color: #aab8c4; font-weight: 700; }
 .topmeta button { min-height: 42px; }
+.window-close-button {
+  width: 46px;
+  height: 46px;
+  min-height: 46px !important;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid rgba(248,113,113,.32);
+  border-bottom-width: 4px;
+  background: linear-gradient(180deg, rgba(127,29,29,.74), rgba(69,10,10,.9));
+  color: #fecaca;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+.window-close-button:hover {
+  border-color: rgba(248,113,113,.7);
+  background: linear-gradient(180deg, #991b1b, #7f1d1d);
+  color: #fff;
+}
+.window-close-button:active {
+  transform: translateY(2px);
+  border-bottom-width: 2px;
+}
 .statusline {
   display: flex;
   align-items: center;
