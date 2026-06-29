@@ -282,6 +282,38 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
   });
 }
 
+export async function pushExpense(
+  terminal: TerminalCredentials,
+  account: Account,
+  expense: { category: string; amountCents: number; note?: string }
+): Promise<void> {
+  const ts = Date.now();
+  const status = expense.amountCents > 50000 ? "pending" : "approved";
+  await jsonFetch("/api/sync/push", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({
+      events: [{
+        id: uid("ex"),
+        type: "expense",
+        branchId: terminal.branchId,
+        clientTs: ts,
+        payload: {
+          category: expense.category,
+          amountCents: expense.amountCents,
+          note: `Quick expense - ${account.name}${expense.note ? " - " + expense.note : ""}`,
+          status,
+          enteredBy: account.name,
+          cashierId: account.id,
+          branchId: terminal.branchId,
+          date: new Date(ts).toISOString().slice(0, 10),
+          ts
+        }
+      }]
+    })
+  });
+}
+
 export async function pushCashSessionEvent(
   terminal: TerminalCredentials,
   account: Account,

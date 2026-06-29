@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Barcode, Building2, Check, FileText, LogOut, Menu, Search, WalletCards } from "lucide-react";
+import { Barcode, Building2, Check, FileText, Menu, Search, WalletCards, X } from "lucide-react";
 import {
   activateTerminal,
   loginCashier,
   logout,
   pullCatalog,
   pushCheckout,
+  pushExpense,
   resolveBarcode
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
+const EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -89,14 +91,20 @@ export default function App() {
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
+  const [expenseOpen, setExpenseOpen] = useState(false);
+  const [debtsOpen, setDebtsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
   const totalCents = cartLines.reduce((sum, line) => sum + line.qty * line.product.priceCents, 0);
   const itemCount = cartLines.reduce((sum, line) => sum + line.qty, 0);
-  const openInvoices = useMemo(() => invoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [invoices]);
-  const carriedDebts = useMemo(() => invoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [invoices]);
+  const myInvoices = useMemo(() => {
+    if (!account?.id) return [];
+    return invoices.filter((invoice) => !invoice.cashierId || invoice.cashierId === account.id);
+  }, [account?.id, invoices]);
+  const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [myInvoices]);
+  const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [myInvoices]);
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
 
@@ -357,9 +365,9 @@ export default function App() {
           </div>
           <div className="card dark quick-actions">
             <h3>Quick Actions</h3>
-            <button onClick={() => setStatus("Expense entry stays in the web admin workspace.")}><WalletCards size={17} />Expense</button>
+            <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
-            <button onClick={() => setStatus(`You have ${carriedDebts.length} carried-over debt invoice(s).`)}><span className="info-dot">!</span>My Debts</button>
+            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
           </div>
         </aside>
 
@@ -431,7 +439,112 @@ export default function App() {
       </section>
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
+      {expenseOpen && terminal && account && (
+        <ExpenseModal
+          onClose={() => { setExpenseOpen(false); focusSearch(); }}
+          onSave={async (expense) => {
+            setError("");
+            await pushExpense(terminal, account, expense);
+            setStatus(expense.amountCents > 50000 ? "Expense sent for admin approval." : "Expense recorded.");
+            setExpenseOpen(false);
+            await refreshCatalog(terminal);
+            focusSearch();
+          }}
+        />
+      )}
+      {debtsOpen && (
+        <DebtsModal
+          debts={carriedDebts}
+          totalCents={carriedDebtTotal}
+          onClose={() => { setDebtsOpen(false); focusSearch(); }}
+        />
+      )}
     </main>
+  );
+}
+
+function ExpenseModal({
+  onClose,
+  onSave
+}: {
+  onClose: () => void;
+  onSave: (expense: { category: string; amountCents: number; note?: string }) => Promise<void>;
+}) {
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const amountCents = Math.round((Number(amount) || 0) * 100);
+
+  async function submit() {
+    if (amountCents <= 0) {
+      setMessage("Enter a valid expense amount.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await onSave({ category, amountCents, note: note.trim() });
+    } catch (err) {
+      setMessage(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <div className="cashier-modal">
+        <div className="modal-head">
+          <div>
+            <span>Quick</span>
+            <h2>Record Expense</h2>
+          </div>
+          <button className="close-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <label>Category</label>
+        <select value={category} onChange={(event) => setCategory(event.target.value)}>
+          {EXPENSE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+        </select>
+        <label>Amount (KES)</label>
+        <input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="0.00" autoFocus />
+        <label>Note</label>
+        <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional expense note" />
+        {amountCents > 50000 && <div className="notice">Expenses above KES 500 are sent for admin approval.</div>}
+        {message && <div className="error">{message}</div>}
+        <button className="modal-primary" disabled={busy || amountCents <= 0} onClick={submit}><Check size={18} />{busy ? "Saving..." : "Save Expense"}</button>
+      </div>
+    </div>
+  );
+}
+
+function DebtsModal({ debts, totalCents, onClose }: { debts: Invoice[]; totalCents: number; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop">
+      <div className="cashier-modal wide">
+        <div className="modal-head">
+          <div>
+            <span>Cashier</span>
+            <h2>My Debts</h2>
+          </div>
+          <button className="close-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="debt-summary"><span>Carried-over unpaid invoices</span><b>{money(totalCents)}</b></div>
+        {debts.length === 0 ? (
+          <div className="empty-modal">No carried-over debts for your login.</div>
+        ) : (
+          <div className="modal-list">
+            {debts.map((invoice) => (
+              <div className="modal-row" key={invoice.id}>
+                <div><b>{invoice.number}</b><span>{invoice.customerName || "Walk-in"}</span></div>
+                <strong>{money(outstanding(invoice))}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

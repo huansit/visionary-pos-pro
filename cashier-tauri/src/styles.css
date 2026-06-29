@@ -401,7 +401,127 @@ button.ghost, .ghost {
     width: 76mm;
     padding: 4mm;
   }
-  .receipt-actions { display: none !important; }
+.receipt-actions { display: none !important; }
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(2,6,23,.64);
+  backdrop-filter: blur(3px);
+}
+.cashier-modal {
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 70px);
+  overflow: auto;
+  border-radius: 24px;
+  padding: 22px;
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid rgba(15,23,42,.1);
+  box-shadow: 0 30px 80px rgba(2,6,23,.36);
+}
+.cashier-modal.wide { width: min(620px, calc(100vw - 48px)); }
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.modal-head span {
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+.modal-head h2 {
+  margin: 2px 0 0;
+  font-size: 25px;
+  letter-spacing: -.04em;
+}
+.close-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(15,23,42,.08);
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.cashier-modal select,
+.cashier-modal input {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: rgba(15,23,42,.1);
+}
+.modal-primary {
+  width: 100%;
+  min-height: 56px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #43bdc8, #72dfd1);
+  color: #062027;
+  font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.debt-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(15,23,42,.08);
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 14px;
+  font-weight: 850;
+}
+.debt-summary b {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 20px;
+}
+.empty-modal {
+  margin-top: 14px;
+  border: 1px dashed rgba(15,23,42,.16);
+  border-radius: 18px;
+  padding: 28px;
+  text-align: center;
+  color: #64748b;
+  font-weight: 850;
+}
+.modal-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+.modal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(15,23,42,.08);
+  border-radius: 16px;
+  padding: 12px;
+}
+.modal-row div {
+  display: grid;
+  gap: 4px;
+}
+.modal-row span {
+  color: #64748b;
+  font-weight: 800;
+}
+.modal-row strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
 }
 
 /* Web cashier parity: keep the Tauri client visually aligned with the live POS. */
