@@ -1488,6 +1488,34 @@ button.ghost, .ghost {
   font-size: 17px;
   color: #111827;
 }
+
+.quick-actions .logout-action {
+  margin-top: 20px;
+  min-height: 56px;
+  justify-content: center;
+  border: 1px solid #fecaca;
+  border-bottom-width: 4px;
+  background: linear-gradient(180deg, #fff5f5 0%, #fee2e2 100%);
+  color: #991b1b;
+  font-weight: 900;
+  letter-spacing: .01em;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.86);
+}
+
+.quick-actions .logout-action svg {
+  color: #dc2626;
+}
+
+.quick-actions .logout-action:hover:not(:disabled) {
+  border-color: #fca5a5;
+  border-bottom-color: #ef4444;
+  background: linear-gradient(180deg, #fee2e2 0%, #fecaca 100%);
+}
+
+.quick-actions .logout-action:active:not(:disabled) {
+  transform: translateY(2px);
+  border-bottom-width: 2px;
+}
 .searchbar svg { color: #94A3B8; }
 .scanner-toggle {
   height: 56px;

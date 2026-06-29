@@ -8,7 +8,7 @@ import {
   Heart,
   KeyRound,
   Lock,
-  Menu,
+  LogOut,
   MonitorCheck,
   Search,
   Server,
@@ -519,7 +519,6 @@ export default function App() {
         <div className="topmeta">
           <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
           <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
-          <button className="menu-button" onClick={handleLogout} title="Logout"><Menu size={20} /></button>
         </div>
       </header>
 
@@ -612,6 +611,7 @@ export default function App() {
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
             <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
+            <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
         </aside>
 
