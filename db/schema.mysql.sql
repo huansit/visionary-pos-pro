@@ -3,9 +3,12 @@ CREATE TABLE IF NOT EXISTS devices (
   name         varchar(255) NOT NULL,
   branch_id    varchar(191),
   token_hash   varchar(255) NOT NULL,
+  status       enum('active','inactive','revoked') NOT NULL DEFAULT 'active',
   revoked_at   datetime,
   created_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_seen_at datetime
+  last_seen_at datetime,
+  INDEX devices_status_idx (status),
+  INDEX devices_branch_status_idx (branch_id, status)
 );
 
 CREATE TABLE IF NOT EXISTS events (

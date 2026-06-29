@@ -282,7 +282,8 @@ test("10. user credentials created on one device work for login on another devic
 
   await request(app)
     .post("/api/auth/login")
-    .send({ pin: "7788", branchId: "b_sip" })
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.account.id, "cashier-cloud-001");
@@ -346,7 +347,8 @@ test("10. user credentials created on one device work for login on another devic
 test("11. cloud login sessions can be validated and revoked", async () => {
   const login = await request(app)
     .post("/api/auth/login")
-    .send({ pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
     .expect(200);
   const token = login.body.sessionToken;
   assert.ok(token);
@@ -387,7 +389,8 @@ test("12. deleted users are inactive immediately and cannot log in again", async
 
   await request(app)
     .post("/api/auth/login")
-    .send({ pin: "8899", branchId: "b_sip" })
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })
     .expect(200);
 
   await request(app)
@@ -398,7 +401,8 @@ test("12. deleted users are inactive immediately and cannot log in again", async
 
   await request(app)
     .post("/api/auth/login")
-    .send({ pin: "8899", branchId: "b_sip" })
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })
     .expect(401);
 });
 

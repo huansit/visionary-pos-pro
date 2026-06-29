@@ -851,7 +851,7 @@ async function authApi(path, body, options = {}) {
   return data;
 }
 async function cloudLogin(payload) {
-  return await authApi("/api/auth/login", payload);
+  return await authApi("/api/auth/login", payload, { device: Boolean(payload?.pin) });
 }
 async function cloudSession(sessionToken) {
   return await authApi("/api/auth/session", { sessionToken });
@@ -1498,6 +1498,10 @@ const css = `
 .authfield{position:relative;width:240px;margin:0 auto}
 .authfield .disp{width:100%;height:36px;background:transparent;border:1px solid #4a5059;border-radius:3px;color:#e8ebef;font-size:18px;letter-spacing:.4em;padding:0 40px 0 14px;display:flex;align-items:center;font-family:var(--font-mono)}
 .authfield.err .disp{border-color:#e0566f;color:#e0566f}
+.authfield.employee-login{margin-bottom:12px}
+.authfield.employee-login input{width:100%;height:36px;background:transparent;border:1px solid #4a5059;border-radius:3px;color:#e8ebef;font-size:14px;padding:0 12px;text-align:center}
+.authfield.employee-login input:focus{outline:none;border-color:#2bb6c4;box-shadow:0 0 0 2px rgba(43,182,196,.18)}
+.authfield.employee-login.err input{border-color:#e0566f}
 .authfield .arrow{position:absolute;right:0;top:0;height:36px;width:38px;border:none;background:transparent;color:#2bb6c4;cursor:pointer;display:grid;place-items:center;border-left:1px solid #4a5059}
 .authfield .arrow:disabled{color:#5a616b;cursor:default}
 .authfield .arrow svg{width:16px;height:16px}
@@ -2529,27 +2533,37 @@ function OnScreenKeyboard({ onKey, onBackspace, onEnter }) {
   );
 }
 function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
+  const [employeeId, setEmployeeId] = useState("");
   const [pin, setPin] = useState(""); const [err, setErr] = useState(false);
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const press = (d) => { if (!err) setPin((p) => (p.length < 4 ? p + d : p)); };
   const back = () => { setErr(false); setPin((p) => p.slice(0, -1)); };
+  const employeeIdentifierMatches = (e) => {
+    const raw = employeeId.trim();
+    const normalized = raw.toLowerCase();
+    if (!normalized) return false;
+    return [e.id, e.name, e.email, e.phone].some((value) => {
+      const current = String(value || "").trim();
+      return current && (current.toLowerCase() === normalized || current === raw);
+    });
+  };
   const submit = async () => {
     if (pin.length !== 4) return;
+    const identifier = employeeId.trim();
+    if (!identifier) {
+      setErr(true); setTimeout(() => setErr(false), 900);
+      return;
+    }
     try {
-      let cloud = null;
-      try {
-        cloud = await cloudLogin({ pin, branchId });
-      } catch (_) {
-        cloud = await cloudLogin({ pin });
-      }
+      const cloud = await cloudLogin({ identifier, pin, branchId });
       if (cloud?.account) {
         const emp = accountToSession(cloud.account, branchId) || employees.find((e) => e.id === cloud.account.id);
         setTimeout(() => onSuccess({ ...emp, sessionToken: cloud.sessionToken }), 80);
         return;
       }
     } catch (_) {}
-    const m = (employees || []).find((e) => isActiveEmployee(e) && e.role === "Cashier" && e.pin === pin && (!branchId || e.branchId === branchId));
+    const m = (employees || []).find((e) => isActiveEmployee(e) && e.role === "Cashier" && employeeIdentifierMatches(e) && e.pin === pin && (!branchId || e.branchId === branchId));
     if (m) { setTimeout(() => onSuccess(m), 140); return; }
     setErr(true); setTimeout(() => { setErr(false); setPin(""); }, 600);
   };
@@ -2567,11 +2581,21 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
     }
   };
   useEffect(() => { if (pin.length === 4) submit(); }, [pin]); // eslint-disable-line
-  useEffect(() => { const k = (e) => { if (e.key >= "0" && e.key <= "9") press(e.key); else if (e.key === "Backspace") back(); else if (e.key === "Enter") submit(); };
+  useEffect(() => { const k = (e) => { const tag = document.activeElement?.tagName?.toLowerCase(); if (tag === "input" || tag === "textarea") return; if (e.key >= "0" && e.key <= "9") press(e.key); else if (e.key === "Backspace") back(); else if (e.key === "Enter") submit(); };
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }); // eslint-disable-line
   return (
     <AuthShellV3>
-      <div className="authfield-label">Login</div>
+      <div className="authfield-label">Employee ID</div>
+      <div className={"authfield employee-login" + (err && !employeeId.trim() ? " err" : "")}>
+        <input
+          value={employeeId}
+          onChange={(e) => { setErr(false); setEmployeeId(e.target.value); }}
+          placeholder="Employee number or username"
+          autoFocus
+          autoComplete="username"
+        />
+      </div>
+      <div className="authfield-label">PIN</div>
       <div className={"authfield" + (err ? " err" : "")}>
         <div className="disp">{"•".repeat(pin.length)}</div>
         <button className="arrow" onClick={submit} disabled={pin.length !== 4} aria-label="Sign in"><ArrowRight /></button>
@@ -3028,7 +3052,7 @@ function Register({ data, update, online, employee, branch }) {
     setPinBusy(true);
     try {
       if (online) {
-        const cloud = await cloudLogin({ pin, branchId: branch.id });
+        const cloud = await cloudLogin({ identifier: employee.id, pin, branchId: branch.id });
         if (cloud?.account?.id !== employee.id) throw new Error("wrong_cashier_pin");
       } else if (employee.pin !== pin) {
         throw new Error("wrong_cashier_pin");

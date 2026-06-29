@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
 import { requireDevice } from "../auth.js";
-import { signDeviceToken } from "../token.js";
+import { signDeviceToken, verifyDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendVerificationCode, validTarget } from "../verification.js";
 
 const router = Router();
@@ -51,12 +51,53 @@ function fingerprintTemplateHash(template) {
   return crypto.createHash("sha256").update(String(template || "")).digest("hex");
 }
 
+async function verifiedTerminalFromRequest(req) {
+  const hdr = req.get("authorization") || "";
+  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
+  const deviceId = verifyDeviceToken(token);
+  if (!deviceId) return { error: "registered_terminal_required" };
+
+  const result = await q(
+    "SELECT device_id, name, branch_id, token_hash, revoked_at, status FROM devices WHERE device_id = $1",
+    [deviceId]
+  );
+  const device = result.rows[0];
+  if (!device || device.revoked_at || (device.status && device.status !== "active")) {
+    return { error: "terminal_not_authorized" };
+  }
+  const tokenOk = await bcrypt.compare(token, device.token_hash);
+  if (!tokenOk) return { error: "terminal_not_authorized" };
+  await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [deviceId]);
+  return {
+    deviceId: device.device_id ?? device.deviceId,
+    name: device.name || "",
+    branchId: device.branch_id ?? device.branchId ?? null,
+  };
+}
+
+function matchesCredentialIdentifier(row, identifier) {
+  const raw = String(identifier || "").trim();
+  const normalized = raw.toLowerCase();
+  if (!normalized) return false;
+  return [
+    row.id,
+    row.name,
+    row.email,
+    row.phone,
+  ].some((value) => {
+    const current = String(value || "").trim();
+    return current && (current.toLowerCase() === normalized || current === raw);
+  });
+}
+
 async function ensureAuthSchema() {
   if (authSchemaReady) return authSchemaReady;
   authSchemaReady = (async () => {
     const pgMem = process.env.PG_MEM === "1";
     const statements = isMySql
       ? [
+          "ALTER TABLE devices ADD COLUMN status enum('active','inactive','revoked') NOT NULL DEFAULT 'active'",
+          "CREATE INDEX devices_status_idx ON devices (status)",
           "ALTER TABLE credentials ADD COLUMN status enum('active','inactive','deleted') NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN last_login datetime",
           "ALTER TABLE credentials ADD COLUMN created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -99,6 +140,8 @@ async function ensureAuthSchema() {
           "CREATE INDEX user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash)",
         ]
       : [
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
+          "CREATE INDEX IF NOT EXISTS devices_status_idx ON devices (status)",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS last_login timestamptz",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
@@ -252,24 +295,26 @@ router.post("/device", async (req, res) => {
   const tokenHash = await bcrypt.hash(token, ROUNDS);
   if (isMySql) {
     await q(
-      `INSERT INTO devices (device_id, name, branch_id, token_hash, revoked_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,NULL,NOW())
+      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at)
+       VALUES ($1,$2,$3,$4,'active',NULL,NOW())
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          branch_id = VALUES(branch_id),
          token_hash = VALUES(token_hash),
+         status = 'active',
          revoked_at = NULL,
          last_seen_at = NOW()`,
       [deviceId, name, branchId, tokenHash]
     );
   } else {
     await q(
-      `INSERT INTO devices (device_id, name, branch_id, token_hash, revoked_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,NULL, now())
+      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at)
+       VALUES ($1,$2,$3,$4,'active',NULL, now())
        ON CONFLICT (device_id) DO UPDATE SET
          name = EXCLUDED.name,
          branch_id = EXCLUDED.branch_id,
          token_hash = EXCLUDED.token_hash,
+         status = 'active',
          revoked_at = NULL,
          last_seen_at = now()`,
       [deviceId, name, branchId, tokenHash]
@@ -614,8 +659,26 @@ router.post("/login", async (req, res) => {
   const { identifier, password, pin, branchId } = req.body || {};
   try {
     if (pin) {
+      const terminal = await verifiedTerminalFromRequest(req);
+      if (terminal.error) {
+        await audit("login_failed", req, null, { mode: "pin", reason: terminal.error, branchId: branchId || null });
+        return res.status(401).json({ error: terminal.error });
+      }
+      const effectiveBranchId = branchId || terminal.branchId || null;
+      if (!effectiveBranchId) {
+        await audit("login_failed", req, null, { mode: "pin", reason: "terminal_branch_required", terminalId: terminal.deviceId });
+        return res.status(403).json({ error: "terminal_branch_required" });
+      }
+      if (terminal.branchId && branchId && terminal.branchId !== branchId) {
+        await audit("login_failed", req, null, { mode: "pin", reason: "terminal_branch_mismatch", branchId, terminalId: terminal.deviceId });
+        return res.status(403).json({ error: "terminal_branch_mismatch" });
+      }
+      if (!String(identifier || "").trim()) {
+        await audit("login_failed", req, null, { mode: "pin", reason: "employee_identifier_required", branchId: effectiveBranchId, terminalId: terminal.deviceId });
+        return res.status(400).json({ error: "employee_identifier_required" });
+      }
       const result = await q(
-        `SELECT id, kind, name, branch_id, rights, status, pin_hash
+        `SELECT id, kind, name, email, phone, branch_id, rights, status, pin_hash
            FROM credentials
           WHERE pin_hash IS NOT NULL
             AND status = 'active'`,
@@ -623,14 +686,16 @@ router.post("/login", async (req, res) => {
       );
       for (const row of result.rows) {
         const rowBranchId = row.branch_id ?? row.branchId ?? null;
-        if (branchId && rowBranchId && rowBranchId !== branchId) continue;
+        if (row.kind === "admin") continue;
+        if (rowBranchId !== effectiveBranchId) continue;
+        if (!matchesCredentialIdentifier(row, identifier)) continue;
         if (await bcrypt.compare(pin, row.pin_hash)) {
           const account = publicAccount(row);
           const session = await issueSession(req, account);
           return res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
         }
       }
-      await audit("login_failed", req, null, { mode: "pin", branchId: branchId || null });
+      await audit("login_failed", req, null, { mode: "pin", branchId: effectiveBranchId, terminalId: terminal.deviceId, identifier: String(identifier).trim().toLowerCase() });
       return res.status(401).json({ error: "invalid_credentials" });
     }
 

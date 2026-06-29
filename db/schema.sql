@@ -7,11 +7,15 @@ CREATE TABLE IF NOT EXISTS devices (
   name         text NOT NULL,
   branch_id    text,
   token_hash   text NOT NULL,
+  status       text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'revoked')),
   revoked_at   timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
   last_seen_at timestamptz,
   CONSTRAINT devices_token_hash_is_bcrypt CHECK (token_hash ~ '^\$2[aby]\$')
 );
+
+CREATE INDEX IF NOT EXISTS devices_status_idx ON devices (status);
+CREATE INDEX IF NOT EXISTS devices_branch_status_idx ON devices (branch_id, status);
 
 CREATE TABLE IF NOT EXISTS events (
   id         text PRIMARY KEY,
