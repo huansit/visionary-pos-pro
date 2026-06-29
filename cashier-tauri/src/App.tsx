@@ -4,41 +4,20 @@ import {
   loginCashier,
   logout,
   pullCatalog,
-  pushCashSessionEvent,
   pushCheckout,
   resolveBarcode
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, CashSession, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
-const CASH_SESSION_KEY = "visionpos:cashier:cash-session:v1";
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
 }
 
-function uid(prefix: string) {
-  const random = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now();
-  return `${prefix}_${random}`;
-}
-
 function normalize(value: string) {
   return value.trim().toLowerCase();
-}
-
-function loadCashSession(): CashSession | null {
-  try {
-    const raw = localStorage.getItem(CASH_SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveCashSession(session: CashSession | null) {
-  if (!session) localStorage.removeItem(CASH_SESSION_KEY);
-  else localStorage.setItem(CASH_SESSION_KEY, JSON.stringify(session));
 }
 
 function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
@@ -107,7 +86,6 @@ export default function App() {
   const [saleNote, setSaleNote] = useState("");
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
   const [error, setError] = useState("");
-  const [cashSession, setCashSession] = useState<CashSession | null>(() => loadCashSession());
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -260,32 +238,6 @@ export default function App() {
     }
   }
 
-  async function openCashSession(openingFloat: string) {
-    if (!terminal || !account) return;
-    const amountCents = Math.round(Number(openingFloat || 0) * 100);
-    const next: CashSession = {
-      id: uid("cash_session"),
-      openedAt: Date.now(),
-      openingFloatCents: amountCents,
-      cashierId: account.id,
-      cashierName: account.name
-    };
-    await pushCashSessionEvent(terminal, account, "open", amountCents);
-    saveCashSession(next);
-    setCashSession(next);
-    setStatus("Cash session opened.");
-  }
-
-  async function closeCashSession(closingCash: string) {
-    if (!terminal || !account || !cashSession) return;
-    const amountCents = Math.round(Number(closingCash || 0) * 100);
-    await pushCashSessionEvent(terminal, account, "close", amountCents);
-    saveCashSession(null);
-    setCashSession(null);
-    setCart({});
-    setStatus("Cash session closed.");
-  }
-
   async function handleLogout() {
     await logout(sessionToken);
     setAccount(null);
@@ -371,27 +323,17 @@ export default function App() {
           <div className="card dark debt-card">
             <div className="card-head">
               <h3>Debt tracker</h3>
-              <b>{money(carriedDebtTotal)}</b>
+              <button className="text-link" onClick={() => setStatus(`${carriedDebts.length} carried-over debt invoice(s).`)}>View</button>
             </div>
             <div className="debt-line"><span>Carried-over debts</span><b>{money(carriedDebtTotal)}</b></div>
             <p>{carriedDebts.length} unpaid carried-over invoice{carriedDebts.length === 1 ? "" : "s"}</p>
+            {carriedDebts.length === 0 && <p>No carried-over debts for your login.</p>}
           </div>
-          <CashSessionCard
-            cashSession={cashSession}
-            openCashSession={openCashSession}
-            closeCashSession={closeCashSession}
-          />
-          <div className="card">
-            <h3>Shortcuts</h3>
-            <button onClick={focusSearch}>Focus search</button>
-            <button onClick={() => setCart({})}>Clear cart</button>
-            <button onClick={() => refreshCatalog()}>Refresh catalog</button>
-          </div>
-          <div className="card">
-            <h3>Categories</h3>
-            {[...new Set(products.map((product) => product.category || "Uncategorised"))].slice(0, 12).map((category) => (
-              <button key={category} onClick={() => setQuery(category || "")}>{category}</button>
-            ))}
+          <div className="card dark quick-actions">
+            <h3>Quick Actions</h3>
+            <button onClick={() => setStatus("Expense entry stays in the web admin workspace.")}>Expense</button>
+            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}>Hold Sale</button>
+            <button onClick={() => setStatus(`You have ${carriedDebts.length} carried-over debt invoice(s).`)}>My Debts</button>
           </div>
         </aside>
 
@@ -536,41 +478,6 @@ function LoginScreen({
         <button className="ghost" onClick={onResetTerminal}>Reset terminal registration</button>
       </div>
     </main>
-  );
-}
-
-function CashSessionCard({
-  cashSession,
-  openCashSession,
-  closeCashSession
-}: {
-  cashSession: CashSession | null;
-  openCashSession: (openingFloat: string) => Promise<void>;
-  closeCashSession: (closingCash: string) => Promise<void>;
-}) {
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit() {
-    setBusy(true);
-    try {
-      if (cashSession) await closeCashSession(amount);
-      else await openCashSession(amount);
-      setAmount("");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="card cash">
-      <h3>Cash Session</h3>
-      <div className={cashSession ? "session open" : "session"}>{cashSession ? "Open" : "Closed"}</div>
-      {cashSession && <p>Opened with {money(cashSession.openingFloatCents)}</p>}
-      <label>{cashSession ? "Closing cash" : "Opening float"}</label>
-      <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="0.00" />
-      <button disabled={busy} onClick={submit}>{cashSession ? "Close Cash Session" : "Open Cash Session"}</button>
-    </div>
   );
 }
 

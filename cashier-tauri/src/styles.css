@@ -124,7 +124,7 @@ button.ghost, .ghost {
 .layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr) 470px;
+  grid-template-columns: 410px minmax(0, 1fr) 470px;
   gap: 18px;
   padding: 18px 24px;
 }
@@ -137,7 +137,7 @@ button.ghost, .ghost {
   border-radius: 22px;
   box-shadow: 0 24px 48px -38px rgba(15,23,42,.56);
 }
-.left-panel { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding-right: 2px; }
+.left-panel { display: flex; flex-direction: column; gap: 18px; min-height: 0; overflow: auto; padding-right: 2px; }
 .card { padding: 18px; }
 .card h3 { letter-spacing: .12em; text-transform: uppercase; color: #64748b; font-size: 13px; }
 .card button { width: 100%; margin-top: 10px; }
@@ -145,11 +145,22 @@ button.ghost, .ghost {
   background: linear-gradient(180deg, #111a21, #121b22);
   color: #f8fafc;
   border-color: rgba(148,163,184,.18);
+  border-radius: 24px;
 }
 .card.dark h3 { color: #8fa3b4; margin-bottom: 8px; }
 .card.dark p, .card.dark span, .card.dark small { color: #91a6b8; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.card-head strong { display: block; font-size: 22px; letter-spacing: -.03em; }
+.card-head strong { display: block; font-size: 28px; letter-spacing: -.04em; }
+.text-link {
+  width: auto !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #5eead4 !important;
+  font-weight: 950;
+}
 .scanner-pill {
   display: inline-flex;
   align-items: center;
@@ -162,31 +173,31 @@ button.ghost, .ghost {
   color: #8ff4ef !important;
   font-weight: 950;
 }
-.open-invoices { min-height: 420px; display: flex; flex-direction: column; }
+.open-invoices { min-height: 540px; display: flex; flex-direction: column; padding: 26px 28px; }
 .invoice-total {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 22px 0;
+  margin: 30px 0;
 }
 .invoice-total b {
   color: #f8fafc;
-  font-size: 24px;
+  font-size: 34px;
   font-weight: 950;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .invoice-empty {
   margin: auto 0;
-  min-height: 190px;
+  min-height: 250px;
   display: grid;
   place-items: center;
   text-align: center;
   border: 1px dashed rgba(148,163,184,.22);
-  border-radius: 22px;
-  padding: 24px;
+  border-radius: 26px;
+  padding: 34px;
 }
-.invoice-empty b { font-size: 20px; }
-.invoice-empty span { display: block; font-size: 18px; line-height: 1.35; max-width: 260px; }
+.invoice-empty b { font-size: 25px; }
+.invoice-empty span { display: block; font-size: 24px; line-height: 1.32; max-width: 310px; }
 .invoice-list { display: grid; gap: 10px; overflow: auto; }
 .invoice-row {
   display: flex;
@@ -204,6 +215,7 @@ button.ghost, .ghost {
 .invoice-row small { margin-top: 4px; }
 .invoice-row strong { color: #7dd3fc; white-space: nowrap; }
 .debt-card { flex: none; }
+.debt-card .card-head strong,.debt-card .card-head b { font-size: 16px; }
 .debt-line {
   display: flex;
   justify-content: space-between;
@@ -212,15 +224,19 @@ button.ghost, .ghost {
   padding: 12px;
   margin: 10px 0;
 }
-.session {
-  display: inline-flex;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: #fee2e2;
-  color: #991b1b;
-  font-weight: 900;
+.quick-actions { flex: none; }
+.quick-actions button {
+  min-height: 58px;
+  margin-top: 12px;
+  border-radius: 15px;
+  border: 1px solid rgba(148,163,184,.14);
+  background: rgba(255,255,255,.025);
+  color: #f8fafc;
+  text-align: left;
+  padding: 0 20px;
+  font-size: 18px;
 }
-.session.open { background: #dcfce7; color: #166534; }
+.quick-actions button:hover:not(:disabled) { border-color: rgba(45,212,222,.45); background: rgba(45,212,222,.07); }
 
 .products-panel {
   min-width: 0;
@@ -362,7 +378,10 @@ button.ghost, .ghost {
 .receipt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
 
 @media (max-width: 1500px) {
-  .layout { grid-template-columns: 290px minmax(0, 1fr) 390px; gap: 12px; padding: 12px; }
+  .layout { grid-template-columns: 310px minmax(0, 1fr) 390px; gap: 12px; padding: 12px; }
+  .open-invoices { min-height: 430px; padding: 20px; }
+  .invoice-empty span { font-size: 18px; }
+  .invoice-empty b { font-size: 20px; }
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .product-card { min-height: 178px; }
   .product-image { height: 82px; }
