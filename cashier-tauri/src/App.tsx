@@ -4,6 +4,8 @@ import {
   Building2,
   Check,
   FileText,
+  Grid2X2,
+  Heart,
   KeyRound,
   Lock,
   Menu,
@@ -15,6 +17,7 @@ import {
   ShieldCheck,
   UserRound,
   WalletCards,
+  Wine,
   Wifi,
   X
 } from "lucide-react";
@@ -217,6 +220,7 @@ export default function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All Products");
   const [customerName, setCustomerName] = useState("");
   const [saleNote, setSaleNote] = useState("");
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
@@ -241,14 +245,22 @@ export default function App() {
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
 
+  const categories = useMemo(() => {
+    const names = Array.from(new Set(products.map((product) => product.category || "Uncategorised").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return ["All Products", ...names.slice(0, 5)];
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     const q = normalize(query);
-    if (!q) return products.slice(0, 80);
-    return products.filter((product) => {
+    const scoped = selectedCategory === "All Products"
+      ? products
+      : products.filter((product) => (product.category || "Uncategorised") === selectedCategory);
+    if (!q) return scoped.slice(0, 80);
+    return scoped.filter((product) => {
       const haystack = [product.name, product.sku, product.barcode, product.category, ...(product.barcodes || [])].join(" ").toLowerCase();
       return haystack.includes(q);
     }).slice(0, 80);
-  }, [products, query]);
+  }, [products, query, selectedCategory]);
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);
 
@@ -551,17 +563,29 @@ export default function App() {
             <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
           </div>
           <div className="product-strip">
-            <b>{products.length}</b> products
-            <span>All categories</span>
+            <button className="category-chip"><Heart size={16} />Favorites</button>
+            {categories.map((category) => (
+              <button
+                key={category}
+                className={"category-chip" + (selectedCategory === category ? " active" : "")}
+                onClick={() => setSelectedCategory(category)}
+              >
+                {category === "All Products" ? <Grid2X2 size={16} /> : <Wine size={16} />}
+                {category}
+              </button>
+            ))}
             <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
           </div>
           <div className="product-grid">
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
+                <span className={"product-stock-badge " + (productStock(product) > 0 ? "ok" : "out")}>{productStock(product) > 0 ? `${productStock(product)} stock` : "Out"}</span>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
                 <span className="product-name">{product.name}</span>
-                <span className="product-code">{[product.sku || product.barcode || "No code", product.size].filter(Boolean).join(" - ")}</span>
+                <span className="product-code">SKU: {product.sku || product.barcode || "No code"}</span>
+                <span className="product-code">Volume: {product.size || "N/A"}</span>
                 <span className="product-foot"><b>{money(product.priceCents)}</b><small>{productStatusText(product)}</small></span>
+                <span className="product-stepper"><i>+</i><b>1</b><i>-</i></span>
               </button>
             ))}
           </div>

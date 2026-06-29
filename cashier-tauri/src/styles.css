@@ -1479,30 +1479,43 @@ button.ghost, .ghost {
   border: 1px solid #E5E7EB;
 }
 .product-strip {
-  min-height: 40px;
+  min-height: 44px;
   margin: 0 0 12px;
   padding: 0 2px;
   gap: 10px;
   color: #64748B;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
 }
-.product-strip b {
-  color: #111827;
-  font-family: inherit;
-}
-.product-strip span {
+.category-chip {
+  min-height: 36px;
   border: 1px solid #E5E7EB;
   border-radius: 999px;
   background: #fff;
-  padding: 6px 10px;
+  padding: 0 13px;
   color: #334155;
+  font-size: 13px;
+  font-weight: 850;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.category-chip.active {
+  background: #13233F;
+  color: #fff;
+  border-color: #13233F;
 }
 .product-strip small {
   color: #94A3B8;
   font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
 }
 .product-grid {
-  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
   gap: 12px;
   padding: 0 4px 12px 0;
 }
@@ -1516,13 +1529,16 @@ button.ghost, .ghost {
   border-radius: 999px;
 }
 .product-card {
-  min-height: 226px;
-  gap: 10px;
+  position: relative;
+  min-height: 248px;
+  gap: 5px;
   border-radius: 12px;
   border-color: #E5E7EB;
   background: #fff;
   padding: 10px;
   box-shadow: none;
+  align-items: stretch;
+  text-align: left;
 }
 .product-card:hover {
   transform: translateY(-1px);
@@ -1532,7 +1548,7 @@ button.ghost, .ghost {
 }
 .product-card:disabled {
   cursor: not-allowed;
-  opacity: .48;
+  opacity: .72;
   transform: none;
 }
 .product-card:disabled:hover {
@@ -1540,31 +1556,98 @@ button.ghost, .ghost {
   background: #fff;
 }
 .product-image {
-  height: 108px;
+  height: 88px;
   border-radius: 10px;
-  background: #F8FAFC;
+  background: #fff;
   border: 1px solid #F1F5F9;
+  display: grid;
+  place-items: center;
+  margin-bottom: 5px;
+  padding: 5px;
+}
+.product-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 .product-name {
   color: #111827;
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.18;
-  min-height: 36px;
+  min-height: 34px;
+  font-weight: 900;
+  letter-spacing: -.02em;
 }
 .product-code {
-  color: #64748B;
-  font-size: 12px;
+  color: #334155;
+  font-size: 11px;
   font-family: inherit;
+  font-weight: 750;
+  line-height: 1.2;
+}
+.product-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  margin-top: 3px;
 }
 .product-foot b {
   color: #111827;
-  font-size: 17px;
+  font-size: 16px;
   font-family: inherit;
 }
 .product-foot small {
-  background: #FEE2E2;
-  color: #DC2626;
+  background: #FEF2F2;
+  color: #B91C1C;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
 }
+.product-stock-badge {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  border-radius: 8px;
+  padding: 4px 7px;
+  font-size: 10px;
+  font-weight: 900;
+  z-index: 1;
+}
+.product-stock-badge.ok {
+  color: #047857;
+  background: #D1FAE5;
+}
+.product-stock-badge.out {
+  color: #B91C1C;
+  background: #FEE2E2;
+}
+.product-stepper {
+  display: grid;
+  grid-template-columns: 32px 34px 32px;
+  align-items: center;
+  justify-content: center;
+  margin: auto auto 0;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  width: max-content;
+  color: #111827;
+}
+.product-stepper i,
+.product-stepper b {
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 15px;
+  border-right: 1px solid #E5E7EB;
+}
+.product-stepper i:last-child { border-right: 0; }
+.product-stepper b { font-size: 13px; }
 .cart-panel {
   padding: 18px;
   border-radius: 12px;
@@ -1672,8 +1755,8 @@ button.ghost, .ghost {
   .layout { grid-template-columns: 292px minmax(0, 1fr) 372px; gap: 12px; padding: 12px; }
   .open-invoices { min-height: 340px; padding: 16px; }
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(142px, 1fr)); gap: 10px; }
-  .product-card { min-height: 190px; }
-  .product-image { height: 82px; }
+  .product-card { min-height: 224px; }
+  .product-image { height: 76px; }
   .product-name { font-size: 13px; min-height: 32px; }
   .product-foot b { font-size: 15px; }
   .total-row strong { font-size: 28px; }
