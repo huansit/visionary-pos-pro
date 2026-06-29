@@ -181,6 +181,10 @@ function outstanding(invoice: Invoice) {
   return Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
 }
 
+function invoiceDate(invoice: Invoice) {
+  return invoice.ts ? new Date(invoice.ts).toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Not dated";
+}
+
 function useScanner(onScan: (barcode: string) => void, enabled = true) {
   const buffer = useRef("");
   const lastAt = useRef(0);
@@ -688,24 +692,18 @@ export default function App() {
           }}
         />
       )}
-      {openInvoicesOpen && (
-        <InvoicesModal
-          invoices={openInvoices}
-          totalCents={openInvoiceTotal}
-          branchName={branch?.name || terminal.branchId}
-          onUseCustomer={(name) => {
-            setCustomerName(name || "Walk-in");
+      {(openInvoicesOpen || debtsOpen) && (
+        <DebtsAndInvoicesModal
+          cashierName={account.name}
+          openInvoices={openInvoices}
+          carriedDebts={carriedDebts}
+          openTotalCents={openInvoiceTotal}
+          carriedTotalCents={carriedDebtTotal}
+          onClose={() => {
             setOpenInvoicesOpen(false);
+            setDebtsOpen(false);
             focusSearch();
           }}
-          onClose={() => { setOpenInvoicesOpen(false); focusSearch(); }}
-        />
-      )}
-      {debtsOpen && (
-        <DebtsModal
-          debts={carriedDebts}
-          totalCents={carriedDebtTotal}
-          onClose={() => { setDebtsOpen(false); focusSearch(); }}
         />
       )}
     </main>
@@ -763,6 +761,126 @@ function ExpenseModal({
         {amountCents > 50000 && <div className="notice">Expenses above KES 500 are sent for admin approval.</div>}
         {message && <div className="error">{message}</div>}
         <button className="modal-primary" disabled={busy || amountCents <= 0} onClick={submit}><Check size={18} />{busy ? "Saving..." : "Save Expense"}</button>
+      </div>
+    </div>
+  );
+}
+
+function DebtsAndInvoicesModal({
+  cashierName,
+  openInvoices,
+  carriedDebts,
+  openTotalCents,
+  carriedTotalCents,
+  onClose
+}: {
+  cashierName: string;
+  openInvoices: Invoice[];
+  carriedDebts: Invoice[];
+  openTotalCents: number;
+  carriedTotalCents: number;
+  onClose: () => void;
+}) {
+  const allInvoices = [...openInvoices, ...carriedDebts].sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  const [selected, setSelected] = useState<Invoice | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("visionpos:cashier:invoice-notes:v1") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const selectedNote = selected ? notes[selected.id] || selected.note || "" : "";
+  const saveSelectedNote = (value: string) => {
+    if (!selected) return;
+    const next = { ...notes, [selected.id]: value };
+    setNotes(next);
+    localStorage.setItem("visionpos:cashier:invoice-notes:v1", JSON.stringify(next));
+  };
+
+  if (selected) {
+    const items = selected.items || [];
+    return (
+      <div className="modal-backdrop">
+        <div className="cashier-modal ledger-modal">
+          <div className="ledger-detail-head">
+            <div>
+              <span>Invoice</span>
+              <h2>{selected.number}</h2>
+            </div>
+            <button className="close-button ledger-close" onClick={() => setSelected(null)}><X size={24} /></button>
+          </div>
+          <div className="ledger-detail-grid">
+            <div><span>Customer</span><b>{selected.customerName || "Walk-in"}</b></div>
+            <div><span>Cashier</span><b>{selected.cashierName || cashierName}</b></div>
+            <div><span>Date</span><b>{invoiceDate(selected)}</b></div>
+            <div><span>Status</span><b className="ledger-status">{selected.status || (selected.carriedOver ? "carried" : "open")}</b></div>
+            <div><span>Total</span><b>{money(selected.totalCents)}</b></div>
+            <div><span>Outstanding</span><b>{money(outstanding(selected))}</b></div>
+          </div>
+          <h3 className="ledger-section-title">Items</h3>
+          <div className="ledger-items">
+            {items.length === 0 ? (
+              <div className="ledger-empty">No item lines were synced for this invoice yet.</div>
+            ) : items.map((item, index) => (
+              <div className="ledger-item" key={(item.productId || item.name) + index}>
+                <div><b>{item.name}</b><span>{item.qty} x {money(item.priceCents)}</span></div>
+                <strong>{money(item.qty * item.priceCents)}</strong>
+              </div>
+            ))}
+          </div>
+          <label className="ledger-note-label">Employee tracking note</label>
+          <textarea
+            className="ledger-note"
+            value={selectedNote}
+            onChange={(event) => saveSelectedNote(event.target.value)}
+            placeholder="Track this invoice - who collected, follow-up, reason for credit, etc."
+          />
+          <button className="modal-primary ledger-save" onClick={() => setSelected(null)}><Check size={20} />Save note</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <div className="cashier-modal ledger-modal">
+        <div className="ledger-title-row">
+          <div>
+            <p>{cashierName}</p>
+            <h2>Debts & Open Invoices</h2>
+          </div>
+          <button className="close-button ledger-close" onClick={onClose}><X size={24} /></button>
+        </div>
+        <div className="ledger-stats">
+          <div className="ledger-stat">
+            <span className="ledger-stat-icon">!</span>
+            <p>Total outstanding</p>
+            <b>{money(openTotalCents)}</b>
+            <small>{openInvoices.length} open invoice{openInvoices.length === 1 ? "" : "s"}</small>
+          </div>
+          <div className="ledger-stat">
+            <FileText size={25} />
+            <p>Carried-over debt</p>
+            <b>{money(carriedTotalCents)}</b>
+            <small>{carriedDebts.length} carried over</small>
+          </div>
+        </div>
+        <h3 className="ledger-section-title">Open invoices ({openInvoices.length})</h3>
+        {allInvoices.length === 0 ? (
+          <div className="ledger-empty">No open invoices or carried-over debts for this login.</div>
+        ) : (
+          <div className="ledger-list">
+            {allInvoices.map((invoice) => (
+              <button className="ledger-row" key={invoice.id} onClick={() => setSelected(invoice)}>
+                <div><b>{invoice.number}</b><span>{invoice.customerName || "Walk-in"} · {invoiceDate(invoice)}</span></div>
+                <strong>{money(outstanding(invoice))}</strong>
+                <em>{invoice.carriedOver ? "Debt" : "Open"}</em>
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="ledger-help">Includes all your open invoices and carried-over debts - cleared by an admin or supervisor. Tap one to view its details.</p>
       </div>
     </div>
   );

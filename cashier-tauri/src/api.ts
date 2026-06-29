@@ -157,12 +157,20 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         number: payload.number || item.id,
         branchId: payload.branchId || item.branchId || "",
         cashierId: payload.cashierId,
+        cashierName: payload.cashierName || payload.cashier || "",
         customerName: payload.customerName || "",
+        note: payload.note || "",
         totalCents: centsFromPayload(payload, ["totalCents", "total_cents"], moneyToCentsFromPayload(payload, ["total", "amount"])),
         paidCents: centsFromPayload(payload, ["paidCents", "paid_cents"], moneyToCentsFromPayload(payload, ["paid"])),
         carriedOver: Boolean(payload.carriedOver || payload.carried_over),
         status: payload.status || "",
-        ts: Number(payload.ts || item.clientTs || 0)
+        ts: Number(payload.ts || item.clientTs || 0),
+        items: Array.isArray(payload.items) ? payload.items.map((line: any) => ({
+          productId: line.productId || line.id || "",
+          name: line.name || line.productName || "Product",
+          qty: Number(line.qty || line.quantity || 0),
+          priceCents: centsFromPayload(line, ["priceCents", "price_cents"], moneyToCentsFromPayload(line, ["price"]))
+        })) : []
       };
       invoiceRecords.set(invoice.id, invoice);
     }

@@ -45,12 +45,15 @@ export type Invoice = {
   number: string;
   branchId: string;
   cashierId?: string;
+  cashierName?: string;
   customerName?: string;
+  note?: string;
   totalCents: number;
   paidCents: number;
   carriedOver?: boolean;
   status?: string;
   ts?: number;
+  items?: Array<{ productId?: string; name: string; qty: number; priceCents: number }>;
 };
 
 export type CartLine = {
