@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { Account, Branch, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
@@ -18,10 +19,27 @@ function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
 
 async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (!API_BASE_URL.startsWith("https://")) throw new Error("HTTPS is required.");
-  const response = await fetch(`${API_BASE_URL}${path}`, init);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `request_failed_${response.status}`);
-  return data as T;
+  const headers: Record<string, string> = {};
+  new Headers(init.headers || {}).forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  let body: unknown;
+  if (typeof init.body === "string" && init.body.trim()) {
+    body = JSON.parse(init.body);
+  }
+
+  const response = await invoke<{ status: number; ok: boolean; body: any }>("api_request", {
+    req: {
+      method: init.method || "GET",
+      path,
+      headers,
+      body
+    }
+  });
+
+  if (!response.ok) throw new Error(response.body?.error || `request_failed_${response.status}`);
+  return response.body as T;
 }
 
 export async function activateTerminal(activationCode: string, terminalName: string): Promise<TerminalCredentials> {

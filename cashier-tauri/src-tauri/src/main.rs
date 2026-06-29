@@ -1,8 +1,28 @@
 use keyring::Entry;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 const SERVICE: &str = "cloud.visionarypos.cashier";
 const TERMINAL_ACCOUNT: &str = "terminal-credentials";
+const API_BASE_URL: &str = "https://visionarypos.cloud";
+
+#[derive(Debug, Deserialize)]
+struct ApiRequest {
+    method: String,
+    path: String,
+    headers: Option<HashMap<String, String>>,
+    body: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiResponse {
+    status: u16,
+    ok: bool,
+    body: Value,
+}
 
 #[tauri::command]
 fn save_terminal_credentials(payload: String) -> Result<(), String> {
@@ -30,13 +50,64 @@ fn clear_terminal_credentials() -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
+    if !req.path.starts_with("/api/") {
+        return Err("invalid_api_path".into());
+    }
+
+    let method = reqwest::Method::from_bytes(req.method.to_uppercase().as_bytes())
+        .map_err(|_| "invalid_http_method".to_string())?;
+    let url = format!("{}{}", API_BASE_URL, req.path);
+    let client = reqwest::Client::builder()
+        .https_only(true)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    let mut request = client
+        .request(method, url)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json");
+
+    if let Some(headers) = req.headers {
+        for (key, value) in headers {
+            let normalized = key.to_ascii_lowercase();
+            if matches!(
+                normalized.as_str(),
+                "x-terminal-uuid" | "x-terminal-secret" | "content-type" | "accept"
+            ) {
+                request = request.header(key, value);
+            }
+        }
+    }
+
+    if let Some(body) = req.body {
+        request = request.json(&body);
+    }
+
+    let response = request.send().await.map_err(|err| err.to_string())?;
+    let status = response.status();
+    let status_code = status.as_u16();
+    let ok = status.is_success();
+    let text = response.text().await.map_err(|err| err.to_string())?;
+    let body = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text }));
+
+    Ok(ApiResponse {
+        status: status_code,
+        ok,
+        body,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             save_terminal_credentials,
             load_terminal_credentials,
-            clear_terminal_credentials
+            clear_terminal_credentials,
+            api_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running VISIONPOS Cashier");
