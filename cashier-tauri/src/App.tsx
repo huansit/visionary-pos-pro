@@ -553,7 +553,6 @@ export default function App() {
                     className="invoice-row"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setCustomerName(invoice.customerName || "Walk-in");
                       setOpenInvoicesOpen(true);
                     }}
                   >
