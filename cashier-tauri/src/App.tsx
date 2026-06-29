@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Barcode, Building2, Check, FileText, LogOut, Menu, Search, WalletCards } from "lucide-react";
 import {
   activateTerminal,
   loginCashier,
@@ -87,6 +88,7 @@ export default function App() {
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [scannerOn, setScannerOn] = useState(true);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
@@ -129,7 +131,37 @@ export default function App() {
     if (account) focusSearch();
   }, [account]);
 
-  useScanner((barcode) => handleScan(barcode), Boolean(account));
+  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn);
+
+  useEffect(() => {
+    if (!account) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "F2") {
+        event.preventDefault();
+        focusSearch();
+      }
+      if (event.key === "F4") {
+        event.preventDefault();
+        completeSale();
+      }
+      if (event.key === "F6") {
+        event.preventDefault();
+        if (cartLines.length) {
+          setCart({});
+          setCustomerName("");
+          setSaleNote("");
+          setStatus("Sale held. Start a new invoice when ready.");
+        }
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setQuery("");
+        focusSearch();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [account, cartLines.length, customerName, totalCents]);
 
   async function refreshCatalog(nextTerminal = terminal) {
     if (!nextTerminal) return;
@@ -276,19 +308,13 @@ export default function App() {
   return (
     <main className="workstation">
       <header className="topbar">
-        <div className="brand"><span>V</span><strong>VISIONPOS Cashier</strong></div>
+        <div className="brand"><span>V</span><strong>Vision<b>POS</b></strong></div>
         <div className="topmeta">
-          <b>{branch?.name || terminal.branchId}</b>
-          <span>{terminal.terminalName}</span>
-          <span>{account.name}</span>
-          <button onClick={handleLogout}>Logout</button>
+          <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
+          <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
+          <button className="menu-button" onClick={handleLogout} title="Logout"><Menu size={20} /></button>
         </div>
       </header>
-
-      <section className="statusline">
-        <span className={error ? "bad" : "good"}>{error || status}</span>
-        <button onClick={() => refreshCatalog()}>Sync products</button>
-      </section>
 
       <section className="layout">
         <aside className="left-panel">
@@ -298,7 +324,7 @@ export default function App() {
                 <h3>Open invoices</h3>
                 <strong>{branch?.name || terminal.branchId}</strong>
               </div>
-              <span className="scanner-pill">On</span>
+              <button className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={15} />{scannerOn ? "On" : "Off"}</button>
             </div>
             <div className="invoice-total">
               <span>{openInvoices.length} unpaid invoice{openInvoices.length === 1 ? "" : "s"}</span>
@@ -331,32 +357,41 @@ export default function App() {
           </div>
           <div className="card dark quick-actions">
             <h3>Quick Actions</h3>
-            <button onClick={() => setStatus("Expense entry stays in the web admin workspace.")}>Expense</button>
-            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}>Hold Sale</button>
-            <button onClick={() => setStatus(`You have ${carriedDebts.length} carried-over debt invoice(s).`)}>My Debts</button>
+            <button onClick={() => setStatus("Expense entry stays in the web admin workspace.")}><WalletCards size={17} />Expense</button>
+            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
+            <button onClick={() => setStatus(`You have ${carriedDebts.length} carried-over debt invoice(s).`)}><span className="info-dot">!</span>My Debts</button>
           </div>
         </aside>
 
         <section className="products-panel">
-          <div className="searchbar">
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && filteredProducts[0]) addToCart(filteredProducts[0]);
-              }}
-              placeholder="Scan barcode or search product..."
-              autoFocus
-            />
+          <div className="search-row">
+            <label className="searchbar">
+              <Search size={24} />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && filteredProducts[0]) addToCart(filteredProducts[0]);
+                }}
+                placeholder="Scan barcode or search product, SKU, or barcode..."
+                autoFocus
+              />
+            </label>
+            <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
+          </div>
+          <div className="product-strip">
+            <b>{products.length}</b> products
+            <span>All categories</span>
+            <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
           </div>
           <div className="product-grid">
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} onClick={() => addToCart(product)}>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
-                <strong>{product.name}</strong>
-                <span>{product.sku || product.barcode || "No code"}</span>
-                <b>{money(product.priceCents)}</b>
+                <span className="product-name">{product.name}</span>
+                <span className="product-code">{product.sku || product.barcode || "No code"}</span>
+                <span className="product-foot"><b>{money(product.priceCents)}</b><small>{product.priceCents > 0 ? "In" : "Out"}</small></span>
               </button>
             ))}
           </div>
@@ -366,9 +401,8 @@ export default function App() {
           <div className="cart-head">
             <div>
               <h2>Current Sale</h2>
-              <span>{itemCount} item(s)</span>
+              <span>{itemCount} item(s) · {branch?.name || terminal.branchId}</span>
             </div>
-            <strong>{money(totalCents)}</strong>
           </div>
           <div className="cart-lines">
             {cartLines.length === 0 && <div className="empty">Scan or tap products to start.</div>}
@@ -379,13 +413,20 @@ export default function App() {
               </div>
             ))}
           </div>
-          <label>Customer</label>
+          <label>Customer name / identifier <em>*</em></label>
           <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
           <label>Sale note</label>
           <input value={saleNote} onChange={(event) => setSaleNote(event.target.value)} placeholder="Optional receipt note" />
-          <button className="checkout" disabled={!cartLines.length || !customerName.trim()} onClick={completeSale}>Complete Sale</button>
+          <div className="subtotal"><span>Subtotal</span><b>{money(totalCents)}</b></div>
+          <div className="total-row"><span>Total</span><strong>{money(totalCents)}</strong></div>
+          <button className="checkout" disabled={!cartLines.length || !customerName.trim()} onClick={completeSale}><Check size={21} />Complete Sale <span>F4</span></button>
+          <div className="cart-actions">
+            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
+            <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setQuery(""); focusSearch(); }}>Clear</button>
+          </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
           <p className="hint muted">Issues an open invoice cleared by admin or supervisor.</p>
+          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || status}</p>}
         </aside>
       </section>
 
