@@ -32,12 +32,14 @@ export type Product = {
   size?: string;
   barcode?: string;
   barcodes?: string[];
+  barcodeCatalogId?: string | null;
   category?: string;
   categoryId?: string;
   image?: string;
   priceCents: number;
   costCents: number;
   stockQty: number;
+  serverTs?: number;
 };
 
 export type Invoice = {

@@ -238,6 +238,7 @@ export default function App() {
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const catalogSyncInFlight = useRef(false);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
@@ -292,6 +293,26 @@ export default function App() {
     if (account) focusSearch();
   }, [account]);
 
+  useEffect(() => {
+    if (!terminal) return;
+    const syncQuietly = () => refreshCatalog(terminal, { silent: true });
+    const intervalId = window.setInterval(syncQuietly, 8000);
+    const onFocus = () => syncQuietly();
+    const onOnline = () => syncQuietly();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") syncQuietly();
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [terminal?.uuid]);
+
   useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn);
 
   useEffect(() => {
@@ -324,24 +345,29 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [account, cartLines.length, customerName, totalCents]);
 
-  async function refreshCatalog(nextTerminal = terminal) {
+  async function refreshCatalog(nextTerminal = terminal, options: { silent?: boolean } = {}) {
     if (!nextTerminal) return;
+    if (catalogSyncInFlight.current) return;
+    catalogSyncInFlight.current = true;
     try {
-      setStatus("Syncing products...");
+      if (!options.silent) setStatus("Syncing products...");
       const pulled = await pullCatalog(nextTerminal);
       setBranches(pulled.branches);
       setProducts(pulled.products);
       setInvoices(pulled.invoices);
       setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
       setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
+      setError("");
     } catch (err) {
       if (String(err).includes("terminal_not_authorized")) {
         await clearTerminalCredentials();
         setTerminal(null);
         setAccount(null);
       }
-      setStatus("Using last cached catalog.");
+      if (!options.silent) setStatus("Using last cached catalog.");
       setError(String(err));
+    } finally {
+      catalogSyncInFlight.current = false;
     }
   }
 

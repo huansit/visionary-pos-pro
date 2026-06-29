@@ -75,8 +75,24 @@ function numberFromPayload(payload: any, fields: string[], fallback = 0) {
 }
 
 function productDedupeKey(product: Product) {
+  const catalogId = product.barcodeCatalogId || "";
+  if (catalogId) return `${product.branchId}|catalog:${catalogId}`;
   const code = product.sku || product.barcode || product.barcodes?.[0] || "";
-  return `${product.branchId}|${code ? "code:" + code.toLowerCase() : "name:" + product.name.toLowerCase()}`;
+  const size = product.size || "";
+  return `${product.branchId}|${code ? "code:" + code.toLowerCase() : "name:" + product.name.toLowerCase() + "|" + size.toLowerCase()}`;
+}
+
+function preferProductRow(current: Product | undefined, candidate: Product) {
+  if (!current) return candidate;
+  const score = (product: Product) =>
+    (product.priceCents > 0 ? 8 : 0) +
+    (product.costCents > 0 ? 4 : 0) +
+    (product.image ? 2 : 0) +
+    (product.barcode ? 1 : 0);
+  const currentScore = score(current);
+  const candidateScore = score(candidate);
+  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
+  return Number(candidate.serverTs || 0) >= Number(current.serverTs || 0) ? candidate : current;
 }
 
 export async function activateTerminal(activationCode: string, terminalName: string): Promise<TerminalCredentials> {
@@ -129,6 +145,8 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const branchRecords = new Map<string, any>();
   const productRecords = new Map<string, any>();
   const productDeduped = new Map<string, Product>();
+  const productIdsByKey = new Map<string, string[]>();
+  const baseStockByKey = new Map<string, number>();
   const invoiceRecords = new Map<string, Invoice>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
@@ -205,17 +223,19 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         size: payload.size || "",
         barcode: payload.barcode || "",
         barcodes: Array.isArray(payload.barcodes) ? payload.barcodes : [],
+        barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
         category: payload.category || payload.categoryId || "Uncategorised",
         categoryId: payload.categoryId || payload.category || "",
         image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
         priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
         costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
-        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0)
+        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0),
+        serverTs: Number(item.serverTs || item.updatedAt || 0)
       };
-      const current = productDeduped.get(productDedupeKey(product));
-      if (!current || (product.priceCents > 0 && current.priceCents <= 0) || product.id > current.id) {
-        productDeduped.set(productDedupeKey(product), product);
-      }
+      const key = productDedupeKey(product);
+      productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
+      baseStockByKey.set(key, (baseStockByKey.get(key) || 0) + product.stockQty);
+      productDeduped.set(key, preferProductRow(productDeduped.get(key), product));
     }
   }
 
@@ -225,8 +245,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
       .map((invoice) => ({ ...invoice, paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0) }))
       .filter((invoice) => invoice.branchId === terminal.branchId)
       .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)),
-    products: Array.from(productDeduped.values())
-      .map((product) => ({ ...product, stockQty: product.stockQty + (stockByProduct.get(product.id) || 0) }))
+    products: Array.from(productDeduped.entries())
+      .map(([key, product]) => ({
+        ...product,
+        stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
+      }))
       .sort((a, b) => a.name.localeCompare(b.name))
   };
 }
