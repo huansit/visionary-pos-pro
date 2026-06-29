@@ -5498,6 +5498,8 @@ function PricingTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [bId, setBId] = useState(branch.id);
   const [q, setQ] = useState("");
+  const [priceDrafts, setPriceDrafts] = useState({});
+  const [priceErr, setPriceErr] = useState("");
   useEffect(() => { setBId(branch.id); }, [branch.id]);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const query = q.trim().toLowerCase();
@@ -5505,13 +5507,30 @@ function PricingTab({ data, update, branch }) {
     productBranchId(p, data) === bId &&
     (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
+  const draftFor = (p) => priceDrafts[p.id] ?? (p.priceCents > 0 ? String(p.priceCents / 100) : "");
+  const savePrice = (p) => {
+    const raw = draftFor(p).trim();
+    const price = Math.round((parseFloat(raw) || 0) * 100);
+    if (!price || price <= 0) return setPriceErr("Enter a valid selling price for " + p.name + ".");
+    if (price < p.costCents) return setPriceErr("Selling price for " + p.name + " cannot be below cost.");
+    setPriceErr("");
+    setPriceDrafts((drafts) => {
+      const { [p.id]: _saved, ...rest } = drafts;
+      return rest;
+    });
+    update((d) => ({
+      ...d,
+      products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
+    }));
+  };
   return (
     <div>
-      <PageHead title="Branch Pricing" sub="Read-only overview · selling prices are set in the Products module." />
+      <PageHead title="Branch Pricing" sub="Edit selling prices by branch." />
       <div className="xferinfo" style={{ marginBottom: 14 }}>
-        <strong>Prices are managed in Products.</strong>
-        <div className="sub" style={{ marginTop: 4 }}>Every branch sells at the product's selling price. To change a price, open the Products module and tap “Edit price”.</div>
+        <strong>Selling prices are editable here.</strong>
+        <div className="sub" style={{ marginTop: 4 }}>Type a new selling price and press Enter, or leave the field to save. Prices below cost are blocked.</div>
       </div>
+      {priceErr && <div className="alert error" style={{ marginBottom: 12 }}>{priceErr}</div>}
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div><label className="label">Select branch</label>
           <select className="select" style={{ minWidth: 220 }} value={bId} onChange={(e) => setBId(e.target.value)}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
@@ -5526,7 +5545,18 @@ function PricingTab({ data, update, branch }) {
           return (<tr key={p.id}>
             <td><div className="nm">{p.name}</div><div className="mt2">{p.sku}</div></td>
             <td className="amt">{fmt(cost, cur)}</td>
-            <td className="amt">{fmt(price, cur)}</td>
+            <td className="amt">
+              <input
+                className="input"
+                style={{ width: 130, height: 38, textAlign: "right", fontFamily: "var(--font-mono)" }}
+                inputMode="decimal"
+                value={draftFor(p)}
+                onChange={(e) => { setPriceErr(""); setPriceDrafts((drafts) => ({ ...drafts, [p.id]: e.target.value.replace(/[^\d.]/g, "") })); }}
+                onBlur={() => savePrice(p)}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                aria-label={"Selling price for " + p.name}
+              />
+            </td>
             <td style={{ color: margin != null && margin < 0 ? "var(--danger)" : "var(--text)", fontWeight: 650 }}>{margin == null ? "—" : margin + "%"}</td>
             <td style={{ color: markup != null && markup < 0 ? "var(--danger)" : "var(--text)", fontWeight: 650 }}>{markup == null ? "—" : markup + "%"}</td>
           </tr>);
