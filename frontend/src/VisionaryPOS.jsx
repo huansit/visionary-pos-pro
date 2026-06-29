@@ -711,6 +711,48 @@ function productMatchesBarcode(product, code) {
 function productMatchesCatalog(product, catalogEntry) {
   return !!catalogEntry && barcodeCatalogIdsForProduct(product).includes(catalogEntry.id);
 }
+function productDedupeKey(product) {
+  const catalogId = barcodeCatalogIdsForProduct(product)[0];
+  if (catalogId) return "catalog:" + catalogId;
+  const sku = normalizeBarcode(product?.sku).toLowerCase();
+  if (sku) return "sku:" + sku;
+  const barcode = normalizeBarcode(product?.barcode).toLowerCase();
+  if (barcode) return "barcode:" + barcode;
+  const name = String(product?.name || "").trim().toLowerCase();
+  const size = String(product?.size || "").trim().toLowerCase();
+  if (name) return "name:" + name + "|" + size;
+  return "product:" + (product?.id || "");
+}
+function preferProductRow(current, candidate) {
+  if (!current) return candidate;
+  const score = (p) => (p?.priceCents > 0 ? 8 : 0) + (p?.costCents > 0 ? 4 : 0) + (p?.imageUrl || p?.image ? 2 : 0) + (normalizeBarcode(p?.barcode) ? 1 : 0);
+  const currentScore = score(current);
+  const candidateScore = score(candidate);
+  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
+  return (candidate?.updatedAt || 0) > (current?.updatedAt || 0) ? candidate : current;
+}
+function dedupeProductsByCode(products) {
+  const byKey = new Map();
+  (products || []).forEach((p) => {
+    const key = productDedupeKey(p);
+    byKey.set(key, preferProductRow(byKey.get(key), p));
+  });
+  return Array.from(byKey.values());
+}
+function branchProductsUnique(data, branchId) {
+  return dedupeProductsByCode((data?.products || []).filter((p) => !branchId || productBranchId(p, data) === branchId));
+}
+function duplicateProductIds(data, product, branchId) {
+  const key = productDedupeKey(product);
+  return (data?.products || [])
+    .filter((p) => (!branchId || productBranchId(p, data) === branchId) && productDedupeKey(p) === key)
+    .map((p) => p.id);
+}
+function productOnHand(data, product, branchId) {
+  const ids = duplicateProductIds(data, product, branchId);
+  if (!ids.length) return onHand(data, product?.id, branchId);
+  return ids.reduce((sum, id) => sum + onHand(data, id, branchId), 0);
+}
 function findProductByBarcode(data, code, branchId) {
   const normalized = normalizeBarcode(code);
   if (!normalized) return null;
@@ -1302,7 +1344,7 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
   return Math.round((q * prevCost + addQty * addCost) / denom);
 }
 function priceFor(data, p) { return p.priceCents; }
-function reorderList(data, branchId) { return data.products.filter((p) => onHand(data, p.id, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
+function reorderList(data, branchId) { return branchProductsUnique(data, branchId).filter((p) => productOnHand(data, p, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
 function sortProductsAZ(products) {
   return [...(products || [])].sort((a, b) =>
     String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base", numeric: true })
@@ -4285,6 +4327,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const isBranchProduct = (p) => productBranchId(p, data) === branch.id;
+  const visibleBranchProducts = branchProductsUnique(data, branch.id);
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
@@ -4480,14 +4523,14 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
-    const rows = data.products.filter(isBranchProduct).map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, onHand(data, p.id, branch.id), p.imageUrl || ""]);
+    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
     downloadFile("visionary-products.csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
   };
-  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(data.products.filter(isBranchProduct).map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: p.costCents, priceCents: p.priceCents, onHand: onHand(data, p.id, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
+  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: p.costCents, priceCents: p.priceCents, onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
   const emailSummary = () => {
-    const totalVal = data.products.filter(isBranchProduct).reduce((s, p) => s + onHand(data, p.id, branch.id) * p.costCents, 0);
+    const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * p.costCents, 0);
     const subject = encodeURIComponent("Product catalog · " + branch.name);
-    const body = encodeURIComponent("Products: " + data.products.filter(isBranchProduct).length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
+    const body = encodeURIComponent("Products: " + visibleBranchProducts.length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
     try { window.open("mailto:?subject=" + subject + "&body=" + body, "_blank"); } catch (_) {}
   };
   const splitCsv = (line) => { const out = []; let curr = "", q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') { if (q && line[i + 1] === '"') { curr += '"'; i++; } else q = !q; } else if (ch === "," && !q) { out.push(curr); curr = ""; } else curr += ch; } out.push(curr); return out; };
@@ -4596,12 +4639,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       <div className="ptools">
         <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => setCatF(e.target.value)}>
-          {["All", ...Array.from(new Set(data.products.filter(isBranchProduct).map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
+          {["All", ...Array.from(new Set(visibleBranchProducts.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
       </div>
       {(() => {
         const reorder = data.settings.reorderLevel || 4;
         const query = q.trim();
-        const list = sortProductsAZ(data.products.filter((p) => isBranchProduct(p) && (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
+        const list = sortProductsAZ(visibleBranchProducts.filter((p) => (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
@@ -4609,7 +4652,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
               <tbody>
                 {list.length === 0 && <tr><td colSpan={8} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
                 {list.map((p) => {
-                  const left = onHand(data, p.id, branch.id);
+                  const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
                   const marg = p.priceCents > 0 ? Math.round((p.priceCents - p.costCents) / p.priceCents * 100) : 0;
                   if (editId === p.id) return (
@@ -4669,22 +4712,23 @@ function StockTab({ data, update, branch }) {
   const isCountedCycle = (pid) => !!lastCount(pid);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const slug = bname.replace(/\s+/g, "");
-  const isLow = (p) => onHand(data, p.id, bId) <= (p.reorderLevel ?? data.settings.reorderLevel);
-  const list = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === bId && (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p)))));
-  const countVar = (p) => { const raw = counts[p.id]; if (raw === undefined || raw === "") return null; const c = parseInt(raw, 10); if (Number.isNaN(c)) return null; return c - onHand(data, p.id, bId); };
+  const uniqueProducts = branchProductsUnique(data, bId);
+  const isLow = (p) => productOnHand(data, p, bId) <= (p.reorderLevel ?? data.settings.reorderLevel);
+  const list = sortProductsAZ(uniqueProducts.filter((p) => (q.trim() === "" || p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))) && (filter === "all" || (filter === "reorder" ? isLow(p) : !isLow(p)))));
+  const countVar = (p) => { const raw = counts[p.id]; if (raw === undefined || raw === "") return null; const c = parseInt(raw, 10); if (Number.isNaN(c)) return null; return c - productOnHand(data, p, bId); };
   const entered = Object.keys(counts).filter((k) => counts[k] !== "" && counts[k] !== undefined).length;
   const countedRows = Object.keys(counts).filter((id) => counts[id] !== "" && counts[id] !== undefined).map((id) => {
     const p = data.products.find((x) => x.id === id); if (!p) return null;
-    const oh = onHand(data, id, bId); const c = parseInt(counts[id], 10); const change = Number.isNaN(c) ? 0 : c - oh;
+    const oh = productOnHand(data, p, bId); const c = parseInt(counts[id], 10); const change = Number.isNaN(c) ? 0 : c - oh;
     return { p, oh, c: Number.isNaN(c) ? 0 : c, change };
   }).filter(Boolean).sort((a, b) => a.p.name.localeCompare(b.p.name));
 
-  const totalProducts = data.products.length;
-  const totalUnits = data.products.reduce((s, p) => s + onHand(data, p.id, bId), 0);
-  const stockValue = data.products.reduce((s, p) => s + onHand(data, p.id, bId) * p.costCents, 0);
+  const totalProducts = uniqueProducts.length;
+  const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * p.costCents, 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
   const lossValue = lossList.reduce((s, m) => s + Math.abs(m.qty) * (data.products.find((p) => p.id === m.productId)?.costCents || 0), 0);
-  const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(data.products.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
+  const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
   const recordLoss = () => {
     const qty = parseInt(lf.qty, 10); if (!lf.productId || !qty || qty <= 0) return;
@@ -4720,9 +4764,9 @@ function StockTab({ data, update, branch }) {
   useBarcodeScanner({ enabled: scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
 
   const saveRow = (p) => {
-    const raw = counts[p.id] !== undefined && counts[p.id] !== "" ? counts[p.id] : String(onHand(data, p.id, bId));
+    const raw = counts[p.id] !== undefined && counts[p.id] !== "" ? counts[p.id] : String(productOnHand(data, p, bId));
     const c = parseInt(raw, 10); if (Number.isNaN(c) || c < 0) return;
-    const oh = onHand(data, p.id, bId); const delta = c - oh;
+    const oh = productOnHand(data, p, bId); const delta = c - oh;
     if (delta !== 0) update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: p.id, branchId: bId, qty: delta, mode: "count", reason: "Inventory count", ts: cts(), synced: false }] }));
     setCounts((s) => { const n = { ...s }; delete n[p.id]; return n; });
   };
@@ -4730,13 +4774,13 @@ function StockTab({ data, update, branch }) {
 
   const generate = () => {
     const ts = cts(); const lines = []; const movements = []; const logs = [];
-    data.products.forEach((p) => {
+    uniqueProducts.forEach((p) => {
       const raw = counts[p.id]; if (raw === undefined || raw === "") return;
       const counted = parseInt(raw, 10); if (Number.isNaN(counted) || counted < 0) return;
       const already = isCountedCycle(p.id);
       // A product can't be freshly counted twice — a second entry in the same cycle is recorded as an amendment.
       if (already && !amending[p.id]) return;
-      const system = onHand(data, p.id, bId); const variance = counted - system;
+      const system = productOnHand(data, p, bId); const variance = counted - system;
       const kind = already ? "amendment" : "count";
       lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: p.costCents, kind });
       if (variance !== 0) movements.push({ id: uid("mv"), productId: p.id, branchId: bId, qty: variance, mode: "count", reason: kind === "amendment" ? "Count amendment" : "Inventory count", ts, synced: false });
@@ -4745,7 +4789,7 @@ function StockTab({ data, update, branch }) {
     if (lines.length === 0) return;
     const countedMap = {}; lines.forEach((l) => { countedMap[l.id] = l.counted; });
     let invUnits = 0, invCost = 0, invRetail = 0;
-    data.products.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : onHand(data, p.id, bId); invUnits += qv; invCost += qv * p.costCents; invRetail += qv * p.priceCents; });
+    uniqueProducts.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : productOnHand(data, p, bId); invUnits += qv; invCost += qv * p.costCents; invRetail += qv * p.priceCents; });
     update((d) => ({ ...d, stockMovements: movements.length ? [...d.stockMovements, ...movements] : d.stockMovements, countLog: [...(d.countLog || []), ...logs] }));
     const discrepancies = lines.filter((l) => l.variance !== 0);
     setReport({ branchName: bname, branchId: bId, ts, lines, discrepancies,
@@ -4803,7 +4847,7 @@ function StockTab({ data, update, branch }) {
       )}
       <div className="tablewrap tblscroll" style={{ marginTop: 18 }}><table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Change</th><th>Value</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>{list.map((p) => {
-          const oh = onHand(data, p.id, bId); const low = oh <= (p.reorderLevel ?? data.settings.reorderLevel);
+          const oh = productOnHand(data, p, bId); const low = oh <= (p.reorderLevel ?? data.settings.reorderLevel);
           const value = oh * p.costCents;
           const prevCount = lastCount(p.id); const locked = !!prevCount && !amending[p.id];
           const isCounted = counts[p.id] !== undefined && counts[p.id] !== "";
@@ -4861,7 +4905,7 @@ function StockTab({ data, update, branch }) {
             <div className="possearch" style={{ height: 44 }}><Search /><input placeholder="Search name or SKU…" value={lf.q} onChange={(e) => setLf({ ...lf, q: e.target.value, productId: "" })} /></div>
             {lf.q.trim() !== "" && !lossProd && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                {lossProdMatches.length === 0 ? <span className="cust-meta">No match.</span> : lossProdMatches.map((p) => <button key={p.id} className="inschip" onClick={() => setLf({ ...lf, productId: p.id, q: p.name })}>{p.name} · {onHand(data, p.id, bId)} on hand</button>)}
+                {lossProdMatches.length === 0 ? <span className="cust-meta">No match.</span> : lossProdMatches.map((p) => <button key={p.id} className="inschip" onClick={() => setLf({ ...lf, productId: p.id, q: p.name })}>{p.name} · {productOnHand(data, p, bId)} on hand</button>)}
               </div>
             )}
             {lossProd && (
@@ -4897,7 +4941,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
-  const initProd = data.products.find((p) => productBranchId(p, data) === branch.id)?.id || data.products[0]?.id || "";
+  const initProd = branchProductsUnique(data, branch.id)[0]?.id || data.products[0]?.id || "";
   const rec0 = recommend(initProd);
   const [adding, setAdding] = useState(false);
   const [list, setList] = useState([]); // batch of purchase lines to save at once
@@ -4911,7 +4955,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => ({ ...s, supplierId: sid, cost: e ? String(e.costCents / 100) : s.cost })); };
   const rec = recommend(f.productId);
   const qlist = quotesFor(f.productId);
-  const purchaseProducts = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === (f.branchId || branch.id)));
+  const purchaseProducts = sortProductsAZ(branchProductsUnique(data, f.branchId || branch.id));
   const focusPurchaseScan = () => window.setTimeout(() => scanInputRef.current?.focus(), 0);
   const handlePurchaseScan = (raw) => {
     const barcode = normalizeBarcode(raw);
@@ -5017,10 +5061,10 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const [planBranch, setPlanBranch] = useState(branch.id);
   const [planNote, setPlanNote] = useState(""); const [planLoading, setPlanLoading] = useState(false);
   const reorderLvl = (p) => p.reorderLevel ?? data.settings.reorderLevel;
-  const suggestQty = (p, bid) => { const oh = onHand(data, p.id, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
+  const suggestQty = (p, bid) => { const oh = productOnHand(data, p, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
   const buildLines = (bid) => reorderList(data, bid).map((p) => {
     const qs = quotesFor(p.id); const r = qs[0] || null;
-    return { productId: p.id, name: p.name, sku: p.sku, onHand: onHand(data, p.id, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : p.costCents, hasQuote: !!r, quotes: qs };
+    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : p.costCents, hasQuote: !!r, quotes: qs };
   });
   const localNote = (lines) => { const named = lines.filter((l) => l.hasQuote).length; const total = lines.reduce((s, l) => s + l.qty * l.costCents, 0); return named + " of " + lines.length + " item(s) have supplier quotes — each matched to its cheapest supplier. Estimated order value " + fmt(total, cur) + (named < lines.length ? ". Items without quotes need a supplier chosen manually." : "."); };
   const prepare = async (bid) => {
@@ -5064,7 +5108,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
             </div>
           </div>
           {scanMsg && <div className="notice" style={{ marginTop: 10 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
-          <div className="field" style={{ marginTop: 12 }}><label className="label">Branch (stock goes here)</label><select className="select" value={f.branchId} onChange={(e) => { const nextBranch = e.target.value; const nextProduct = data.products.find((p) => productBranchId(p, data) === nextBranch)?.id || ""; setF({ ...f, branchId: nextBranch, productId: nextProduct }); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <div className="field" style={{ marginTop: 12 }}><label className="label">Branch (stock goes here)</label><select className="select" value={f.branchId} onChange={(e) => { const nextBranch = e.target.value; const nextProduct = branchProductsUnique(data, nextBranch)[0]?.id || ""; setF({ ...f, branchId: nextBranch, productId: nextProduct }); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
           {rec && (
             <div className="notice" style={{ marginTop: 12 }}>
               Recommended: <b>{rec.supplier.name}</b> at {fmt(rec.costCents, cur)}{qlist.length > 1 ? " · cheapest of " + qlist.length + " quotes" : ""}.{" "}
@@ -5230,7 +5274,8 @@ function SuppliersTab({ data, update }) {
   const add = () => { if (!f.name.trim()) return; update((d) => ({ ...d, suppliers: [...d.suppliers, { id: uid("s"), ...f, name: f.name.trim(), synced: false }] })); setF({ name: "", contact: "", phone: "" }); setAdding(false); };
   const remove = (id) => update((d) => ({ ...d, suppliers: d.suppliers.filter((s) => s.id !== id) }));
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
-  const prodMatches = q.trim() === "" ? sortProductsAZ(data.products).slice(0, 8) : sortProductsAZ(data.products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).slice(0, 12);
+  const uniqueProducts = sortProductsAZ(dedupeProductsByCode(data.products));
+  const prodMatches = q.trim() === "" ? uniqueProducts.slice(0, 8) : uniqueProducts.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())).slice(0, 12);
   const prod = data.products.find((p) => p.id === cmpProd);
   const best = cmpProd ? quotesFor(cmpProd)[0] : null;
   const setSupQuote = (supplierId, valCents) => update((d) => {
@@ -5309,7 +5354,7 @@ function BranchesTab({ data, update }) {
   const prod = (id) => data.products.find((p) => p.id === id);
   const stats = (b) => {
     let units = 0, value = 0;
-    data.products.forEach((p) => { const oh = Math.max(0, onHand(data, p.id, b.id)); units += oh; value += oh * p.costCents; });
+    branchProductsUnique(data, b.id).forEach((p) => { const oh = Math.max(0, productOnHand(data, p, b.id)); units += oh; value += oh * p.costCents; });
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
     const recInvs = data.invoices.filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
@@ -5396,8 +5441,8 @@ function BorrowingTab({ data, update }) {
   const product = data.products.find((p) => p.id === productId);
   // available accounts for quantities already added to the pending list for this product at this source
   const pendingQty = (pid) => lines.filter((l) => l.productId === pid).reduce((s, l) => s + l.qty, 0);
-  const available = product ? onHand(data, product.id, fromB) - pendingQty(product.id) : 0;
-  const matches = q.trim() === "" ? [] : sortProductsAZ(data.products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).slice(0, 6);
+  const available = product ? productOnHand(data, product, fromB) - pendingQty(product.id) : 0;
+  const matches = q.trim() === "" ? [] : sortProductsAZ(branchProductsUnique(data, fromB).filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).slice(0, 6);
 
   const addLine = () => {
     setErr("");
@@ -5452,7 +5497,7 @@ function BorrowingTab({ data, update }) {
             <div className="searchres">{matches.map((p) => (
               <button key={p.id} className="sres" onClick={() => { setProductId(p.id); setQ(""); }}>
                 <span>{p.name} <span style={{ color: "var(--muted-2)" }}>· {p.sku}</span></span>
-                <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 12 }}>{onHand(data, p.id, fromB) - pendingQty(p.id)} @ {bn(fromB)}</span>
+                <span style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: 12 }}>{productOnHand(data, p, fromB) - pendingQty(p.id)} @ {bn(fromB)}</span>
               </button>))}
             </div>
           )}
@@ -6092,13 +6137,13 @@ function ReportsTab({ data, initialTab }) {
     if (sub === "products") return { name: "product-report", headers: ["Product", "SKU", "Units", "Revenue", "COGS", "Loss value", "Net profit", "Margin %"], rows: productRows.map((r) => { const lv = lossMoves.filter((mv) => mv.productId === r.p.id).reduce((s, mv) => s + Math.abs(mv.qty) * r.p.costCents, 0); return [r.p.name, r.p.sku, r.qty, m(r.revenue), m(r.cost), m(lv), m(r.profit - lv), r.marg]; }) };
     if (sub === "pnl") return { name: "profit-loss", headers: ["Line", "Amount"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)]] };
     if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * ((p && p.costCents) || 0))]; }) };
-    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: data.products.map((p) => { const oh = onHand(data, p.id, bId); return [p.name, p.sku, oh, m(oh * p.costCents), m(oh * p.priceCents)]; }) };
+    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: branchProductsUnique(data, bId).map((p) => { const oh = productOnHand(data, p, bId); return [p.name, p.sku, oh, m(oh * p.costCents), m(oh * p.priceCents)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
       const fm = data.stockMovements.filter((m2) => typeof m2.reason === "string" && m2.reason.startsWith("Sale") && m2.ts >= lbStart && inBranch(m2.branchId));
       const sbp = {}; let earliest = Date.now(); fm.forEach((m2) => { sbp[m2.productId] = (sbp[m2.productId] || 0) + (-m2.qty); if (m2.ts < earliest) earliest = m2.ts; });
       const wkObs = fm.length ? Math.max(1, Math.min(LB, (Date.now() - earliest) / weekMs)) : 1;
-      const rws = data.products.map((p) => { const wk = (sbp[p.id] || 0) / wkObs; if (wk <= 0) return null; const oh = onHand(data, p.id, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel; const cover = oh / wk; const need = Math.max(0, Math.ceil(wk * reorderWeeks - oh)); return { p, oh, lvl, wk, cover, need }; }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
+      const rws = branchProductsUnique(data, bId).map((p) => { const wk = duplicateProductIds(data, p, bId).reduce((s, id) => s + (sbp[id] || 0), 0) / wkObs; if (wk <= 0) return null; const oh = productOnHand(data, p, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel; const cover = oh / wk; const need = Math.max(0, Math.ceil(wk * reorderWeeks - oh)); return { p, oh, lvl, wk, cover, need }; }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
       return { name: "reorder-forecast", headers: ["Product", "SKU", "On hand", "Weekly demand", "Weeks of cover", "Reorder level", "Suggested order (" + reorderWeeks + "wk cover)"], rows: rws.map((r) => [r.p.name, r.p.sku, r.oh, r.wk.toFixed(2), r.cover.toFixed(1), r.lvl, r.need]) };
     }
     if (sub === "cashier") return { name: "cashier-credit", headers: ["Cashier", "Owed"], rows: Object.entries(debtByCashier).map(([n, v]) => [n, m(v)]) };
@@ -6290,7 +6335,7 @@ function ReportsTab({ data, initialTab }) {
       )}
 
       {sub === "inventory" && (() => {
-        const rows = data.products.map((p) => ({ p, oh: onHand(data, p.id, bId) }));
+        const rows = branchProductsUnique(data, bId).map((p) => ({ p, oh: productOnHand(data, p, bId) }));
         const costVal = rows.reduce((s, r) => s + r.oh * r.p.costCents, 0);
         const retailVal = rows.reduce((s, r) => s + r.oh * r.p.priceCents, 0);
         const units = rows.reduce((s, r) => s + r.oh, 0);
@@ -6311,10 +6356,10 @@ function ReportsTab({ data, initialTab }) {
         const weeksObserved = fcMoves.length ? Math.max(1, Math.min(WEEKS_LOOKBACK, (Date.now() - earliest) / weekMs)) : 1;
         const weekly = (pid) => (soldByProd[pid] || 0) / weeksObserved; // average units sold per week
         const target = reorderWeeks;
-        const rows = data.products.map((p) => {
-          const wk = weekly(p.id);
+        const rows = branchProductsUnique(data, bId).map((p) => {
+          const wk = duplicateProductIds(data, p, bId).reduce((s, id) => s + weekly(id), 0);
           if (wk <= 0) return null; // idle product — not part of the reorder forecast
-          const oh = onHand(data, p.id, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel;
+          const oh = productOnHand(data, p, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel;
           const cover = oh / wk; // weeks of stock remaining at current demand
           const need = Math.max(0, Math.ceil(wk * target - oh)); // order enough to cover `target` weeks
           return { p, oh, lvl, wk, cover, need };
