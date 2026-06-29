@@ -29,6 +29,7 @@ export type Product = {
   branchId: string;
   name: string;
   sku?: string;
+  size?: string;
   barcode?: string;
   barcodes?: string[];
   category?: string;

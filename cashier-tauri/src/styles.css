@@ -724,26 +724,91 @@ button.ghost, .ghost {
 .receipt-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(2,6,23,.72);
+  background: rgba(15,23,42,.58);
   display: grid;
   place-items: center;
   z-index: 20;
+  backdrop-filter: blur(6px);
 }
 .receipt-modal {
-  width: 420px;
-  border-radius: 22px;
+  width: min(440px, calc(100vw - 40px));
+  border-radius: 12px;
   background: #fff;
   color: #0f172a;
-  padding: 20px;
+  padding: 18px;
+  border: 1px solid #E5E7EB;
+}
+.receipt-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #E5E7EB;
+  margin-bottom: 14px;
+}
+.receipt-title span {
+  display: block;
+  color: #64748B;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.receipt-title strong {
+  display: block;
+  color: #0F172A;
+  font-size: 18px;
+  letter-spacing: -.02em;
+}
+.receipt-x {
+  width: 34px;
+  height: 34px;
+  min-height: 34px !important;
+  border-radius: 10px !important;
+  border: 1px solid #E5E7EB !important;
+  background: #F8FAFC !important;
+  color: #334155 !important;
+  padding: 0 !important;
+  font-size: 22px;
+  line-height: 1;
 }
 .receipt {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #111827;
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 18px;
 }
-.receipt h2, .receipt p { text-align: center; margin: 4px 0; }
-.receipt-line, .receipt-total { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; }
+.receipt h2 {
+  text-align: center;
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.receipt p { text-align: center; margin: 5px 0; }
+.receipt hr {
+  border: 0;
+  border-top: 1px dashed #CBD5E1;
+  margin: 12px 0;
+}
+.receipt-line, .receipt-total { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; }
+.receipt-line span { max-width: 270px; }
 .receipt-total { font-size: 18px; font-weight: 950; }
 .receipt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+.receipt-actions button {
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid #2563EB;
+  background: #2563EB;
+  color: #fff;
+  font-weight: 850;
+}
+.receipt-actions button.ghost {
+  border-color: #E5E7EB;
+  background: #F8FAFC;
+  color: #334155;
+}
 
 @media (max-width: 1500px) {
   .layout { grid-template-columns: 280px minmax(0, 1fr) 340px; gap: 10px; padding: 10px; }
@@ -768,7 +833,10 @@ button.ghost, .ghost {
     inset: 0 auto auto 0;
     width: 76mm;
     padding: 4mm;
+    border: 0 !important;
+    border-radius: 0 !important;
   }
+.receipt-title,
 .receipt-actions { display: none !important; }
 }
 

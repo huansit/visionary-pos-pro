@@ -64,6 +64,16 @@ function moneyToCentsFromPayload(payload: any, fields: string[], fallback = 0) {
   return fallback;
 }
 
+function numberFromPayload(payload: any, fields: string[], fallback = 0) {
+  for (const field of fields) {
+    const raw = payload?.[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
+
 function productDedupeKey(product: Product) {
   const code = product.sku || product.barcode || product.barcodes?.[0] || "";
   return `${product.branchId}|${code ? "code:" + code.toLowerCase() : "name:" + product.name.toLowerCase()}`;
@@ -184,14 +194,15 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         branchId: terminal.branchId,
         name: payload.name || "Unnamed product",
         sku: payload.sku || "",
+        size: payload.size || "",
         barcode: payload.barcode || "",
         barcodes: Array.isArray(payload.barcodes) ? payload.barcodes : [],
         category: payload.category || payload.categoryId || "Uncategorised",
         categoryId: payload.categoryId || payload.category || "",
-        image: payload.image || payload.imageUrl || payload.image_url || "",
-        priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "price"])),
-        costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "cost"])),
-        stockQty: Number(payload.stockQty ?? payload.stock ?? 0)
+        image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
+        priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
+        costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
+        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "qty", "quantity", "onHand"], 0)
       };
       const current = productDeduped.get(productDedupeKey(product));
       if (!current || (product.priceCents > 0 && current.priceCents <= 0) || product.id > current.id) {

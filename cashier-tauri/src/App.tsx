@@ -441,7 +441,7 @@ export default function App() {
               <button className="product-card" key={product.id} onClick={() => addToCart(product)}>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
                 <span className="product-name">{product.name}</span>
-                <span className="product-code">{product.sku || product.barcode || "No code"}</span>
+                <span className="product-code">{[product.sku || product.barcode || "No code", product.size].filter(Boolean).join(" - ")}</span>
                 <span className="product-foot"><b>{money(product.priceCents)}</b><small>{product.priceCents > 0 ? "In" : "Out"}</small></span>
               </button>
             ))}
@@ -833,9 +833,15 @@ function ReceiptPreview({ receipt, onClose }: { receipt: Receipt; onClose: () =>
   return (
     <div className="receipt-backdrop">
       <div className="receipt-modal">
+        <div className="receipt-title">
+          <div>
+            <span>Invoice receipt</span>
+            <strong>{receipt.number}</strong>
+          </div>
+          <button className="receipt-x" onClick={onClose} aria-label="Close receipt">×</button>
+        </div>
         <div className="receipt" id="receipt-print">
-          <h2>VISIONPOS</h2>
-          <p>{receipt.branchName}</p>
+          <h2>{receipt.branchName}</h2>
           <p>{new Date(receipt.ts).toLocaleString()}</p>
           <p>Receipt: {receipt.number}</p>
           <p>Cashier: {receipt.cashierName}</p>
