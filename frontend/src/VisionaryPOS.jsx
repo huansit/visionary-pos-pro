@@ -5503,7 +5503,28 @@ function PricingTab({ data, update, branch }) {
   useEffect(() => { setBId(branch.id); }, [branch.id]);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const query = q.trim().toLowerCase();
-  const list = sortProductsAZ(data.products.filter((p) =>
+  const pricingKey = (p) => {
+    const catalogId = barcodeCatalogIdsForProduct(p)[0];
+    if (catalogId) return "catalog:" + catalogId;
+    const sku = normalizeBarcode(p.sku).toLowerCase();
+    if (sku) return "sku:" + sku;
+    const barcode = normalizeBarcode(p.barcode).toLowerCase();
+    if (barcode) return "barcode:" + barcode;
+    return "product:" + p.id;
+  };
+  const preferPricingRow = (current, candidate) => {
+    if (!current) return candidate;
+    if ((candidate.priceCents || 0) > 0 && !(current.priceCents || 0)) return candidate;
+    if (!(candidate.priceCents || 0) && (current.priceCents || 0) > 0) return current;
+    if ((candidate.updatedAt || 0) > (current.updatedAt || 0)) return candidate;
+    return current;
+  };
+  const dedupePricingProducts = (products) => {
+    const byKey = new Map();
+    products.forEach((p) => byKey.set(pricingKey(p), preferPricingRow(byKey.get(pricingKey(p)), p)));
+    return sortProductsAZ(Array.from(byKey.values()));
+  };
+  const list = dedupePricingProducts(data.products.filter((p) =>
     productBranchId(p, data) === bId &&
     (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
@@ -5520,7 +5541,7 @@ function PricingTab({ data, update, branch }) {
     });
     update((d) => ({
       ...d,
-      products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
+      products: d.products.map((x) => productBranchId(x, d) === bId && pricingKey(x) === pricingKey(p) ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
     }));
   };
   return (
