@@ -7,4 +7,6 @@ frontend/dist/
 desktop/dist/
 desktop/release/
 cashier-tauri/dist/
+cashier-tauri/release/
+cashier-tauri/src-tauri/gen/
 cashier-tauri/src-tauri/target/
