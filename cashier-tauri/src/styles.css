@@ -1598,29 +1598,19 @@ button.ghost, .ghost {
   font-family: inherit;
 }
 .product-foot small {
-  background: #FEF2F2;
-  color: #B91C1C;
+  background: #F1F5F9;
+  color: #64748B;
   border-radius: 999px;
-  padding: 3px 7px;
+  padding: 4px 8px;
   font-size: 10px;
   font-weight: 850;
   white-space: nowrap;
 }
-.product-stock-badge {
-  position: absolute;
-  top: 9px;
-  right: 9px;
-  border-radius: 8px;
-  padding: 4px 7px;
-  font-size: 10px;
-  font-weight: 900;
-  z-index: 1;
-}
-.product-stock-badge.ok {
+.product-foot small.ok {
   color: #047857;
   background: #D1FAE5;
 }
-.product-stock-badge.out {
+.product-foot small.out {
   color: #B91C1C;
   background: #FEE2E2;
 }

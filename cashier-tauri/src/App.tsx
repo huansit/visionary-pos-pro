@@ -77,6 +77,10 @@ function productStatusText(product: Product) {
   return `${stock} in`;
 }
 
+function productStatusClass(product: Product) {
+  return productSaleBlockReason(product, 0) ? "out" : "ok";
+}
+
 function receiptPrintHtml(receipt: Receipt) {
   const lines = receipt.items.map((item) => `
     <div class="line">
@@ -579,12 +583,11 @@ export default function App() {
           <div className="product-grid">
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
-                <span className={"product-stock-badge " + (productStock(product) > 0 ? "ok" : "out")}>{productStock(product) > 0 ? `${productStock(product)} stock` : "Out"}</span>
                 <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
                 <span className="product-name">{product.name}</span>
                 <span className="product-code">SKU: {product.sku || product.barcode || "No code"}</span>
                 <span className="product-code">Volume: {product.size || "N/A"}</span>
-                <span className="product-foot"><b>{money(product.priceCents)}</b><small>{productStatusText(product)}</small></span>
+                <span className="product-foot"><b>{money(product.priceCents)}</b><small className={productStatusClass(product)}>{productStatusText(product)}</small></span>
                 <span className="product-stepper"><i>+</i><b>1</b><i>-</i></span>
               </button>
             ))}
