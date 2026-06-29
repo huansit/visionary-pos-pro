@@ -30,6 +30,7 @@ const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY];
 const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
+const AUTO_LOGOUT_MS = 5 * 60 * 1000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 const now = () => Date.now();
@@ -884,6 +885,33 @@ async function cloudSession(sessionToken) {
 async function cloudLogout(sessionToken) {
   if (!sessionToken) return;
   try { await authApi("/api/auth/logout", { sessionToken }); } catch (_) {}
+}
+function storedSessionTokenSync() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return "";
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    if (!raw) return "";
+    const saved = JSON.parse(raw);
+    return saved?.sessionToken || "";
+  } catch (_) { return ""; }
+}
+function clearSessionStateSync() {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(SESSION_KEY, "");
+  } catch (_) {}
+}
+async function logoutSessionToken(sessionToken, options = {}) {
+  if (!sessionToken) return;
+  const cfg = syncConfig();
+  const body = JSON.stringify({ sessionToken });
+  try {
+    await fetch(cfg.apiBaseUrl + "/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: Boolean(options.keepalive)
+    });
+  } catch (_) {}
 }
 const SECUGEN_BASES = ["https://localhost:8443", "http://localhost:8080"];
 const SECUGEN_CAPTURE_PATH = "/SGIFPCapture";
@@ -2326,13 +2354,46 @@ export default function VisionPOS() {
     setView(nextView);
     saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: now() });
   };
-  const signOutSession = () => {
-    cloudLogout(session?.sessionToken);
+  const signOutSession = (opts = {}) => {
+    const options = opts?.type ? {} : opts;
+    const token = options.sessionToken || session?.sessionToken || storedSessionTokenSync();
+    logoutSessionToken(token, { keepalive: Boolean(options.keepalive) });
     setMenuOpen(false);
     setSession(null);
     setView("pin");
     clearSessionState();
   };
+  useEffect(() => {
+    if (!session) return;
+    let idleTimer = null;
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => signOutSession({ reason: "idle" }), AUTO_LOGOUT_MS);
+    };
+    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart"];
+    activityEvents.forEach((name) => window.addEventListener(name, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+    return () => {
+      clearTimeout(idleTimer);
+      activityEvents.forEach((name) => window.removeEventListener(name, resetIdleTimer));
+    };
+  }, [session?.id, session?.sessionToken]); // eslint-disable-line
+  useEffect(() => {
+    if (!session) return;
+    const logoutBeforeClose = () => {
+      const token = session?.sessionToken || storedSessionTokenSync();
+      logoutSessionToken(token, { keepalive: true });
+      clearSessionStateSync();
+    };
+    window.addEventListener("pagehide", logoutBeforeClose);
+    window.addEventListener("beforeunload", logoutBeforeClose);
+    window.addEventListener("visionpos:desktop-closing", logoutBeforeClose);
+    return () => {
+      window.removeEventListener("pagehide", logoutBeforeClose);
+      window.removeEventListener("beforeunload", logoutBeforeClose);
+      window.removeEventListener("visionpos:desktop-closing", logoutBeforeClose);
+    };
+  }, [session?.id, session?.sessionToken]);
   const update = (fn) => setData((prev) => {
     const next = { ...fn(prev), _sync: prev?._sync || { outboxLength: 0, cursor: 0 } };
     saveData(next);

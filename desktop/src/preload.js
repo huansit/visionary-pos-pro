@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld("visionposDesktop", {
   }
 });
 
+ipcRenderer.on("app:closing", () => {
+  window.dispatchEvent(new Event("visionpos:desktop-closing"));
+});
+
 window.addEventListener("DOMContentLoaded", () => {
   installDesktopChrome();
   installConnectionBadge();

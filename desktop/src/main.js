@@ -24,6 +24,7 @@ let mainWindow;
 let activeSale = false;
 let reconnectTimer;
 let lastConnectionState = "offline";
+let closingAfterLogout = false;
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -248,9 +249,22 @@ function createWindow() {
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized", false));
 
+  const closeAfterRendererLogout = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    closingAfterLogout = true;
+    mainWindow.webContents.send("app:closing");
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+    }, 300);
+  };
+
   mainWindow.on("close", async (event) => {
-    if (!activeSale) return;
+    if (closingAfterLogout) return;
     event.preventDefault();
+    if (!activeSale) {
+      closeAfterRendererLogout();
+      return;
+    }
     const result = await dialog.showMessageBox(mainWindow, {
       type: "warning",
       buttons: ["Stay open", "Close anyway"],
@@ -261,7 +275,7 @@ function createWindow() {
     });
     if (result.response === 1) {
       activeSale = false;
-      mainWindow.close();
+      closeAfterRendererLogout();
     }
   });
 
