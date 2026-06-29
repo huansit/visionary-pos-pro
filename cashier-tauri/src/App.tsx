@@ -1128,8 +1128,10 @@ function LoginScreen({
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(error);
+  const canSubmit = !busy && employeeNumber.trim().length > 0 && pin.length >= 4;
 
   async function submit() {
+    if (!canSubmit) return;
     setBusy(true);
     setMessage("");
     try {
@@ -1150,11 +1152,11 @@ function LoginScreen({
         </div>
         <p>{branch?.name || terminal.branchId} · {terminal.terminalName}</p>
         <label>Employee number</label>
-        <div className="premium-input"><UserRound size={20} /><input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} autoFocus /></div>
+        <div className="premium-input"><UserRound size={20} /><input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} autoFocus /></div>
         <label>PIN</label>
-        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} type="password" inputMode="numeric" /></div>
-        {(message || status) && <div className={message ? "error" : "notice"}>{message || status}</div>}
-        <button className="premium-primary" disabled={busy || !employeeNumber.trim() || pin.length < 4} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
+        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" /></div>
+        {message && <div className="error">{message}</div>}
+        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
       </LoginCard>
     </AuthShell>
   );
