@@ -517,6 +517,18 @@ button.ghost, .ghost {
 }
 .card.dark h3 { color: #8fa3b4; margin-bottom: 8px; }
 .card.dark p, .card.dark span, .card.dark small { color: #91a6b8; }
+.clickable-card {
+  cursor: pointer;
+  transition: border-color .16s ease, transform .16s ease, background .16s ease;
+}
+.clickable-card:hover {
+  border-color: rgba(45,212,222,.44);
+  transform: translateY(-1px);
+}
+.clickable-card:focus-visible {
+  outline: 3px solid rgba(45,212,222,.34);
+  outline-offset: 3px;
+}
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .card-head strong { display: block; font-size: 22px; letter-spacing: -.04em; }
 .text-link {
@@ -958,6 +970,17 @@ button.ghost, .ghost {
 .modal-row strong {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;
+}
+.modal-row-button {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+}
+.modal-row-button:hover {
+  border-color: rgba(37,99,235,.28);
+  background: #f8fafc;
 }
 
 /* Web cashier parity: keep the Tauri client visually aligned with the live POS. */

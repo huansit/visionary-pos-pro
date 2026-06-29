@@ -232,6 +232,7 @@ export default function App() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
+  const [openInvoicesOpen, setOpenInvoicesOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -504,13 +505,32 @@ export default function App() {
 
       <section className="layout">
         <aside className="left-panel">
-          <div className="card dark open-invoices">
+          <div
+            className="card dark open-invoices clickable-card"
+            role="button"
+            tabIndex={0}
+            onClick={() => setOpenInvoicesOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setOpenInvoicesOpen(true);
+              }
+            }}
+          >
             <div className="card-head">
               <div>
                 <h3>Open invoices</h3>
                 <strong>{branch?.name || terminal.branchId}</strong>
               </div>
-              <button className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={15} />{scannerOn ? "On" : "Off"}</button>
+              <button
+                className={"scanner-pill" + (scannerOn ? " on" : "")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setScannerOn((value) => !value);
+                }}
+              >
+                <Barcode size={15} />{scannerOn ? "On" : "Off"}
+              </button>
             </div>
             <div className="invoice-total">
               <span>{openInvoices.length} unpaid invoice{openInvoices.length === 1 ? "" : "s"}</span>
@@ -524,7 +544,15 @@ export default function App() {
             ) : (
               <div className="invoice-list">
                 {openInvoices.slice(0, 8).map((invoice) => (
-                  <button key={invoice.id} className="invoice-row" onClick={() => setCustomerName(invoice.customerName || "Walk-in")}>
+                  <button
+                    key={invoice.id}
+                    className="invoice-row"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCustomerName(invoice.customerName || "Walk-in");
+                      setOpenInvoicesOpen(true);
+                    }}
+                  >
                     <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
                     <strong>{money(outstanding(invoice))}</strong>
                   </button>
@@ -532,10 +560,29 @@ export default function App() {
               </div>
             )}
           </div>
-          <div className="card dark debt-card">
+          <div
+            className="card dark debt-card clickable-card"
+            role="button"
+            tabIndex={0}
+            onClick={() => setDebtsOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setDebtsOpen(true);
+              }
+            }}
+          >
             <div className="card-head">
               <h3>Debt tracker</h3>
-              <button className="text-link" onClick={() => setStatus(`${carriedDebts.length} carried-over debt invoice(s).`)}>View</button>
+              <button
+                className="text-link"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setDebtsOpen(true);
+                }}
+              >
+                View
+              </button>
             </div>
             <div className="debt-line"><span>Carried-over debts</span><b>{money(carriedDebtTotal)}</b></div>
             <p>{carriedDebts.length} unpaid carried-over invoice{carriedDebts.length === 1 ? "" : "s"}</p>
@@ -641,6 +688,19 @@ export default function App() {
           }}
         />
       )}
+      {openInvoicesOpen && (
+        <InvoicesModal
+          invoices={openInvoices}
+          totalCents={openInvoiceTotal}
+          branchName={branch?.name || terminal.branchId}
+          onUseCustomer={(name) => {
+            setCustomerName(name || "Walk-in");
+            setOpenInvoicesOpen(false);
+            focusSearch();
+          }}
+          onClose={() => { setOpenInvoicesOpen(false); focusSearch(); }}
+        />
+      )}
       {debtsOpen && (
         <DebtsModal
           debts={carriedDebts}
@@ -703,6 +763,51 @@ function ExpenseModal({
         {amountCents > 50000 && <div className="notice">Expenses above KES 500 are sent for admin approval.</div>}
         {message && <div className="error">{message}</div>}
         <button className="modal-primary" disabled={busy || amountCents <= 0} onClick={submit}><Check size={18} />{busy ? "Saving..." : "Save Expense"}</button>
+      </div>
+    </div>
+  );
+}
+
+function InvoicesModal({
+  invoices,
+  totalCents,
+  branchName,
+  onUseCustomer,
+  onClose
+}: {
+  invoices: Invoice[];
+  totalCents: number;
+  branchName: string;
+  onUseCustomer: (name: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <div className="cashier-modal wide">
+        <div className="modal-head">
+          <div>
+            <span>{branchName}</span>
+            <h2>Open Invoices</h2>
+          </div>
+          <button className="close-button" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="debt-summary"><span>Unpaid open invoices</span><b>{money(totalCents)}</b></div>
+        {invoices.length === 0 ? (
+          <div className="empty-modal">No open invoices for your login.</div>
+        ) : (
+          <div className="modal-list">
+            {invoices.map((invoice) => (
+              <button
+                className="modal-row modal-row-button"
+                key={invoice.id}
+                onClick={() => onUseCustomer(invoice.customerName || "Walk-in")}
+              >
+                <div><b>{invoice.number}</b><span>{invoice.customerName || "Walk-in"}</span></div>
+                <strong>{money(outstanding(invoice))}</strong>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
