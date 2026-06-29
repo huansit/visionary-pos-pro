@@ -10,8 +10,6 @@ import {
   Lock,
   Menu,
   MonitorCheck,
-  PackageCheck,
-  RefreshCw,
   Search,
   Server,
   ShieldCheck,
@@ -463,8 +461,6 @@ export default function App() {
         onActivated={(next) => { setTerminal(next); refreshCatalog(next); }}
         error={error}
         status={status}
-        productCount={products.length}
-        invoiceCount={invoices.length}
         lastSyncAt={lastSyncAt}
       />
     );
@@ -475,8 +471,6 @@ export default function App() {
       <LoginScreen
         terminal={terminal}
         branch={branch}
-        productCount={products.length}
-        invoiceCount={invoices.length}
         lastSyncAt={lastSyncAt}
         status={status}
         error={error}
@@ -487,10 +481,6 @@ export default function App() {
           setSessionToken(result.sessionToken);
           setStatus(`Signed in as ${result.account.name}.`);
           await refreshCatalog(terminal);
-        }}
-        onResetTerminal={async () => {
-          await clearTerminalCredentials();
-          setTerminal(null);
         }}
       />
     );
@@ -993,16 +983,12 @@ function BrandSection() {
 function StatusPanel({
   terminal,
   branch,
-  productCount,
-  invoiceCount,
   lastSyncAt,
   status,
   activationMode = false
 }: {
   terminal?: TerminalCredentials | null;
   branch?: Branch | null;
-  productCount: number;
-  invoiceCount: number;
   lastSyncAt?: number;
   status: string;
   activationMode?: boolean;
@@ -1018,14 +1004,10 @@ function StatusPanel({
         <div><ShieldCheck size={17} />Secure Connection</div>
         <div><MonitorCheck size={17} />{activationMode ? "Activation Required" : "Terminal Registered"}</div>
         <div><Server size={17} />Connected to Server</div>
-        <div><PackageCheck size={17} />Products Loaded</div>
-        <div><RefreshCw size={17} />Inventory Synced</div>
       </div>
       <div className="status-cards">
         <div><span>Branch Name</span><b>{branch?.name || terminal?.branchId || "Pending activation"}</b></div>
         <div><span>Terminal Name</span><b>{terminal?.terminalName || "Not registered"}</b></div>
-        <div><span>Inventory</span><b>{productCount.toLocaleString()} Products</b></div>
-        <div><span>Invoices</span><b>{invoiceCount.toLocaleString()} Records</b></div>
         <div><span>Last Synchronization</span><b>{syncLabel(lastSyncAt)}</b></div>
         <div><span>Current Version</span><b>v0.1.0</b></div>
       </div>
@@ -1048,8 +1030,6 @@ function AuthShell({
   children,
   terminal,
   branch,
-  productCount,
-  invoiceCount,
   lastSyncAt,
   status,
   activationMode = false
@@ -1057,8 +1037,6 @@ function AuthShell({
   children: ReactNode;
   terminal?: TerminalCredentials | null;
   branch?: Branch | null;
-  productCount: number;
-  invoiceCount: number;
   lastSyncAt?: number;
   status: string;
   activationMode?: boolean;
@@ -1070,8 +1048,6 @@ function AuthShell({
         <StatusPanel
           terminal={terminal}
           branch={branch}
-          productCount={productCount}
-          invoiceCount={invoiceCount}
           lastSyncAt={lastSyncAt}
           status={status}
           activationMode={activationMode}
@@ -1090,20 +1066,14 @@ function LoginCard({ eyebrow, title, subtitle, children }: { eyebrow: string; ti
       <h1>{title}</h1>
       <p>{subtitle}</p>
       {children}
-      <div className="assist-line">
-        <span>Need assistance?</span>
-        <b>Contact your administrator.</b>
-      </div>
     </section>
   );
 }
 
-function ActivationScreen({ onActivated, error, status, productCount, invoiceCount, lastSyncAt }: {
+function ActivationScreen({ onActivated, error, status, lastSyncAt }: {
   onActivated: (terminal: TerminalCredentials) => void;
   error: string;
   status: string;
-  productCount: number;
-  invoiceCount: number;
   lastSyncAt?: number;
 }) {
   const [code, setCode] = useState("");
@@ -1126,7 +1096,7 @@ function ActivationScreen({ onActivated, error, status, productCount, invoiceCou
   }
 
   return (
-    <AuthShell productCount={productCount} invoiceCount={invoiceCount} lastSyncAt={lastSyncAt} status={status} activationMode>
+    <AuthShell lastSyncAt={lastSyncAt} status={status} activationMode>
       <LoginCard eyebrow="Terminal Setup" title="Register Terminal" subtitle="Activate this computer as a trusted cashier workstation.">
         <label>Terminal name</label>
         <div className="premium-input"><MonitorCheck size={20} /><input value={terminalName} onChange={(event) => setTerminalName(event.target.value)} /></div>
@@ -1142,23 +1112,17 @@ function ActivationScreen({ onActivated, error, status, productCount, invoiceCou
 function LoginScreen({
   terminal,
   branch,
-  productCount,
-  invoiceCount,
   lastSyncAt,
   status,
   error,
-  onLogin,
-  onResetTerminal
+  onLogin
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
-  productCount: number;
-  invoiceCount: number;
   lastSyncAt?: number;
   status: string;
   error: string;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
-  onResetTerminal: () => Promise<void>;
 }) {
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
@@ -1178,7 +1142,7 @@ function LoginScreen({
   }
 
   return (
-    <AuthShell terminal={terminal} branch={branch} productCount={productCount} invoiceCount={invoiceCount} lastSyncAt={lastSyncAt} status={status}>
+    <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status}>
       <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
         <div className="terminal-summary">
           <ConnectionIndicator label="Terminal Registered" />
@@ -1191,7 +1155,6 @@ function LoginScreen({
         <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} type="password" inputMode="numeric" /></div>
         {(message || status) && <div className={message ? "error" : "notice"}>{message || status}</div>}
         <button className="premium-primary" disabled={busy || !employeeNumber.trim() || pin.length < 4} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
-        <button className="premium-secondary" onClick={onResetTerminal}>Reset Terminal Registration</button>
       </LoginCard>
     </AuthShell>
   );
