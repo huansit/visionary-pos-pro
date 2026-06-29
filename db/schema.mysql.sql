@@ -1,14 +1,31 @@
 CREATE TABLE IF NOT EXISTS devices (
   device_id    varchar(191) PRIMARY KEY,
+  terminal_uuid varchar(191) UNIQUE,
   name         varchar(255) NOT NULL,
   branch_id    varchar(191),
   token_hash   varchar(255) NOT NULL,
-  status       enum('active','inactive','revoked') NOT NULL DEFAULT 'active',
+  terminal_secret_hash varchar(64),
+  app_version varchar(80),
+  status       enum('ACTIVE','DISABLED','REVOKED') NOT NULL DEFAULT 'ACTIVE',
   revoked_at   datetime,
   created_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_seen_at datetime,
   INDEX devices_status_idx (status),
   INDEX devices_branch_status_idx (branch_id, status)
+);
+
+CREATE TABLE IF NOT EXISTS terminal_activation_codes (
+  id           varchar(191) PRIMARY KEY,
+  code_hash    varchar(64) NOT NULL UNIQUE,
+  branch_id    varchar(191) NOT NULL,
+  terminal_name varchar(255) NOT NULL,
+  created_by   varchar(191),
+  created_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at   datetime NOT NULL,
+  used_at      datetime,
+  used_by_terminal_uuid varchar(191),
+  revoked_at   datetime,
+  INDEX terminal_activation_codes_active_idx (expires_at, used_at, revoked_at)
 );
 
 CREATE TABLE IF NOT EXISTS events (

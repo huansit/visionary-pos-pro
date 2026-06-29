@@ -12,9 +12,45 @@ const SESSION_DAYS = Math.max(1, Math.min(90, parseInt(process.env.AUTH_SESSION_
 const SINGLE_SESSION = process.env.AUTH_SINGLE_SESSION === "1";
 let authSchemaReady = null;
 const FINGERPRINT_ALGO = "aes-256-gcm";
+const TERMINAL_CODE_TTL_HOURS = Math.max(1, Math.min(168, parseInt(process.env.TERMINAL_CODE_TTL_HOURS || "24", 10)));
 
 function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function terminalSecretHash(secret) {
+  return crypto.createHash("sha256").update(String(secret || ""), "utf8").digest("hex");
+}
+
+function safeHashEqual(left, right) {
+  const a = Buffer.from(String(left || ""), "hex");
+  const b = Buffer.from(String(right || ""), "hex");
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+function activationCodeHash(code) {
+  return crypto.createHash("sha256").update(normalizeActivationCode(code), "utf8").digest("hex");
+}
+
+function normalizeActivationCode(code) {
+  return String(code || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function formatActivationCode(raw) {
+  return raw.match(/.{1,4}/g).join("-");
+}
+
+function generateActivationCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let raw = "";
+  const bytes = crypto.randomBytes(12);
+  for (const byte of bytes) raw += alphabet[byte % alphabet.length];
+  return formatActivationCode(raw);
+}
+
+function terminalStatus(value) {
+  const status = String(value || "ACTIVE").toUpperCase();
+  return ["ACTIVE", "DISABLED", "REVOKED"].includes(status) ? status : "ACTIVE";
 }
 
 function requestMeta(req) {
@@ -52,6 +88,25 @@ function fingerprintTemplateHash(template) {
 }
 
 async function verifiedTerminalFromRequest(req) {
+  const terminalUuid = String(req.get("x-terminal-uuid") || "").trim();
+  const terminalSecret = String(req.get("x-terminal-secret") || "").trim();
+  if (terminalUuid && terminalSecret) {
+    const result = await q(
+      "SELECT device_id, terminal_uuid, name, branch_id, terminal_secret_hash, revoked_at, status FROM devices WHERE terminal_uuid = $1",
+      [terminalUuid]
+    );
+    const terminal = result.rows[0];
+    if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE") return { error: "terminal_not_authorized" };
+    if (!safeHashEqual(terminalSecretHash(terminalSecret), terminal.terminal_secret_hash ?? terminal.terminalSecretHash)) return { error: "terminal_not_authorized" };
+    await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [terminal.device_id ?? terminal.deviceId]);
+    return {
+      deviceId: terminal.device_id ?? terminal.deviceId,
+      terminalUuid,
+      name: terminal.name || "",
+      branchId: terminal.branch_id ?? terminal.branchId ?? null,
+    };
+  }
+
   const hdr = req.get("authorization") || "";
   const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
   const deviceId = verifyDeviceToken(token);
@@ -62,7 +117,7 @@ async function verifiedTerminalFromRequest(req) {
     [deviceId]
   );
   const device = result.rows[0];
-  if (!device || device.revoked_at || (device.status && device.status !== "active")) {
+  if (!device || device.revoked_at || terminalStatus(device.status) !== "ACTIVE") {
     return { error: "terminal_not_authorized" };
   }
   const tokenOk = await bcrypt.compare(token, device.token_hash);
@@ -96,8 +151,25 @@ async function ensureAuthSchema() {
     const pgMem = process.env.PG_MEM === "1";
     const statements = isMySql
       ? [
+          "ALTER TABLE devices ADD COLUMN terminal_uuid varchar(191)",
+          "ALTER TABLE devices ADD COLUMN terminal_secret_hash varchar(64)",
+          "ALTER TABLE devices ADD COLUMN app_version varchar(80)",
           "ALTER TABLE devices ADD COLUMN status enum('active','inactive','revoked') NOT NULL DEFAULT 'active'",
           "CREATE INDEX devices_status_idx ON devices (status)",
+          "CREATE UNIQUE INDEX devices_terminal_uuid_idx ON devices (terminal_uuid)",
+          `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
+             id varchar(191) PRIMARY KEY,
+             code_hash varchar(64) NOT NULL UNIQUE,
+             branch_id varchar(191) NOT NULL,
+             terminal_name varchar(255) NOT NULL,
+             created_by varchar(191),
+             created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+             expires_at datetime NOT NULL,
+             used_at datetime,
+             used_by_terminal_uuid varchar(191),
+             revoked_at datetime
+           )`,
+          "CREATE INDEX terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN status enum('active','inactive','deleted') NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN last_login datetime",
           "ALTER TABLE credentials ADD COLUMN created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -140,8 +212,38 @@ async function ensureAuthSchema() {
           "CREATE INDEX user_fingerprints_hash_idx ON user_fingerprints (finger_template_hash)",
         ]
       : [
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS terminal_uuid text",
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS terminal_secret_hash text",
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS app_version text",
           "ALTER TABLE devices ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
           "CREATE INDEX IF NOT EXISTS devices_status_idx ON devices (status)",
+          "CREATE UNIQUE INDEX IF NOT EXISTS devices_terminal_uuid_idx ON devices (terminal_uuid)",
+          pgMem
+            ? `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
+               id text,
+               code_hash text,
+               branch_id text,
+               terminal_name text,
+               created_by text,
+               created_at timestamptz,
+               expires_at timestamptz,
+               used_at timestamptz,
+               used_by_terminal_uuid text,
+               revoked_at timestamptz
+             )`
+            : `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
+               id text PRIMARY KEY,
+               code_hash text NOT NULL UNIQUE,
+               branch_id text NOT NULL,
+               terminal_name text NOT NULL,
+               created_by text,
+               created_at timestamptz NOT NULL DEFAULT now(),
+               expires_at timestamptz NOT NULL,
+               used_at timestamptz,
+               used_by_terminal_uuid text,
+               revoked_at timestamptz
+             )`,
+          "CREATE INDEX IF NOT EXISTS terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS last_login timestamptz",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
@@ -321,6 +423,136 @@ router.post("/device", async (req, res) => {
     );
   }
   res.json({ deviceId, token });
+});
+
+router.post("/terminal-activations", requireDevice, async (req, res) => {
+  await ensureAuthSchema();
+  const branchId = String(req.body?.branchId || "").trim();
+  const terminalName = String(req.body?.terminalName || req.body?.name || "").trim().slice(0, 255);
+  const ttlHours = Math.max(1, Math.min(168, parseInt(req.body?.ttlHours || TERMINAL_CODE_TTL_HOURS, 10)));
+  if (!branchId || !terminalName) return res.status(400).json({ error: "branch_and_terminal_name_required" });
+
+  const code = generateActivationCode();
+  const id = "tac_" + (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  await q(
+    isMySql
+      ? `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at)
+         VALUES ($1,$2,$3,$4,$5,NOW(),DATE_ADD(NOW(), INTERVAL $6 HOUR))`
+      : `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at)
+         VALUES ($1,$2,$3,$4,$5,now(),now() + ($6 || ' hours')::interval)`,
+    [id, activationCodeHash(code), branchId, terminalName, req.deviceId || null, ttlHours]
+  );
+  await audit("terminal_activation_created", req, null, { activationId: id, branchId, terminalName, expiresInHours: ttlHours });
+  res.json({ ok: true, id, code, branchId, terminalName, expiresInHours: ttlHours });
+});
+
+router.post("/terminals/activate", async (req, res) => {
+  await ensureAuthSchema();
+  const activationCode = normalizeActivationCode(req.body?.activationCode || req.body?.code);
+  const appVersion = String(req.body?.appVersion || "").trim().slice(0, 80);
+  const requestedName = String(req.body?.terminalName || req.body?.name || "").trim().slice(0, 255);
+  if (!activationCode || activationCode.length < 8) return res.status(400).json({ error: "activation_code_required" });
+
+  try {
+    const codeHash = activationCodeHash(activationCode);
+    const result = await q(
+      `SELECT id, branch_id, terminal_name, expires_at, used_at, revoked_at
+         FROM terminal_activation_codes
+        WHERE code_hash = $1
+        LIMIT 1`,
+      [codeHash]
+    );
+    const activation = result.rows[0];
+    if (!activation || activation.used_at || activation.usedAt || activation.revoked_at || activation.revokedAt) {
+      await audit("terminal_activation_failed", req, null, { reason: "invalid_or_used_code" });
+      return res.status(401).json({ error: "invalid_activation_code" });
+    }
+    if (new Date(activation.expires_at ?? activation.expiresAt).getTime() <= Date.now()) {
+      await audit("terminal_activation_failed", req, null, { activationId: activation.id, reason: "expired_code" });
+      return res.status(401).json({ error: "activation_code_expired" });
+    }
+
+    const uuid = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+    const id = "term_" + uuid;
+    const secret = crypto.randomBytes(32).toString("hex");
+    const token = signDeviceToken(id);
+    const tokenHash = await bcrypt.hash(token, ROUNDS);
+    const terminalName = requestedName || activation.terminal_name || activation.terminalName;
+    const branchId = activation.branch_id ?? activation.branchId;
+    if (isMySql) {
+      await q(
+        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,NOW())`,
+        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion]
+      );
+      await q(
+        `UPDATE terminal_activation_codes SET used_at = NOW(), used_by_terminal_uuid = $1 WHERE id = $2`,
+        [uuid, activation.id]
+      );
+    } else {
+      await q(
+        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,now())`,
+        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion]
+      );
+      await q(
+        `UPDATE terminal_activation_codes SET used_at = now(), used_by_terminal_uuid = $1 WHERE id = $2`,
+        [uuid, activation.id]
+      );
+    }
+    await audit("terminal_activated", req, null, { terminalId: id, terminalUuid: uuid, branchId, terminalName, appVersion });
+    res.json({ ok: true, terminal: { id, uuid, branchId, terminalName, status: "ACTIVE", appVersion }, terminalSecret: secret });
+  } catch (error) {
+    console.error("terminal activation failed:", error);
+    res.status(500).json({ error: "terminal_activation_failed" });
+  }
+});
+
+router.get("/terminals", requireDevice, async (_req, res) => {
+  await ensureAuthSchema();
+  const result = await q(
+    isMySql
+      ? `SELECT device_id AS id, terminal_uuid AS uuid, branch_id AS branchId, name AS terminalName,
+                status, last_seen_at AS lastSeen, app_version AS appVersion, created_at AS createdAt, revoked_at AS revokedAt
+           FROM devices
+          WHERE terminal_uuid IS NOT NULL
+          ORDER BY created_at DESC`
+      : `SELECT device_id AS "id", terminal_uuid AS "uuid", branch_id AS "branchId", name AS "terminalName",
+                status, last_seen_at AS "lastSeen", app_version AS "appVersion", created_at AS "createdAt", revoked_at AS "revokedAt"
+           FROM devices
+          WHERE terminal_uuid IS NOT NULL
+          ORDER BY created_at DESC`,
+    []
+  );
+  res.json({ terminals: result.rows.map((row) => ({ ...row, status: terminalStatus(row.status) })) });
+});
+
+router.post("/terminals/:uuid", requireDevice, async (req, res) => {
+  await ensureAuthSchema();
+  const uuid = String(req.params.uuid || "").trim();
+  const action = String(req.body?.action || "update").toLowerCase();
+  const terminalName = req.body?.terminalName == null ? null : String(req.body.terminalName).trim().slice(0, 255);
+  const branchId = req.body?.branchId == null ? null : String(req.body.branchId).trim();
+  if (!uuid) return res.status(400).json({ error: "terminal_uuid_required" });
+
+  let status = null;
+  if (action === "disable") status = "DISABLED";
+  if (action === "revoke") status = "REVOKED";
+  if (action === "activate") status = "ACTIVE";
+
+  const fields = [];
+  const values = [];
+  const add = (sql, value) => { values.push(value); fields.push(sql.replace("?", "$" + values.length)); };
+  if (terminalName) add("name = ?", terminalName);
+  if (branchId) add("branch_id = ?", branchId);
+  if (status) add("status = ?", status);
+  if (status === "REVOKED") fields.push(`revoked_at = ${isMySql ? "NOW()" : "now()"}`);
+  if (status === "ACTIVE") fields.push("revoked_at = NULL");
+  if (!fields.length) return res.status(400).json({ error: "no_terminal_changes" });
+  values.push(uuid);
+  await q(`UPDATE devices SET ${fields.join(", ")} WHERE terminal_uuid = $${values.length}`, values);
+  await audit("terminal_updated", req, null, { terminalUuid: uuid, action, status, terminalName, branchId });
+  res.json({ ok: true });
 });
 
 router.post("/send-code", async (req, res) => {

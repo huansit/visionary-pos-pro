@@ -28,6 +28,7 @@ after(async () => {
 const state = {
   tokenA: null,
   tokenB: null,
+  terminal: null,
   invoice: {
     id: "inv-001",
     type: "invoice",
@@ -65,6 +66,37 @@ test("1. registers two devices via /api/auth/device", async () => {
   state.tokenB = deviceB.body.token;
 });
 
+test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
+  const activation = await request(app)
+    .post("/api/auth/terminal-activations")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_sip", terminalName: "SIPCITY Till 1" })
+    .expect(200);
+  assert.ok(activation.body.code);
+
+  const activated = await request(app)
+    .post("/api/auth/terminals/activate")
+    .send({ activationCode: activation.body.code, appVersion: "2.0.2" })
+    .expect(200);
+  assert.ok(activated.body.terminal.uuid);
+  assert.ok(activated.body.terminalSecret);
+  state.terminal = { ...activated.body.terminal, secret: activated.body.terminalSecret };
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("X-Terminal-UUID", state.terminal.uuid)
+    .set("X-Terminal-Secret", state.terminal.secret)
+    .expect(200);
+
+  await request(app)
+    .get("/api/auth/terminals")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .expect(200)
+    .expect((res) => {
+      assert.ok(res.body.terminals.some((terminal) => terminal.uuid === state.terminal.uuid));
+    });
+});
+
 test("2. pushes an invoice event from device A to /api/sync/push", async () => {
   await request(app)
     .post("/api/sync/push")
@@ -76,6 +108,38 @@ test("2. pushes an invoice event from device A to /api/sync/push", async () => {
       assert.equal(res.body.rejected.length, 0);
       assert.ok(res.body.serverTs["inv-001"]);
     });
+});
+
+test("14. disabled and revoked terminals cannot authenticate", async () => {
+  await request(app)
+    .post(`/api/auth/terminals/${state.terminal.uuid}`)
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ action: "disable" })
+    .expect(200);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("X-Terminal-UUID", state.terminal.uuid)
+    .set("X-Terminal-Secret", state.terminal.secret)
+    .expect(401);
+
+  await request(app)
+    .post(`/api/auth/terminals/${state.terminal.uuid}`)
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ action: "activate" })
+    .expect(200);
+
+  await request(app)
+    .post(`/api/auth/terminals/${state.terminal.uuid}`)
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ action: "revoke" })
+    .expect(200);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("X-Terminal-UUID", state.terminal.uuid)
+    .set("X-Terminal-Secret", state.terminal.secret)
+    .expect(401);
 });
 
 test("3. pulls from device B via /api/sync/pull and receives the invoice", async () => {

@@ -4,10 +4,13 @@
 
 CREATE TABLE IF NOT EXISTS devices (
   device_id    text PRIMARY KEY,
+  terminal_uuid text UNIQUE,
   name         text NOT NULL,
   branch_id    text,
   token_hash   text NOT NULL,
-  status       text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'revoked')),
+  terminal_secret_hash text,
+  app_version text,
+  status       text NOT NULL DEFAULT 'ACTIVE' CHECK (upper(status) IN ('ACTIVE', 'DISABLED', 'REVOKED')),
   revoked_at   timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
   last_seen_at timestamptz,
@@ -16,6 +19,22 @@ CREATE TABLE IF NOT EXISTS devices (
 
 CREATE INDEX IF NOT EXISTS devices_status_idx ON devices (status);
 CREATE INDEX IF NOT EXISTS devices_branch_status_idx ON devices (branch_id, status);
+CREATE INDEX IF NOT EXISTS devices_terminal_uuid_idx ON devices (terminal_uuid);
+
+CREATE TABLE IF NOT EXISTS terminal_activation_codes (
+  id           text PRIMARY KEY,
+  code_hash    text NOT NULL UNIQUE,
+  branch_id    text NOT NULL,
+  terminal_name text NOT NULL,
+  created_by   text,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  expires_at   timestamptz NOT NULL,
+  used_at      timestamptz,
+  used_by_terminal_uuid text,
+  revoked_at   timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at);
 
 CREATE TABLE IF NOT EXISTS events (
   id         text PRIMARY KEY,

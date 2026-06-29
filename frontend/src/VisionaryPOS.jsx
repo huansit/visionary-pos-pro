@@ -3,7 +3,7 @@ import { buildReportDocument, ReportPreviewDialog } from "./components/reports/R
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import "./styles/print.css";
 import {
-  Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check,
+  Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
   AlertCircle, Search, Wifi, WifiOff, RefreshCw, X, Package, Users, BarChart3, Tag, Tags,
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
@@ -837,15 +837,40 @@ async function ensureDeviceToken(branchId = null) {
   }
   return data.token;
 }
+async function hasDesktopTerminalAuth() {
+  try {
+    if (typeof window === "undefined" || !window.visionposTerminalAuth?.getTerminal) return false;
+    const terminal = await window.visionposTerminalAuth.getTerminal();
+    return Boolean(terminal?.hasSecret && terminal?.uuid);
+  } catch (_) {
+    return false;
+  }
+}
+async function deviceAuthHeaders(branchId = null, base = {}) {
+  const headers = { ...base };
+  if (await hasDesktopTerminalAuth()) return headers;
+  const cfg = syncConfig();
+  headers.Authorization = "Bearer " + (cfg.deviceToken || await ensureDeviceToken(branchId));
+  return headers;
+}
 async function authApi(path, body, options = {}) {
   const cfg = syncConfig();
-  const headers = { "Content-Type": "application/json" };
-  if (options.device) headers.Authorization = "Bearer " + (cfg.deviceToken || await ensureDeviceToken(body?.branchId || null));
+  const headers = options.device
+    ? await deviceAuthHeaders(body?.branchId || null, { "Content-Type": "application/json" })
+    : { "Content-Type": "application/json" };
   const response = await fetch(cfg.apiBaseUrl + path, {
     method: "POST",
     headers,
     body: JSON.stringify(body)
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "request_failed");
+  return data;
+}
+async function authGet(path, options = {}) {
+  const cfg = syncConfig();
+  const headers = options.device ? await deviceAuthHeaders(options.branchId || null) : {};
+  const response = await fetch(cfg.apiBaseUrl + path, { headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "request_failed");
   return data;
@@ -1189,12 +1214,12 @@ async function enqueueChanges(prev, next) {
 }
 async function runSyncClient(currentData) {
   const cfg = syncConfig();
-  const token = cfg.deviceToken || await ensureDeviceToken(currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null);
+  const branchId = currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null;
   let data = currentData;
   const credentialProvision = await provisionCloudEmployeeCredentials(data);
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
-  const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token };
+  const headers = await deviceAuthHeaders(branchId, { "Content-Type": "application/json" });
   let rejected = [];
   if (outbox.length) {
     const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, body: JSON.stringify({ events: outbox }) });
@@ -6563,6 +6588,10 @@ function UsersTab({ data, update, isAdmin }) {
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const [fpMsg, setFpMsg] = useState("");
+  const [terminals, setTerminals] = useState([]);
+  const [terminalBusy, setTerminalBusy] = useState(false);
+  const [terminalMsg, setTerminalMsg] = useState("");
+  const [activation, setActivation] = useState({ terminalName: "", branchId: data.branches[0]?.id || "", code: "" });
   const visibleEmployees = activeEmployees(data);
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
@@ -6680,6 +6709,43 @@ function UsersTab({ data, update, isAdmin }) {
   };
   const toggleRight = (id, r) => update((d) => ({ ...d, employees: d.employees.map((e) => { if (e.id !== id) return e; const cur = e.rights || []; const rights = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]; return { ...e, rights, synced: false }; }) }));
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
+  const loadTerminals = async () => {
+    setTerminalBusy(true);
+    try {
+      const result = await authGet("/api/auth/terminals", { device: true });
+      setTerminals(result.terminals || []);
+      setTerminalMsg("");
+    } catch (error) {
+      setTerminalMsg("Could not load terminals: " + error.message);
+    } finally {
+      setTerminalBusy(false);
+    }
+  };
+  const generateActivation = async () => {
+    if (!activation.terminalName.trim() || !activation.branchId) return setTerminalMsg("Enter terminal name and branch.");
+    setTerminalBusy(true);
+    try {
+      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim(), branchId: activation.branchId }, { device: true });
+      setActivation((p) => ({ ...p, code: result.code || "" }));
+      setTerminalMsg("Activation code generated. Use it once on the desktop app.");
+    } catch (error) {
+      setTerminalMsg("Could not generate activation code: " + error.message);
+    } finally {
+      setTerminalBusy(false);
+    }
+  };
+  const updateTerminal = async (terminal, patch) => {
+    setTerminalBusy(true);
+    try {
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), patch, { device: true });
+      await loadTerminals();
+    } catch (error) {
+      setTerminalMsg("Terminal update failed: " + error.message);
+    } finally {
+      setTerminalBusy(false);
+    }
+  };
+  useEffect(() => { if (isAdmin) loadTerminals(); }, [isAdmin]); // eslint-disable-line
   const RightsGrid = ({ selected, onToggle }) => (
     <div className="rights-grid">{RIGHTS.map((r) => { const on = selected.includes(r.id); return (
       <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>
@@ -6700,6 +6766,39 @@ function UsersTab({ data, update, isAdmin }) {
             <button className="btn btn-ghost" style={{ width: "auto", padding: "0 16px" }} onClick={() => { setAdminCred(false); setAdminPw(""); setAdminErr(""); }}>Cancel</button>
           </div>
           {adminErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{adminErr}</div>}
+        </div>
+      )}
+      {isAdmin && (
+        <div className="addpanel fade" style={{ marginBottom: 14 }}>
+          <div className="section-title" style={{ marginTop: 0, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+            <span>Terminal Authentication</span>
+            <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={loadTerminals}><RefreshCw /> Refresh</button>
+          </div>
+          <div className="grid3">
+            <div><label className="label">Terminal name</label><input className="input" value={activation.terminalName} onChange={(e) => setActivation({ ...activation, terminalName: e.target.value, code: "" })} placeholder="Main Till 1" /></div>
+            <div><label className="label">Branch</label><select className="select" value={activation.branchId} onChange={(e) => setActivation({ ...activation, branchId: e.target.value, code: "" })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" disabled={terminalBusy} onClick={generateActivation}><KeyRound /> Generate code</button></div>
+          </div>
+          {activation.code && <div className="notice" style={{ marginTop: 12, fontSize: 18, fontWeight: 900, letterSpacing: ".08em", textAlign: "center" }}>{activation.code}</div>}
+          {terminalMsg && <div className="notice" style={{ marginTop: 12 }}>{terminalMsg}</div>}
+          <div className="tablewrap" style={{ marginTop: 14 }}>
+            <table><thead><tr><th>Terminal</th><th>Branch</th><th>Status</th><th>Version</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>
+              {terminals.length === 0 ? <tr><td colSpan="6">No activated terminals yet.</td></tr> : terminals.map((t) => (
+                <tr key={t.uuid}>
+                  <td><b>{t.terminalName}</b><div className="muted mono">{String(t.uuid || "").slice(0, 8)}...</div></td>
+                  <td><select className="select" value={t.branchId || ""} onChange={(e) => updateTerminal(t, { branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
+                  <td><span className={"ist " + (t.status === "ACTIVE" ? "paid" : t.status === "DISABLED" ? "hold" : "bad")}>{t.status}</span></td>
+                  <td>{t.appVersion || "-"}</td>
+                  <td>{t.lastSeen ? new Date(t.lastSeen).toLocaleString() : "Never"}</td>
+                  <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={() => { const name = prompt("Rename terminal", t.terminalName || ""); if (name) updateTerminal(t, { terminalName: name }); }}><Edit /> Rename</button>
+                    {t.status === "ACTIVE" ? <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={() => updateTerminal(t, { action: "disable" })}><X /> Disable</button> : <button className="btn xs btn-ghost" disabled={terminalBusy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "activate" })}><Check /> Enable</button>}
+                    <button className="btn xs btn-ghost" disabled={terminalBusy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "revoke" })}><Trash2 /> Revoke</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
         </div>
       )}
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add user</button> : (

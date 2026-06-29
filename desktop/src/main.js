@@ -1,10 +1,11 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, session, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs");
 const path = require("node:path");
 const netSocket = require("node:net");
 
 const DEFAULT_POS_URL = "https://visionarypos.cloud/";
+const APP_VERSION = require("../package.json").version;
 const DEFAULT_SETTINGS = {
   posUrl: process.env.VISIONPOS_URL || DEFAULT_POS_URL,
   kiosk: process.env.VISIONPOS_KIOSK === "1",
@@ -62,6 +63,29 @@ function encryptedUserPath() {
   return path.join(app.getPath("userData"), "last-user.bin");
 }
 
+function encryptedTerminalPath() {
+  return path.join(app.getPath("userData"), "terminal.bin");
+}
+
+function encryptJson(value) {
+  const text = JSON.stringify(value || {});
+  return safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(text)
+    : Buffer.from(text, "utf8");
+}
+
+function decryptJson(file) {
+  try {
+    const bytes = fs.readFileSync(file);
+    const text = safeStorage.isEncryptionAvailable()
+      ? safeStorage.decryptString(bytes)
+      : bytes.toString("utf8");
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 function setLastUser(user) {
   const value = JSON.stringify({
     email: user?.email || "",
@@ -88,12 +112,62 @@ function getLastUser() {
   }
 }
 
+function getTerminalCredentials() {
+  return decryptJson(encryptedTerminalPath());
+}
+
+function setTerminalCredentials(terminal) {
+  fs.mkdirSync(path.dirname(encryptedTerminalPath()), { recursive: true });
+  fs.writeFileSync(encryptedTerminalPath(), encryptJson({
+    id: terminal?.id || "",
+    uuid: terminal?.uuid || "",
+    branchId: terminal?.branchId || "",
+    terminalName: terminal?.terminalName || "",
+    terminalSecret: terminal?.terminalSecret || "",
+    status: terminal?.status || "ACTIVE",
+    appVersion: APP_VERSION,
+    savedAt: Date.now()
+  }));
+  return getTerminalCredentials();
+}
+
+async function activateTerminal({ activationCode, terminalName } = {}) {
+  const settings = readSettings();
+  const endpoint = new URL("/api/auth/terminals/activate", settings.posUrl || DEFAULT_POS_URL).toString();
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ activationCode, terminalName, appVersion: APP_VERSION })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return { ok: false, error: data.error || "terminal_activation_failed" };
+  const saved = setTerminalCredentials({ ...data.terminal, terminalSecret: data.terminalSecret });
+  return { ok: true, terminal: { ...saved, terminalSecret: undefined } };
+}
+
 function connectionUrl() {
   try {
     return new URL("/health", readSettings().posUrl).toString();
   } catch {
     return new URL("/health", DEFAULT_POS_URL).toString();
   }
+}
+
+function installTerminalHeaderInjection() {
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    try {
+      const target = new URL(details.url);
+      const appOrigin = new URL(readSettings().posUrl || DEFAULT_POS_URL).origin;
+      if (target.origin === appOrigin && target.pathname.startsWith("/api/")) {
+        const terminal = getTerminalCredentials();
+        if (terminal?.uuid && terminal?.terminalSecret) {
+          details.requestHeaders["X-Terminal-UUID"] = terminal.uuid;
+          details.requestHeaders["X-Terminal-Secret"] = terminal.terminalSecret;
+        }
+      }
+    } catch (_) {}
+    callback({ requestHeaders: details.requestHeaders });
+  });
 }
 
 function sendConnectionState(state) {
@@ -195,7 +269,10 @@ function createWindow() {
   autoUpdater.checkForUpdatesAndNotify().catch(() => {});
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  installTerminalHeaderInjection();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -209,6 +286,11 @@ ipcMain.handle("settings:get", () => readSettings());
 ipcMain.handle("settings:set", (_event, patch) => saveSettings(patch || {}));
 ipcMain.handle("user:getLast", () => getLastUser());
 ipcMain.handle("user:setLast", (_event, user) => setLastUser(user || {}));
+ipcMain.handle("terminal:get", () => {
+  const terminal = getTerminalCredentials();
+  return terminal ? { ...terminal, terminalSecret: undefined, hasSecret: Boolean(terminal.terminalSecret) } : null;
+});
+ipcMain.handle("terminal:activate", (_event, payload) => activateTerminal(payload || {}));
 ipcMain.handle("sale:setActive", (_event, value) => {
   activeSale = Boolean(value);
   return activeSale;
