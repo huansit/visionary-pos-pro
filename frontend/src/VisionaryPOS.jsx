@@ -1616,8 +1616,8 @@ const css = `
 @media (max-width:860px){.login{grid-template-columns:1fr;max-width:420px}.loginbrand{min-height:0;padding:26px 26px 22px}.lb-feats{display:none}.lb-p{display:none}.lb-h{font-size:24px;margin:10px 0 0}.loginpanel{padding:28px 24px}}
 
 /* ===== login (v4 — Aronium terminal) ===== */
-.authstage{width:100%;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:30px 24px;background:#2b2f36}
-.authwrap{width:100%;max-width:480px;display:flex;flex-direction:column;align-items:center;animation:rise .28s ease}
+.authstage{width:100%;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:30px 24px;background:radial-gradient(circle at 50% 0%,rgba(43,182,196,.18),transparent 34%),linear-gradient(135deg,#20252d 0%,#2b2f36 52%,#1f232a 100%)}
+.authwrap{width:100%;max-width:520px;display:flex;flex-direction:column;align-items:center;animation:rise .28s ease}
 .authlogo{display:flex;flex-direction:column;align-items:center;margin-bottom:28px}
 .authhex{position:relative;width:78px;height:86px;display:grid;place-items:center;margin-bottom:14px}
 .authhex svg{width:78px;height:86px}
@@ -1656,20 +1656,26 @@ const css = `
 .authadmin svg{width:14px;height:14px}
 /* admin form, terminal styling */
 .authform{width:280px;margin:6px auto 0}
+.authform.admin-authform{width:min(430px,92vw);margin:0 auto;background:rgba(31,36,44,.88);border:1px solid rgba(154,161,171,.18);border-radius:22px;padding:24px;box-shadow:0 28px 90px -34px rgba(0,0,0,.72);backdrop-filter:blur(14px)}
+.authpanel-title{font-size:25px;line-height:1.1;font-weight:800;color:#f4f7fb;letter-spacing:-.02em;text-align:left}
+.authpanel-sub{font-size:13.5px;color:#9aa1ab;line-height:1.55;margin-top:8px;margin-bottom:18px}
 .authform .label{color:#9aa1ab}
-.authform .input{background:transparent;border-color:#4a5059;color:#e8ebef}
-.authform .input::placeholder{color:#6b727c}
+.authform .input{background:rgba(15,20,28,.62);border-color:#46505d;color:#e8ebef}
+.authform .input::placeholder{color:#717b88}
 .authform .input:focus{border-color:#2bb6c4;box-shadow:0 0 0 3px rgba(43,182,196,.16)}
 .authform .input-wrap > svg.lead{color:#9aa1ab}
 .authform .toggle-eye{color:#9aa1ab}
-.authform .btn-primary{background:#2bb6c4;color:#0c1418}
+.authform .btn-primary{background:linear-gradient(135deg,#2bb6c4,#6be1cf);color:#0c1418}
 .authform .btn-primary:hover:not(:disabled){filter:brightness(1.08)}
+.auth-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+.auth-actions .field{margin-top:0}
+.auth-actions.single{grid-template-columns:1fr}
 .authback{margin-top:8px;width:100%;background:none;border:none;color:#9aa1ab;font-size:12.5px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;padding:10px;border-radius:4px;font-family:inherit;transition:.12s}
 .authback:hover{color:#e8ebef;background:#363b43}
 .authback svg{width:14px;height:14px}
-.authmake{margin-top:14px;width:100%;background:none;border:1px solid #3a3f47;color:#cfd4db;font-size:12.5px;font-weight:600;cursor:pointer;padding:11px;border-radius:5px;font-family:inherit;transition:.12s}
-.authmake:hover{border-color:#2bb6c4;color:#fff}
-.authdownload-card{margin:20px auto 0;width:min(420px,92vw);border-top:1px solid #3a3f47;padding-top:18px;display:grid;grid-template-columns:42px 1fr;gap:12px;color:#cfd4db}
+.authmake{width:100%;height:48px;background:rgba(255,255,255,.04);border:1px solid #4a5059;color:#cfd4db;font-size:14px;font-weight:750;cursor:pointer;padding:0 13px;border-radius:12px;font-family:inherit;transition:.12s;display:flex;align-items:center;justify-content:center;gap:8px}
+.authmake:hover{border-color:#2bb6c4;color:#fff;background:rgba(43,182,196,.1)}
+.authdownload-card{margin:18px auto 0;width:min(430px,92vw);border:1px solid rgba(154,161,171,.16);border-radius:18px;background:rgba(31,36,44,.58);padding:16px;display:grid;grid-template-columns:42px 1fr;gap:12px;color:#cfd4db}
 .authdownload-icon{width:42px;height:42px;border-radius:12px;background:rgba(43,182,196,.12);border:1px solid rgba(43,182,196,.28);display:grid;place-items:center;color:#2bb6c4}
 .authdownload-icon svg{width:21px;height:21px}
 .authdownload-copy{min-width:0}
@@ -3214,8 +3220,9 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   }
   return (
     <AuthShellV3>
-      <div className="authform">
-        <div className="authfield-label" style={{ marginBottom: 14 }}>Admin / Supervisor sign-in</div>
+      <div className="authform admin-authform">
+        <div className="authpanel-title">Admin / Supervisor sign-in</div>
+        <div className="authpanel-sub">Access the web portal for management, reports, inventory, and branch operations.</div>
         <div className="field" style={{ marginTop: 0 }}><label className="label">Email or phone</label><div className={"input-wrap" + (focusField === "email" ? " kbfocus" : "")}><Mail className="lead" />
           <input className="input lead" type="text" placeholder="you@store.com or 0712345678" value={email} onFocus={() => setFocusField("email")} onChange={(e) => { setEmail(e.target.value); setErr(""); resetCodeStep(); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div></div>
         <div className="field"><label className="label">Password</label><div className={"input-wrap" + (focusField === "pw" ? " kbfocus" : "")}>
@@ -3225,13 +3232,14 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
           <input className="input lead mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code} onFocus={() => setFocusField("code")} onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
           <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div></div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
+        <div className={"auth-actions" + (admin && !admin.provisioned ? "" : " single")}>
+          <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
+          {admin && !admin.provisioned && <div className="field"><button className="authmake" onClick={onSignup}><Users /> Sign up</button></div>}
+        </div>
         <div className="authforgot" onClick={() => { setResetEmail(email.trim()); setForgot(true); setErr(""); }}>Forgot password?</div>
-        {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
         {onBack && <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>}
       </div>
       <DesktopDownloadSection />
-      <OnScreenKeyboard onKey={kbKey} onBackspace={kbBack} onEnter={submit} />
     </AuthShellV3>
   );
 }
