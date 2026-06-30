@@ -17,6 +17,10 @@ const PASSWORD_RESET_TTL_MINUTES = 30;
 const PASSWORD_RESET_RATE_WINDOW_MINUTES = 30;
 const PASSWORD_RESET_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.PASSWORD_RESET_RATE_MAX || "3", 10)));
 const resetRequestBuckets = new Map();
+const emailVerificationBuckets = new Map();
+const EMAIL_VERIFICATION_RESEND_SECONDS = 60;
+const EMAIL_VERIFICATION_RATE_WINDOW_MINUTES = 10;
+const EMAIL_VERIFICATION_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.EMAIL_VERIFICATION_RATE_MAX || "5", 10)));
 
 function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
@@ -88,6 +92,14 @@ function passwordResetRateLimited(target, ipAddress) {
   recent.push(Date.now());
   resetRequestBuckets.set(key, recent);
   return recent.length > PASSWORD_RESET_RATE_MAX;
+}
+
+function bucketRateLimited(map, key, windowMinutes, max) {
+  const cutoff = Date.now() - windowMinutes * 60 * 1000;
+  const recent = (map.get(key) || []).filter((ts) => ts > cutoff);
+  recent.push(Date.now());
+  map.set(key, recent);
+  return recent.length > max;
 }
 
 function adminEmailCodeEnabled() {
@@ -213,6 +225,7 @@ async function ensureAuthSchema() {
            )`,
           "CREATE INDEX terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN status enum('active','inactive','deleted') NOT NULL DEFAULT 'active'",
+          "ALTER TABLE credentials ADD COLUMN email_verified boolean NOT NULL DEFAULT false",
           "ALTER TABLE credentials ADD COLUMN last_login datetime",
           "ALTER TABLE credentials ADD COLUMN created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP",
           "CREATE INDEX credentials_status_idx ON credentials (status)",
@@ -300,6 +313,7 @@ async function ensureAuthSchema() {
              )`,
           "CREATE INDEX IF NOT EXISTS terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
+          "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS last_login timestamptz",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
           "CREATE INDEX IF NOT EXISTS credentials_status_idx ON credentials (status)",
@@ -449,7 +463,7 @@ async function accountForSessionToken(token) {
   await ensureAuthSchema();
   const result = await q(
     `SELECT s.id AS session_id, s.expires_at, s.is_active,
-            c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status
+            c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status, c.email_verified
        FROM user_sessions s
        JOIN credentials c ON c.id = s.user_id
       WHERE s.token_hash = $1
@@ -786,6 +800,80 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
+router.post("/resend-email-verification", async (req, res) => {
+  await ensureAuthSchema();
+  const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
+  if (!validTarget("email", target)) return res.status(400).json({ error: "invalid_email" });
+  const { ipAddress } = requestMeta(req);
+  try {
+    const result = await q(
+      `SELECT id, kind, status, email_verified
+         FROM credentials
+        WHERE LOWER(email) = $1
+          AND password_hash IS NOT NULL
+          AND status = 'active'
+        LIMIT 1`,
+      [target]
+    );
+    const account = result.rows[0];
+    if (!account || account.kind !== "admin") {
+      await audit("email_verification_resend_requested", req, null, { target: maskEmail(target), accepted: false });
+      return res.json({ ok: true, target: maskEmail(target), resendAfterSeconds: EMAIL_VERIFICATION_RESEND_SECONDS });
+    }
+    if (account.email_verified ?? account.emailVerified) {
+      await audit("email_verification_resend_skipped", req, account.id, { target: maskEmail(target), reason: "already_verified" });
+      return res.json({ ok: true, alreadyVerified: true, target: maskEmail(target) });
+    }
+    if (bucketRateLimited(emailVerificationBuckets, `${target}|${ipAddress || ""}`, EMAIL_VERIFICATION_RATE_WINDOW_MINUTES, EMAIL_VERIFICATION_RATE_MAX)) {
+      await audit("email_verification_resend_rate_limited", req, account.id, { target: maskEmail(target), ipAddress });
+      return res.status(429).json({ error: "too_many_attempts", resendAfterSeconds: EMAIL_VERIFICATION_RESEND_SECONDS });
+    }
+    const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "email_verification" });
+    await audit("email_verification_code_sent", req, account.id, { target: maskEmail(target), expiresInMinutes });
+    res.json({ ok: true, target: maskEmail(target), expiresInMinutes, resendAfterSeconds: EMAIL_VERIFICATION_RESEND_SECONDS });
+  } catch (error) {
+    console.error("resend email verification failed:", error);
+    await audit("email_verification_resend_failed", req, null, { target: maskEmail(target), reason: error.message });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : "email_verification_send_failed" });
+  }
+});
+
+router.post("/verify-email", async (req, res) => {
+  await ensureAuthSchema();
+  const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
+  const code = String(req.body?.code || "").trim();
+  if (!validTarget("email", target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
+  try {
+    const result = await q(
+      `SELECT id, kind, status, email_verified
+         FROM credentials
+        WHERE LOWER(email) = $1
+          AND password_hash IS NOT NULL
+          AND status = 'active'
+        LIMIT 1`,
+      [target]
+    );
+    const account = result.rows[0];
+    if (!account || account.kind !== "admin") {
+      await audit("email_verification_failed", req, null, { target: maskEmail(target), reason: "account_not_found" });
+      return res.status(401).json({ error: "invalid_code" });
+    }
+    if (account.email_verified ?? account.emailVerified) {
+      await audit("email_verification_already_verified", req, account.id, { target: maskEmail(target) });
+      return res.json({ ok: true, alreadyVerified: true });
+    }
+    await verifyAuthCode({ channel: "email", target, code, purpose: "email_verification", consume: true });
+    await q(`UPDATE credentials SET email_verified = ${isMySql ? "true" : "true"}, updated_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [account.id]);
+    await audit("email_verification_completed", req, account.id, { target: maskEmail(target) });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("verify email failed:", error);
+    await audit("email_verification_failed", req, null, { target: maskEmail(target), reason: error.message });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: status >= 500 ? "email_verification_failed" : error.message });
+  }
+});
+
 router.post("/register-owner", async (req, res) => {
   await ensureAuthSchema();
   const { name, password } = req.body || {};
@@ -803,32 +891,34 @@ router.post("/register-owner", async (req, res) => {
     const phone = channel === "phone" ? target : null;
     if (isMySql) {
       await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights)
-         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, $6)
+        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights, email_verified)
+         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, $6, $7)
          ON DUPLICATE KEY UPDATE
            name = VALUES(name),
            email = VALUES(email),
            phone = VALUES(phone),
            password_hash = VALUES(password_hash),
            rights = VALUES(rights),
+           email_verified = VALUES(email_verified),
            updated_at = NOW()`,
-        [id, String(name).trim(), email, phone, passwordHash, { admin: true }]
+        [id, String(name).trim(), email, phone, passwordHash, { admin: true }, channel === "email"]
       );
     } else {
       await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights)
-         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, '{"admin":true}'::jsonb)
+        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights, email_verified)
+         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, '{"admin":true}'::jsonb, $6)
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
            email = EXCLUDED.email,
            phone = EXCLUDED.phone,
            password_hash = EXCLUDED.password_hash,
            rights = EXCLUDED.rights,
+           email_verified = EXCLUDED.email_verified,
            updated_at = now()`,
-        [id, String(name).trim(), email, phone, passwordHash]
+        [id, String(name).trim(), email, phone, passwordHash, channel === "email"]
       );
     }
-    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [id]);
+    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified FROM credentials WHERE id = $1", [id]);
     res.json({ ok: true, account: publicAccount(result.rows[0]) });
   } catch (error) {
     console.error("register-owner failed:", error);
@@ -1102,7 +1192,7 @@ router.post("/login", async (req, res) => {
         return res.status(400).json({ error: "employee_identifier_required" });
       }
       const result = await q(
-        `SELECT id, kind, name, email, phone, branch_id, rights, status, pin_hash
+        `SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified, pin_hash
            FROM credentials
           WHERE pin_hash IS NOT NULL
             AND status = 'active'`,
@@ -1129,7 +1219,7 @@ router.post("/login", async (req, res) => {
 
     const normalized = String(identifier).trim().toLowerCase();
     const result = await q(
-      `SELECT id, kind, name, email, phone, branch_id, rights, status, password_hash
+      `SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified, password_hash
          FROM credentials
         WHERE password_hash IS NOT NULL
           AND status = 'active'`,
@@ -1140,6 +1230,26 @@ router.post("/login", async (req, res) => {
       const rowPhone = String(row.phone || "").trim();
       if (rowEmail !== normalized && rowPhone !== String(identifier).trim()) continue;
       if (await bcrypt.compare(password, row.password_hash)) {
+        const emailVerified = Boolean(row.email_verified ?? row.emailVerified);
+        if (row.kind === "admin" && rowEmail && validTarget("email", rowEmail) && !emailVerified) {
+          try {
+            const expiresInMinutes = await sendAndStoreCode({ channel: "email", target: rowEmail, purpose: "email_verification" });
+            await audit("email_verification_required", req, row.id, { target: maskEmail(rowEmail), expiresInMinutes });
+            return res.json({
+              ok: true,
+              emailVerificationRequired: true,
+              channel: "email",
+              target: rowEmail,
+              maskedTarget: maskEmail(rowEmail),
+              expiresInMinutes,
+              resendAfterSeconds: EMAIL_VERIFICATION_RESEND_SECONDS,
+            });
+          } catch (error) {
+            console.error("email verification send during login failed:", error);
+            await audit("email_verification_send_failed", req, row.id, { target: maskEmail(rowEmail), reason: error.message });
+            return res.status(error.statusCode || 503).json({ error: "email_verification_send_failed" });
+          }
+        }
         if (row.kind === "admin" && adminEmailCodeEnabled()) {
           const target = normalizeTarget("email", rowEmail);
           if (!validTarget("email", target)) {
@@ -1231,7 +1341,8 @@ function publicAccount(row) {
     role: row.kind === "admin" ? "Admin" : row.kind === "cashier" ? "Cashier" : "Supervisor",
     branchId: row.branch_id ?? row.branchId ?? null,
     rights,
-    status: row.status || "active"
+    status: row.status || "active",
+    emailVerified: Boolean(row.email_verified ?? row.emailVerified)
   };
 }
 
@@ -1239,6 +1350,15 @@ async function sendAndStoreCode({ channel, target, purpose }) {
   const code = generateCode();
   const codeHash = await bcrypt.hash(code, ROUNDS);
   const ttl = Math.max(1, Math.min(30, parseInt(process.env.OTP_TTL_MINUTES || "10", 10)));
+  await q(
+    `UPDATE auth_verification_codes
+        SET consumed_at = ${isMySql ? "NOW()" : "now()"}
+      WHERE channel = $1
+        AND target = $2
+        AND purpose = $3
+        AND consumed_at IS NULL`,
+    [channel, target, purpose]
+  );
   await q(
     isMySql
       ? `INSERT INTO auth_verification_codes (channel, target, code_hash, purpose, expires_at)

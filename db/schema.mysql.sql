@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   branch_id     varchar(191),
   rights        json NOT NULL,
   status        enum('active', 'inactive', 'deleted') NOT NULL DEFAULT 'active',
+  email_verified boolean NOT NULL DEFAULT false,
   last_login    datetime,
   created_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP

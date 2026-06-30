@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   branch_id     text,
   rights        jsonb NOT NULL DEFAULT '{}'::jsonb,
   status        text NOT NULL DEFAULT 'active',
+  email_verified boolean NOT NULL DEFAULT false,
   last_login    timestamptz,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),

@@ -396,6 +396,7 @@ test("10. user credentials created on one device work for login on another devic
       assert.equal(res.body.account.kind, "admin");
       assert.equal(res.body.account.role, "Admin");
     });
+  await pool.query("UPDATE credentials SET email_verified = true WHERE id = 'admin'");
 
   await request(app)
     .post("/api/auth/login")

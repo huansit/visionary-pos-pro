@@ -2825,6 +2825,11 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [codeRequired, setCodeRequired] = useState(false);
   const [codeTarget, setCodeTarget] = useState("");
   const [code, setCode] = useState("");
+  const [emailVerifyRequired, setEmailVerifyRequired] = useState(false);
+  const [emailVerifyEmail, setEmailVerifyEmail] = useState("");
+  const [emailVerifyMasked, setEmailVerifyMasked] = useState("");
+  const [emailVerifyCode, setEmailVerifyCode] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [resetEmail, setResetEmail] = useState("");
   const [resetToken, setResetToken] = useState(initialResetToken);
   const [resetTarget, setResetTarget] = useState("");
@@ -2841,6 +2846,11 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       .then((result) => { setResetTarget(result.target || "your admin email"); setErr(""); })
       .catch(() => setErr("This reset link is invalid or expired. Request a new one."));
   }, []); // eslint-disable-line
+  useEffect(() => {
+    if (resendCooldown <= 0) return undefined;
+    const id = setInterval(() => setResendCooldown((v) => Math.max(0, v - 1)), 1000);
+    return () => clearInterval(id);
+  }, [resendCooldown]);
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
@@ -2851,6 +2861,15 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     setBusy(true);
     try {
       const cloud = await cloudLogin({ identifier: raw, password: pw, code: code.trim() || undefined, deviceName: "VISIONPOS Admin" });
+      if (cloud?.emailVerificationRequired) {
+        setEmailVerifyRequired(true);
+        setEmailVerifyEmail(cloud.target || raw);
+        setEmailVerifyMasked(cloud.maskedTarget || cloud.target || raw);
+        setEmailVerifyCode("");
+        setResendCooldown(cloud.resendAfterSeconds || 60);
+        setErr("");
+        return;
+      }
       if (cloud?.verificationRequired) {
         setCodeRequired(true);
         setCodeTarget(cloud.target || "your admin email");
@@ -2870,6 +2889,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
           error.message === "code_not_found_or_expired" ? "That email code expired. Sign in again to get a new code." :
           error.message === "too_many_attempts" ? "Too many incorrect code attempts. Sign in again to get a new code." :
           error.message === "admin_email_required" ? "This admin account needs an email address before email code login can work." :
+          error.message === "email_verification_send_failed" ? "Verification email could not be sent right now. Try again later." :
           error.message === "Failed to fetch" ? "Cloud login is unreachable. Check your internet connection." : error.message);
         setBusy(false);
         return;
@@ -2900,6 +2920,48 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     }
   };
   const resetCodeStep = () => { setCodeRequired(false); setCodeTarget(""); setCode(""); };
+  const resendEmailVerification = async () => {
+    if (resendCooldown > 0 || !emailVerifyEmail) return;
+    setErr("");
+    setBusy(true);
+    try {
+      const result = await authApi("/api/auth/resend-email-verification", { email: emailVerifyEmail });
+      setEmailVerifyMasked(result.target || emailVerifyMasked || emailVerifyEmail);
+      setResendCooldown(result.resendAfterSeconds || 60);
+      setErr("Verification code sent. Check your email.");
+    } catch (error) {
+      setErr(error.message === "too_many_attempts" ? "Too many resend attempts. Try again in a few minutes." :
+        error.message === "email_provider_not_configured" || error.message === "email_verification_send_failed" ? "Email could not be sent right now. Try again later." :
+        error.message === "Failed to fetch" ? "Cloud verification is unreachable. Check your internet connection." : error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const verifyEmailCode = async () => {
+    if (!emailVerifyEmail) return setErr("Start the email verification again from login.");
+    if (!/^\d{6}$/.test(emailVerifyCode.trim())) return setErr("Enter the 6-digit verification code.");
+    setErr("");
+    setBusy(true);
+    try {
+      await authApi("/api/auth/verify-email", { email: emailVerifyEmail, code: emailVerifyCode.trim() });
+      setEmail(emailVerifyEmail);
+      setPw("");
+      setCode("");
+      setCodeRequired(false);
+      setEmailVerifyRequired(false);
+      setEmailVerifyCode("");
+      setResendCooldown(0);
+      setFocusField("pw");
+      setErr("Email verified. Sign in with your password.");
+    } catch (error) {
+      setErr(error.message === "invalid_code" ? "That verification code is incorrect." :
+        error.message === "code_not_found_or_expired" ? "That verification code expired. Send a new code." :
+        error.message === "too_many_attempts" ? "Too many incorrect attempts. Send a new code." :
+        error.message === "Failed to fetch" ? "Cloud verification is unreachable. Check your internet connection." : error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const requestResetCode = async () => {
     const target = resetEmail.trim().toLowerCase();
     if (!isValidEmail(target)) return setErr("Enter the admin email address.");
@@ -2960,6 +3022,24 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     else if (focusField === "code") setCode((v) => v.slice(0, -1));
     else setPw((v) => v.slice(0, -1));
   };
+  if (emailVerifyRequired) {
+    return (
+      <AuthShellV3>
+        <div className="authform">
+          <div className="authfield-label" style={{ marginBottom: 14 }}>Verify your email</div>
+          <div className="authnote" style={{ marginTop: 0, marginBottom: 12 }}>
+            Enter the verification code sent to <b>{emailVerifyMasked || emailVerifyEmail}</b>.
+          </div>
+          <div className="field"><label className="label">Verification code</label>
+            <input className="input mono" inputMode="numeric" maxLength={6} placeholder="000000" value={emailVerifyCode} onChange={(e) => { setEmailVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && verifyEmailCode()} /></div>
+          {err && <div className={err.includes("sent") ? "authnote" : "alert"}>{!err.includes("sent") && <AlertCircle />}{err}</div>}
+          <div className="field"><button className="btn btn-primary" disabled={busy} onClick={verifyEmailCode}><ShieldCheck /> {busy ? "Please wait..." : "Verify Email"}</button></div>
+          <div className="field"><button className="btn btn-ghost" disabled={busy || resendCooldown > 0} onClick={resendEmailVerification}><Mail /> {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend Code"}</button></div>
+          <button className="authback" style={{ marginTop: 16 }} onClick={() => { setEmailVerifyRequired(false); setEmailVerifyCode(""); setErr(""); setFocusField("pw"); }}><ArrowLeft /> Back to sign-in</button>
+        </div>
+      </AuthShellV3>
+    );
+  }
   if (forgot) {
     return (
       <AuthShellV3>
