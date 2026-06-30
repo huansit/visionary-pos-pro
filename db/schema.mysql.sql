@@ -141,6 +141,22 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 CREATE INDEX auth_audit_log_user_idx ON auth_audit_log (user_id);
 CREATE INDEX auth_audit_log_created_idx ON auth_audit_log (created_at);
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id              varchar(191) PRIMARY KEY,
+  user_id         varchar(191),
+  token_hash      varchar(64) NOT NULL UNIQUE,
+  requested_email varchar(255) NOT NULL,
+  ip_address      varchar(80),
+  used_at         datetime,
+  expires_at      datetime NOT NULL,
+  created_at      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT password_reset_tokens_user_fk FOREIGN KEY (user_id) REFERENCES credentials(id) ON DELETE CASCADE
+);
+
+CREATE INDEX password_reset_tokens_user_idx ON password_reset_tokens (user_id);
+CREATE INDEX password_reset_tokens_lookup_idx ON password_reset_tokens (token_hash, used_at, expires_at);
+CREATE INDEX password_reset_tokens_rate_idx ON password_reset_tokens (requested_email, ip_address, created_at);
+
 CREATE TABLE IF NOT EXISTS user_fingerprints (
   id                       varchar(191) PRIMARY KEY,
   user_id                  varchar(191) NOT NULL,

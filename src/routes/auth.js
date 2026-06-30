@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
 import { requireDevice } from "../auth.js";
 import { signDeviceToken, verifyDeviceToken } from "../token.js";
-import { generateCode, normalizeTarget, sendVerificationCode, validTarget } from "../verification.js";
+import { generateCode, normalizeTarget, sendPasswordResetEmail, sendVerificationCode, validTarget } from "../verification.js";
 
 const router = Router();
 const ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
@@ -13,6 +13,10 @@ const SINGLE_SESSION = process.env.AUTH_SINGLE_SESSION === "1";
 let authSchemaReady = null;
 const FINGERPRINT_ALGO = "aes-256-gcm";
 const TERMINAL_CODE_TTL_HOURS = Math.max(1, Math.min(168, parseInt(process.env.TERMINAL_CODE_TTL_HOURS || "24", 10)));
+const PASSWORD_RESET_TTL_MINUTES = 30;
+const PASSWORD_RESET_RATE_WINDOW_MINUTES = 30;
+const PASSWORD_RESET_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.PASSWORD_RESET_RATE_MAX || "3", 10)));
+const resetRequestBuckets = new Map();
 
 function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
@@ -57,6 +61,33 @@ function maskEmail(email) {
   const [name, domain] = String(email || "").trim().toLowerCase().split("@");
   if (!name || !domain) return "";
   return `${name.slice(0, 2)}${name.length > 2 ? "***" : "*"}@${domain}`;
+}
+
+function passwordPolicyIssue(password) {
+  const pw = String(password || "");
+  if (pw.length < 8) return "password_too_short";
+  if (!/[A-Z]/.test(pw)) return "password_missing_uppercase";
+  if (!/[a-z]/.test(pw)) return "password_missing_lowercase";
+  if (!/[0-9]/.test(pw)) return "password_missing_number";
+  if (!/[^A-Za-z0-9]/.test(pw)) return "password_missing_special";
+  return null;
+}
+
+function publicAppBaseUrl(req) {
+  const configured = String(process.env.PUBLIC_APP_URL || process.env.APP_URL || "").replace(/\/$/, "");
+  if (configured) return configured;
+  const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0].trim();
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+  return `${proto || "https"}://${host}`;
+}
+
+function passwordResetRateLimited(target, ipAddress) {
+  const key = `${target}|${ipAddress || ""}`;
+  const cutoff = Date.now() - PASSWORD_RESET_RATE_WINDOW_MINUTES * 60 * 1000;
+  const recent = (resetRequestBuckets.get(key) || []).filter((ts) => ts > cutoff);
+  recent.push(Date.now());
+  resetRequestBuckets.set(key, recent);
+  return recent.length > PASSWORD_RESET_RATE_MAX;
 }
 
 function adminEmailCodeEnabled() {
@@ -209,6 +240,19 @@ async function ensureAuthSchema() {
            )`,
           "CREATE INDEX auth_audit_log_user_idx ON auth_audit_log (user_id)",
           "CREATE INDEX auth_audit_log_created_idx ON auth_audit_log (created_at)",
+          `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+             id varchar(191) PRIMARY KEY,
+             user_id varchar(191),
+             token_hash varchar(64) NOT NULL UNIQUE,
+             requested_email varchar(255) NOT NULL,
+             ip_address varchar(80),
+             used_at datetime,
+             expires_at datetime NOT NULL,
+             created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )`,
+          "CREATE INDEX password_reset_tokens_user_idx ON password_reset_tokens (user_id)",
+          "CREATE INDEX password_reset_tokens_lookup_idx ON password_reset_tokens (token_hash, used_at, expires_at)",
+          "CREATE INDEX password_reset_tokens_rate_idx ON password_reset_tokens (requested_email, ip_address, created_at)",
           `CREATE TABLE IF NOT EXISTS user_fingerprints (
              id varchar(191) PRIMARY KEY,
              user_id varchar(191) NOT NULL,
@@ -306,6 +350,30 @@ async function ensureAuthSchema() {
              )`,
           "CREATE INDEX IF NOT EXISTS auth_audit_log_user_idx ON auth_audit_log (user_id)",
           "CREATE INDEX IF NOT EXISTS auth_audit_log_created_idx ON auth_audit_log (created_at)",
+          pgMem
+            ? `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+               id text,
+               user_id text,
+               token_hash text,
+               requested_email text,
+               ip_address text,
+               used_at timestamptz,
+               expires_at timestamptz,
+               created_at timestamptz
+             )`
+            : `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+               id text PRIMARY KEY,
+               user_id text REFERENCES credentials(id) ON DELETE CASCADE,
+               token_hash text NOT NULL UNIQUE,
+               requested_email text NOT NULL,
+               ip_address text,
+               used_at timestamptz,
+               expires_at timestamptz NOT NULL,
+               created_at timestamptz NOT NULL DEFAULT now()
+             )`,
+          "CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens (user_id)",
+          "CREATE INDEX IF NOT EXISTS password_reset_tokens_lookup_idx ON password_reset_tokens (token_hash, used_at, expires_at)",
+          "CREATE INDEX IF NOT EXISTS password_reset_tokens_rate_idx ON password_reset_tokens (requested_email, ip_address, created_at)",
           pgMem
             ? `CREATE TABLE IF NOT EXISTS user_fingerprints (
                id text,
@@ -599,10 +667,16 @@ router.post("/request-password-reset", async (req, res) => {
   await ensureAuthSchema();
   const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
   if (!validTarget("email", target)) return res.status(400).json({ error: "invalid_email" });
+  const { ipAddress } = requestMeta(req);
+  const generic = { ok: true, message: "If that admin email exists, a reset link has been sent." };
 
   try {
+    if (passwordResetRateLimited(target, ipAddress)) {
+      await audit("password_reset_rate_limited", req, null, { target: maskEmail(target), ipAddress });
+      return res.json(generic);
+    }
     const result = await q(
-      `SELECT id, kind, status
+      `SELECT id, kind, status, password_hash
          FROM credentials
         WHERE LOWER(email) = $1
           AND password_hash IS NOT NULL
@@ -613,44 +687,97 @@ router.post("/request-password-reset", async (req, res) => {
     const account = result.rows[0];
     if (!account || account.kind !== "admin") {
       await audit("password_reset_requested", req, null, { target: maskEmail(target), accepted: false });
-      return res.status(404).json({ error: "admin_email_not_found" });
+      return res.json(generic);
     }
 
-    const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "admin_password_reset" });
-    await audit("password_reset_code_sent", req, account.id, { target: maskEmail(target), expiresInMinutes });
-    res.json({ ok: true, target: maskEmail(target), expiresInMinutes });
+    const rateResult = await q(
+      `SELECT ${isMySql ? "COUNT(*)" : "COUNT(*)::int"} AS n
+         FROM password_reset_tokens
+        WHERE requested_email = $1
+          AND COALESCE(ip_address, '') = COALESCE($2, '')
+          AND created_at > ${isMySql ? "DATE_SUB(NOW(), INTERVAL " + PASSWORD_RESET_RATE_WINDOW_MINUTES + " MINUTE)" : "now() - ($3::int * interval '1 minute')"}`,
+      isMySql ? [target, ipAddress] : [target, ipAddress, PASSWORD_RESET_RATE_WINDOW_MINUTES]
+    );
+    const recentRequests = Number(rateResult.rows[0]?.n || 0);
+    if (recentRequests >= PASSWORD_RESET_RATE_MAX) {
+      await audit("password_reset_rate_limited", req, account.id, { target: maskEmail(target), ipAddress });
+      return res.json(generic);
+    }
+
+    await q("UPDATE password_reset_tokens SET used_at = " + (isMySql ? "NOW()" : "now()") + " WHERE user_id = $1 AND used_at IS NULL", [account.id]);
+    const token = crypto.randomBytes(32).toString("base64url");
+    const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+    const hashedToken = tokenHash(token);
+    await q(
+      `INSERT INTO password_reset_tokens (id, user_id, token_hash, requested_email, ip_address, expires_at)
+       VALUES ($1,$2,$3,$4,$5,${isMySql ? "DATE_ADD(NOW(), INTERVAL " + PASSWORD_RESET_TTL_MINUTES + " MINUTE)" : "now() + ($6::int * interval '1 minute')"})`,
+      isMySql ? [id, account.id, hashedToken, target, ipAddress] : [id, account.id, hashedToken, target, ipAddress, PASSWORD_RESET_TTL_MINUTES]
+    );
+    const resetUrl = `${publicAppBaseUrl(req)}/?resetToken=${encodeURIComponent(token)}`;
+    await sendPasswordResetEmail({ target, resetUrl, expiresInMinutes: PASSWORD_RESET_TTL_MINUTES });
+    await audit("password_reset_link_sent", req, account.id, { target: maskEmail(target), expiresInMinutes: PASSWORD_RESET_TTL_MINUTES });
+    res.json(generic);
   } catch (error) {
     console.error("request-password-reset failed:", error);
     res.status(error.statusCode || 500).json({ error: error.message || "password_reset_request_failed" });
   }
 });
 
+router.post("/validate-password-reset", async (req, res) => {
+  await ensureAuthSchema();
+  const token = String(req.body?.token || "").trim();
+  if (!token) return res.status(400).json({ error: "reset_token_required" });
+  try {
+    const result = await q(
+      `SELECT prt.id, prt.expires_at, prt.used_at, c.email, c.status
+         FROM password_reset_tokens prt
+         JOIN credentials c ON c.id = prt.user_id
+        WHERE prt.token_hash = $1
+        LIMIT 1`,
+      [tokenHash(token)]
+    );
+    const row = result.rows[0];
+    if (!row || row.used_at || new Date(row.expires_at).getTime() <= Date.now() || row.status !== "active") {
+      return res.status(400).json({ error: "reset_token_invalid_or_expired" });
+    }
+    res.json({ ok: true, target: maskEmail(row.email) });
+  } catch (error) {
+    console.error("validate-password-reset failed:", error);
+    res.status(500).json({ error: "password_reset_validate_failed" });
+  }
+});
+
 router.post("/reset-password", async (req, res) => {
   await ensureAuthSchema();
-  const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
-  const code = String(req.body?.code || "").trim();
+  const token = String(req.body?.token || "").trim();
   const password = String(req.body?.password || "");
-  if (!validTarget("email", target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
-  if (password.length < 8) return res.status(400).json({ error: "password_too_short" });
+  const confirmPassword = String(req.body?.confirmPassword || req.body?.passwordConfirm || password);
+  if (!token) return res.status(400).json({ error: "reset_token_required" });
+  if (password !== confirmPassword) return res.status(400).json({ error: "passwords_do_not_match" });
+  const policyIssue = passwordPolicyIssue(password);
+  if (policyIssue) return res.status(400).json({ error: policyIssue });
 
   try {
     const result = await q(
-      `SELECT id, kind, status
-         FROM credentials
-        WHERE LOWER(email) = $1
-          AND password_hash IS NOT NULL
-          AND status = 'active'
+      `SELECT prt.id AS reset_id, prt.expires_at, prt.used_at, prt.requested_email, c.id, c.kind, c.status, c.password_hash
+         FROM password_reset_tokens prt
+         JOIN credentials c ON c.id = prt.user_id
+        WHERE prt.token_hash = $1
         LIMIT 1`,
-      [target]
+      [tokenHash(token)]
     );
     const account = result.rows[0];
-    if (!account || account.kind !== "admin") return res.status(404).json({ error: "admin_email_not_found" });
+    if (!account || account.kind !== "admin" || account.status !== "active" || account.used_at || new Date(account.expires_at).getTime() <= Date.now()) {
+      return res.status(400).json({ error: "reset_token_invalid_or_expired" });
+    }
+    const samePassword = await bcrypt.compare(password, account.password_hash);
+    if (samePassword) return res.status(400).json({ error: "password_reused" });
 
-    await verifyAuthCode({ channel: "email", target, code, purpose: "admin_password_reset", consume: true });
     const passwordHash = await bcrypt.hash(password, ROUNDS);
     await q(`UPDATE credentials SET password_hash = $1, updated_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $2`, [passwordHash, account.id]);
+    await q(`UPDATE password_reset_tokens SET used_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [account.reset_id]);
     await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [account.id]);
-    await audit("password_reset_completed", req, account.id, { target: maskEmail(target) });
+    await audit("password_reset_completed", req, account.id, { target: maskEmail(account.requested_email), resetId: account.reset_id });
     res.json({ ok: true });
   } catch (error) {
     console.error("reset-password failed:", error);

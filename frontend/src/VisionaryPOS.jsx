@@ -2430,9 +2430,17 @@ export default function VisionPOS() {
   const syncRequestRef = useRef(false);
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { (async () => {
+    const resetToken = (() => { try { return new URLSearchParams(window.location.search).get("resetToken") || ""; } catch (_) { return ""; } })();
     const l = await loadData();
     const loaded = await cloudBootstrapData(l);
     saveData(loaded);
+    if (resetToken) {
+      await clearSessionState();
+      setSession(null);
+      setView("adminLogin");
+      setData(loaded);
+      return;
+    }
     const savedSession = await loadSessionState();
     if (savedSession?.sessionToken) {
       try {
@@ -2808,6 +2816,9 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
 }
 function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [email, setEmail] = useState(""), [pw, setPw] = useState(""), [show, setShow] = useState(false), [err, setErr] = useState(""), [forgot, setForgot] = useState(false);
+  const initialResetToken = (() => {
+    try { return new URLSearchParams(window.location.search).get("resetToken") || ""; } catch (_) { return ""; }
+  })();
   const [focusField, setFocusField] = useState("email");
   const [fpBusy, setFpBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -2815,11 +2826,21 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [codeTarget, setCodeTarget] = useState("");
   const [code, setCode] = useState("");
   const [resetEmail, setResetEmail] = useState("");
-  const [resetCode, setResetCode] = useState("");
+  const [resetToken, setResetToken] = useState(initialResetToken);
+  const [resetTarget, setResetTarget] = useState("");
   const [resetPw, setResetPw] = useState("");
   const [resetPw2, setResetPw2] = useState("");
   const [resetSent, setResetSent] = useState(false);
   const [resetDone, setResetDone] = useState(false);
+  useEffect(() => {
+    if (!initialResetToken) return;
+    setForgot(true);
+    setResetSent(true);
+    setErr("Checking reset link...");
+    authApi("/api/auth/validate-password-reset", { token: initialResetToken })
+      .then((result) => { setResetTarget(result.target || "your admin email"); setErr(""); })
+      .catch(() => setErr("This reset link is invalid or expired. Request a new one."));
+  }, []); // eslint-disable-line
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
@@ -2887,32 +2908,31 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     try {
       await authApi("/api/auth/request-password-reset", { email: target });
       setResetSent(true);
-      setResetCode("");
-      setErr("Reset code sent. Check the admin email.");
+      setResetToken("");
+      setResetTarget(maskEmailLocal(target));
+      setErr("If that admin email exists, a secure reset link has been sent.");
     } catch (error) {
-      setErr(error.message === "admin_email_not_found" ? "No active admin account uses that email." :
-        error.message === "email_provider_not_configured" ? "Email sending is not configured on the server." :
+      setErr(error.message === "email_provider_not_configured" ? "Email sending is not configured on the server." :
         error.message === "Failed to fetch" ? "Cloud reset is unreachable. Check your internet connection." : error.message);
     } finally {
       setBusy(false);
     }
   };
   const completeReset = async () => {
-    const target = resetEmail.trim().toLowerCase();
-    if (!isValidEmail(target)) return setErr("Enter the admin email address.");
-    if (!/^\d{6}$/.test(resetCode.trim())) return setErr("Enter the 6-digit reset code.");
+    if (!resetToken) return setErr("Open the reset link from your email first.");
     const issue = passwordIssue(resetPw); if (issue) return setErr(issue);
     if (resetPw !== resetPw2) return setErr("Passwords don't match.");
     setErr("");
     setBusy(true);
     try {
-      await authApi("/api/auth/reset-password", { email: target, code: resetCode.trim(), password: resetPw });
-      setEmail(target);
+      await authApi("/api/auth/reset-password", { token: resetToken, password: resetPw, confirmPassword: resetPw2 });
+      try { window.history.replaceState({}, "", window.location.pathname); } catch (_) {}
+      setEmail(resetEmail.trim().toLowerCase());
       setPw("");
       setCodeRequired(false);
       setCodeTarget("");
       setCode("");
-      setResetCode("");
+      setResetToken("");
       setResetPw("");
       setResetPw2("");
       setResetSent(false);
@@ -2921,10 +2941,9 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       setFocusField("pw");
       setErr("Password updated. Sign in with the new password.");
     } catch (error) {
-      setErr(error.message === "invalid_code" ? "That reset code is incorrect." :
-        error.message === "code_not_found_or_expired" ? "That reset code expired. Send a new one." :
-        error.message === "too_many_attempts" ? "Too many incorrect attempts. Send a new code." :
-        error.message === "admin_email_not_found" ? "No active admin account uses that email." : error.message);
+      setErr(error.message === "reset_token_invalid_or_expired" ? "This reset link is invalid or expired. Request a new one." :
+        error.message === "password_reused" ? "Choose a password you have not used for this account." :
+        resetErrorMessage(error.message));
     } finally {
       setBusy(false);
     }
@@ -2946,21 +2965,24 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       <AuthShellV3>
         <div className="authform">
           <div className="authfield-label" style={{ marginBottom: 14 }}>Reset your password</div>
-          <div className="authnote" style={{ marginTop: 0, marginBottom: 12 }}>Enter the admin email. We'll send a verification code before you choose a new password.</div>
-          <div className="field" style={{ marginTop: 0 }}><label className="label">Admin email</label>
-            <input className="input" type="email" placeholder="admin@visionarypos.cloud" value={resetEmail} onChange={(e) => { setResetEmail(e.target.value); setErr(""); setResetDone(false); }} onKeyDown={(e) => e.key === "Enter" && requestResetCode()} /></div>
-          <div className="field"><button className="btn btn-ghost" disabled={busy} onClick={requestResetCode}><Mail /> {resetSent ? "Send code again" : "Send reset code"}</button></div>
-          {resetSent && <>
-            <div className="field"><label className="label">Reset code</label>
-              <input className="input mono" inputMode="numeric" maxLength={6} placeholder="000000" value={resetCode} onChange={(e) => { setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} /></div>
+          <div className="authnote" style={{ marginTop: 0, marginBottom: 12 }}>
+            {resetToken ? `Enter a new password for ${resetTarget || "this admin account"}.` : "Enter the admin email. We'll send a secure reset link if the account exists."}
+          </div>
+          {!resetToken && <>
+            <div className="field" style={{ marginTop: 0 }}><label className="label">Admin email</label>
+              <input className="input" type="email" placeholder="admin@visionarypos.cloud" value={resetEmail} onChange={(e) => { setResetEmail(e.target.value); setErr(""); setResetDone(false); }} onKeyDown={(e) => e.key === "Enter" && requestResetCode()} /></div>
+            <div className="field"><button className="btn btn-ghost" disabled={busy} onClick={requestResetCode}><Mail /> {resetSent ? "Send reset link again" : "Send reset link"}</button></div>
+          </>}
+          {resetToken && <>
             <div className="field"><label className="label">New password</label>
               <input className="input" type="password" placeholder="8+ chars, upper, number, symbol" value={resetPw} onChange={(e) => { setResetPw(e.target.value); setErr(""); }} /></div>
             <div className="field"><label className="label">Confirm new password</label>
               <input className="input" type="password" placeholder="Re-enter new password" value={resetPw2} onChange={(e) => { setResetPw2(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && completeReset()} /></div>
+            <PasswordRules password={resetPw} confirm={resetPw2} />
             <div className="field"><button className="btn btn-primary" disabled={busy} onClick={completeReset}><ShieldCheck /> {busy ? "Please wait..." : "Update password"}</button></div>
           </>}
           {err && <div className={resetDone ? "authnote" : "alert"}>{!resetDone && <AlertCircle />}{err}</div>}
-          <button className="authback" style={{ marginTop: 16 }} onClick={() => { setForgot(false); setErr(""); setResetDone(false); }}><ArrowLeft /> Back to sign-in</button>
+          <button className="authback" style={{ marginTop: 16 }} onClick={() => { setForgot(false); setErr(""); setResetDone(false); setResetToken(""); try { window.history.replaceState({}, "", window.location.pathname); } catch (_) {} }}><ArrowLeft /> Back to sign-in</button>
         </div>
       </AuthShellV3>
     );
@@ -6903,6 +6925,42 @@ function passwordIssue(pw) {
   if (!/[0-9]/.test(pw)) return "Password needs at least one number.";
   if (!/[^A-Za-z0-9]/.test(pw)) return "Password needs at least one special character.";
   return null;
+}
+function resetErrorMessage(code) {
+  return ({
+    password_too_short: "Password must be at least 8 characters.",
+    password_missing_uppercase: "Password needs at least one uppercase letter.",
+    password_missing_lowercase: "Password needs at least one lowercase letter.",
+    password_missing_number: "Password needs at least one number.",
+    password_missing_special: "Password needs at least one special character.",
+    passwords_do_not_match: "Passwords don't match.",
+    reset_token_required: "Open the reset link from your email first.",
+  })[code] || code;
+}
+function maskEmailLocal(email) {
+  const [name, domain] = String(email || "").trim().toLowerCase().split("@");
+  if (!name || !domain) return "";
+  return `${name.slice(0, 2)}${name.length > 2 ? "***" : "*"}@${domain}`;
+}
+function PasswordRules({ password, confirm }) {
+  const rules = [
+    ["At least 8 characters", password.length >= 8],
+    ["One uppercase letter", /[A-Z]/.test(password)],
+    ["One lowercase letter", /[a-z]/.test(password)],
+    ["One number", /[0-9]/.test(password)],
+    ["One special character", /[^A-Za-z0-9]/.test(password)],
+    ["Passwords match", Boolean(password) && password === confirm],
+  ];
+  return (
+    <div className="authnote" style={{ marginTop: 10, display: "grid", gap: 6 }}>
+      {rules.map(([label, ok]) => (
+        <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, color: ok ? "var(--ok)" : "var(--muted)" }}>
+          {ok ? <Check style={{ width: 14, height: 14 }} /> : <AlertCircle style={{ width: 14, height: 14 }} />}
+          <span>{label}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 function TerminalsTab({ data, isAdmin }) {
   const [terminals, setTerminals] = useState([]);

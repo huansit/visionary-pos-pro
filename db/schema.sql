@@ -162,6 +162,21 @@ CREATE TABLE IF NOT EXISTS auth_audit_log (
 CREATE INDEX IF NOT EXISTS auth_audit_log_user_idx ON auth_audit_log (user_id);
 CREATE INDEX IF NOT EXISTS auth_audit_log_created_idx ON auth_audit_log (created_at);
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id              text PRIMARY KEY,
+  user_id         text REFERENCES credentials(id) ON DELETE CASCADE,
+  token_hash      text NOT NULL UNIQUE,
+  requested_email text NOT NULL,
+  ip_address      text,
+  used_at         timestamptz,
+  expires_at      timestamptz NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS password_reset_tokens_user_idx ON password_reset_tokens (user_id);
+CREATE INDEX IF NOT EXISTS password_reset_tokens_lookup_idx ON password_reset_tokens (token_hash, used_at, expires_at);
+CREATE INDEX IF NOT EXISTS password_reset_tokens_rate_idx ON password_reset_tokens (requested_email, ip_address, created_at);
+
 CREATE TABLE IF NOT EXISTS user_fingerprints (
   id                       text PRIMARY KEY,
   user_id                  text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
