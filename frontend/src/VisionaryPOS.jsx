@@ -2849,9 +2849,18 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     setBusy(true);
     try {
       await authApi("/api/auth/reset-password", { email: target, code: resetCode.trim(), password: resetPw });
-      setResetDone(true);
       setEmail(target);
       setPw("");
+      setCodeRequired(false);
+      setCodeTarget("");
+      setCode("");
+      setResetCode("");
+      setResetPw("");
+      setResetPw2("");
+      setResetSent(false);
+      setResetDone(false);
+      setForgot(false);
+      setFocusField("pw");
       setErr("Password updated. Sign in with the new password.");
     } catch (error) {
       setErr(error.message === "invalid_code" ? "That reset code is incorrect." :
