@@ -1,10 +1,12 @@
 {
-  "version": "2.0.1",
+  "version": "2.0.2",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2820443,
-  "sha512": "E812765F96270AB774F94BEF88427EA0B3A4E941DE29C4329B7447EEDB5555D11BE86DE34C5ACC745A80D0AE8FB077DE9CD043DF6B16C8BB3381B8A62AB666AB",
+  "size": 2821514,
+  "sha512": "34C29B8ADCA9B93768D5FCB111100EF844E8C8E6F8A330FD1918B1A6A1F86F90B140C39B96FA14F6359A3AA499C187BE21F6A38F5B2362EEEB1210AE428E2271",
   "releaseNotes": [
+    "Responsive desktop window sizing for different Windows displays and DPI settings.",
+    "Visible in-app update check from the cashier dashboard.",
     "Near real-time sync notifications for invoices, inventory, expenses, branches, and employee changes.",
     "Automatic desktop refresh after cloud updates with reconnecting live update support.",
     "In-app update notifications using the VisionPOS downloads manifest.",

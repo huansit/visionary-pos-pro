@@ -321,38 +321,38 @@ export default function App() {
     if (account) focusSearch();
   }, [account]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function checkForUpdates() {
-      if (updateCheckInFlight.current) return;
-      updateCheckInFlight.current = true;
-      try {
-        const manifest = await fetchUpdateManifest();
-        if (cancelled) return;
-        const version = String(manifest.version || "");
-        if (version && compareVersions(version, APP_VERSION) > 0) {
-          setUpdatePrompt({
-            version,
-            currentVersion: APP_VERSION,
-            url: absoluteDownloadUrl(manifest.installer),
-            releaseNotes: Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes : [],
-            size: manifest.size
-          });
-        }
-      } catch {
-        // Update checks must never interrupt cashier sales.
-      } finally {
-        updateCheckInFlight.current = false;
+  async function checkForUpdates(manual = false) {
+    if (updateCheckInFlight.current) return;
+    updateCheckInFlight.current = true;
+    if (manual) setStatus("Checking for desktop updates...");
+    try {
+      const manifest = await fetchUpdateManifest();
+      const version = String(manifest.version || "");
+      if (version && compareVersions(version, APP_VERSION) > 0) {
+        setUpdatePrompt({
+          version,
+          currentVersion: APP_VERSION,
+          url: absoluteDownloadUrl(manifest.installer),
+          releaseNotes: Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes : [],
+          size: manifest.size
+        });
+        if (manual) setStatus(`Update ${version} is available.`);
+      } else if (manual) {
+        setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
       }
+    } catch (err) {
+      if (manual) setError(`Update check failed: ${String(err)}`);
+    } finally {
+      updateCheckInFlight.current = false;
     }
+  }
 
-    checkForUpdates();
-    const intervalId = window.setInterval(checkForUpdates, 60 * 60 * 1000);
-    const onFocus = () => checkForUpdates();
+  useEffect(() => {
+    checkForUpdates(false);
+    const intervalId = window.setInterval(() => checkForUpdates(false), 60 * 60 * 1000);
+    const onFocus = () => checkForUpdates(false);
     window.addEventListener("focus", onFocus);
     return () => {
-      cancelled = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", onFocus);
     };
@@ -609,6 +609,7 @@ export default function App() {
         <div className="topmeta">
           <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
           <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
+          <button className="update-chip" onClick={() => checkForUpdates(true)} title={`Check updates. Running ${APP_VERSION}`}><Download size={16} />v{APP_VERSION}</button>
           <button className="window-close-button" onClick={handleCloseApp} title="Close app" aria-label="Close app"><X size={20} /></button>
         </div>
       </header>
@@ -702,6 +703,7 @@ export default function App() {
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
             <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
+            <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
             <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
         </aside>
