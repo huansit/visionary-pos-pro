@@ -23,14 +23,61 @@ function toProduct(row) {
     branchId: row.branch_id,
     barcodeCatalogId: row.barcode_catalog_id,
     name: row.name,
+    sku: row.sku || "",
     categoryId: row.category_id,
+    brand: row.brand || "",
+    unit: row.unit || "",
     costPrice: Number(row.cost_price || 0),
     sellingPrice: Number(row.selling_price || 0),
     stock: Number(row.stock || 0),
     reorderLevel: Number(row.reorder_level || 0),
+    shelfLocation: row.shelf_location || "",
+    availability: row.availability === undefined || row.availability === null ? true : Boolean(row.availability),
     image: row.image || "",
+    description: row.description || "",
     status: row.status || "active",
   };
+}
+
+function branchProductId(branchId, productId) {
+  return `bp_${branchId}_${productId}`.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 180);
+}
+
+async function findProductByCatalog(client, barcodeCatalogId) {
+  const result = await client.query(
+    "SELECT id FROM products WHERE barcode_catalog_id = $1 AND status = 'active' ORDER BY created_at ASC, id ASC LIMIT 1",
+    [barcodeCatalogId]
+  );
+  return result.rows[0] || null;
+}
+
+async function selectBranchProductView(client, productId, branchId) {
+  const result = await client.query(
+    `SELECT
+       p.id,
+       bp.branch_id,
+       p.barcode_catalog_id,
+       p.name,
+       p.sku,
+       p.category_id,
+       p.brand,
+       p.unit,
+       p.cost_price,
+       bp.selling_price,
+       bp.stock,
+       bp.reorder_level,
+       bp.shelf_location,
+       bp.availability,
+       p.image,
+       p.description,
+       p.status
+     FROM products p
+     LEFT JOIN branch_products bp ON bp.product_id = p.id AND bp.branch_id = $2
+     WHERE p.id = $1
+     LIMIT 1`,
+    [productId, branchId]
+  );
+  return toProduct(result.rows[0]);
 }
 
 async function findCatalog(client, barcode) {
@@ -76,14 +123,33 @@ router.post("/resolve", async (req, res, next) => {
     if (!catalog) return res.json({ found: false, available: false, reason: "barcode_not_found" });
 
     const productResult = await q(
-      `SELECT id, branch_id, barcode_catalog_id, name, category_id, cost_price, selling_price, stock, reorder_level, image, status
-       FROM products
-       WHERE branch_id = $1 AND barcode_catalog_id = $2 AND status = 'active'
+      `SELECT
+         p.id,
+         bp.branch_id,
+         p.barcode_catalog_id,
+         p.name,
+         p.sku,
+         p.category_id,
+         p.brand,
+         p.unit,
+         p.cost_price,
+         bp.selling_price,
+         bp.stock,
+         bp.reorder_level,
+         bp.shelf_location,
+         bp.availability,
+         p.image,
+         p.description,
+         p.status
+       FROM products p
+       LEFT JOIN branch_products bp ON bp.product_id = p.id AND bp.branch_id = $1
+       WHERE p.barcode_catalog_id = $2 AND p.status = 'active'
+       ORDER BY p.created_at ASC, p.id ASC
        LIMIT 1`,
       [branchId, catalog.id]
     );
     const product = toProduct(productResult.rows[0]);
-    if (!product) {
+    if (!product || !product.branchId || product.availability === false) {
       return res.json({
         found: true,
         available: false,
@@ -124,61 +190,82 @@ router.post("/products", async (req, res, next) => {
 
     const result = await tx(async (client) => {
       const catalog = await ensureCatalog(client, barcode, req.body?.barcodeType || "code128");
-      const existing = await client.query(
-        "SELECT id FROM products WHERE branch_id = $1 AND barcode_catalog_id = $2 LIMIT 1",
-        [branchId, catalog.id]
-      );
-      if (existing.rows[0] && existing.rows[0].id !== req.body?.id) {
-        const error = new Error("duplicate_branch_product");
-        error.statusCode = 409;
-        throw error;
-      }
-
-      const id = req.body?.id || uid("p");
-      const values = [
+      const existingGlobal = await findProductByCatalog(client, catalog.id);
+      const id = existingGlobal?.id || req.body?.id || uid("p");
+      const productValues = [
         id,
-        branchId,
         catalog.id,
         String(req.body.name).trim(),
+        req.body.sku || barcode,
         req.body.categoryId || req.body.category || null,
+        req.body.brand || null,
+        req.body.unit || null,
         Number(req.body.costPrice || 0),
-        Number(req.body.sellingPrice || req.body.price || 0),
-        Number(req.body.stock || 0),
-        Number(req.body.reorderLevel || 0),
         req.body.image || req.body.imageUrl || null,
+        req.body.description || null,
         req.body.status || "active",
       ];
-      const byId = await client.query("SELECT id FROM products WHERE id = $1 LIMIT 1", [id]);
+      const byId = existingGlobal ? { rows: [existingGlobal] } : await client.query("SELECT id FROM products WHERE id = $1 LIMIT 1", [id]);
       if (byId.rows[0]) {
         await client.query(
           `UPDATE products SET
-             branch_id = $2,
-             barcode_catalog_id = $3,
-             name = $4,
+             barcode_catalog_id = $2,
+             name = $3,
+             sku = $4,
              category_id = $5,
-             cost_price = $6,
-             selling_price = $7,
-             stock = $8,
-             reorder_level = $9,
-             image = $10,
+             brand = $6,
+             unit = $7,
+             cost_price = $8,
+             image = $9,
+             description = $10,
              status = $11,
              updated_at = ${isMySql ? "CURRENT_TIMESTAMP" : "now()"}
            WHERE id = $1`,
-          values
+          productValues
         );
       } else {
         await client.query(
-          `INSERT INTO products (id, branch_id, barcode_catalog_id, name, category_id, cost_price, selling_price, stock, reorder_level, image, status)
+          `INSERT INTO products (id, barcode_catalog_id, name, sku, category_id, brand, unit, cost_price, image, description, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          values
+          productValues
         );
       }
-      const product = await client.query(
-        `SELECT id, branch_id, barcode_catalog_id, name, category_id, cost_price, selling_price, stock, reorder_level, image, status
-         FROM products WHERE id = $1`,
-        [id]
+
+      const branchValues = [
+        branchProductId(branchId, id),
+        id,
+        branchId,
+        Number(req.body.sellingPrice || req.body.price || 0),
+        Number(req.body.stock || 0),
+        Number(req.body.reorderLevel || 0),
+        req.body.shelfLocation || null,
+        req.body.availability === undefined ? true : Boolean(req.body.availability),
+      ];
+      const existingBranch = await client.query(
+        "SELECT id FROM branch_products WHERE branch_id = $1 AND product_id = $2 LIMIT 1",
+        [branchId, id]
       );
-      return { catalog, product: toProduct(product.rows[0]) };
+      if (existingBranch.rows[0]) {
+        await client.query(
+          `UPDATE branch_products SET
+             selling_price = $4,
+             stock = $5,
+             reorder_level = $6,
+             shelf_location = $7,
+             availability = $8,
+             updated_at = ${isMySql ? "CURRENT_TIMESTAMP" : "now()"}
+           WHERE branch_id = $3 AND product_id = $2`,
+          branchValues
+        );
+      } else {
+        await client.query(
+          `INSERT INTO branch_products (id, product_id, branch_id, selling_price, stock, reorder_level, shelf_location, availability)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          branchValues
+        );
+      }
+
+      return { catalog, product: await selectBranchProductView(client, id, branchId) };
     });
     res.json({
       barcodeCatalog: { id: result.catalog.id, barcode: result.catalog.barcode, barcodeType: result.catalog.barcode_type },

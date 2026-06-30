@@ -280,6 +280,76 @@ test("6. product record last-write-wins keeps newer updatedAt and ignores older"
     });
 });
 
+test("6b. product records sync global fields while preserving branch-specific selling price", async () => {
+  const sipProduct = {
+    id: "prod-global-sip",
+    type: "product",
+    branchId: "b_sip",
+    updatedAt: 2100,
+    payload: {
+      branchId: "b_sip",
+      name: "Shared Gin",
+      sku: "GIN001",
+      barcode: "SGIN001",
+      barcodeCatalogId: "bc_shared_gin",
+      category: "Gin",
+      costCents: 48000,
+      priceCents: 65000,
+    },
+  };
+  const cptProduct = {
+    id: "prod-global-cpt",
+    type: "product",
+    branchId: "b_cpt",
+    updatedAt: 2200,
+    payload: {
+      branchId: "b_cpt",
+      name: "Shared Gin",
+      sku: "GIN001",
+      barcode: "SGIN001",
+      barcodeCatalogId: "bc_shared_gin",
+      category: "Gin",
+      costCents: 48000,
+      priceCents: 72000,
+    },
+  };
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [sipProduct, cptProduct] })
+    .expect(200);
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      events: [{
+        ...sipProduct,
+        updatedAt: 2300,
+        payload: {
+          ...sipProduct.payload,
+          name: "Shared Gin Updated",
+          costCents: 51000,
+          priceCents: 66000,
+        },
+      }],
+    })
+    .expect(200);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const cpt = res.body.events.find((event) => event.id === "prod-global-cpt" && event.type === "product");
+      assert.ok(cpt);
+      assert.equal(cpt.payload.name, "Shared Gin Updated");
+      assert.equal(cpt.payload.costCents, 51000);
+      assert.equal(cpt.payload.priceCents, 72000);
+      assert.equal(cpt.payload.branchId, "b_cpt");
+    });
+});
+
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {
   await request(app)
     .post("/api/barcodes/products")
@@ -311,6 +381,8 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
       assert.equal(res.body.available, true);
       assert.equal(res.body.product.name, "Hennessy VS 750ML");
       assert.equal(res.body.product.sellingPrice, 6500);
+      assert.equal(res.body.product.costPrice, 4800);
+      assert.equal(res.body.product.stock, 12);
     });
 
   await request(app)
@@ -322,6 +394,70 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
       assert.equal(res.body.found, true);
       assert.equal(res.body.available, false);
       assert.equal(res.body.message, "This product is not available in this branch.");
+    });
+
+  await request(app)
+    .post("/api/barcodes/products")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "prod-bc-cpt-ignored",
+      branchId: "b_cpt",
+      barcode: "3245990043300",
+      name: "Hennessy VS 750ML Updated",
+      categoryId: "Spirits",
+      costPrice: 5100,
+      sellingPrice: 7200,
+      stock: 3,
+      reorderLevel: 2,
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.product.branchId, "b_cpt");
+      assert.equal(res.body.product.name, "Hennessy VS 750ML Updated");
+      assert.equal(res.body.product.costPrice, 5100);
+      assert.equal(res.body.product.sellingPrice, 7200);
+      assert.equal(res.body.product.stock, 3);
+    });
+
+  await request(app)
+    .post("/api/barcodes/resolve")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_sip", barcode: "3245990043300" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.available, true);
+      assert.equal(res.body.product.name, "Hennessy VS 750ML Updated");
+      assert.equal(res.body.product.costPrice, 5100);
+      assert.equal(res.body.product.sellingPrice, 6500);
+      assert.equal(res.body.product.stock, 12);
+    });
+
+  await request(app)
+    .post("/api/barcodes/products")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      branchId: "b_sip",
+      barcode: "3245990043300",
+      name: "Hennessy VS 750ML Final",
+      categoryId: "Spirits",
+      costPrice: 5200,
+      sellingPrice: 6600,
+      stock: 9,
+      reorderLevel: 5,
+    })
+    .expect(200);
+
+  await request(app)
+    .post("/api/barcodes/resolve")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_cpt", barcode: "3245990043300" })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.available, true);
+      assert.equal(res.body.product.name, "Hennessy VS 750ML Final");
+      assert.equal(res.body.product.costPrice, 5200);
+      assert.equal(res.body.product.sellingPrice, 7200);
+      assert.equal(res.body.product.stock, 3);
     });
 });
 

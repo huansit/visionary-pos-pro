@@ -72,25 +72,43 @@ CREATE INDEX barcode_catalog_barcode_lookup_idx
 
 CREATE TABLE IF NOT EXISTS products (
   id                 varchar(191) PRIMARY KEY,
-  branch_id          varchar(191) NOT NULL,
   barcode_catalog_id varchar(191) NOT NULL,
   name               varchar(255) NOT NULL,
+  sku                varchar(191),
   category_id        varchar(191),
+  brand              varchar(191),
+  unit               varchar(80),
   cost_price         decimal(12, 2) NOT NULL DEFAULT 0,
-  selling_price      decimal(12, 2) NOT NULL DEFAULT 0,
-  stock              int NOT NULL DEFAULT 0,
-  reorder_level      int NOT NULL DEFAULT 0,
   image              text,
+  description        text,
   status             varchar(40) NOT NULL DEFAULT 'active',
   created_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT products_barcode_catalog_fk FOREIGN KEY (barcode_catalog_id) REFERENCES barcode_catalog(id),
-  CONSTRAINT products_branch_barcode_catalog_unique UNIQUE (branch_id, barcode_catalog_id)
+  CONSTRAINT products_barcode_catalog_fk FOREIGN KEY (barcode_catalog_id) REFERENCES barcode_catalog(id)
 );
 
 CREATE INDEX products_barcode_catalog_idx ON products (barcode_catalog_id);
-CREATE INDEX products_branch_idx ON products (branch_id);
+CREATE INDEX products_sku_idx ON products (sku);
 CREATE INDEX products_status_idx ON products (status);
+
+CREATE TABLE IF NOT EXISTS branch_products (
+  id                 varchar(191) PRIMARY KEY,
+  product_id         varchar(191) NOT NULL,
+  branch_id          varchar(191) NOT NULL,
+  selling_price      decimal(12, 2) NOT NULL DEFAULT 0,
+  stock              int NOT NULL DEFAULT 0,
+  reorder_level      int NOT NULL DEFAULT 0,
+  shelf_location     varchar(191),
+  availability       boolean NOT NULL DEFAULT true,
+  created_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT branch_products_product_fk FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+  CONSTRAINT branch_products_branch_product_unique UNIQUE (branch_id, product_id)
+);
+
+CREATE INDEX branch_products_product_idx ON branch_products (product_id);
+CREATE INDEX branch_products_branch_idx ON branch_products (branch_id);
+CREATE INDEX branch_products_availability_idx ON branch_products (availability);
 
 CREATE TABLE IF NOT EXISTS credentials (
   id            varchar(191) PRIMARY KEY,

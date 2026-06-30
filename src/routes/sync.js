@@ -94,6 +94,7 @@ router.post("/push", async (req, res) => {
         serverTs[ev.id] = ts;
       } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
         const ts = await upsertMutableRecord(client, ev, type, req.deviceId, nextServerTs());
+        if (type === "product") await propagateProductGlobalFields(client, ev, req.deviceId, ts);
         accepted.push(ev.id);
         serverTs[ev.id] = ts;
       } else {
@@ -235,6 +236,73 @@ async function upsertMutableRecord(client, ev, type, deviceId, ts) {
     [type, ev.id]
   );
   return existing.rows[0].server_ts;
+}
+
+const PRODUCT_GLOBAL_FIELDS = [
+  "name",
+  "sku",
+  "barcode",
+  "barcodes",
+  "barcodeCatalogId",
+  "barcodeCatalogIds",
+  "category",
+  "categoryId",
+  "brand",
+  "unit",
+  "size",
+  "image",
+  "imageUrl",
+  "description",
+  "status",
+  "costCents",
+  "costPrice",
+  "costPriceCents",
+  "cost_price",
+  "cost_price_cents",
+];
+
+function productGlobalKey(payload = {}) {
+  const catalogId = String(payload.barcodeCatalogId || payload.barcode_catalog_id || "").trim().toLowerCase();
+  if (catalogId) return `catalog:${catalogId}`;
+  const code = String(payload.barcode || payload.sku || "").trim().replace(/\s+/g, "").toLowerCase();
+  return code ? `code:${code}` : "";
+}
+
+function productGlobalPatch(payload = {}) {
+  const patch = {};
+  for (const field of PRODUCT_GLOBAL_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(payload, field) && payload[field] !== undefined) {
+      patch[field] = payload[field];
+    }
+  }
+  return patch;
+}
+
+async function propagateProductGlobalFields(client, ev, deviceId, ts) {
+  const incomingPayload = ev.payload || {};
+  const key = productGlobalKey(incomingPayload);
+  if (!key) return;
+  const patch = productGlobalPatch(incomingPayload);
+  if (!Object.keys(patch).length) return;
+
+  const existing = await client.query(
+    "SELECT id, payload FROM records WHERE type = $1 AND deleted = $2",
+    ["product", false]
+  );
+  for (const row of existing.rows) {
+    const payload = row.payload || {};
+    if (row.id === ev.id) continue;
+    if (productGlobalKey(payload) !== key) continue;
+    await client.query(
+      `UPDATE records
+       SET payload = $3,
+           device_id = $4,
+           updated_at = $5,
+           server_ts = $5
+       WHERE type = $1 AND id = $2`,
+      ["product", row.id, { ...payload, ...patch }, deviceId, ts]
+    );
+  }
 }
 
 export default router;

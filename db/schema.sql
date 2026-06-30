@@ -89,25 +89,42 @@ CREATE INDEX IF NOT EXISTS barcode_catalog_barcode_lookup_idx
 
 CREATE TABLE IF NOT EXISTS products (
   id                 text PRIMARY KEY,
-  branch_id          text NOT NULL,
   barcode_catalog_id text NOT NULL REFERENCES barcode_catalog(id),
   name               text NOT NULL,
+  sku                text,
   category_id        text,
+  brand              text,
+  unit               text,
   cost_price         numeric(12, 2) NOT NULL DEFAULT 0,
-  selling_price      numeric(12, 2) NOT NULL DEFAULT 0,
-  stock              integer NOT NULL DEFAULT 0,
-  reorder_level      integer NOT NULL DEFAULT 0,
   image              text,
+  description        text,
   status             text NOT NULL DEFAULT 'active',
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS products_branch_barcode_catalog_unique_idx
-  ON products (branch_id, barcode_catalog_id);
 CREATE INDEX IF NOT EXISTS products_barcode_catalog_idx ON products (barcode_catalog_id);
-CREATE INDEX IF NOT EXISTS products_branch_idx ON products (branch_id);
+CREATE INDEX IF NOT EXISTS products_sku_idx ON products (sku);
 CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
+
+CREATE TABLE IF NOT EXISTS branch_products (
+  id             text PRIMARY KEY,
+  product_id     text NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  branch_id      text NOT NULL,
+  selling_price      numeric(12, 2) NOT NULL DEFAULT 0,
+  stock              integer NOT NULL DEFAULT 0,
+  reorder_level      integer NOT NULL DEFAULT 0,
+  shelf_location     text,
+  availability       boolean NOT NULL DEFAULT true,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_products_branch_product_unique_idx
+  ON branch_products (branch_id, product_id);
+CREATE INDEX IF NOT EXISTS branch_products_product_idx ON branch_products (product_id);
+CREATE INDEX IF NOT EXISTS branch_products_branch_idx ON branch_products (branch_id);
+CREATE INDEX IF NOT EXISTS branch_products_availability_idx ON branch_products (availability);
 
 CREATE TABLE IF NOT EXISTS credentials (
   id            text PRIMARY KEY,
