@@ -6,12 +6,12 @@ export function requestIp(req) {
     .trim();
 }
 
-export async function auditWhatsApp(event, { phone = null, command = "", status = "ok", detail = {}, req = null } = {}) {
+export async function auditWhatsApp(event, { userId = null, phone = null, command = "", status = "ok", detail = {}, req = null } = {}) {
   await q(
     `INSERT INTO auth_audit_log (user_id, event, device_name, ip_address, detail)
      VALUES ($1, $2, $3, $4, $5)`,
     [
-      null,
+      userId,
       event,
       "whatsapp",
       requestIp(req),

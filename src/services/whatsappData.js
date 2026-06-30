@@ -91,6 +91,10 @@ export async function reportOutstandingInvoices() {
   return ["Outstanding invoices", `Open: ${open.length}`, `Total outstanding: ${money(total)}`, ...top].join("\n");
 }
 
+export async function reportPendingInvoices() {
+  return reportOutstandingInvoices();
+}
+
 export async function reportExpenses({ days = 1 } = {}) {
   const snapshot = await loadSnapshot();
   const start = Date.now() - days * DAY;
@@ -122,6 +126,18 @@ export async function reportBranchSummary() {
     return `- ${branch.name}: ${money(total)} (${invoices.length} invoices)`;
   });
   return ["Branch performance today", ...lines].join("\n");
+}
+
+export async function reportInventoryStatus() {
+  const snapshot = await loadSnapshot();
+  const stock = new Map();
+  snapshot.stockMovements.forEach((mv) => stock.set(mv.productId, (stock.get(mv.productId) || 0) + n(mv.qty ?? mv.quantity)));
+  const products = snapshot.products.map((p) => ({ ...p, onHand: stock.get(p.id) || 0 }));
+  const total = products.length;
+  const inStock = products.filter((p) => p.onHand > 0).length;
+  const out = products.filter((p) => p.onHand <= 0).length;
+  const low = products.filter((p) => p.onHand > 0 && p.onHand <= n(p.reorderLevel ?? p.reorder_level ?? 4)).length;
+  return ["Inventory status", `Products: ${total}`, `In stock: ${inStock}`, `Low stock: ${low}`, `Out of stock: ${out}`].join("\n");
 }
 
 export async function reportCashierPerformance() {
