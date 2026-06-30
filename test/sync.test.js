@@ -530,3 +530,53 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     .send({ userId: "cashier-cloud-001", sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
 });
+
+test("15. sync stream notifies clients after a committed push", async () => {
+  const server = app.listen(0);
+  const port = server.address().port;
+  const controller = new AbortController();
+  const response = await fetch(`http://127.0.0.1:${port}/api/sync/stream?token=${encodeURIComponent(state.tokenA)}`, {
+    signal: controller.signal,
+  });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  async function readEvent(name) {
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split(/\n\n/);
+      buffer = blocks.pop() || "";
+      for (const block of blocks) {
+        if (block.includes(`event: ${name}`)) return block;
+      }
+    }
+    throw new Error(`missing_${name}_event`);
+  }
+
+  try {
+    await readEvent("connected");
+    await request(app)
+      .post("/api/sync/push")
+      .set("Authorization", `Bearer ${state.tokenA}`)
+      .send({
+        events: [{
+          id: "inv-stream-001",
+          type: "invoice",
+          branchId: "b_sip",
+          clientTs: Date.now(),
+          payload: { totalCents: 1000, status: "open" },
+        }],
+      })
+      .expect(200);
+    const block = await readEvent("sync");
+    assert.match(block, /"types":\["invoice"\]/);
+  } finally {
+    controller.abort();
+    server.close();
+  }
+});

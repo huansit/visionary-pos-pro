@@ -25,6 +25,7 @@ import {
   APP_VERSION,
   absoluteDownloadUrl,
   activateTerminal,
+  connectSyncStream,
   fetchUpdateManifest,
   loginCashier,
   logout,
@@ -261,6 +262,7 @@ export default function App() {
   const [openInvoicesOpen, setOpenInvoicesOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
+  const [realtimeState, setRealtimeState] = useState<"connected" | "reconnecting">("reconnecting");
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const catalogSyncInFlight = useRef(false);
@@ -359,7 +361,13 @@ export default function App() {
   useEffect(() => {
     if (!terminal) return;
     const syncQuietly = () => refreshCatalog(terminal, { silent: true });
-    const intervalId = window.setInterval(syncQuietly, 8000);
+    let realtimeTimer: number | undefined;
+    const scheduleRealtimeSync = () => {
+      window.clearTimeout(realtimeTimer);
+      realtimeTimer = window.setTimeout(syncQuietly, 150);
+    };
+    const disconnectStream = connectSyncStream(terminal, scheduleRealtimeSync, setRealtimeState);
+    const intervalId = window.setInterval(syncQuietly, 30000);
     const onFocus = () => syncQuietly();
     const onOnline = () => syncQuietly();
     const onVisibility = () => {
@@ -369,6 +377,8 @@ export default function App() {
     window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      disconnectStream();
+      window.clearTimeout(realtimeTimer);
       window.clearInterval(intervalId);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onOnline);
@@ -770,7 +780,7 @@ export default function App() {
           </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
           <p className="hint muted">Issues an open invoice cleared by admin or supervisor.</p>
-          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || status}</p>}
+          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || (realtimeState === "reconnecting" ? "Reconnecting live updates..." : status)}</p>}
         </aside>
       </section>
 

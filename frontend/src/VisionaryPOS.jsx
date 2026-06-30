@@ -31,6 +31,7 @@ const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY];
 const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
+const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 5 * 60 * 1000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
@@ -850,7 +851,7 @@ function envValue(key, fallback = "") {
 }
 function desktopDownloadConfig() {
   const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
-  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.0");
+  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.1");
   const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier-Setup.exe");
   const releaseNotes = runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", [
     "Secure first-run terminal activation with admin-generated codes.",
@@ -905,6 +906,7 @@ async function ensureDeviceToken(branchId = null) {
   const deviceId = getOrCreateDeviceId();
   const response = await fetch(cfg.apiBaseUrl + "/api/auth/device", {
     method: "POST",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       deviceId,
@@ -947,6 +949,7 @@ async function authApi(path, body, options = {}) {
   const response = await fetch(cfg.apiBaseUrl + path, {
     method: "POST",
     headers,
+    cache: "no-store",
     body: JSON.stringify(body)
   });
   const data = await response.json().catch(() => ({}));
@@ -956,7 +959,7 @@ async function authApi(path, body, options = {}) {
 async function authGet(path, options = {}) {
   const cfg = syncConfig();
   const headers = options.device ? await deviceAuthHeaders(options.branchId || null) : {};
-  const response = await fetch(cfg.apiBaseUrl + path, { headers });
+  const response = await fetch(cfg.apiBaseUrl + path, { headers, cache: "no-store" });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "request_failed");
   return data;
@@ -993,6 +996,7 @@ async function logoutSessionToken(sessionToken, options = {}) {
     await fetch(cfg.apiBaseUrl + "/api/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      cache: "no-store",
       body,
       keepalive: Boolean(options.keepalive)
     });
@@ -1173,6 +1177,7 @@ async function aiComplete({ system, messages, maxTokens = 400 }) {
   const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     body: JSON.stringify({ system, messages, maxTokens }),
   });
   const data = await response.json().catch(() => ({}));
@@ -1335,7 +1340,7 @@ async function runSyncClient(currentData) {
   const headers = await deviceAuthHeaders(branchId, { "Content-Type": "application/json" });
   let rejected = [];
   if (outbox.length) {
-    const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, body: JSON.stringify({ events: outbox }) });
+    const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox }) });
     if (!pushed.ok) throw new Error("push_failed_" + pushed.status);
     const body = await pushed.json();
     rejected = Array.isArray(body.rejected) ? body.rejected : [];
@@ -1346,7 +1351,7 @@ async function runSyncClient(currentData) {
   }
   let hasMore = true;
   while (hasMore) {
-    const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor), { headers });
+    const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor) + "&t=" + Date.now(), { headers, cache: "no-store" });
     if (!pulled.ok) throw new Error("pull_failed_" + pulled.status);
     const body = await pulled.json();
     data = mergeSyncEvents(data, body.events || []);
@@ -1360,6 +1365,11 @@ async function runSyncClient(currentData) {
   data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [rejectedText, credentialText].filter(Boolean).join(" ") } };
   await saveData(data);
   return { data, status: data._sync };
+}
+async function syncStreamUrl(branchId = null) {
+  const cfg = syncConfig();
+  const token = cfg.deviceToken || await ensureDeviceToken(branchId);
+  return cfg.apiBaseUrl + "/api/sync/stream?token=" + encodeURIComponent(token) + "&t=" + Date.now();
 }
 async function cloudBootstrapData(localData) {
   const base = localData || { ...CLEAN_SETUP(), _sync: await syncStatus() };
@@ -2651,6 +2661,44 @@ export default function VisionPOS() {
     const id = setInterval(() => { if (navigator.onLine && !document.hidden) runSync(); }, REALTIME_SYNC_MS);
     return () => clearInterval(id);
   }, []); // eslint-disable-line
+  useEffect(() => {
+    if (!data) return;
+    let stopped = false;
+    let source = null;
+    let reconnectTimer = null;
+    let syncTimer = null;
+
+    const scheduleSync = () => {
+      if (stopped || !navigator.onLine) return;
+      clearTimeout(syncTimer);
+      syncTimer = setTimeout(() => runSync({ force: true, source: "realtime" }), 200);
+    };
+
+    const connect = async () => {
+      if (stopped || !navigator.onLine || typeof EventSource === "undefined") return;
+      try {
+        const url = await syncStreamUrl(dataRef.current?.settings?.activeBranchId || null);
+        if (stopped) return;
+        source = new EventSource(url);
+        source.addEventListener("connected", scheduleSync);
+        source.addEventListener("sync", scheduleSync);
+        source.onerror = () => {
+          try { source?.close(); } catch (_) {}
+          if (!stopped) reconnectTimer = setTimeout(connect, REALTIME_RECONNECT_MS);
+        };
+      } catch (_) {
+        if (!stopped) reconnectTimer = setTimeout(connect, REALTIME_RECONNECT_MS);
+      }
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      clearTimeout(reconnectTimer);
+      clearTimeout(syncTimer);
+      try { source?.close(); } catch (_) {}
+    };
+  }, [!!data]); // eslint-disable-line
   useEffect(() => {
     if (!data || didInitialSync.current) return;
     didInitialSync.current = true;

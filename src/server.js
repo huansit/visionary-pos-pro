@@ -29,6 +29,20 @@ const frontendDist = join(here, "..", "frontend", "dist");
 app.use(helmet());
 app.use(express.json({ limit: "5mb" }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  if (req.originalUrl.startsWith("/api/") || req.originalUrl === "/health") {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+  }
+  res.on("finish", () => {
+    if (!req.originalUrl.startsWith("/api/") && req.originalUrl !== "/health") return;
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    console.log(`[api] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
+  });
+  next();
+});
 
 const origins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
 app.use(cors({ origin: origins.length ? origins : true }));

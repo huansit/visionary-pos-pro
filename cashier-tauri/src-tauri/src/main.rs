@@ -114,7 +114,7 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
             let normalized = key.to_ascii_lowercase();
             if matches!(
                 normalized.as_str(),
-                "x-terminal-uuid" | "x-terminal-secret" | "content-type" | "accept"
+                "x-terminal-uuid" | "x-terminal-secret" | "content-type" | "accept" | "cache-control" | "pragma"
             ) {
                 request = request.header(key, value);
             }

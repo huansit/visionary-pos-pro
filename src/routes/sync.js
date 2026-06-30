@@ -1,9 +1,25 @@
 import { Router } from "express";
 import { isMySql, pool, q, serverNow } from "../db.js";
 import { requireDevice } from "../auth.js";
+import { addRealtimeClient, publishSyncChange } from "../realtime.js";
 
 const router = Router();
 router.use(requireDevice);
+router.use((req, res, next) => {
+  const started = process.hrtime.bigint();
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.on("finish", () => {
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    console.log(`[sync] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms device=${req.deviceId || "-"} branch=${req.deviceBranchId || "-"}`);
+  });
+  next();
+});
+
+router.get("/stream", (req, res) => {
+  addRealtimeClient(req, res);
+});
 
 const EVENT_TYPES = new Set([
   "invoice",
@@ -88,6 +104,16 @@ router.post("/push", async (req, res) => {
     await client.query(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [req.deviceId]);
     await client.query("COMMIT");
     const cursor = Object.values(serverTs).reduce((max, ts) => Math.max(max, ts), Number(req.body?.cursor || 0));
+    if (accepted.length) {
+      const changedTypes = [...new Set(events.filter((ev) => accepted.includes(ev.id)).map((ev) => normalizeType(ev.type)))];
+      publishSyncChange({
+        sourceDeviceId: req.deviceId,
+        branchId: req.deviceBranchId || null,
+        cursor,
+        accepted: accepted.length,
+        types: changedTypes,
+      });
+    }
     return res.json({ accepted, serverTs, rejected, cursor });
   } catch (error) {
     await client.query("ROLLBACK");

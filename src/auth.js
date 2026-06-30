@@ -40,7 +40,8 @@ async function requireTerminalHeaders(req) {
 // Sets req.deviceId for downstream handlers.
 export async function requireDevice(req, res, next) {
   const hdr = req.get("authorization") || "";
-  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
+  const queryToken = req.path === "/stream" && req.method === "GET" ? String(req.query?.token || "") : "";
+  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : queryToken || null;
 
   try {
     const terminal = await requireTerminalHeaders(req);

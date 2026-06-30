@@ -1,10 +1,12 @@
 {
-  "version": "2.0.0",
+  "version": "2.0.1",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2819550,
-  "sha512": "4779FB41C33F00124EFB0515459CFA6FA25BFFC504A0FC9D6A1A336F63C2AC977E66840376F4EF48345E14B55A9181CA2B4408947C1C53EFDC23AF5839CDDB1A",
+  "size": 2820443,
+  "sha512": "E812765F96270AB774F94BEF88427EA0B3A4E941DE29C4329B7447EEDB5555D11BE86DE34C5ACC745A80D0AE8FB077DE9CD043DF6B16C8BB3381B8A62AB666AB",
   "releaseNotes": [
+    "Near real-time sync notifications for invoices, inventory, expenses, branches, and employee changes.",
+    "Automatic desktop refresh after cloud updates with reconnecting live update support.",
     "In-app update notifications using the VisionPOS downloads manifest.",
     "Secure first-run terminal activation with admin-generated codes.",
     "Cashier-only desktop interface connected to the VisionPOS cloud backend.",

@@ -3,7 +3,7 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.0";
+export const APP_VERSION = "2.0.1";
 export const UPDATE_MANIFEST_URL = `${API_BASE_URL}/downloads/release.json`;
 
 export type UpdateManifest = {
@@ -27,6 +27,64 @@ export function absoluteDownloadUrl(pathOrUrl?: string) {
   return `${API_BASE_URL}/downloads/VISIONPOS-Cashier-Setup.exe`;
 }
 
+export function connectSyncStream(terminal: TerminalCredentials, onSync: () => void, onState?: (state: "connected" | "reconnecting") => void) {
+  const controller = new AbortController();
+  let stopped = false;
+  let retryMs = 1000;
+
+  async function wait(ms: number) {
+    await new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function parseSseBlock(block: string) {
+    const lines = block.split(/\r?\n/);
+    const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
+    const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+    return { event, data };
+  }
+
+  async function run() {
+    while (!stopped && !controller.signal.aborted) {
+      try {
+        onState?.("reconnecting");
+        const response = await fetch(`${API_BASE_URL}/api/sync/stream?t=${Date.now()}`, {
+          headers: terminalHeaders(terminal),
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok || !response.body) throw new Error(`stream_failed_${response.status}`);
+        onState?.("connected");
+        retryMs = 1000;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!stopped) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split(/\n\n/);
+          buffer = blocks.pop() || "";
+          for (const block of blocks) {
+            const parsed = parseSseBlock(block);
+            if (parsed.event === "sync" || parsed.event === "connected") onSync();
+          }
+        }
+      } catch (_) {
+        if (stopped || controller.signal.aborted) break;
+      }
+      onState?.("reconnecting");
+      await wait(retryMs);
+      retryMs = Math.min(retryMs * 1.6, 15000);
+    }
+  }
+
+  run();
+  return () => {
+    stopped = true;
+    controller.abort();
+  };
+}
+
 function uid(prefix: string) {
   const random = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now();
   return `${prefix}_${random}`;
@@ -35,6 +93,8 @@ function uid(prefix: string) {
 function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
   return {
     "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
     "X-Terminal-UUID": terminal.uuid,
     "X-Terminal-Secret": terminal.terminalSecret
   };
@@ -42,7 +102,7 @@ function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
 
 async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (!API_BASE_URL.startsWith("https://")) throw new Error("HTTPS is required.");
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { "Cache-Control": "no-store", "Pragma": "no-cache" };
   new Headers(init.headers || {}).forEach((value, key) => {
     headers[key] = value;
   });
