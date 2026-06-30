@@ -12,6 +12,7 @@ import {
   Lock,
   LogOut,
   MonitorCheck,
+  Package,
   Search,
   Server,
   ShieldCheck,
@@ -742,7 +743,7 @@ export default function App() {
           <div className="product-grid">
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
-                <div className="product-image">{product.image ? <img src={product.image} alt="" /> : <span>{product.name.slice(0, 1)}</span>}</div>
+                <span className="product-icon" aria-hidden="true"><Package size={17} /></span>
                 <span className="product-name">{product.name}</span>
                 <span className="product-code">SKU: {product.sku || product.barcode || "No code"}</span>
                 <span className="product-code">Volume: {product.size || "N/A"}</span>

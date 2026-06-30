@@ -1,10 +1,11 @@
 {
-  "version": "2.0.7",
+  "version": "2.0.8",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2832848,
-  "sha512": "02B53620D43C70966838579EDD360D7A3EDCA9AD5CCD70CA84A5AE8CC6450D554D0AE14676C438954EDACA0ED5FEC4A24697EC24344BA01301DB0127409FB9EC",
+  "size": 2833170,
+  "sha512": "77559DA80B6D07475305464FBD6E62CA24F522E26C72A97301E0A250983EC1AC2ECF894EA06B8E9B0C0D8ED720603360C120C4FEF683A56D3A0CAE8C49648152",
   "releaseNotes": [
+    "Cashier product cards now use compact icons instead of large product photos.",
     "Product cards now remain readable on 1366x768 laptop displays with Windows taskbars.",
     "Activation and login screens now resize correctly across Windows DPI settings and taskbar sizes.",
     "Cashier workstation panels now use adaptive sizing for 1366x768 through large desktop displays.",

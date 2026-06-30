@@ -2092,7 +2092,7 @@ button.ghost, .ghost {
   --vp-card-pad: clamp(12px, 1vw, 18px);
   --vp-search-h: clamp(48px, 6.2vh, 62px);
   --vp-product-min: clamp(136px, 9.2vw, 176px);
-  --vp-product-image-h: clamp(68px, 10.2vh, 96px);
+  --vp-product-image-h: clamp(28px, 4.2vh, 36px);
   --vp-product-font: clamp(12px, .86vw, 15px);
   --vp-meta-font: clamp(10px, .72vw, 12px);
 }
@@ -2530,11 +2530,22 @@ body {
 .product-card {
   display: grid;
   grid-template-rows: var(--vp-product-image-h) minmax(34px, auto) auto auto auto minmax(28px, auto);
-  min-height: clamp(188px, 28vh, 246px);
+  min-height: clamp(154px, 22vh, 190px);
   padding: clamp(8px, .82vw, 12px);
   gap: clamp(4px, .58vh, 7px);
   border-radius: var(--vp-radius);
   overflow: hidden;
+}
+
+.product-icon {
+  width: var(--vp-product-image-h);
+  height: var(--vp-product-image-h);
+  display: inline-grid;
+  place-items: center;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #EFF6FF, #ECFDF5);
+  border: 1px solid #DBEAFE;
+  color: #2563EB;
 }
 
 .product-image {
@@ -2646,7 +2657,7 @@ body {
     --vp-left: clamp(230px, 22vw, 280px);
     --vp-right: clamp(300px, 29vw, 340px);
     --vp-product-min: clamp(124px, 14vw, 145px);
-    --vp-product-image-h: clamp(58px, 9vh, 72px);
+    --vp-product-image-h: clamp(28px, 4.2vh, 34px);
   }
 
   .layout {
@@ -2673,7 +2684,7 @@ body {
     --vp-pad: 8px;
     --vp-card-pad: 10px;
     --vp-search-h: 46px;
-    --vp-product-image-h: 66px;
+    --vp-product-image-h: 30px;
   }
 
   .brand span {
@@ -2708,7 +2719,7 @@ body {
   }
 
   .product-card {
-    min-height: 214px;
+    min-height: 164px;
     grid-template-rows: var(--vp-product-image-h) 34px 15px 15px 25px 28px;
   }
 
@@ -2752,7 +2763,7 @@ body {
   }
 
   .product-card {
-    min-height: 220px;
+    min-height: 168px;
   }
 
   .product-foot b {
