@@ -9,7 +9,7 @@ import {
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
-  Barcode, ClipboardCheck, Download, Fingerprint,
+  Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -845,6 +845,40 @@ function syncConfig() {
     deviceToken: cfg.deviceToken || (ls && ls.getItem(DEVICE_TOKEN_KEY)) || "",
   };
 }
+function envValue(key, fallback = "") {
+  try { return (typeof import.meta !== "undefined" && import.meta.env && import.meta.env[key]) || fallback; } catch (_) { return fallback; }
+}
+function desktopDownloadConfig() {
+  const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
+  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.0");
+  return {
+    version,
+    releaseNotes: runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", "Cashier terminal app with secure activation, barcode scanning, receipt printing, and synced sales."),
+    apps: [
+      {
+        platform: "Windows",
+        label: "Windows Installer (.exe)",
+        url: runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL"),
+        available: Boolean(runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL")),
+        instructions: "Download, run the installer, open VisionPOS, then enter the terminal activation code generated in the admin portal.",
+      },
+      {
+        platform: "Mac",
+        label: "macOS App",
+        url: runtime.macUrl || envValue("VITE_VISIONPOS_MAC_DOWNLOAD_URL"),
+        available: Boolean(runtime.macUrl || envValue("VITE_VISIONPOS_MAC_DOWNLOAD_URL")),
+        instructions: "Coming soon. Mac builds will use the same activation-code security flow.",
+      },
+      {
+        platform: "Linux",
+        label: "Linux AppImage",
+        url: runtime.linuxUrl || envValue("VITE_VISIONPOS_LINUX_DOWNLOAD_URL"),
+        available: Boolean(runtime.linuxUrl || envValue("VITE_VISIONPOS_LINUX_DOWNLOAD_URL")),
+        instructions: "Coming soon. Linux builds will use the same activation-code security flow.",
+      },
+    ],
+  };
+}
 function getOrCreateDeviceId() {
   const ls = typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
   if (!ls) return "device-" + Math.random().toString(36).slice(2);
@@ -1635,10 +1669,48 @@ const css = `
 .authback svg{width:14px;height:14px}
 .authmake{margin-top:14px;width:100%;background:none;border:1px solid #3a3f47;color:#cfd4db;font-size:12.5px;font-weight:600;cursor:pointer;padding:11px;border-radius:5px;font-family:inherit;transition:.12s}
 .authmake:hover{border-color:#2bb6c4;color:#fff}
-.authdownload{margin-top:18px;width:min(300px,100%);display:flex;align-items:center;justify-content:center;gap:9px;text-decoration:none;color:#cfd4db;background:#363b43;border:1px solid #3a3f47;border-radius:6px;padding:12px 14px;font-size:13px;font-weight:650;transition:.12s}
-.authdownload:hover{color:#fff;border-color:#2bb6c4;background:#3a414a}
-.authdownload svg{width:17px;height:17px;color:#2bb6c4}
-.authdownload span{color:#8d96a3;font-size:12px;font-weight:500}
+.authdownload-card{margin:20px auto 0;width:min(420px,92vw);border-top:1px solid #3a3f47;padding-top:18px;display:grid;grid-template-columns:42px 1fr;gap:12px;color:#cfd4db}
+.authdownload-icon{width:42px;height:42px;border-radius:12px;background:rgba(43,182,196,.12);border:1px solid rgba(43,182,196,.28);display:grid;place-items:center;color:#2bb6c4}
+.authdownload-icon svg{width:21px;height:21px}
+.authdownload-copy{min-width:0}
+.authdownload-kicker{font-size:12px;color:#9aa1ab;font-weight:650;margin-bottom:3px}
+.authdownload-title{font-size:14px;color:#e8ebef;font-weight:760;line-height:1.3}
+.authdownload-version{font-size:12px;color:#8d96a3;margin-top:4px}
+.authdownload-btn{grid-column:1 / -1;display:flex;align-items:center;justify-content:center;gap:9px;text-decoration:none;color:#0c1418;background:#2bb6c4;border:1px solid #2bb6c4;border-radius:9px;padding:12px 14px;font-size:13px;font-weight:800;transition:.12s}
+.authdownload-btn:hover{filter:brightness(1.08)}
+.authdownload-btn svg{width:17px;height:17px}
+.authdownload-btn.disabled,.authdownload-btn.disabled:hover{pointer-events:none;filter:none;background:#363b43;border-color:#3a3f47;color:#8d96a3}
+.authdownload-more{grid-column:1 / -1;text-align:center;color:#9aa1ab;text-decoration:none;font-size:12.5px;font-weight:650}
+.authdownload-more:hover{color:#e8ebef;text-decoration:underline}
+.downloads-page{min-height:100dvh;background:linear-gradient(135deg,#07111f 0%,#0f172a 100%);color:#f8fafc;padding:42px 22px 64px}
+.downloads-hero,.downloads-shell{width:min(1060px,100%);margin:0 auto}
+.downloads-back{display:inline-flex;align-items:center;gap:8px;color:#94a3b8;text-decoration:none;font-size:13px;font-weight:700;margin-bottom:28px}
+.downloads-back:hover{color:#f8fafc}
+.downloads-back svg{width:16px;height:16px}
+.downloads-brand{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+.downloads-name{font-size:25px;font-weight:850;letter-spacing:-.02em}
+.downloads-tag{font-size:13px;color:#94a3b8;font-weight:700}
+.downloads-eyebrow{color:#60a5fa;text-transform:uppercase;letter-spacing:.18em;font-weight:850;font-size:12px;margin-bottom:12px}
+.downloads-hero h1{font-size:clamp(38px,6vw,72px);line-height:.95;margin:0 0 16px;letter-spacing:-.05em}
+.downloads-hero p{max-width:720px;color:#cbd5e1;font-size:17px;line-height:1.7;margin:0 0 34px}
+.downloads-shell{display:grid;gap:18px}
+.downloads-panel{background:rgba(17,24,39,.86);border:1px solid rgba(148,163,184,.18);border-radius:18px;padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.22)}
+.downloads-section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.downloads-section-head h2{margin:0;font-size:18px}
+.downloads-section-head p{margin:4px 0 0;color:#94a3b8;font-size:13px}
+.download-app-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.download-app-card{border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:16px;background:rgba(15,23,42,.68);display:flex;flex-direction:column;gap:14px;min-height:190px}
+.download-app-icon{width:42px;height:42px;border-radius:12px;background:rgba(59,130,246,.16);display:grid;place-items:center;color:#60a5fa;border:1px solid rgba(96,165,250,.2)}
+.download-app-icon svg{width:21px;height:21px}
+.download-app-meta h3{margin:0 0 6px;font-size:16px}
+.download-app-meta p{margin:0;color:#94a3b8;font-size:13px;line-height:1.5}
+.download-app-button{margin-top:auto;border:none;border-radius:10px;background:#3b82f6;color:white;text-decoration:none;font-weight:800;font-size:13px;padding:11px 12px;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit}
+.download-app-button svg{width:16px;height:16px}
+.download-app-button.disabled{background:rgba(148,163,184,.14);color:#94a3b8}
+.download-notes{border:1px solid rgba(148,163,184,.16);border-radius:14px;background:rgba(15,23,42,.58);padding:16px;color:#cbd5e1;line-height:1.7}
+.download-steps{margin:0;padding-left:22px;color:#cbd5e1;line-height:1.8}
+.download-steps li{padding-left:6px;margin:7px 0}
+@media (max-width: 820px){.download-app-grid{grid-template-columns:1fr}.downloads-page{padding:26px 14px 42px}.downloads-panel{padding:18px}.downloads-hero p{font-size:15px}}
 .segrow{display:flex;gap:8px}
 .segbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border-radius:5px;border:1px solid #4a5059;background:transparent;color:#9aa1ab;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.12s}
 .segbtn svg{width:15px;height:15px}
@@ -2598,6 +2670,8 @@ export default function VisionPOS() {
     return () => clearTimeout(id);
   }, [data, view, syncing]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
+  const routePath = typeof window !== "undefined" ? window.location.pathname.replace(/\/$/, "") || "/" : "/";
+  if (routePath === "/downloads") return <DownloadsPage />;
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
   const syncError = data?._sync?.error || "";
@@ -2703,12 +2777,74 @@ function AuthShellV3({ children }) {
     </div>
   );
 }
-function DesktopDownloadLink() {
+function DesktopDownloadSection() {
+  const downloads = desktopDownloadConfig();
+  const windows = downloads.apps.find((app) => app.platform === "Windows");
   return (
-    <a className="authdownload" href="/downloads.html">
-      <Download />
-      <div>Download Windows POS <span>Version 2.0.0</span></div>
-    </a>
+    <section className="authdownload-card" aria-label="Cashier desktop application download">
+      <div className="authdownload-icon"><MonitorDown /></div>
+      <div className="authdownload-copy">
+        <div className="authdownload-kicker">Need to setup a cashier terminal?</div>
+        <div className="authdownload-title">Download the VisionPOS Desktop App</div>
+        <div className="authdownload-version">Version {downloads.version}</div>
+      </div>
+      <a className={"authdownload-btn" + (!windows?.available ? " disabled" : "")} href={windows?.available ? windows.url : "/downloads"} aria-disabled={!windows?.available}>
+        <Download /> Download for Windows
+      </a>
+      <a className="authdownload-more" href="/downloads">View all downloads and instructions</a>
+    </section>
+  );
+}
+function DownloadsPage() {
+  const downloads = desktopDownloadConfig();
+  const configuredApps = downloads.apps;
+  return (
+    <div className="downloads-page">
+      <style>{css}</style>
+      <header className="downloads-hero">
+        <a className="downloads-back" href="/"><ArrowLeft /> Back to admin login</a>
+        <div className="downloads-brand"><Logo size={54} /><div><div className="downloads-name">VisionPOS</div><div className="downloads-tag">Business in Focus</div></div></div>
+        <div className="downloads-eyebrow">Cashier terminal applications</div>
+        <h1>Downloads</h1>
+        <p>Install only on approved shop computers. Each desktop app must be activated with a terminal code generated from the admin portal before it can access your POS.</p>
+      </header>
+      <main className="downloads-shell">
+        <section className="downloads-panel">
+          <div className="downloads-section-head">
+            <div><h2>Available applications</h2><p>Version {downloads.version}</p></div>
+          </div>
+          <div className="download-app-grid">
+            {configuredApps.map((app) => (
+              <article className="download-app-card" key={app.platform}>
+                <div className="download-app-icon"><MonitorDown /></div>
+                <div className="download-app-meta">
+                  <h3>{app.label}</h3>
+                  <p>{app.available ? "Ready to download" : "Planned for a future release"}</p>
+                </div>
+                {app.available ? (
+                  <a className="download-app-button" href={app.url}><Download /> Download</a>
+                ) : (
+                  <button className="download-app-button disabled" disabled>Coming soon</button>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="downloads-panel">
+          <div className="downloads-section-head"><div><h2>Release notes</h2><p>Current desktop release</p></div></div>
+          <div className="download-notes">{downloads.releaseNotes}</div>
+        </section>
+        <section className="downloads-panel">
+          <div className="downloads-section-head"><div><h2>Installation instructions</h2><p>Secure terminal activation flow</p></div></div>
+          <ol className="download-steps">
+            <li>Download and install the VisionPOS Desktop App on the cashier computer.</li>
+            <li>In the admin portal, generate a terminal activation code for the correct branch.</li>
+            <li>Open the desktop app and enter the activation code on the first-run activation screen.</li>
+            <li>After activation, cashiers sign in with their employee number and PIN. The web admin portal remains for admins and supervisors only.</li>
+          </ol>
+        </section>
+      </main>
+    </div>
   );
 }
 function OnScreenKeyboard({ onKey, onBackspace, onEnter }) {
@@ -2819,7 +2955,7 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
           <button className="authk fn" onClick={submit} style={{ flex: 2 }}>enter</button>
         </div>
       </div>
-      <DesktopDownloadLink />
+      <DesktopDownloadSection />
     </AuthShellV3>
   );
 }
@@ -3090,12 +3226,11 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
           <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div></div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
         <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
-        <div className="field"><button className="btn btn-ghost" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button></div>
         <div className="authforgot" onClick={() => { setResetEmail(email.trim()); setForgot(true); setErr(""); }}>Forgot password?</div>
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
         {onBack && <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>}
       </div>
-      <DesktopDownloadLink />
+      <DesktopDownloadSection />
       <OnScreenKeyboard onKey={kbKey} onBackspace={kbBack} onEnter={submit} />
     </AuthShellV3>
   );
