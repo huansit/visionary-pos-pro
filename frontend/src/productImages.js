@@ -180,18 +180,22 @@ const PRODUCT_IMAGE_FALLBACK_BY_SKU = {
   // closest matching brand-family images and are preferred over stale record URLs.
   "SIP0065": "sip-064-jagermeister-whisky-1l-web_ee7xfp",
   "SIP0067": "sip-068-jameson-whisky-750ml-web_umpjjv",
-  "SIP0113": "sip-112-vanda-wine-250ml-web_epi1po",
   "SIP0122": "sip-123-amarula-350ml_d5p7cc",
   "SIP0160": "sip-169-essential-water-web_dkgric",
   "SIP0163": "sip-141-soda-500ml_gzuegp",
   "SIP0164": "sip-169-essential-water-web_dkgric",
-  "SIP0165": "sip-166-remy-martin-vsop-1l-web_jtn15v",
+};
+
+const PRODUCT_IMAGE_LABEL_BY_SKU = {
+  "SIP0113": "V&A WINE 750ML",
+  "SIP0165": "REMY MARTIN VSOP 750ML",
 };
 
 function generatedProductImageUrl(product) {
   const sku = String(product?.sku || product?.barcode || '').trim().toUpperCase();
-  if (sku !== "SIP0158") return '';
-  const label = encodeURIComponent("SIPCITY TSHIRT");
+  const fallbackLabel = PRODUCT_IMAGE_LABEL_BY_SKU[sku] || (sku === "SIP0158" ? "SIPCITY TSHIRT" : "");
+  if (!fallbackLabel) return '';
+  const label = encodeURIComponent(fallbackLabel);
   return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"><defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%23eef8ff"/><stop offset="1" stop-color="%23d7f7ef"/></linearGradient><linearGradient id="shirt" x1="0" x2="1"><stop offset="0" stop-color="%23111827"/><stop offset="1" stop-color="%23253647"/></linearGradient></defs><rect width="640" height="480" rx="42" fill="url(%23bg)"/><path d="M205 118h230l74 58-45 62-38-24v170H214V214l-38 24-45-62 74-58z" fill="url(%23shirt)"/><rect x="258" y="188" width="124" height="54" rx="16" fill="%235eead4" opacity=".95"/><text x="320" y="224" font-family="Inter,Arial,sans-serif" font-size="30" font-weight="900" text-anchor="middle" fill="%230f172a">V</text><text x="320" y="426" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="800" text-anchor="middle" fill="%23111827">${label}</text></svg>`;
 }
 
