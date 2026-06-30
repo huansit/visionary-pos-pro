@@ -1,10 +1,14 @@
 {
-  "version": "2.0.9",
+  "version": "2.0.10",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2831793,
-  "sha512": "BDDF0A3B05CE6918AF85572210294A973C7A6BA08673AD9D8A5083F1451018060107CFA396E159AAADAB30BFF8C74128808160F11C9EC82DF4B11A8AA93470B3",
+  "size": 2834251,
+  "sha512": "790C080E5C6B7BAE6B21D3371E09E32D944426D590138225FCCD0B223897F2252D053E9CFCAAB2A599C849D451CA44224DA0D3B76C685AE318AB0E525D08AF34",
   "releaseNotes": [
+    "Product tiles now follow a clearer cashier layout: bold name, price, SKU, and stock indicator.",
+    "Left cashier sidebar can collapse to create more product-grid space.",
+    "Manual update checks now confirm when this terminal is already on the latest version.",
+    "Current invoice sync status now uses a compact indicator instead of reconnecting text.",
     "Cashier product cards redesigned into compact three-line POS tiles with SKU, price, stock count, and colored stock status.",
     "Category filters now use consistent accent colors for faster product navigation.",
     "Cashier product cards now use compact icons instead of large product photos.",

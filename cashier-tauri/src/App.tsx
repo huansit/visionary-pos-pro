@@ -280,6 +280,8 @@ export default function App() {
   const [openInvoicesOpen, setOpenInvoicesOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
+  const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [realtimeState, setRealtimeState] = useState<"connected" | "reconnecting">("reconnecting");
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -357,6 +359,7 @@ export default function App() {
         if (manual) setStatus(`Update ${version} is available.`);
       } else if (manual) {
         setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
+        setLatestUpdateNotice(true);
       }
     } catch (err) {
       if (manual) setError(`Update check failed: ${String(err)}`);
@@ -579,6 +582,8 @@ export default function App() {
 
   const updateModal = updatePrompt
     ? <UpdatePromptModal update={updatePrompt} onClose={() => setUpdatePrompt(null)} />
+    : latestUpdateNotice
+      ? <LatestUpdateModal version={APP_VERSION} onClose={() => setLatestUpdateNotice(false)} />
     : null;
 
   if (!terminal) {
@@ -632,8 +637,20 @@ export default function App() {
         </div>
       </header>
 
-      <section className="layout">
+      <section className={"layout" + (leftCollapsed ? " left-collapsed" : "")}>
         <aside className="left-panel">
+          <button className="sidebar-collapse" onClick={() => setLeftCollapsed((value) => !value)}>
+            {leftCollapsed ? "Show sidebar" : "Collapse sidebar"}
+          </button>
+          {leftCollapsed ? (
+            <div className="mini-sidebar">
+              <button onClick={() => setOpenInvoicesOpen(true)}><FileText size={18} /><span>{openInvoices.length}</span></button>
+              <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span><span>{carriedDebts.length}</span></button>
+              <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} /></button>
+              <button onClick={handleLogout}><LogOut size={18} /></button>
+            </div>
+          ) : (
+          <>
           <div
             className="card dark open-invoices clickable-card"
             role="button"
@@ -724,6 +741,8 @@ export default function App() {
             <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
             <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
+          </>
+          )}
         </aside>
 
         <section className="products-panel">
@@ -761,13 +780,12 @@ export default function App() {
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
                 <span className="product-name">{product.name}</span>
-                <span className="product-line product-line-main">
-                  <span>SKU: {product.sku || product.barcode || "No code"}</span>
-                  <b>{money(product.priceCents)}</b>
-                </span>
-                <span className="product-line product-line-stock">
-                  <span>{productStockLabel(product)}</span>
-                  <small className={productStatusClass(product)}>{productStatusText(product)}</small>
+                <b className="product-price">{money(product.priceCents)}</b>
+                <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
+                <span className={"product-stock-row " + productStatusClass(product)}>
+                  <i />
+                  <b>{productStockLabel(product)}</b>
+                  <small>{productStatusText(product)}</small>
                 </span>
               </button>
             ))}
@@ -803,7 +821,11 @@ export default function App() {
           </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
           <p className="hint muted">Issues an open invoice cleared by admin or supervisor.</p>
-          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || (realtimeState === "reconnecting" ? "Reconnecting live updates..." : status)}</p>}
+          <div className={"sync-indicator " + (realtimeState === "connected" ? "connected" : "reconnecting")}>
+            <i />
+            <span>Sync {realtimeState === "connected" ? "connected" : "reconnecting"}</span>
+          </div>
+          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || status}</p>}
         </aside>
       </section>
 
@@ -870,6 +892,23 @@ function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose:
         <div className="update-actions">
           <button onClick={openDownload} disabled={busy}>{busy ? "Opening..." : "Download update"}</button>
           <button className="ghost" onClick={onClose}>Remind me later</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LatestUpdateModal({ version, onClose }: { version: string; onClose: () => void }) {
+  return (
+    <div className="update-backdrop">
+      <section className="update-modal latest-modal" role="dialog" aria-modal="true" aria-labelledby="latest-title">
+        <button className="update-close" onClick={onClose} aria-label="Close update status"><X size={18} /></button>
+        <div className="update-icon latest-icon"><Check size={28} /></div>
+        <span>Update status</span>
+        <h2 id="latest-title">This is the latest update</h2>
+        <p>VISIONPOS Cashier is already running version {version}. No installer download is needed on this terminal.</p>
+        <div className="update-actions single">
+          <button onClick={onClose}>OK</button>
         </div>
       </section>
     </div>
