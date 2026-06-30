@@ -2420,8 +2420,9 @@ function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><d
 export default function VisionPOS() {
   const [data, setData] = useState(null);
   const dataRef = useRef(null);
-  const [view, setView] = useState("pin");
+  const [view, setView] = useState("adminLogin");
   const [session, setSession] = useState(null);
+  const [terminalLoginAvailable, setTerminalLoginAvailable] = useState(false);
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [syncing, setSyncing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2430,6 +2431,8 @@ export default function VisionPOS() {
   const syncRequestRef = useRef(false);
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { (async () => {
+    const hasRegisteredTerminal = await hasDesktopTerminalAuth();
+    setTerminalLoginAvailable(hasRegisteredTerminal);
     const resetToken = (() => { try { return new URLSearchParams(window.location.search).get("resetToken") || ""; } catch (_) { return ""; } })();
     const l = await loadData();
     const loaded = await cloudBootstrapData(l);
@@ -2447,6 +2450,12 @@ export default function VisionPOS() {
         const active = await cloudSession(savedSession.sessionToken);
         const restored = accountToSession(active.account, loaded.settings.activeBranchId);
         if (restored?.status === "active") {
+          if (restored.kind === "cashier" && !hasRegisteredTerminal) {
+            await clearSessionState();
+            setView("adminLogin");
+            setData(loaded);
+            return;
+          }
           setSession({ ...restored, sessionToken: savedSession.sessionToken });
           setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
         } else {
@@ -2470,7 +2479,7 @@ export default function VisionPOS() {
     logoutSessionToken(token, { keepalive: Boolean(options.keepalive) });
     setMenuOpen(false);
     setSession(null);
-    setView("pin");
+    setView(terminalLoginAvailable ? "pin" : "adminLogin");
     clearSessionState();
   };
   useEffect(() => {
@@ -2599,8 +2608,8 @@ export default function VisionPOS() {
 
   if (view === "pin" || view === "adminLogin" || view === "signup") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
-      {view === "pin" && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
-      {view === "adminLogin" && <AdminLogin admin={data.admin} employees={data.employees} onBack={() => setView("pin")} onSignup={() => setView("signup")} onSignedIn={(emp) => { if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); signInSession("admin", emp || null); }} />}
+      {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
+      {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin admin={data.admin} employees={data.employees} onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignup={() => setView("signup")} onSignedIn={(emp) => { if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); signInSession("admin", emp || null); }} />}
       {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
   }
@@ -3084,7 +3093,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
         <div className="field"><button className="btn btn-ghost" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button></div>
         <div className="authforgot" onClick={() => { setResetEmail(email.trim()); setForgot(true); setErr(""); }}>Forgot password?</div>
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
-        <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>
+        {onBack && <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>}
       </div>
       <DesktopDownloadLink />
       <OnScreenKeyboard onKey={kbKey} onBackspace={kbBack} onEnter={submit} />

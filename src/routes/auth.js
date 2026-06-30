@@ -141,7 +141,7 @@ function fingerprintTemplateHash(template) {
   return crypto.createHash("sha256").update(String(template || "")).digest("hex");
 }
 
-async function verifiedTerminalFromRequest(req) {
+async function verifiedTerminalFromRequest(req, options = {}) {
   const terminalUuid = String(req.get("x-terminal-uuid") || "").trim();
   const terminalSecret = String(req.get("x-terminal-secret") || "").trim();
   if (terminalUuid && terminalSecret) {
@@ -160,6 +160,7 @@ async function verifiedTerminalFromRequest(req) {
       branchId: terminal.branch_id ?? terminal.branchId ?? null,
     };
   }
+  if (options.requireRegisteredTerminal) return { error: "registered_terminal_required" };
 
   const hdr = req.get("authorization") || "";
   const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
@@ -1173,7 +1174,7 @@ router.post("/login", async (req, res) => {
   const loginCode = String(req.body?.code || req.body?.otpCode || "").trim();
   try {
     if (pin) {
-      const terminal = await verifiedTerminalFromRequest(req);
+      const terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
       if (terminal.error) {
         await audit("login_failed", req, null, { mode: "pin", reason: terminal.error, branchId: branchId || null });
         return res.status(401).json({ error: terminal.error });

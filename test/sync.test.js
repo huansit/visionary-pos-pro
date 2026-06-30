@@ -29,6 +29,7 @@ const state = {
   tokenA: null,
   tokenB: null,
   terminal: null,
+  loginTerminal: null,
   invoice: {
     id: "inv-001",
     type: "invoice",
@@ -37,6 +38,27 @@ const state = {
     payload: { total: 42.5, lineCount: 2 },
   },
 };
+
+async function activateTestTerminal(name = "SIPCITY Cashier Till") {
+  const activation = await request(app)
+    .post("/api/auth/terminal-activations")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_sip", terminalName: name })
+    .expect(200);
+
+  const activated = await request(app)
+    .post("/api/auth/terminals/activate")
+    .send({ activationCode: activation.body.code, appVersion: "2.0.2" })
+    .expect(200);
+
+  return { ...activated.body.terminal, secret: activated.body.terminalSecret };
+}
+
+function withTerminalAuth(req, terminal) {
+  return req
+    .set("X-Terminal-UUID", terminal.uuid)
+    .set("X-Terminal-Secret", terminal.secret);
+}
 
 test("1. registers two devices via /api/auth/device", async () => {
   const deviceA = await request(app)
@@ -331,6 +353,8 @@ test("9. sync push reports rejected invalid events so clients can clear non-retr
 });
 
 test("10. user credentials created on one device work for login on another device", async () => {
+  state.loginTerminal = await activateTestTerminal();
+
   await request(app)
     .post("/api/auth/users")
     .set("Authorization", `Bearer ${state.tokenA}`)
@@ -347,6 +371,13 @@ test("10. user credentials created on one device work for login on another devic
   await request(app)
     .post("/api/auth/login")
     .set("Authorization", `Bearer ${state.tokenB}`)
+    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
+    .expect(401)
+    .expect((res) => {
+      assert.equal(res.body.error, "registered_terminal_required");
+    });
+
+  await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
     .expect(200)
     .expect((res) => {
@@ -410,9 +441,7 @@ test("10. user credentials created on one device work for login on another devic
 });
 
 test("11. cloud login sessions can be validated and revoked", async () => {
-  const login = await request(app)
-    .post("/api/auth/login")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
     .expect(200);
   const token = login.body.sessionToken;
@@ -452,9 +481,7 @@ test("12. deleted users are inactive immediately and cannot log in again", async
     })
     .expect(200);
 
-  await request(app)
-    .post("/api/auth/login")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })
     .expect(200);
 
@@ -464,9 +491,7 @@ test("12. deleted users are inactive immediately and cannot log in again", async
     .send({})
     .expect(200);
 
-  await request(app)
-    .post("/api/auth/login")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })
     .expect(401);
 });
