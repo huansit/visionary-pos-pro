@@ -92,6 +92,30 @@ fn open_update_download(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn fetch_update_manifest() -> Result<Value, String> {
+    let url = format!("{}/downloads/release.json", API_BASE_URL);
+    let client = reqwest::Client::builder()
+        .https_only(true)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|err| err.to_string())?;
+
+    let response = client
+        .get(url)
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-store")
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    let status = response.status();
+    let text = response.text().await.map_err(|err| err.to_string())?;
+    if !status.is_success() {
+        return Err(format!("update_manifest_{}", status.as_u16()));
+    }
+    serde_json::from_str(&text).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     if !req.path.starts_with("/api/") {
         return Err("invalid_api_path".into());
@@ -150,6 +174,7 @@ pub fn run() {
             clear_terminal_credentials,
             close_app,
             open_update_download,
+            fetch_update_manifest,
             api_request
         ])
         .run(tauri::generate_context!())

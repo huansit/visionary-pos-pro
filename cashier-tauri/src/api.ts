@@ -3,7 +3,7 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.4";
+export const APP_VERSION = "2.0.5";
 export const UPDATE_MANIFEST_URL = `${API_BASE_URL}/downloads/release.json`;
 
 export type UpdateManifest = {
@@ -16,9 +16,7 @@ export type UpdateManifest = {
 };
 
 export async function fetchUpdateManifest(): Promise<UpdateManifest> {
-  const response = await fetch(`${UPDATE_MANIFEST_URL}?t=${Date.now()}`, { cache: "no-store" });
-  if (!response.ok) throw new Error(`update_manifest_${response.status}`);
-  return response.json();
+  return invoke<UpdateManifest>("fetch_update_manifest");
 }
 
 export function absoluteDownloadUrl(pathOrUrl?: string) {

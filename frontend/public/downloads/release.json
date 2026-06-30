@@ -1,9 +1,9 @@
 {
-  "version": "2.0.4",
+  "version": "2.0.5",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2822574,
-  "sha512": "70EEA96877E7E11CE2A787F1CC8668C010D369A5859B28D1EFFCCB0606505071E97B1A2425DA5C97EC1CF604D3616302ABF315CDA83B067C37F68AB57C7FFB32",
+  "size": 2831445,
+  "sha512": "8ACA48232DE7D3B321C7316C0572BEC858319C8F572742626BE5D83D2C31D25ED571C86486345D2A77AEDAD85A3BE444468AB0B3680CF721D6BAF3EE2243DFEC",
   "releaseNotes": [
     "Windows app now launches without opening a command prompt window.",
     "Responsive desktop window sizing for different Windows displays and DPI settings.",
