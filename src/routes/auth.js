@@ -53,6 +53,17 @@ function terminalStatus(value) {
   return ["ACTIVE", "DISABLED", "REVOKED"].includes(status) ? status : "ACTIVE";
 }
 
+function maskEmail(email) {
+  const [name, domain] = String(email || "").trim().toLowerCase().split("@");
+  if (!name || !domain) return "";
+  return `${name.slice(0, 2)}${name.length > 2 ? "***" : "*"}@${domain}`;
+}
+
+function adminEmailCodeEnabled() {
+  return process.env.ADMIN_EMAIL_CODE_REQUIRED !== "0"
+    && Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
 function requestMeta(req) {
   return {
     deviceName: String(req.body?.deviceName || req.headers["x-device-name"] || "Web POS").slice(0, 255),
@@ -561,18 +572,7 @@ router.post("/send-code", async (req, res) => {
   if (!validTarget(channel, target)) return res.status(400).json({ error: "invalid_target" });
 
   try {
-    const code = generateCode();
-    const codeHash = await bcrypt.hash(code, ROUNDS);
-    const ttl = Math.max(1, Math.min(30, parseInt(process.env.OTP_TTL_MINUTES || "10", 10)));
-    await q(
-      isMySql
-        ? `INSERT INTO auth_verification_codes (channel, target, code_hash, purpose, expires_at)
-           VALUES ($1, $2, $3, 'owner_signup', DATE_ADD(NOW(), INTERVAL $4 MINUTE))`
-        : `INSERT INTO auth_verification_codes (channel, target, code_hash, purpose, expires_at)
-           VALUES ($1, $2, $3, 'owner_signup', now() + ($4 || ' minutes')::interval)`,
-      [channel, target, codeHash, ttl]
-    );
-    await sendVerificationCode({ channel, target, code });
+    const ttl = await sendAndStoreCode({ channel, target, purpose: "owner_signup" });
     res.json({ ok: true, channel, target, expiresInMinutes: ttl });
   } catch (error) {
     console.error("send-code failed:", error);
@@ -889,6 +889,7 @@ router.post("/fingerprints/failed", async (req, res) => {
 router.post("/login", async (req, res) => {
   await ensureAuthSchema();
   const { identifier, password, pin, branchId } = req.body || {};
+  const loginCode = String(req.body?.code || req.body?.otpCode || "").trim();
   try {
     if (pin) {
       const terminal = await verifiedTerminalFromRequest(req);
@@ -948,6 +949,19 @@ router.post("/login", async (req, res) => {
       const rowPhone = String(row.phone || "").trim();
       if (rowEmail !== normalized && rowPhone !== String(identifier).trim()) continue;
       if (await bcrypt.compare(password, row.password_hash)) {
+        if (row.kind === "admin" && adminEmailCodeEnabled()) {
+          const target = normalizeTarget("email", rowEmail);
+          if (!validTarget("email", target)) {
+            await audit("login_failed", req, row.id, { mode: "password", reason: "admin_email_required" });
+            return res.status(400).json({ error: "admin_email_required" });
+          }
+          if (!loginCode) {
+            const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "admin_login" });
+            await audit("admin_login_code_sent", req, row.id, { target: maskEmail(target), expiresInMinutes });
+            return res.json({ ok: true, verificationRequired: true, channel: "email", target: maskEmail(target), expiresInMinutes });
+          }
+          await verifyAuthCode({ channel: "email", target, code: loginCode, purpose: "admin_login", consume: true });
+        }
         const account = publicAccount(row);
         const session = await issueSession(req, account);
         return res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
@@ -957,7 +971,8 @@ router.post("/login", async (req, res) => {
     return res.status(401).json({ error: "invalid_credentials" });
   } catch (error) {
     console.error("login failed:", error);
-    return res.status(500).json({ error: "login_failed" });
+    const status = error.statusCode || 500;
+    return res.status(status).json({ error: status >= 500 ? "login_failed" : error.message });
   }
 });
 
@@ -1029,18 +1044,34 @@ function publicAccount(row) {
   };
 }
 
-async function verifyOwnerCode({ channel, target, code, consume = false }) {
+async function sendAndStoreCode({ channel, target, purpose }) {
+  const code = generateCode();
+  const codeHash = await bcrypt.hash(code, ROUNDS);
+  const ttl = Math.max(1, Math.min(30, parseInt(process.env.OTP_TTL_MINUTES || "10", 10)));
+  await q(
+    isMySql
+      ? `INSERT INTO auth_verification_codes (channel, target, code_hash, purpose, expires_at)
+         VALUES ($1, $2, $3, $4, DATE_ADD(NOW(), INTERVAL $5 MINUTE))`
+      : `INSERT INTO auth_verification_codes (channel, target, code_hash, purpose, expires_at)
+         VALUES ($1, $2, $3, $4, now() + ($5 || ' minutes')::interval)`,
+    [channel, target, codeHash, purpose, ttl]
+  );
+  await sendVerificationCode({ channel, target, code });
+  return ttl;
+}
+
+async function verifyAuthCode({ channel, target, code, purpose = "owner_signup", consume = false }) {
   const result = await q(
     `SELECT id, code_hash, attempts
        FROM auth_verification_codes
       WHERE channel = $1
         AND target = $2
-        AND purpose = 'owner_signup'
+        AND purpose = $3
         AND consumed_at IS NULL
         AND expires_at > ${isMySql ? "NOW()" : "now()"}
       ORDER BY created_at DESC
       LIMIT 1`,
-    [channel, target]
+    [channel, target, purpose]
   );
   const row = result.rows[0];
   if (!row) throw Object.assign(new Error("code_not_found_or_expired"), { statusCode: 401 });
@@ -1053,6 +1084,10 @@ async function verifyOwnerCode({ channel, target, code, consume = false }) {
   }
   if (consume) await q(`UPDATE auth_verification_codes SET consumed_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.id]);
   return true;
+}
+
+async function verifyOwnerCode(args) {
+  return verifyAuthCode({ ...args, purpose: "owner_signup" });
 }
 
 export default router;

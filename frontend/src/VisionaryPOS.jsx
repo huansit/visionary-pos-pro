@@ -2752,19 +2752,46 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [email, setEmail] = useState(""), [pw, setPw] = useState(""), [show, setShow] = useState(false), [err, setErr] = useState(""), [forgot, setForgot] = useState(false);
   const [focusField, setFocusField] = useState("email");
   const [fpBusy, setFpBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [codeRequired, setCodeRequired] = useState(false);
+  const [codeTarget, setCodeTarget] = useState("");
+  const [code, setCode] = useState("");
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
+    if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
     const raw = email.trim();
     const em = raw.toLowerCase();
     const ph = normPhone(raw);
+    setErr("");
+    setBusy(true);
     try {
-      const cloud = await cloudLogin({ identifier: raw, password: pw });
+      const cloud = await cloudLogin({ identifier: raw, password: pw, code: code.trim() || undefined, deviceName: "VISIONPOS Admin" });
+      if (cloud?.verificationRequired) {
+        setCodeRequired(true);
+        setCodeTarget(cloud.target || "your admin email");
+        setFocusField("code");
+        setCode("");
+        setErr(`Enter the code sent to ${cloud.target || "your admin email"}.`);
+        return;
+      }
       if (cloud?.account) {
         const emp = accountToSession(cloud.account, "");
         if (emp) emp.sessionToken = cloud.sessionToken;
         return onSignedIn(emp);
       }
-    } catch (_) {}
+    } catch (error) {
+      if (codeRequired || ["invalid_code", "code_not_found_or_expired", "too_many_attempts", "admin_email_required"].includes(error.message)) {
+        setErr(error.message === "invalid_code" ? "That email code is incorrect." :
+          error.message === "code_not_found_or_expired" ? "That email code expired. Sign in again to get a new code." :
+          error.message === "too_many_attempts" ? "Too many incorrect code attempts. Sign in again to get a new code." :
+          error.message === "admin_email_required" ? "This admin account needs an email address before email code login can work." :
+          error.message === "Failed to fetch" ? "Cloud login is unreachable. Check your internet connection." : error.message);
+        setBusy(false);
+        return;
+      }
+    } finally {
+      setBusy(false);
+    }
     const ownerMatch = ((admin.email && em === admin.email.toLowerCase()) || (admin.phone && ph === normPhone(admin.phone))) && pw === admin.password;
     if (ownerMatch) return onSignedIn(null); // owner admin
     const emp = (employees || []).find((e) => isActiveEmployee(e) && e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
@@ -2787,8 +2814,19 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       setFpBusy(false);
     }
   };
-  const kbKey = (k) => { setErr(""); if (focusField === "email") setEmail((v) => v + k); else setPw((v) => v + k); };
-  const kbBack = () => { setErr(""); if (focusField === "email") setEmail((v) => v.slice(0, -1)); else setPw((v) => v.slice(0, -1)); };
+  const resetCodeStep = () => { setCodeRequired(false); setCodeTarget(""); setCode(""); };
+  const kbKey = (k) => {
+    setErr("");
+    if (focusField === "email") setEmail((v) => v + k);
+    else if (focusField === "code") setCode((v) => (v + k).replace(/\D/g, "").slice(0, 6));
+    else setPw((v) => v + k);
+  };
+  const kbBack = () => {
+    setErr("");
+    if (focusField === "email") setEmail((v) => v.slice(0, -1));
+    else if (focusField === "code") setCode((v) => v.slice(0, -1));
+    else setPw((v) => v.slice(0, -1));
+  };
   if (forgot) {
     return (
       <AuthShellV3>
@@ -2805,12 +2843,15 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       <div className="authform">
         <div className="authfield-label" style={{ marginBottom: 14 }}>Admin / Supervisor sign-in</div>
         <div className="field" style={{ marginTop: 0 }}><label className="label">Email or phone</label><div className={"input-wrap" + (focusField === "email" ? " kbfocus" : "")}><Mail className="lead" />
-          <input className="input lead" type="text" placeholder="you@store.com or 0712345678" value={email} onFocus={() => setFocusField("email")} onChange={(e) => { setEmail(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div></div>
+          <input className="input lead" type="text" placeholder="you@store.com or 0712345678" value={email} onFocus={() => setFocusField("email")} onChange={(e) => { setEmail(e.target.value); setErr(""); resetCodeStep(); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div></div>
         <div className="field"><label className="label">Password</label><div className={"input-wrap" + (focusField === "pw" ? " kbfocus" : "")}>
           <input className="input" type={show ? "text" : "password"} placeholder="••••••••" value={pw} onFocus={() => setFocusField("pw")} onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} />
           <button className="toggle-eye" onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
+        {codeRequired && <div className="field"><label className="label">Email verification code</label><div className={"input-wrap" + (focusField === "code" ? " kbfocus" : "")}><ShieldCheck className="lead" />
+          <input className="input lead mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code} onFocus={() => setFocusField("code")} onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
+          <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div></div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <div className="field"><button className="btn btn-primary" onClick={submit}><ShieldCheck /> Sign in</button></div>
+        <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
         <div className="field"><button className="btn btn-ghost" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button></div>
         <div className="authforgot" onClick={() => { setForgot(true); setErr(""); }}>Forgot password?</div>
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
