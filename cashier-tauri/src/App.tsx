@@ -4,6 +4,7 @@ import {
   Barcode,
   Building2,
   Check,
+  Download,
   FileText,
   Grid2X2,
   Heart,
@@ -21,7 +22,10 @@ import {
   X
 } from "lucide-react";
 import {
+  APP_VERSION,
+  absoluteDownloadUrl,
   activateTerminal,
+  fetchUpdateManifest,
   loginCashier,
   logout,
   pullCatalog,
@@ -34,6 +38,14 @@ import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCred
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
 const EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
+
+type UpdatePrompt = {
+  version: string;
+  currentVersion: string;
+  url: string;
+  releaseNotes: string[];
+  size?: number;
+};
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -50,6 +62,17 @@ function escapeHtml(value: string) {
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
+}
+
+function compareVersions(a: string, b: string) {
+  const left = a.split(".").map((part) => Number(part) || 0);
+  const right = b.split(".").map((part) => Number(part) || 0);
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (left[index] || 0) - (right[index] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function productStock(product: Product) {
@@ -237,9 +260,11 @@ export default function App() {
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [openInvoicesOpen, setOpenInvoicesOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
+  const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const catalogSyncInFlight = useRef(false);
+  const updateCheckInFlight = useRef(false);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
@@ -293,6 +318,43 @@ export default function App() {
   useEffect(() => {
     if (account) focusSearch();
   }, [account]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkForUpdates() {
+      if (updateCheckInFlight.current) return;
+      updateCheckInFlight.current = true;
+      try {
+        const manifest = await fetchUpdateManifest();
+        if (cancelled) return;
+        const version = String(manifest.version || "");
+        if (version && compareVersions(version, APP_VERSION) > 0) {
+          setUpdatePrompt({
+            version,
+            currentVersion: APP_VERSION,
+            url: absoluteDownloadUrl(manifest.installer),
+            releaseNotes: Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes : [],
+            size: manifest.size
+          });
+        }
+      } catch {
+        // Update checks must never interrupt cashier sales.
+      } finally {
+        updateCheckInFlight.current = false;
+      }
+    }
+
+    checkForUpdates();
+    const intervalId = window.setInterval(checkForUpdates, 60 * 60 * 1000);
+    const onFocus = () => checkForUpdates();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   useEffect(() => {
     if (!terminal) return;
@@ -487,36 +549,46 @@ export default function App() {
     await invoke("close_app");
   }
 
+  const updateModal = updatePrompt
+    ? <UpdatePromptModal update={updatePrompt} onClose={() => setUpdatePrompt(null)} />
+    : null;
+
   if (!terminal) {
     return (
-      <ActivationScreen
-        onActivated={(next) => { setTerminal(next); refreshCatalog(next); }}
-        error={error}
-        status={status}
-        lastSyncAt={lastSyncAt}
-        onClose={handleCloseApp}
-      />
+      <>
+        <ActivationScreen
+          onActivated={(next) => { setTerminal(next); refreshCatalog(next); }}
+          error={error}
+          status={status}
+          lastSyncAt={lastSyncAt}
+          onClose={handleCloseApp}
+        />
+        {updateModal}
+      </>
     );
   }
 
   if (!account) {
     return (
-      <LoginScreen
-        terminal={terminal}
-        branch={branch}
-        lastSyncAt={lastSyncAt}
-        status={status}
-        error={error}
-        onClose={handleCloseApp}
-        onLogin={async (employeeNumber, pin) => {
-          setError("");
-          const result = await loginCashier(terminal, employeeNumber, pin);
-          setAccount(result.account);
-          setSessionToken(result.sessionToken);
-          setStatus(`Signed in as ${result.account.name}.`);
-          await refreshCatalog(terminal);
-        }}
-      />
+      <>
+        <LoginScreen
+          terminal={terminal}
+          branch={branch}
+          lastSyncAt={lastSyncAt}
+          status={status}
+          error={error}
+          onClose={handleCloseApp}
+          onLogin={async (employeeNumber, pin) => {
+            setError("");
+            const result = await loginCashier(terminal, employeeNumber, pin);
+            setAccount(result.account);
+            setSessionToken(result.sessionToken);
+            setStatus(`Signed in as ${result.account.name}.`);
+            await refreshCatalog(terminal);
+          }}
+        />
+        {updateModal}
+      </>
     );
   }
 
@@ -703,6 +775,7 @@ export default function App() {
       </section>
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
+      {updateModal}
       {expenseOpen && terminal && account && (
         <ExpenseModal
           onClose={() => { setExpenseOpen(false); focusSearch(); }}
@@ -731,6 +804,42 @@ export default function App() {
         />
       )}
     </main>
+  );
+}
+
+function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+
+  async function openDownload() {
+    setBusy(true);
+    try {
+      await invoke("open_update_download", { url: update.url });
+    } catch {
+      window.open(update.url, "_blank", "noopener,noreferrer");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="update-backdrop">
+      <section className="update-modal" role="dialog" aria-modal="true" aria-labelledby="update-title">
+        <button className="update-close" onClick={onClose} aria-label="Remind me later"><X size={18} /></button>
+        <div className="update-icon"><Download size={28} /></div>
+        <span>Update available</span>
+        <h2 id="update-title">VISIONPOS Cashier {update.version}</h2>
+        <p>You are using version {update.currentVersion}. Download the latest installer, close VISIONPOS Cashier, then run the installer to update this terminal.</p>
+        {update.releaseNotes.length > 0 && (
+          <ul>
+            {update.releaseNotes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}
+          </ul>
+        )}
+        <div className="update-actions">
+          <button onClick={openDownload} disabled={busy}>{busy ? "Opening..." : "Download update"}</button>
+          <button className="ghost" onClick={onClose}>Remind me later</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
