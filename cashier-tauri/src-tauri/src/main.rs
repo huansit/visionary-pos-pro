@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
