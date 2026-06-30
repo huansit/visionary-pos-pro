@@ -11,8 +11,10 @@ import authRoutes from "./routes/auth.js";
 import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
 import syncRoutes from "./routes/sync.js";
+import whatsappRoutes from "./routes/whatsapp.js";
 import { requireDevice } from "./auth.js";
 import { isMySql, q, ready } from "./db.js";
+import { startWhatsAppScheduler, stopWhatsAppScheduler } from "./services/whatsappScheduler.js";
 
 let dbReadyError = null;
 const dbReady = ready.catch((error) => {
@@ -57,6 +59,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/barcodes", barcodeRoutes);
 app.use("/api/sync", syncRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 
 /**
  * GET /api/reconcile/oversell  (device-authed)
@@ -116,12 +119,14 @@ let server;
 
 if (process.env.NODE_ENV !== "test") {
   server = app.listen(port, () => console.log(`Visionary POS API listening on ${port}`));
+  startWhatsAppScheduler();
   // Surface bind failures (e.g. EADDRINUSE) to stderr so the platform logs show them.
   server.on("error", (err) => console.error("FATAL: server failed to bind to", port, "-", err.message));
 }
 
 async function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
+  stopWhatsAppScheduler();
   if (!server) return;
   server.close(async () => {
     const { pool } = await import("./db.js");
