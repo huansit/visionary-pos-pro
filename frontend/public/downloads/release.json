@@ -1,14 +1,14 @@
 {
   "version": "2.0.0",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Setup-2.0.0.exe",
-  "size": 78637653,
-  "sha512": "3KQfR4cVKFGMPgfKKYjaA4TArLXamVvM9b+a/NBarm+P1f7Uvq3zlBBhA/IRqHTA2evdNK2yjSkgUPWjB1Ax4w==",
+  "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
+  "size": 2816618,
+  "sha512": "",
   "releaseNotes": [
-    "Desktop shell for the cloud POS.",
-    "Windows printer selection and persisted settings.",
-    "USB barcode scanner friendly focus handling.",
-    "Cash drawer trigger support for compatible ESC/POS network printers.",
-    "Automatic update checks on startup."
+    "Secure first-run terminal activation with admin-generated codes.",
+    "Cashier-only desktop interface connected to the VisionPOS cloud backend.",
+    "USB barcode scanner workflow with persistent search focus.",
+    "Receipt printing support through installed Windows printers.",
+    "Designed for approved shop terminals only; downloading the app alone does not grant access."
   ]
 }

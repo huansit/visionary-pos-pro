@@ -851,15 +851,23 @@ function envValue(key, fallback = "") {
 function desktopDownloadConfig() {
   const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
   const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.0");
+  const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier-Setup.exe");
+  const releaseNotes = runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", [
+    "Secure first-run terminal activation with admin-generated codes.",
+    "Cashier-only desktop interface connected to the VisionPOS cloud backend.",
+    "USB barcode scanner workflow with persistent search focus.",
+    "Receipt printing support through installed Windows printers.",
+    "Designed for approved shop terminals only; downloading the app alone does not grant access.",
+  ].join("|"));
   return {
     version,
-    releaseNotes: runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", "Cashier terminal app with secure activation, barcode scanning, receipt printing, and synced sales."),
+    releaseNotes,
     apps: [
       {
         platform: "Windows",
         label: "Windows Installer (.exe)",
-        url: runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL"),
-        available: Boolean(runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL")),
+        url: windowsUrl,
+        available: Boolean(windowsUrl),
         instructions: "Download, run the installer, open VisionPOS, then enter the terminal activation code generated in the admin portal.",
       },
       {
@@ -1713,7 +1721,9 @@ const css = `
 .download-app-button{margin-top:auto;border:none;border-radius:10px;background:#3b82f6;color:white;text-decoration:none;font-weight:800;font-size:13px;padding:11px 12px;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit}
 .download-app-button svg{width:16px;height:16px}
 .download-app-button.disabled{background:rgba(148,163,184,.14);color:#94a3b8}
-.download-notes{border:1px solid rgba(148,163,184,.16);border-radius:14px;background:rgba(15,23,42,.58);padding:16px;color:#cbd5e1;line-height:1.7}
+.download-notes{border:1px solid rgba(148,163,184,.16);border-radius:14px;background:rgba(15,23,42,.58);padding:16px;color:#cbd5e1;line-height:1.7;display:grid;gap:10px}
+.download-note{display:flex;align-items:flex-start;gap:10px}
+.download-note svg{width:17px;height:17px;color:#60a5fa;flex:none;margin-top:4px}
 .download-steps{margin:0;padding-left:22px;color:#cbd5e1;line-height:1.8}
 .download-steps li{padding-left:6px;margin:7px 0}
 @media (max-width: 820px){.download-app-grid{grid-template-columns:1fr}.downloads-page{padding:26px 14px 42px}.downloads-panel{padding:18px}.downloads-hero p{font-size:15px}}
@@ -2804,6 +2814,7 @@ function DesktopDownloadSection() {
 function DownloadsPage() {
   const downloads = desktopDownloadConfig();
   const configuredApps = downloads.apps;
+  const notes = Array.isArray(downloads.releaseNotes) ? downloads.releaseNotes : String(downloads.releaseNotes || "").split("|").map((item) => item.trim()).filter(Boolean);
   return (
     <div className="downloads-page">
       <style>{css}</style>
@@ -2826,6 +2837,7 @@ function DownloadsPage() {
                 <div className="download-app-meta">
                   <h3>{app.label}</h3>
                   <p>{app.available ? "Ready to download" : "Planned for a future release"}</p>
+                  <p>{app.instructions}</p>
                 </div>
                 {app.available ? (
                   <a className="download-app-button" href={app.url}><Download /> Download</a>
@@ -2838,7 +2850,9 @@ function DownloadsPage() {
         </section>
         <section className="downloads-panel">
           <div className="downloads-section-head"><div><h2>Release notes</h2><p>Current desktop release</p></div></div>
-          <div className="download-notes">{downloads.releaseNotes}</div>
+          <div className="download-notes">
+            {notes.map((note) => <div className="download-note" key={note}><Check /> {note}</div>)}
+          </div>
         </section>
         <section className="downloads-panel">
           <div className="downloads-section-head"><div><h2>Installation instructions</h2><p>Secure terminal activation flow</p></div></div>
@@ -2848,6 +2862,14 @@ function DownloadsPage() {
             <li>Open the desktop app and enter the activation code on the first-run activation screen.</li>
             <li>After activation, cashiers sign in with their employee number and PIN. The web admin portal remains for admins and supervisors only.</li>
           </ol>
+        </section>
+        <section className="downloads-panel">
+          <div className="downloads-section-head"><div><h2>Security notes</h2><p>Why download alone is not enough</p></div></div>
+          <div className="download-notes">
+            <div className="download-note"><ShieldCheck /> Each installation must be activated before login.</div>
+            <div className="download-note"><Lock /> Terminal credentials are stored on the machine after activation.</div>
+            <div className="download-note"><Building2 /> Admins can disable or revoke terminals from the admin portal.</div>
+          </div>
         </section>
       </main>
     </div>
