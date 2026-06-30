@@ -39,11 +39,11 @@ const state = {
   },
 };
 
-async function activateTestTerminal(name = "SIPCITY Cashier Till") {
+async function activateTestTerminal(name = "SIPCITY Cashier Till", branchId = "b_sip") {
   const activation = await request(app)
     .post("/api/auth/terminal-activations")
     .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ branchId: "b_sip", terminalName: name })
+    .send({ branchId, terminalName: name })
     .expect(200);
 
   const activated = await request(app)
@@ -237,6 +237,58 @@ test("5. two devices sync a complete transaction sale across invoice, payment, a
         assert.equal(byId.get(event.id).type, event.type);
         assert.deepEqual(byId.get(event.id).payload, event.payload);
       }
+    });
+});
+
+test("5b. Cape Town terminal invoice reaches admin sync feed", async () => {
+  const capeTownTerminal = await activateTestTerminal("Cape Town Till", "b_cpt");
+  const saleEvents = [
+    {
+      id: "inv-cpt-terminal-001",
+      type: "invoice",
+      branchId: "b_cpt",
+      clientTs: 3200,
+      payload: {
+        id: "inv-cpt-terminal-001",
+        number: "RCP-B_CPT-001",
+        branchId: "b_cpt",
+        cashierId: "cashier-cpt-001",
+        cashier: "Cape Town Cashier",
+        customerName: "Walk-in",
+        totalCents: 35000,
+        paidCents: 0,
+        status: "open",
+        carriedOver: false,
+        items: [{ productId: "prod-cpt-001", name: "Cape Product", qty: 1, priceCents: 35000 }],
+      },
+    },
+    {
+      id: "stock-cpt-terminal-001",
+      type: "stockMovement",
+      branchId: "b_cpt",
+      clientTs: 3201,
+      payload: { productId: "prod-cpt-001", branchId: "b_cpt", qty: -1, reason: "Sale RCP-B_CPT-001" },
+    },
+  ];
+
+  const pushed = await withTerminalAuth(request(app).post("/api/sync/push"), capeTownTerminal)
+    .send({ events: saleEvents })
+    .expect(200);
+
+  assert.deepEqual(pushed.body.accepted.sort(), saleEvents.map((event) => event.id).sort());
+  assert.equal(pushed.body.rejected.length, 0);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .expect(200)
+    .expect((res) => {
+      const invoice = res.body.events.find((event) => event.id === "inv-cpt-terminal-001");
+      const movement = res.body.events.find((event) => event.id === "stock-cpt-terminal-001");
+      assert.ok(invoice, "admin sync feed should include the Cape Town invoice");
+      assert.ok(movement, "admin sync feed should include the Cape Town stock movement");
+      assert.equal(invoice.branchId, "b_cpt");
+      assert.equal(invoice.payload.branchId, "b_cpt");
     });
 });
 

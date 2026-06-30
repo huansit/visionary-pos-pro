@@ -368,6 +368,22 @@ export async function resolveBarcode(terminal: TerminalCredentials, barcode: str
   };
 }
 
+function assertSyncAccepted(
+  result: { accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> },
+  events: Array<{ id: string; type: string }>
+) {
+  const accepted = new Set(result.accepted || []);
+  const rejected = result.rejected || [];
+  const rejectedDetails = rejected
+    .map((item) => `${item.id || "unknown"}:${item.reason || "rejected"}`)
+    .join(", ");
+  const missing = events.filter((event) => !accepted.has(event.id));
+  if (rejected.length || missing.length) {
+    const missingDetails = missing.map((event) => `${event.id}:${event.type}`).join(", ");
+    throw new Error(`sync_rejected ${[rejectedDetails, missingDetails].filter(Boolean).join(" ")}`.trim());
+  }
+}
+
 export async function pushCheckout(terminal: TerminalCredentials, account: Account, receipt: Receipt): Promise<void> {
   const ts = Date.now();
   const invoiceId = uid("inv");
@@ -410,11 +426,12 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
     }))
   ];
 
-  await jsonFetch("/api/sync/push", {
+  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> }>("/api/sync/push", {
     method: "POST",
     headers: terminalHeaders(terminal),
     body: JSON.stringify({ events })
   });
+  assertSyncAccepted(result, events);
 }
 
 export async function pushExpense(
