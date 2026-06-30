@@ -51,6 +51,11 @@ fn clear_terminal_credentials() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn close_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     if !req.path.starts_with("/api/") {
         return Err("invalid_api_path".into());
@@ -107,6 +112,7 @@ pub fn run() {
             save_terminal_credentials,
             load_terminal_credentials,
             clear_terminal_credentials,
+            close_app,
             api_request
         ])
         .run(tauri::generate_context!())

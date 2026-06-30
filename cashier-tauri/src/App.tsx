@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Barcode,
   Building2,
@@ -484,7 +484,7 @@ export default function App() {
 
   async function handleCloseApp() {
     if (cartLines.length && !window.confirm("Close VISIONPOS Cashier and discard the current sale?")) return;
-    await getCurrentWindow().close();
+    await invoke("close_app");
   }
 
   if (!terminal) {
@@ -494,6 +494,7 @@ export default function App() {
         error={error}
         status={status}
         lastSyncAt={lastSyncAt}
+        onClose={handleCloseApp}
       />
     );
   }
@@ -506,6 +507,7 @@ export default function App() {
         lastSyncAt={lastSyncAt}
         status={status}
         error={error}
+        onClose={handleCloseApp}
         onLogin={async (employeeNumber, pin) => {
           setError("");
           const result = await loginCashier(terminal, employeeNumber, pin);
@@ -1065,7 +1067,8 @@ function AuthShell({
   branch,
   lastSyncAt,
   status,
-  activationMode = false
+  activationMode = false,
+  onClose
 }: {
   children: ReactNode;
   terminal?: TerminalCredentials | null;
@@ -1073,9 +1076,11 @@ function AuthShell({
   lastSyncAt?: number;
   status: string;
   activationMode?: boolean;
+  onClose?: () => void;
 }) {
   return (
     <main className="auth premium-auth">
+      {onClose && <button className="auth-close-button" onClick={onClose} title="Close app" aria-label="Close app"><X size={22} /></button>}
       <div className="auth-left">
         <BrandSection />
         <StatusPanel
@@ -1103,11 +1108,12 @@ function LoginCard({ eyebrow, title, subtitle, children }: { eyebrow: string; ti
   );
 }
 
-function ActivationScreen({ onActivated, error, status, lastSyncAt }: {
+function ActivationScreen({ onActivated, error, status, lastSyncAt, onClose }: {
   onActivated: (terminal: TerminalCredentials) => void;
   error: string;
   status: string;
   lastSyncAt?: number;
+  onClose: () => void;
 }) {
   const [code, setCode] = useState("");
   const [terminalName, setTerminalName] = useState(`Till ${new Date().toLocaleDateString()}`);
@@ -1129,7 +1135,7 @@ function ActivationScreen({ onActivated, error, status, lastSyncAt }: {
   }
 
   return (
-    <AuthShell lastSyncAt={lastSyncAt} status={status} activationMode>
+    <AuthShell lastSyncAt={lastSyncAt} status={status} activationMode onClose={onClose}>
       <LoginCard eyebrow="Terminal Setup" title="Register Terminal" subtitle="Activate this computer as a trusted cashier workstation.">
         <label>Terminal name</label>
         <div className="premium-input"><MonitorCheck size={20} /><input value={terminalName} onChange={(event) => setTerminalName(event.target.value)} /></div>
@@ -1148,6 +1154,7 @@ function LoginScreen({
   lastSyncAt,
   status,
   error,
+  onClose,
   onLogin
 }: {
   terminal: TerminalCredentials;
@@ -1155,6 +1162,7 @@ function LoginScreen({
   lastSyncAt?: number;
   status: string;
   error: string;
+  onClose: () => void;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
 }) {
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -1177,7 +1185,7 @@ function LoginScreen({
   }
 
   return (
-    <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status}>
+    <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status} onClose={onClose}>
       <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
         <div className="terminal-summary">
           <ConnectionIndicator label="Terminal Registered" />
