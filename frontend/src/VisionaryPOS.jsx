@@ -2756,6 +2756,12 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
   const [codeRequired, setCodeRequired] = useState(false);
   const [codeTarget, setCodeTarget] = useState("");
   const [code, setCode] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetPw, setResetPw] = useState("");
+  const [resetPw2, setResetPw2] = useState("");
+  const [resetSent, setResetSent] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
@@ -2815,6 +2821,47 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     }
   };
   const resetCodeStep = () => { setCodeRequired(false); setCodeTarget(""); setCode(""); };
+  const requestResetCode = async () => {
+    const target = resetEmail.trim().toLowerCase();
+    if (!isValidEmail(target)) return setErr("Enter the admin email address.");
+    setErr("");
+    setBusy(true);
+    try {
+      await authApi("/api/auth/request-password-reset", { email: target });
+      setResetSent(true);
+      setResetCode("");
+      setErr("Reset code sent. Check the admin email.");
+    } catch (error) {
+      setErr(error.message === "admin_email_not_found" ? "No active admin account uses that email." :
+        error.message === "email_provider_not_configured" ? "Email sending is not configured on the server." :
+        error.message === "Failed to fetch" ? "Cloud reset is unreachable. Check your internet connection." : error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const completeReset = async () => {
+    const target = resetEmail.trim().toLowerCase();
+    if (!isValidEmail(target)) return setErr("Enter the admin email address.");
+    if (!/^\d{6}$/.test(resetCode.trim())) return setErr("Enter the 6-digit reset code.");
+    const issue = passwordIssue(resetPw); if (issue) return setErr(issue);
+    if (resetPw !== resetPw2) return setErr("Passwords don't match.");
+    setErr("");
+    setBusy(true);
+    try {
+      await authApi("/api/auth/reset-password", { email: target, code: resetCode.trim(), password: resetPw });
+      setResetDone(true);
+      setEmail(target);
+      setPw("");
+      setErr("Password updated. Sign in with the new password.");
+    } catch (error) {
+      setErr(error.message === "invalid_code" ? "That reset code is incorrect." :
+        error.message === "code_not_found_or_expired" ? "That reset code expired. Send a new one." :
+        error.message === "too_many_attempts" ? "Too many incorrect attempts. Send a new code." :
+        error.message === "admin_email_not_found" ? "No active admin account uses that email." : error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const kbKey = (k) => {
     setErr("");
     if (focusField === "email") setEmail((v) => v + k);
@@ -2832,8 +2879,21 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
       <AuthShellV3>
         <div className="authform">
           <div className="authfield-label" style={{ marginBottom: 14 }}>Reset your password</div>
-          <div className="authnote">For security, an admin password can't be reset from the sign-in screen. The account owner can change it under <strong>Settings → Security</strong> while signed in. If no one can sign in, contact your VISIONPOS administrator to restore access.</div>
-          <button className="authback" style={{ marginTop: 16 }} onClick={() => { setForgot(false); setErr(""); }}><ArrowLeft /> Back to sign-in</button>
+          <div className="authnote" style={{ marginTop: 0, marginBottom: 12 }}>Enter the admin email. We'll send a verification code before you choose a new password.</div>
+          <div className="field" style={{ marginTop: 0 }}><label className="label">Admin email</label>
+            <input className="input" type="email" placeholder="admin@visionarypos.cloud" value={resetEmail} onChange={(e) => { setResetEmail(e.target.value); setErr(""); setResetDone(false); }} onKeyDown={(e) => e.key === "Enter" && requestResetCode()} /></div>
+          <div className="field"><button className="btn btn-ghost" disabled={busy} onClick={requestResetCode}><Mail /> {resetSent ? "Send code again" : "Send reset code"}</button></div>
+          {resetSent && <>
+            <div className="field"><label className="label">Reset code</label>
+              <input className="input mono" inputMode="numeric" maxLength={6} placeholder="000000" value={resetCode} onChange={(e) => { setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} /></div>
+            <div className="field"><label className="label">New password</label>
+              <input className="input" type="password" placeholder="8+ chars, upper, number, symbol" value={resetPw} onChange={(e) => { setResetPw(e.target.value); setErr(""); }} /></div>
+            <div className="field"><label className="label">Confirm new password</label>
+              <input className="input" type="password" placeholder="Re-enter new password" value={resetPw2} onChange={(e) => { setResetPw2(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && completeReset()} /></div>
+            <div className="field"><button className="btn btn-primary" disabled={busy} onClick={completeReset}><ShieldCheck /> {busy ? "Please wait..." : "Update password"}</button></div>
+          </>}
+          {err && <div className={resetDone ? "authnote" : "alert"}>{!resetDone && <AlertCircle />}{err}</div>}
+          <button className="authback" style={{ marginTop: 16 }} onClick={() => { setForgot(false); setErr(""); setResetDone(false); }}><ArrowLeft /> Back to sign-in</button>
         </div>
       </AuthShellV3>
     );
@@ -2853,7 +2913,7 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
         {err && <div className="alert"><AlertCircle />{err}</div>}
         <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
         <div className="field"><button className="btn btn-ghost" disabled={fpBusy} onClick={scanFingerprint}><Fingerprint /> {fpBusy ? "Scanning..." : "Scan Fingerprint"}</button></div>
-        <div className="authforgot" onClick={() => { setForgot(true); setErr(""); }}>Forgot password?</div>
+        <div className="authforgot" onClick={() => { setResetEmail(email.trim()); setForgot(true); setErr(""); }}>Forgot password?</div>
         {admin && !admin.provisioned && <button className="authmake" onClick={onSignup}>First-time setup — create owner account</button>}
         <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>
       </div>

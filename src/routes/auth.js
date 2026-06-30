@@ -595,6 +595,70 @@ router.post("/verify-code", async (req, res) => {
   }
 });
 
+router.post("/request-password-reset", async (req, res) => {
+  await ensureAuthSchema();
+  const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
+  if (!validTarget("email", target)) return res.status(400).json({ error: "invalid_email" });
+
+  try {
+    const result = await q(
+      `SELECT id, kind, status
+         FROM credentials
+        WHERE LOWER(email) = $1
+          AND password_hash IS NOT NULL
+          AND status = 'active'
+        LIMIT 1`,
+      [target]
+    );
+    const account = result.rows[0];
+    if (!account || account.kind !== "admin") {
+      await audit("password_reset_requested", req, null, { target: maskEmail(target), accepted: false });
+      return res.status(404).json({ error: "admin_email_not_found" });
+    }
+
+    const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "admin_password_reset" });
+    await audit("password_reset_code_sent", req, account.id, { target: maskEmail(target), expiresInMinutes });
+    res.json({ ok: true, target: maskEmail(target), expiresInMinutes });
+  } catch (error) {
+    console.error("request-password-reset failed:", error);
+    res.status(error.statusCode || 500).json({ error: error.message || "password_reset_request_failed" });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  await ensureAuthSchema();
+  const target = normalizeTarget("email", req.body?.email || req.body?.identifier);
+  const code = String(req.body?.code || "").trim();
+  const password = String(req.body?.password || "");
+  if (!validTarget("email", target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
+  if (password.length < 8) return res.status(400).json({ error: "password_too_short" });
+
+  try {
+    const result = await q(
+      `SELECT id, kind, status
+         FROM credentials
+        WHERE LOWER(email) = $1
+          AND password_hash IS NOT NULL
+          AND status = 'active'
+        LIMIT 1`,
+      [target]
+    );
+    const account = result.rows[0];
+    if (!account || account.kind !== "admin") return res.status(404).json({ error: "admin_email_not_found" });
+
+    await verifyAuthCode({ channel: "email", target, code, purpose: "admin_password_reset", consume: true });
+    const passwordHash = await bcrypt.hash(password, ROUNDS);
+    await q(`UPDATE credentials SET password_hash = $1, updated_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $2`, [passwordHash, account.id]);
+    await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [account.id]);
+    await audit("password_reset_completed", req, account.id, { target: maskEmail(target) });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("reset-password failed:", error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: status >= 500 ? "password_reset_failed" : error.message });
+  }
+});
+
 router.post("/register-owner", async (req, res) => {
   await ensureAuthSchema();
   const { name, password } = req.body || {};
