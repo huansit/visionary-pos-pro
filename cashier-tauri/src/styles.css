@@ -2856,6 +2856,59 @@ body {
   color: #dbeafe;
 }
 
+.update-progress {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, .72);
+}
+
+.update-progress div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #dbeafe;
+  font-size: 13px;
+}
+
+.update-progress span {
+  color: #93c5fd;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.update-progress progress {
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, .16);
+}
+
+.update-progress progress::-webkit-progress-bar {
+  background: rgba(148, 163, 184, .16);
+}
+
+.update-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #60a5fa, #34d399);
+}
+
+.update-error {
+  margin-top: 12px !important;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, .34);
+  border-radius: 12px;
+  background: rgba(127, 29, 29, .22);
+  color: #fecaca !important;
+  font-size: 13px;
+}
+
 .update-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

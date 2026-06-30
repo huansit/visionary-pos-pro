@@ -4,7 +4,6 @@ use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::process::Command;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -56,63 +55,6 @@ fn clear_terminal_credentials() -> Result<(), String> {
 #[tauri::command]
 fn close_app(app: tauri::AppHandle) {
     app.exit(0);
-}
-
-#[tauri::command]
-fn open_update_download(url: String) -> Result<(), String> {
-    if !url.starts_with("https://visionarypos.cloud/downloads/") {
-        return Err("invalid_download_url".into());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", &url])
-            .spawn()
-            .map_err(|err| err.to_string())?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&url)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(&url)
-            .spawn()
-            .map_err(|err| err.to_string())?;
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn fetch_update_manifest() -> Result<Value, String> {
-    let url = format!("{}/downloads/release.json", API_BASE_URL);
-    let client = reqwest::Client::builder()
-        .https_only(true)
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|err| err.to_string())?;
-
-    let response = client
-        .get(url)
-        .header("Accept", "application/json")
-        .header("Cache-Control", "no-store")
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    let status = response.status();
-    let text = response.text().await.map_err(|err| err.to_string())?;
-    if !status.is_success() {
-        return Err(format!("update_manifest_{}", status.as_u16()));
-    }
-    serde_json::from_str(&text).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -168,13 +110,13 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             save_terminal_credentials,
             load_terminal_credentials,
             clear_terminal_credentials,
             close_app,
-            open_update_download,
-            fetch_update_manifest,
             api_request
         ])
         .run(tauri::generate_context!())

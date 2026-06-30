@@ -3,27 +3,7 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.10";
-export const UPDATE_MANIFEST_URL = `${API_BASE_URL}/downloads/release.json`;
-
-export type UpdateManifest = {
-  version: string;
-  platform?: string;
-  installer?: string;
-  size?: number;
-  sha512?: string;
-  releaseNotes?: string[];
-};
-
-export async function fetchUpdateManifest(): Promise<UpdateManifest> {
-  return invoke<UpdateManifest>("fetch_update_manifest");
-}
-
-export function absoluteDownloadUrl(pathOrUrl?: string) {
-  if (pathOrUrl?.startsWith("https://visionarypos.cloud/downloads/")) return pathOrUrl;
-  if (pathOrUrl?.startsWith("/downloads/")) return `${API_BASE_URL}${pathOrUrl}`;
-  return `${API_BASE_URL}/downloads/VISIONPOS-Cashier-Setup.exe`;
-}
+export const APP_VERSION = "2.0.11";
 
 export function connectSyncStream(terminal: TerminalCredentials, onSync: () => void, onState?: (state: "connected" | "reconnecting") => void) {
   const controller = new AbortController();

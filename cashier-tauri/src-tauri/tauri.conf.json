@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VISIONPOS Cashier",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "identifier": "cloud.visionarypos.cashier",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,6 +30,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZFN0IzRkM5NEE5OUZDNQpSV1RGbjZtVS9MUG5CcG8wWmZrVzU3aDkxdnZSOTMrUFJlUzBKcnkxQi9LUWU1K2J2eTUxeUZaSQo=",
+      "endpoints": [
+        "https://visionarypos.cloud/downloads/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

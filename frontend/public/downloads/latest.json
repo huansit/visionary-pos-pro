@@ -1,0 +1,11 @@
+{
+  "version": "2.0.11",
+  "notes": "Native in-app auto-updater.\nChecks on startup and from Settings.\nDownloads in the background, verifies the signed package, installs automatically, and restarts VisionPOS.\nNo browser, command prompt, or manual installer required.",
+  "pub_date": "2026-06-30T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVURm42bVUvTFBuQnJBeEExYzlVSFlJY01kMU4yV2dTS2Jwanhjd3JKOExyVXNhMzRCZ2duQVZOMmI1MFZJaFNmU1pXRHRsYlJxU1cvOXk3bTBkL3UrMVhORGZwbTkvZ2d3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODYyMjQ4CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjExX3g2NC1zZXR1cC5leGUKOEUvbTVLK1NWZVl2TEVFakVLbHBMd3BrRjNyRTJCVkJ6Y0VNZFMrWGlvbEdTeXpES2c2UFhyTngrQ2c4NnZqdU9kd3hodVFsc3dJVVl4TFlHTys1QWc9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier-Setup.exe"
+    }
+  }
+}

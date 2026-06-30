@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import {
   Barcode,
   Building2,
@@ -23,10 +25,8 @@ import {
 } from "lucide-react";
 import {
   APP_VERSION,
-  absoluteDownloadUrl,
   activateTerminal,
   connectSyncStream,
-  fetchUpdateManifest,
   loginCashier,
   logout,
   pullCatalog,
@@ -38,18 +38,30 @@ import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredenti
 import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
+const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
 
 type UpdatePrompt = {
   version: string;
   currentVersion: string;
-  url: string;
   releaseNotes: string[];
-  size?: number;
+  update: NonNullable<Awaited<ReturnType<typeof check>>>;
 };
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
+}
+
+function logUpdateEvent(event: string, details: Record<string, unknown> = {}) {
+  const entry = { ts: Date.now(), event, ...details };
+  try {
+    const current = JSON.parse(localStorage.getItem(UPDATE_LOG_KEY) || "[]");
+    const next = Array.isArray(current) ? [entry, ...current].slice(0, 60) : [entry];
+    localStorage.setItem(UPDATE_LOG_KEY, JSON.stringify(next));
+  } catch {
+    localStorage.setItem(UPDATE_LOG_KEY, JSON.stringify([entry]));
+  }
+  console.info("[visionpos:update]", entry);
 }
 
 function escapeHtml(value: string) {
@@ -63,17 +75,6 @@ function escapeHtml(value: string) {
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
-}
-
-function compareVersions(a: string, b: string) {
-  const left = a.split(".").map((part) => Number(part) || 0);
-  const right = b.split(".").map((part) => Number(part) || 0);
-  const length = Math.max(left.length, right.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (left[index] || 0) - (right[index] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
 }
 
 function productStock(product: Product) {
@@ -346,22 +347,24 @@ export default function App() {
     updateCheckInFlight.current = true;
     if (manual) setStatus("Checking for desktop updates...");
     try {
-      const manifest = await fetchUpdateManifest();
-      const version = String(manifest.version || "");
-      if (version && compareVersions(version, APP_VERSION) > 0) {
+      logUpdateEvent("check_started", { manual, currentVersion: APP_VERSION });
+      const update = await check();
+      if (update?.available) {
+        logUpdateEvent("update_available", { currentVersion: APP_VERSION, version: update.version });
         setUpdatePrompt({
-          version,
+          version: update.version,
           currentVersion: APP_VERSION,
-          url: absoluteDownloadUrl(manifest.installer),
-          releaseNotes: Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes : [],
-          size: manifest.size
+          releaseNotes: update.body ? update.body.split(/\r?\n/).filter(Boolean) : [],
+          update
         });
-        if (manual) setStatus(`Update ${version} is available.`);
+        if (manual) setStatus(`Update ${update.version} is available.`);
       } else if (manual) {
+        logUpdateEvent("already_current", { currentVersion: APP_VERSION });
         setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
         setLatestUpdateNotice(true);
       }
     } catch (err) {
+      logUpdateEvent("check_failed", { message: String(err) });
       if (manual) setError(`Update check failed: ${String(err)}`);
     } finally {
       updateCheckInFlight.current = false;
@@ -864,17 +867,48 @@ export default function App() {
 
 function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [downloaded, setDownloaded] = useState(0);
+  const [contentLength, setContentLength] = useState(0);
+  const [phase, setPhase] = useState("Ready to install");
+  const [failure, setFailure] = useState("");
 
-  async function openDownload() {
+  async function installUpdate() {
     setBusy(true);
+    setFailure("");
+    setDownloaded(0);
+    setContentLength(0);
+    setPhase("Preparing secure download...");
     try {
-      await invoke("open_update_download", { url: update.url });
-    } catch {
-      window.open(update.url, "_blank", "noopener,noreferrer");
+      logUpdateEvent("download_started", { version: update.version });
+      let received = 0;
+      await update.update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          const total = Number(event.data.contentLength || 0);
+          setContentLength(total);
+          setPhase("Downloading update...");
+        }
+        if (event.event === "Progress") {
+          received += Number(event.data.chunkLength || 0);
+          setDownloaded(received);
+        }
+        if (event.event === "Finished") {
+          setPhase("Verifying and installing...");
+        }
+      });
+      logUpdateEvent("install_finished", { version: update.version });
+      setPhase("Restarting VISIONPOS...");
+      await relaunch();
+    } catch (err) {
+      const message = String(err);
+      logUpdateEvent("install_failed", { version: update.version, message });
+      setFailure(message);
+      setPhase("Update failed");
     } finally {
       setBusy(false);
     }
   }
+
+  const progress = contentLength > 0 ? Math.min(100, Math.round((downloaded / contentLength) * 100)) : busy ? 12 : 0;
 
   return (
     <div className="update-backdrop">
@@ -883,14 +917,19 @@ function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose:
         <div className="update-icon"><Download size={28} /></div>
         <span>Update available</span>
         <h2 id="update-title">VISIONPOS Cashier {update.version}</h2>
-        <p>You are using version {update.currentVersion}. Download the latest installer, close VISIONPOS Cashier, then run the installer to update this terminal.</p>
+        <p>You are using version {update.currentVersion}. The update will download, verify, install, and restart VISIONPOS automatically.</p>
         {update.releaseNotes.length > 0 && (
           <ul>
             {update.releaseNotes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}
           </ul>
         )}
+        <div className="update-progress">
+          <div><b>{phase}</b><span>{contentLength > 0 ? `${progress}%` : busy ? "Starting" : "Idle"}</span></div>
+          <progress max={100} value={progress} />
+        </div>
+        {failure && <p className="update-error">Update failed: {failure}. You can retry the download.</p>}
         <div className="update-actions">
-          <button onClick={openDownload} disabled={busy}>{busy ? "Opening..." : "Download update"}</button>
+          <button onClick={installUpdate} disabled={busy}>{busy ? "Updating..." : failure ? "Retry update" : "Update now"}</button>
           <button className="ghost" onClick={onClose}>Remind me later</button>
         </div>
       </section>
