@@ -2070,3 +2070,399 @@ button.ghost, .ghost {
   min-height: 62px;
   margin-top: 8px;
 }
+
+/* Responsive workstation fit layer.
+   Keep the cashier workflow unchanged, but stop the desktop client from
+   looking zoomed out or oversized on different Windows displays. */
+:root {
+  --vp-header-h: clamp(56px, 7.2vh, 72px);
+  --vp-gap: clamp(10px, 1.1vw, 18px);
+  --vp-pad: clamp(10px, 1.15vw, 18px);
+  --vp-left: clamp(260px, 19vw, 350px);
+  --vp-right: clamp(330px, 25vw, 440px);
+  --vp-radius: 12px;
+  --vp-card-pad: clamp(12px, 1vw, 18px);
+  --vp-search-h: clamp(48px, 6.2vh, 62px);
+  --vp-product-min: clamp(136px, 9.2vw, 176px);
+  --vp-product-image-h: clamp(68px, 10.2vh, 96px);
+  --vp-product-font: clamp(12px, .86vw, 15px);
+  --vp-meta-font: clamp(10px, .72vw, 12px);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  min-width: 0;
+}
+
+.workstation {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  grid-template-rows: var(--vp-header-h) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.topbar {
+  min-width: 0;
+  padding: 0 clamp(12px, 1.35vw, 26px);
+}
+
+.brand {
+  min-width: 0;
+  font-size: clamp(17px, 1.18vw, 22px);
+}
+
+.brand span {
+  width: clamp(30px, 2.5vw, 40px);
+  height: clamp(30px, 2.5vw, 40px);
+  font-size: clamp(18px, 1.45vw, 24px);
+  border-radius: 10px;
+}
+
+.topmeta {
+  min-width: 0;
+}
+
+.branch-pill {
+  min-height: clamp(34px, 4.7vh, 44px);
+  max-width: min(36vw, 260px);
+  overflow: hidden;
+}
+
+.branch-pill b,
+.branch-pill small,
+.cashier-id b,
+.cashier-id span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.window-close-button {
+  width: clamp(36px, 3vw, 46px);
+  height: clamp(36px, 3vw, 46px);
+  min-height: clamp(36px, 3vw, 46px) !important;
+  border-radius: var(--vp-radius);
+}
+
+.layout {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: var(--vp-left) minmax(420px, 1fr) var(--vp-right);
+  gap: var(--vp-gap);
+  padding: var(--vp-pad);
+  overflow: hidden;
+}
+
+.left-panel,
+.products-panel,
+.cart-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.left-panel {
+  gap: clamp(8px, 1vh, 12px);
+}
+
+.card,
+.cart-panel {
+  padding: var(--vp-card-pad);
+  border-radius: var(--vp-radius);
+}
+
+.card h3,
+.cart-head h2 {
+  font-size: clamp(10px, .72vw, 12px);
+}
+
+.card-head strong {
+  font-size: clamp(20px, 1.55vw, 26px);
+}
+
+.open-invoices {
+  min-height: clamp(260px, 45vh, 410px);
+  padding: clamp(14px, 1.35vw, 22px);
+}
+
+.invoice-total {
+  margin: clamp(12px, 1.5vh, 22px) 0;
+  padding: clamp(10px, 1vw, 14px);
+}
+
+.invoice-total b {
+  font-size: clamp(22px, 1.8vw, 30px);
+}
+
+.invoice-empty {
+  min-height: clamp(140px, 22vh, 210px);
+  padding: clamp(16px, 1.4vw, 24px);
+}
+
+.invoice-empty b {
+  font-size: clamp(16px, 1.25vw, 21px);
+}
+
+.invoice-empty span {
+  font-size: clamp(13px, 1vw, 17px);
+}
+
+.debt-line,
+.quick-actions button {
+  padding: clamp(9px, .8vw, 12px);
+}
+
+.quick-actions button {
+  min-height: clamp(40px, 5.2vh, 52px);
+  font-size: clamp(13px, .95vw, 16px);
+  gap: clamp(8px, .8vw, 12px);
+}
+
+.quick-actions .logout-action {
+  min-height: clamp(46px, 6vh, 58px);
+}
+
+.products-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.search-row {
+  grid-template-columns: minmax(0, 1fr) clamp(112px, 9.2vw, 148px);
+  gap: clamp(8px, .9vw, 12px);
+  margin-bottom: clamp(8px, 1vh, 12px);
+}
+
+.searchbar,
+.scanner-toggle {
+  min-height: var(--vp-search-h);
+  height: var(--vp-search-h);
+  border-radius: var(--vp-radius);
+}
+
+.searchbar {
+  padding: 0 clamp(12px, 1vw, 16px);
+  gap: clamp(8px, .9vw, 14px);
+}
+
+.searchbar input {
+  height: calc(var(--vp-search-h) - 6px);
+  font-size: clamp(15px, 1.15vw, 19px);
+}
+
+.scanner-toggle {
+  font-size: clamp(13px, .95vw, 16px);
+  padding: 0 clamp(8px, .8vw, 14px);
+}
+
+.product-strip {
+  min-height: clamp(34px, 4.8vh, 44px);
+  margin-bottom: clamp(8px, 1vh, 12px);
+  gap: clamp(6px, .8vw, 10px);
+}
+
+.category-chip {
+  min-height: clamp(30px, 4vh, 36px);
+  font-size: clamp(11px, .8vw, 13px);
+  padding: 0 clamp(9px, .8vw, 13px);
+}
+
+.product-strip small {
+  font-size: clamp(10px, .72vw, 12px);
+}
+
+.product-grid {
+  min-height: 0;
+  grid-template-columns: repeat(auto-fill, minmax(var(--vp-product-min), 1fr));
+  gap: clamp(8px, .85vw, 14px);
+  padding: 0 clamp(2px, .4vw, 6px) clamp(8px, 1vh, 14px) 0;
+}
+
+.product-card {
+  min-height: clamp(188px, 28vh, 246px);
+  padding: clamp(8px, .82vw, 12px);
+  gap: clamp(4px, .58vh, 7px);
+  border-radius: var(--vp-radius);
+}
+
+.product-image {
+  height: var(--vp-product-image-h);
+  border-radius: 10px;
+  margin-bottom: clamp(2px, .5vh, 5px);
+}
+
+.product-name {
+  font-size: var(--vp-product-font);
+  min-height: calc(var(--vp-product-font) * 2.35);
+}
+
+.product-code {
+  font-size: var(--vp-meta-font);
+}
+
+.product-foot b {
+  font-size: clamp(14px, 1vw, 17px);
+}
+
+.product-foot small {
+  font-size: clamp(9px, .66vw, 10.5px);
+  padding: 3px 7px;
+}
+
+.product-stepper {
+  grid-template-columns: clamp(28px, 2vw, 34px) clamp(30px, 2.1vw, 36px) clamp(28px, 2vw, 34px);
+}
+
+.product-stepper i,
+.product-stepper b {
+  min-height: clamp(24px, 3.3vh, 30px);
+}
+
+.cart-panel {
+  grid-template-rows: auto minmax(90px, 1fr) auto auto auto auto auto auto;
+  overflow: hidden;
+}
+
+.cart-head {
+  padding-bottom: clamp(9px, 1vh, 14px);
+}
+
+.cart-head h2 {
+  font-size: clamp(17px, 1.2vw, 20px);
+}
+
+.cart-lines {
+  padding: clamp(10px, 1vh, 16px) 0;
+}
+
+.empty {
+  min-height: clamp(120px, 23vh, 220px);
+}
+
+.cart-panel label {
+  margin: clamp(5px, .8vh, 10px) 0 6px;
+}
+
+.cart-panel input {
+  min-height: clamp(42px, 5.6vh, 52px);
+  font-size: clamp(13px, .92vw, 15px);
+}
+
+.total-row strong {
+  font-size: clamp(26px, 2.5vw, 38px);
+}
+
+.checkout {
+  min-height: clamp(50px, 6.5vh, 64px);
+  font-size: clamp(15px, 1.1vw, 18px);
+}
+
+.cart-actions button {
+  height: clamp(42px, 5.7vh, 50px);
+  font-size: clamp(13px, .95vw, 15px);
+}
+
+.hint,
+.status-note {
+  font-size: clamp(10px, .75vw, 12px);
+}
+
+@media (min-width: 1720px) {
+  :root {
+    --vp-left: clamp(340px, 18vw, 380px);
+    --vp-right: clamp(420px, 23vw, 480px);
+    --vp-product-min: clamp(170px, 9vw, 205px);
+  }
+
+  .layout {
+    max-width: 1920px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}
+
+@media (max-width: 1320px) {
+  :root {
+    --vp-left: clamp(230px, 22vw, 280px);
+    --vp-right: clamp(300px, 29vw, 340px);
+    --vp-product-min: clamp(124px, 14vw, 145px);
+    --vp-product-image-h: clamp(58px, 9vh, 72px);
+  }
+
+  .layout {
+    grid-template-columns: var(--vp-left) minmax(360px, 1fr) var(--vp-right);
+  }
+
+  .product-strip small {
+    display: none;
+  }
+
+  .card h3 {
+    letter-spacing: .1em;
+  }
+
+  .card-head strong {
+    font-size: 19px;
+  }
+}
+
+@media (max-height: 780px) {
+  :root {
+    --vp-header-h: 56px;
+    --vp-gap: 8px;
+    --vp-pad: 8px;
+    --vp-card-pad: 10px;
+    --vp-search-h: 46px;
+    --vp-product-image-h: 58px;
+  }
+
+  .brand span {
+    width: 30px;
+    height: 30px;
+  }
+
+  .open-invoices {
+    min-height: 250px;
+  }
+
+  .invoice-total {
+    margin: 10px 0;
+  }
+
+  .invoice-empty {
+    min-height: 120px;
+    padding: 12px;
+  }
+
+  .invoice-empty span {
+    display: none;
+  }
+
+  .debt-card p {
+    display: none;
+  }
+
+  .quick-actions button {
+    min-height: 38px;
+    margin-top: 6px;
+  }
+
+  .product-card {
+    min-height: 176px;
+  }
+
+  .cart-lines {
+    padding: 8px 0;
+  }
+
+  .empty {
+    min-height: 90px;
+  }
+}

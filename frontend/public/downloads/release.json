@@ -2,8 +2,8 @@
   "version": "2.0.0",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2816618,
-  "sha512": "",
+  "size": 2820471,
+  "sha512": "E4943B5065E216435255258D2FE9A3FD1429052652D5238F685F91C832A189C2E0E3FB415D88AB31D5319346F0610742561518EB90FDF56685D42D65A9400431",
   "releaseNotes": [
     "Secure first-run terminal activation with admin-generated codes.",
     "Cashier-only desktop interface connected to the VisionPOS cloud backend.",
