@@ -851,7 +851,7 @@ function envValue(key, fallback = "") {
 }
 function desktopDownloadConfig() {
   const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
-  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.3");
+  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.4");
   const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier-Setup.exe");
   const releaseNotes = runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", [
     "Secure first-run terminal activation with admin-generated codes.",
