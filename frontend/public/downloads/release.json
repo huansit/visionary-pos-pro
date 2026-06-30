@@ -1,10 +1,12 @@
 {
-  "version": "2.0.5",
+  "version": "2.0.6",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2831445,
-  "sha512": "8ACA48232DE7D3B321C7316C0572BEC858319C8F572742626BE5D83D2C31D25ED571C86486345D2A77AEDAD85A3BE444468AB0B3680CF721D6BAF3EE2243DFEC",
+  "size": 2834491,
+  "sha512": "25E0977C3F1F83F3330B99FE786F7A9E4986A78193EB08655B1D1FB2ADC748D15E8F33596826F6E4ABEF9F412678A46D6719BB61BB9AD938EB921930BDEF7B67",
   "releaseNotes": [
+    "Activation and login screens now resize correctly across Windows DPI settings and taskbar sizes.",
+    "Cashier workstation panels now use adaptive sizing for 1366x768 through large desktop displays.",
     "Windows app now launches without opening a command prompt window.",
     "Responsive desktop window sizing for different Windows displays and DPI settings.",
     "Visible in-app update check from the cashier dashboard.",

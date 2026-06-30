@@ -3,7 +3,7 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.5";
+export const APP_VERSION = "2.0.6";
 export const UPDATE_MANIFEST_URL = `${API_BASE_URL}/downloads/release.json`;
 
 export type UpdateManifest = {

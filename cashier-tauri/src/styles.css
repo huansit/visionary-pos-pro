@@ -2108,9 +2108,214 @@ body {
   min-width: 0;
 }
 
+/* Responsive activation/login fit layer.
+   Windows DPI and taskbar height change the usable viewport; keep first-run
+   setup and cashier login scrollable and compressed instead of clipped. */
+.auth {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 0;
+  overflow: auto;
+}
+
+.premium-auth {
+  min-height: 100dvh;
+  grid-template-columns: minmax(420px, 1.08fr) minmax(390px, .92fr);
+  overflow: auto;
+}
+
+.auth-close-button {
+  top: clamp(12px, 2.2vh, 22px);
+  right: clamp(12px, 1.8vw, 24px);
+  width: clamp(42px, 4.8vh, 54px);
+  height: clamp(42px, 4.8vh, 54px);
+  border-radius: 14px;
+}
+
+.auth-left,
+.auth-right {
+  min-height: 0;
+  padding: clamp(18px, 3.6vw, 54px);
+}
+
+.auth-left {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: clamp(14px, 2vh, 28px);
+}
+
+.auth-right {
+  align-content: center;
+  overflow: auto;
+}
+
+.auth-card {
+  width: min(500px, 100%);
+  max-height: calc(100dvh - clamp(40px, 8vh, 96px));
+  overflow: auto;
+  padding: clamp(22px, 2.8vw, 38px);
+  border-radius: clamp(18px, 2vw, 28px);
+}
+
+.brand-mark {
+  width: clamp(56px, 5vw, 72px);
+  height: clamp(56px, 5vw, 72px);
+  font-size: clamp(34px, 3.2vw, 44px);
+  margin-bottom: clamp(14px, 2vh, 24px);
+}
+
+.auth-brand h1 {
+  font-size: clamp(44px, 5.4vw, 88px);
+}
+
+.auth-brand p {
+  margin-top: clamp(10px, 1.6vh, 18px);
+  font-size: clamp(18px, 1.65vw, 24px);
+}
+
+.auth-visual {
+  width: min(560px, 94%);
+  height: clamp(170px, 28vh, 270px);
+  margin-top: clamp(18px, 4vh, 46px);
+}
+
+.orb-one {
+  width: clamp(160px, 18vw, 240px);
+  height: clamp(160px, 18vw, 240px);
+}
+
+.orb-two {
+  width: clamp(120px, 14vw, 180px);
+  height: clamp(120px, 14vw, 180px);
+  left: clamp(170px, 20vw, 230px);
+}
+
+.orb-three {
+  width: clamp(100px, 11vw, 150px);
+  height: clamp(100px, 11vw, 150px);
+  left: clamp(300px, 34vw, 402px);
+}
+
+.glass-terminal {
+  left: clamp(54px, 8vw, 96px);
+  top: clamp(30px, 5vh, 42px);
+  width: min(390px, 72%);
+  height: clamp(150px, 21vh, 202px);
+  border-radius: 24px;
+  padding: clamp(16px, 1.7vw, 22px);
+}
+
+.terminal-grid {
+  margin-top: clamp(16px, 3vh, 28px);
+  gap: clamp(9px, 1vw, 14px);
+}
+
+.terminal-grid b {
+  height: clamp(30px, 4.8vh, 42px);
+}
+
+.status-panel {
+  padding: clamp(14px, 1.5vw, 22px);
+  border-radius: 20px;
+}
+
+.status-checks {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.status-cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.login-panel h1 {
+  font-size: clamp(30px, 3.1vw, 40px);
+}
+
+.login-panel > p {
+  margin-bottom: clamp(18px, 2.4vh, 28px);
+  font-size: clamp(14px, 1.2vw, 17px);
+}
+
+.premium-input {
+  min-height: clamp(50px, 7vh, 64px);
+}
+
+.premium-input input {
+  min-height: clamp(48px, 6.6vh, 60px);
+  font-size: clamp(15px, 1.25vw, 18px);
+}
+
+.premium-primary,
+.premium-secondary {
+  min-height: clamp(50px, 7vh, 60px);
+}
+
+@media (max-height: 820px) {
+  .auth-left,
+  .auth-right {
+    padding-block: 18px;
+  }
+
+  .auth-visual {
+    height: 170px;
+    margin-top: 14px;
+  }
+
+  .status-panel {
+    max-height: 230px;
+    overflow: auto;
+  }
+
+  .status-checks div {
+    min-height: 44px;
+    padding: 8px;
+  }
+
+  .status-cards div {
+    min-height: 58px;
+    padding: 10px;
+  }
+
+  .auth-footer {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .premium-auth {
+    grid-template-columns: 1fr;
+    min-height: 100dvh;
+  }
+
+  .auth-left {
+    min-height: auto;
+    grid-template-rows: auto auto;
+  }
+
+  .auth-right {
+    padding-top: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .auth-left {
+    display: none;
+  }
+
+  .premium-auth {
+    display: grid;
+    place-items: center;
+    padding: 18px;
+  }
+
+  .auth-right {
+    width: 100%;
+    padding: 0;
+  }
+}
+
 .workstation {
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   min-height: 0;
   grid-template-rows: var(--vp-header-h) minmax(0, 1fr);
   overflow: hidden;
