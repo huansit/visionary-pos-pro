@@ -2121,7 +2121,24 @@ const css = `
 .navside.collapsed .navsec{justify-content:center;gap:0;padding:13px 0 5px}
 .navside.collapsed .navsec svg{width:15px;height:15px}
 .navside.collapsed .navlabel{display:none}
-@media (max-width:900px){.adminwrap,.adminwrap.nav-collapsed{grid-template-columns:1fr}.navside{position:static;max-height:none}.navcollapse{display:none}}
+.admincontent{min-width:0}
+@media (max-width:1100px){
+  .adminwrap{grid-template-columns:210px 1fr;gap:16px}
+  .adminwrap.nav-collapsed{grid-template-columns:60px 1fr}
+  .navside{top:72px;max-height:calc(100dvh - 88px)}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ptblwrap{max-height:calc(100dvh - 260px)}
+}
+@media (max-width:900px){
+  .adminwrap,.adminwrap.nav-collapsed{grid-template-columns:1fr;gap:14px}
+  .navside,.navside.collapsed{position:static;max-height:42dvh;overflow-y:auto;padding:10px;border-radius:14px}
+  .navcollapse{display:none}
+  .navside.collapsed .navlabel{display:inline}
+  .navside.collapsed .navitem{justify-content:flex-start;gap:10px;padding:10px 11px}
+  .navside.collapsed .navsec{justify-content:flex-start;gap:7px;padding:13px 11px 5px}
+  .navside.collapsed .navsec-chev{display:grid}
+  .admincontent{width:100%;min-width:0}
+}
 .wtab{display:flex;align-items:center;gap:7px;padding:9px 14px;border-radius:11px;border:1px solid var(--border-soft);background:var(--surface);color:var(--muted);font-size:13px;font-weight:650;cursor:pointer;transition:.15s}
 .wtab:hover{color:var(--text);background:var(--surface-2)}
 .wtab.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border-color:transparent;box-shadow:0 6px 18px -8px var(--accent)}
@@ -2331,6 +2348,47 @@ const css = `
 .fade{animation:fade .25s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.vpos *{animation:none!important;transition:none!important}}
+@media (max-width:760px){
+  .vpos{padding:12px}
+  .admincontent .page-h{align-items:stretch;gap:10px;margin-bottom:12px}
+  .admincontent .page-h > div:first-child{flex:1 1 100%;min-width:0}
+  .admincontent .page-h > div:last-child{width:100%;display:flex;gap:8px;flex-wrap:wrap}
+  .admincontent .page-h .btn{flex:1 1 136px;min-height:42px}
+  .admincontent .kpis,.admincontent .stats{grid-template-columns:1fr;gap:10px}
+  .admincontent .kpi,.admincontent .stat{border-radius:14px;padding:14px}
+  .admincontent .grid2,.admincontent .grid3{grid-template-columns:1fr}
+  .admincontent .addpanel{padding:14px;border-radius:14px;margin-bottom:12px}
+  .admincontent .ptools{align-items:stretch;gap:8px}
+  .admincontent .ptools .possearch{min-width:100%;width:100%;height:44px}
+  .admincontent .ptools .select{width:100%!important;min-width:100%}
+  .admincontent .ptblwrap{max-height:none;border-radius:12px}
+  .admincontent .ptbl{min-width:760px}
+  .admincontent .row{align-items:flex-start;flex-wrap:wrap;padding:11px;border-radius:12px}
+  .admincontent .row .meta{flex:1 1 calc(100% - 58px)}
+  .admincontent .pill,.admincontent .smdel{min-height:38px}
+  .admincontent .wtabs{gap:7px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px}
+  .admincontent .wtab{flex:0 0 auto}
+  .admincontent .branchwrap{gap:12px}
+  .admincontent .brow{align-items:flex-start;flex-wrap:wrap}
+}
+@media (max-width:520px){
+  .vpos{padding:8px}
+  .adminwrap{gap:10px}
+  .navside,.navside.collapsed{max-height:36dvh;padding:8px}
+  .navitem,.navitem.main{min-height:42px;font-size:13px}
+  .navsec{min-height:38px}
+  .admincontent .title{font-size:20px!important}
+  .admincontent .sub{font-size:13px}
+  .admincontent .input,.admincontent .select{height:44px;font-size:15px}
+  .admincontent textarea.input{height:auto;min-height:92px}
+  .admincontent .btn{min-height:44px}
+  .admincontent .btn.sm{min-height:40px}
+  .admincontent .row-add{height:44px}
+  .admincontent .avatar{width:36px;height:36px;border-radius:10px}
+  .admincontent .ptbl{font-size:12px;min-width:700px}
+  .admincontent .ptbl thead th,.admincontent .ptbl tbody td{padding:9px 10px}
+  .modal{max-width:min(430px,calc(100vw - 20px));padding:18px;border-radius:16px}
+}
 @media (max-width:760px){.regwrap{grid-template-columns:1fr;height:auto;overflow:visible}.side,.catcol,.cart{height:auto;overflow:visible}.kpis{grid-template-columns:1fr}.filters{grid-template-columns:1fr}.catscroll{flex:none;max-height:none;overflow:visible}.cartbox{flex:none;max-height:360px}}
 @media (max-width:430px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:820px){.cmain{grid-template-columns:1fr}.ticket{position:static}}
@@ -4007,7 +4065,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
             {open && g.items.map((it) => <NavBtn key={it.id} item={it} />)}
           </div>); })}
       </nav>
-      <div>
+      <div className="admincontent">
         {render()}
       </div>
     </div>
