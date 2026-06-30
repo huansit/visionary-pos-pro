@@ -12,7 +12,6 @@ import {
   Lock,
   LogOut,
   MonitorCheck,
-  Package,
   Search,
   Server,
   ShieldCheck,
@@ -98,11 +97,29 @@ function productStatusText(product: Product) {
   if (stock <= 0) return "Out";
   if (product.priceCents <= 0) return "No price";
   if (product.costCents > 0 && product.priceCents < product.costCents) return "Below cost";
+  if (stock <= 5) return "Low";
   return `${stock} in`;
 }
 
 function productStatusClass(product: Product) {
-  return productSaleBlockReason(product, 0) ? "out" : "ok";
+  const stock = productStock(product);
+  if (productSaleBlockReason(product, 0)) return "out";
+  if (stock <= 5) return "low";
+  return "ok";
+}
+
+function productStockLabel(product: Product) {
+  const stock = productStock(product);
+  return `${stock} stock`;
+}
+
+function categoryAccentClass(category: string) {
+  const value = category.toLowerCase();
+  if (value.includes("beer")) return " beer";
+  if (value.includes("spirit") || value.includes("whisky") || value.includes("vodka") || value.includes("gin")) return " spirits";
+  if (value.includes("wine")) return " wine";
+  if (value.includes("mixer") || value.includes("soft") || value.includes("soda")) return " mixers";
+  return "";
 }
 
 function receiptPrintHtml(receipt: Receipt) {
@@ -731,7 +748,7 @@ export default function App() {
             {categories.map((category) => (
               <button
                 key={category}
-                className={"category-chip" + (selectedCategory === category ? " active" : "")}
+                className={"category-chip" + categoryAccentClass(category) + (selectedCategory === category ? " active" : "")}
                 onClick={() => setSelectedCategory(category)}
               >
                 {category === "All Products" ? <Grid2X2 size={16} /> : <Wine size={16} />}
@@ -743,12 +760,15 @@ export default function App() {
           <div className="product-grid">
             {filteredProducts.map((product) => (
               <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
-                <span className="product-icon" aria-hidden="true"><Package size={17} /></span>
                 <span className="product-name">{product.name}</span>
-                <span className="product-code">SKU: {product.sku || product.barcode || "No code"}</span>
-                <span className="product-code">Volume: {product.size || "N/A"}</span>
-                <span className="product-foot"><b>{money(product.priceCents)}</b><small className={productStatusClass(product)}>{productStatusText(product)}</small></span>
-                <span className="product-stepper"><i>+</i><b>1</b><i>-</i></span>
+                <span className="product-line product-line-main">
+                  <span>SKU: {product.sku || product.barcode || "No code"}</span>
+                  <b>{money(product.priceCents)}</b>
+                </span>
+                <span className="product-line product-line-stock">
+                  <span>{productStockLabel(product)}</span>
+                  <small className={productStatusClass(product)}>{productStatusText(product)}</small>
+                </span>
               </button>
             ))}
           </div>

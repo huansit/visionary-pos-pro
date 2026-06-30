@@ -1,10 +1,12 @@
 {
-  "version": "2.0.8",
+  "version": "2.0.9",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 2833170,
-  "sha512": "77559DA80B6D07475305464FBD6E62CA24F522E26C72A97301E0A250983EC1AC2ECF894EA06B8E9B0C0D8ED720603360C120C4FEF683A56D3A0CAE8C49648152",
+  "size": 2831793,
+  "sha512": "BDDF0A3B05CE6918AF85572210294A973C7A6BA08673AD9D8A5083F1451018060107CFA396E159AAADAB30BFF8C74128808160F11C9EC82DF4B11A8AA93470B3",
   "releaseNotes": [
+    "Cashier product cards redesigned into compact three-line POS tiles with SKU, price, stock count, and colored stock status.",
+    "Category filters now use consistent accent colors for faster product navigation.",
     "Cashier product cards now use compact icons instead of large product photos.",
     "Product cards now remain readable on 1366x768 laptop displays with Windows taskbars.",
     "Activation and login screens now resize correctly across Windows DPI settings and taskbar sizes.",
