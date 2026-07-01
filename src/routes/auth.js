@@ -30,6 +30,11 @@ function terminalSecretHash(secret) {
   return crypto.createHash("sha256").update(String(secret || ""), "utf8").digest("hex");
 }
 
+function pinLookupHash(pin) {
+  const pepper = process.env.PIN_LOOKUP_SECRET || process.env.JWT_SECRET || process.env.DEVICE_TOKEN_SECRET || "visionpos-pin-lookup";
+  return crypto.createHmac("sha256", String(pepper)).update(String(pin || ""), "utf8").digest("hex");
+}
+
 function safeHashEqual(left, right) {
   const a = Buffer.from(String(left || ""), "hex");
   const b = Buffer.from(String(right || ""), "hex");
@@ -200,6 +205,37 @@ function matchesCredentialIdentifier(row, identifier) {
   });
 }
 
+async function pinAlreadyAssigned(pin, excludeId = null) {
+  const lookup = pinLookupHash(pin);
+  const direct = await q(
+    `SELECT id
+       FROM credentials
+      WHERE pin_lookup_hash = $1
+        AND status <> 'deleted'
+        ${excludeId ? "AND id <> $2" : ""}
+      LIMIT 1`,
+    excludeId ? [lookup, excludeId] : [lookup]
+  );
+  if (direct.rows[0]) return direct.rows[0].id;
+
+  const legacy = await q(
+    `SELECT id, pin_hash
+       FROM credentials
+      WHERE pin_hash IS NOT NULL
+        AND status <> 'deleted'
+        ${excludeId ? "AND id <> $1" : ""}`,
+    excludeId ? [excludeId] : []
+  );
+  for (const row of legacy.rows) {
+    if (await bcrypt.compare(String(pin), row.pin_hash)) return row.id;
+  }
+  return null;
+}
+
+function uniqueViolation(error) {
+  return ["23505", "ER_DUP_ENTRY"].includes(error?.code);
+}
+
 async function ensureAuthSchema() {
   if (authSchemaReady) return authSchemaReady;
   authSchemaReady = (async () => {
@@ -209,7 +245,7 @@ async function ensureAuthSchema() {
           "ALTER TABLE devices ADD COLUMN terminal_uuid varchar(191)",
           "ALTER TABLE devices ADD COLUMN terminal_secret_hash varchar(64)",
           "ALTER TABLE devices ADD COLUMN app_version varchar(80)",
-          "ALTER TABLE devices ADD COLUMN status enum('active','inactive','revoked') NOT NULL DEFAULT 'active'",
+          "ALTER TABLE devices ADD COLUMN status enum('ACTIVE','DISABLED','REVOKED') NOT NULL DEFAULT 'ACTIVE'",
           "CREATE INDEX devices_status_idx ON devices (status)",
           "CREATE UNIQUE INDEX devices_terminal_uuid_idx ON devices (terminal_uuid)",
           `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
@@ -229,11 +265,15 @@ async function ensureAuthSchema() {
           "ALTER TABLE credentials ADD COLUMN email_verified boolean NOT NULL DEFAULT false",
           "ALTER TABLE credentials ADD COLUMN last_login datetime",
           "ALTER TABLE credentials ADD COLUMN created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP",
+          "ALTER TABLE credentials ADD COLUMN pin_lookup_hash varchar(64)",
           "CREATE INDEX credentials_status_idx ON credentials (status)",
+          "CREATE UNIQUE INDEX credentials_pin_lookup_hash_unique_idx ON credentials (pin_lookup_hash)",
           `CREATE TABLE IF NOT EXISTS user_sessions (
              id varchar(191) PRIMARY KEY,
              user_id varchar(191) NOT NULL,
              token_hash varchar(255) NOT NULL UNIQUE,
+             device_id varchar(191),
+             terminal_uuid varchar(191),
              device_name varchar(255),
              ip_address varchar(80),
              login_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -241,8 +281,12 @@ async function ensureAuthSchema() {
              expires_at datetime NOT NULL,
              is_active boolean NOT NULL DEFAULT true
            )`,
+          "ALTER TABLE user_sessions ADD COLUMN device_id varchar(191)",
+          "ALTER TABLE user_sessions ADD COLUMN terminal_uuid varchar(191)",
           "CREATE INDEX user_sessions_user_active_idx ON user_sessions (user_id, is_active)",
           "CREATE INDEX user_sessions_expires_idx ON user_sessions (expires_at)",
+          "CREATE INDEX user_sessions_terminal_idx ON user_sessions (terminal_uuid, is_active)",
+          "CREATE INDEX user_sessions_device_idx ON user_sessions (device_id, is_active)",
           `CREATE TABLE IF NOT EXISTS auth_audit_log (
              id bigint PRIMARY KEY AUTO_INCREMENT,
              user_id varchar(191),
@@ -317,12 +361,16 @@ async function ensureAuthSchema() {
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS last_login timestamptz",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+          "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS pin_lookup_hash text",
           "CREATE INDEX IF NOT EXISTS credentials_status_idx ON credentials (status)",
+          "CREATE UNIQUE INDEX IF NOT EXISTS credentials_pin_lookup_hash_unique_idx ON credentials (pin_lookup_hash) WHERE pin_lookup_hash IS NOT NULL AND status <> 'deleted'",
           pgMem
             ? `CREATE TABLE IF NOT EXISTS user_sessions (
                id text,
                user_id text,
                token_hash text,
+               device_id text,
+               terminal_uuid text,
                device_name text,
                ip_address text,
                login_time timestamptz,
@@ -334,6 +382,8 @@ async function ensureAuthSchema() {
                id text PRIMARY KEY,
                user_id text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
                token_hash text NOT NULL,
+               device_id text,
+               terminal_uuid text,
                device_name text,
                ip_address text,
                login_time timestamptz NOT NULL DEFAULT now(),
@@ -341,9 +391,13 @@ async function ensureAuthSchema() {
                expires_at timestamptz NOT NULL,
                is_active boolean NOT NULL DEFAULT true
              )`,
+          "ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_id text",
+          "ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS terminal_uuid text",
           "CREATE UNIQUE INDEX IF NOT EXISTS user_sessions_token_hash_idx ON user_sessions (token_hash)",
           "CREATE INDEX IF NOT EXISTS user_sessions_user_active_idx ON user_sessions (user_id, is_active)",
           "CREATE INDEX IF NOT EXISTS user_sessions_expires_idx ON user_sessions (expires_at)",
+          "CREATE INDEX IF NOT EXISTS user_sessions_terminal_idx ON user_sessions (terminal_uuid, is_active)",
+          "CREATE INDEX IF NOT EXISTS user_sessions_device_idx ON user_sessions (device_id, is_active)",
           pgMem
             ? `CREATE TABLE IF NOT EXISTS auth_audit_log (
                id text,
@@ -436,7 +490,7 @@ async function audit(event, req, userId = null, detail = {}) {
   }
 }
 
-async function issueSession(req, account) {
+async function issueSession(req, account, terminal = null) {
   await ensureAuthSchema();
   const { deviceName, ipAddress } = requestMeta(req);
   const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
@@ -449,21 +503,21 @@ async function issueSession(req, account) {
   }
   await q(
     isMySql
-      ? `INSERT INTO user_sessions (id, user_id, token_hash, device_name, ip_address, login_time, last_seen, expires_at, is_active)
-         VALUES ($1,$2,$3,$4,$5,NOW(),NOW(),DATE_ADD(NOW(), INTERVAL $6 DAY),true)`
-      : `INSERT INTO user_sessions (id, user_id, token_hash, device_name, ip_address, login_time, last_seen, expires_at, is_active)
-         VALUES ($1,$2,$3,$4,$5,now(),now(),now() + ($6 || ' days')::interval,true)`,
-    [id, account.id, tokenHash(token), deviceName, ipAddress, SESSION_DAYS]
+      ? `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, device_name, ip_address, login_time, last_seen, expires_at, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),DATE_ADD(NOW(), INTERVAL $8 DAY),true)`
+      : `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, device_name, ip_address, login_time, last_seen, expires_at, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now(),now() + ($8 || ' days')::interval,true)`,
+    [id, account.id, tokenHash(token), terminal?.deviceId || req.deviceId || null, terminal?.terminalUuid || req.terminalUuid || null, deviceName, ipAddress, SESSION_DAYS]
   );
   await q(`UPDATE credentials SET last_login = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [account.id]);
-  await audit("login_success", req, account.id, { sessionId: id });
+  await audit("login_success", req, account.id, { sessionId: id, deviceId: terminal?.deviceId || req.deviceId || null, terminalUuid: terminal?.terminalUuid || req.terminalUuid || null });
   return { id, token, expiresInDays: SESSION_DAYS };
 }
 
 async function accountForSessionToken(token) {
   await ensureAuthSchema();
   const result = await q(
-    `SELECT s.id AS session_id, s.expires_at, s.is_active,
+    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid,
             c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status, c.email_verified
        FROM user_sessions s
        JOIN credentials c ON c.id = s.user_id
@@ -476,6 +530,22 @@ async function accountForSessionToken(token) {
   );
   const row = result.rows[0];
   if (!row) return null;
+  const sessionTerminalUuid = row.terminal_uuid ?? row.terminalUuid ?? null;
+  const sessionDeviceId = row.device_id ?? row.deviceId ?? null;
+  if (sessionTerminalUuid || sessionDeviceId) {
+    const terminalResult = await q(
+      `SELECT device_id, terminal_uuid, status, revoked_at
+         FROM devices
+        WHERE ${sessionTerminalUuid ? "terminal_uuid = $1" : "device_id = $1"}
+        LIMIT 1`,
+      [sessionTerminalUuid || sessionDeviceId]
+    );
+    const terminal = terminalResult.rows[0];
+    if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE") {
+      await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
+      return null;
+    }
+  }
   await q(`UPDATE user_sessions SET last_seen = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.session_id ?? row.sessionId]);
   return { sessionId: row.session_id ?? row.sessionId, account: publicAccount(row) };
 }
@@ -521,10 +591,11 @@ router.post("/device", async (req, res) => {
 
 router.post("/terminal-activations", requireDevice, async (req, res) => {
   await ensureAuthSchema();
-  const branchId = String(req.body?.branchId || "").trim();
+  const branchId = String(req.deviceBranchId || "").trim();
   const terminalName = String(req.body?.terminalName || req.body?.name || "").trim().slice(0, 255);
   const ttlHours = Math.max(1, Math.min(168, parseInt(req.body?.ttlHours || TERMINAL_CODE_TTL_HOURS, 10)));
-  if (!branchId || !terminalName) return res.status(400).json({ error: "branch_and_terminal_name_required" });
+  if (!branchId) return res.status(400).json({ error: "current_branch_required" });
+  if (!terminalName) return res.status(400).json({ error: "terminal_name_required" });
 
   const code = generateActivationCode();
   const id = "tac_" + (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
@@ -626,7 +697,6 @@ router.post("/terminals/:uuid", requireDevice, async (req, res) => {
   const uuid = String(req.params.uuid || "").trim();
   const action = String(req.body?.action || "update").toLowerCase();
   const terminalName = req.body?.terminalName == null ? null : String(req.body.terminalName).trim().slice(0, 255);
-  const branchId = req.body?.branchId == null ? null : String(req.body.branchId).trim();
   if (!uuid) return res.status(400).json({ error: "terminal_uuid_required" });
 
   let status = null;
@@ -638,14 +708,25 @@ router.post("/terminals/:uuid", requireDevice, async (req, res) => {
   const values = [];
   const add = (sql, value) => { values.push(value); fields.push(sql.replace("?", "$" + values.length)); };
   if (terminalName) add("name = ?", terminalName);
-  if (branchId) add("branch_id = ?", branchId);
   if (status) add("status = ?", status);
   if (status === "REVOKED") fields.push(`revoked_at = ${isMySql ? "NOW()" : "now()"}`);
   if (status === "ACTIVE") fields.push("revoked_at = NULL");
   if (!fields.length) return res.status(400).json({ error: "no_terminal_changes" });
   values.push(uuid);
+  const before = await q("SELECT device_id, branch_id, status FROM devices WHERE terminal_uuid = $1 LIMIT 1", [uuid]);
+  const terminal = before.rows[0];
+  if (!terminal) return res.status(404).json({ error: "terminal_not_found" });
   await q(`UPDATE devices SET ${fields.join(", ")} WHERE terminal_uuid = $${values.length}`, values);
-  await audit("terminal_updated", req, null, { terminalUuid: uuid, action, status, terminalName, branchId });
+  if (status === "DISABLED" || status === "REVOKED") {
+    await q(
+      `UPDATE user_sessions
+          SET is_active = false
+        WHERE is_active = true
+          AND (terminal_uuid = $1 OR device_id = $2)`,
+      [uuid, terminal.device_id ?? terminal.deviceId]
+    );
+  }
+  await audit("terminal_updated", req, null, { terminalUuid: uuid, action, status, terminalName, branchId: terminal.branch_id ?? terminal.branchId ?? null });
   res.json({ ok: true });
 });
 
@@ -931,6 +1012,8 @@ router.post("/users", requireDevice, async (req, res) => {
   await ensureAuthSchema();
   const { id, name, role, email, phone, password, pin, branchId, rights = [] } = req.body || {};
   if (!id || !name || !role) return res.status(400).json({ error: "id_name_role_required" });
+  const allowedRoles = new Set(["Cashier", "Supervisor", "Manager", "Admin"]);
+  if (!allowedRoles.has(role)) return res.status(400).json({ error: "invalid_role" });
   const isAdmin = role === "Admin" || id === "admin";
   const isCashier = role === "Cashier" && !isAdmin;
   if (isCashier && !/^\d{4}$/.test(String(pin || ""))) return res.status(400).json({ error: "cashier_pin_required" });
@@ -939,7 +1022,12 @@ router.post("/users", requireDevice, async (req, res) => {
   try {
     const credentialId = isAdmin ? "admin" : id;
     const kind = isAdmin ? "admin" : isCashier ? "cashier" : "user";
+    if (isCashier) {
+      const duplicatePinOwner = await pinAlreadyAssigned(pin, credentialId);
+      if (duplicatePinOwner) return res.status(409).json({ error: "duplicate_pin", ownerId: duplicatePinOwner });
+    }
     const pinHash = isCashier ? await bcrypt.hash(String(pin), ROUNDS) : null;
+    const pinLookup = isCashier ? pinLookupHash(pin) : null;
     const passwordHash = !isCashier ? await bcrypt.hash(String(password), ROUNDS) : null;
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
@@ -948,40 +1036,44 @@ router.post("/users", requireDevice, async (req, res) => {
 
     if (isMySql) {
       await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, pin_lookup_hash, password_hash, branch_id, rights)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON DUPLICATE KEY UPDATE
            kind = VALUES(kind),
            name = VALUES(name),
            email = VALUES(email),
            phone = VALUES(phone),
            pin_hash = VALUES(pin_hash),
+           pin_lookup_hash = VALUES(pin_lookup_hash),
            password_hash = VALUES(password_hash),
            branch_id = VALUES(branch_id),
            rights = VALUES(rights),
            updated_at = NOW()`,
-        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, passwordHash, credentialBranchId, rightsPayload]
+        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, pinLookup, passwordHash, credentialBranchId, rightsPayload]
       );
     } else {
       await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, password_hash, branch_id, rights)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO credentials (id, kind, name, email, phone, pin_hash, pin_lookup_hash, password_hash, branch_id, rights)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT (id) DO UPDATE SET
            kind = EXCLUDED.kind,
            name = EXCLUDED.name,
            email = EXCLUDED.email,
            phone = EXCLUDED.phone,
            pin_hash = EXCLUDED.pin_hash,
+           pin_lookup_hash = EXCLUDED.pin_lookup_hash,
            password_hash = EXCLUDED.password_hash,
            branch_id = EXCLUDED.branch_id,
            rights = EXCLUDED.rights,
            updated_at = now()`,
-        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, passwordHash, credentialBranchId, rightsPayload]
+        [credentialId, kind, String(name).trim(), normalizedEmail, normalizedPhone, pinHash, pinLookup, passwordHash, credentialBranchId, rightsPayload]
       );
     }
+    await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [credentialId]);
     const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [credentialId]);
     res.json({ ok: true, account: publicAccount(result.rows[0]) });
   } catch (error) {
+    if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
     console.error("upsert user credential failed:", error);
     res.status(error.statusCode || 500).json({ error: error.message || "upsert_user_failed" });
   }
@@ -1106,6 +1198,7 @@ router.post("/fingerprints/templates", requireDevice, async (_req, res) => {
 router.post("/fingerprints/login", async (req, res) => {
   await ensureAuthSchema();
   const userId = String(req.body?.userId || "").trim();
+  const requestedBranchId = req.body?.branchId || null;
   const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
   if (!userId) return res.status(400).json({ error: "user_required" });
   try {
@@ -1122,8 +1215,21 @@ router.post("/fingerprints/login", async (req, res) => {
       await audit("fingerprint_failed", req, userId || null, { reason: "user_or_template_not_found", deviceSerial });
       return res.status(401).json({ error: "fingerprint_not_recognized" });
     }
+    let terminal = null;
+    if (row.kind !== "admin") {
+      terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
+      if (terminal.error) {
+        await audit("fingerprint_failed", req, userId, { reason: terminal.error, deviceSerial });
+        return res.status(401).json({ error: terminal.error });
+      }
+      const rowBranchId = row.branch_id ?? row.branchId ?? null;
+      if (!terminal.branchId || rowBranchId !== terminal.branchId || (requestedBranchId && requestedBranchId !== terminal.branchId)) {
+        await audit("fingerprint_failed", req, userId, { reason: "terminal_branch_mismatch", deviceSerial, branchId: requestedBranchId || rowBranchId, terminalId: terminal.deviceId });
+        return res.status(403).json({ error: "terminal_branch_mismatch" });
+      }
+    }
     const account = publicAccount(row);
-    const session = await issueSession(req, account);
+    const session = await issueSession(req, account, terminal);
     await audit("fingerprint_login", req, account.id, { deviceSerial, sessionId: session.id });
     res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
   } catch (error) {
@@ -1179,12 +1285,12 @@ router.post("/login", async (req, res) => {
         await audit("login_failed", req, null, { mode: "pin", reason: terminal.error, branchId: branchId || null });
         return res.status(401).json({ error: terminal.error });
       }
-      const effectiveBranchId = branchId || terminal.branchId || null;
+      const effectiveBranchId = terminal.branchId || null;
       if (!effectiveBranchId) {
         await audit("login_failed", req, null, { mode: "pin", reason: "terminal_branch_required", terminalId: terminal.deviceId });
         return res.status(403).json({ error: "terminal_branch_required" });
       }
-      if (terminal.branchId && branchId && terminal.branchId !== branchId) {
+      if (branchId && terminal.branchId !== branchId) {
         await audit("login_failed", req, null, { mode: "pin", reason: "terminal_branch_mismatch", branchId, terminalId: terminal.deviceId });
         return res.status(403).json({ error: "terminal_branch_mismatch" });
       }
@@ -1206,7 +1312,7 @@ router.post("/login", async (req, res) => {
         if (!matchesCredentialIdentifier(row, identifier)) continue;
         if (await bcrypt.compare(pin, row.pin_hash)) {
           const account = publicAccount(row);
-          const session = await issueSession(req, account);
+          const session = await issueSession(req, account, terminal);
           return res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
         }
       }

@@ -43,6 +43,10 @@ function branchProductId(branchId, productId) {
   return `bp_${branchId}_${productId}`.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 180);
 }
 
+function requestBranchId(req) {
+  return req.terminalUuid ? req.deviceBranchId : (req.body?.branchId || req.deviceBranchId);
+}
+
 async function findProductByCatalog(client, barcodeCatalogId) {
   const result = await client.query(
     "SELECT id FROM products WHERE barcode_catalog_id = $1 AND status = 'active' ORDER BY created_at ASC, id ASC LIMIT 1",
@@ -111,7 +115,7 @@ router.use(requireDevice);
 router.post("/resolve", async (req, res, next) => {
   try {
     const barcode = normalizeBarcode(req.body?.barcode);
-    const branchId = req.body?.branchId || req.deviceBranchId;
+    const branchId = requestBranchId(req);
     if (!validBarcode(barcode)) return res.status(400).json({ error: "invalid_barcode" });
     if (!branchId) return res.status(400).json({ error: "branch_required" });
 
@@ -183,7 +187,7 @@ router.post("/catalog", async (req, res, next) => {
 router.post("/products", async (req, res, next) => {
   try {
     const barcode = normalizeBarcode(req.body?.barcode);
-    const branchId = req.body?.branchId || req.deviceBranchId;
+    const branchId = requestBranchId(req);
     if (!validBarcode(barcode)) return res.status(400).json({ error: "invalid_barcode" });
     if (!branchId) return res.status(400).json({ error: "branch_required" });
     if (!String(req.body?.name || "").trim()) return res.status(400).json({ error: "name_required" });

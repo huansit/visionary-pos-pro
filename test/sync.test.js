@@ -28,6 +28,7 @@ after(async () => {
 const state = {
   tokenA: null,
   tokenB: null,
+  tokenC: null,
   terminal: null,
   loginTerminal: null,
   invoice: {
@@ -42,7 +43,7 @@ const state = {
 async function activateTestTerminal(name = "SIPCITY Cashier Till", branchId = "b_sip") {
   const activation = await request(app)
     .post("/api/auth/terminal-activations")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+    .set("Authorization", `Bearer ${branchId === "b_cpt" ? state.tokenC : state.tokenA}`)
     .send({ branchId, terminalName: name })
     .expect(200);
 
@@ -86,6 +87,19 @@ test("1. registers two devices via /api/auth/device", async () => {
   assert.equal(deviceB.body.deviceId, "device-b");
   assert.ok(deviceB.body.token);
   state.tokenB = deviceB.body.token;
+
+  const deviceC = await request(app)
+    .post("/api/auth/device")
+    .send({
+      deviceId: "device-c",
+      name: "Cape Town Register",
+      branchId: "b_cpt",
+      setupKey: "test-setup-key",
+    })
+    .expect(200);
+  assert.equal(deviceC.body.deviceId, "device-c");
+  assert.ok(deviceC.body.token);
+  state.tokenC = deviceC.body.token;
 });
 
 test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
@@ -116,6 +130,55 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
     .expect(200)
     .expect((res) => {
       assert.ok(res.body.terminals.some((terminal) => terminal.uuid === state.terminal.uuid));
+    });
+});
+
+test("1c. terminal branch is server-owned and cannot be changed by clients", async () => {
+  const activation = await request(app)
+    .post("/api/auth/terminal-activations")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_cpt", terminalName: "Spoofed Branch Till" })
+    .expect(200);
+  assert.equal(activation.body.branchId, "b_sip");
+
+  const spoofed = await request(app)
+    .post("/api/auth/terminals/activate")
+    .send({ activationCode: activation.body.code, appVersion: "2.0.2" })
+    .expect(200);
+  assert.equal(spoofed.body.terminal.branchId, "b_sip");
+
+  await request(app)
+    .post(`/api/auth/terminals/${spoofed.body.terminal.uuid}`)
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ branchId: "b_cpt", terminalName: "Still SIP Till" })
+    .expect(200);
+
+  await request(app)
+    .get("/api/auth/terminals")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .expect(200)
+    .expect((res) => {
+      const terminal = res.body.terminals.find((item) => item.uuid === spoofed.body.terminal.uuid);
+      assert.equal(terminal.branchId, "b_sip");
+      assert.equal(terminal.terminalName, "Still SIP Till");
+    });
+});
+
+test("1d. terminal sync cannot submit transactions for a different branch", async () => {
+  await withTerminalAuth(request(app).post("/api/sync/push"), state.terminal)
+    .send({
+      events: [{
+        id: "inv-cross-branch-rejected",
+        type: "invoice",
+        branchId: "b_cpt",
+        clientTs: 1100,
+        payload: { branchId: "b_cpt", totalCents: 1000 },
+      }],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.reason, "terminal_branch_mismatch");
     });
 });
 
@@ -628,6 +691,24 @@ test("10. user credentials created on one device work for login on another devic
     });
 });
 
+test("10b. cashier PINs must be unique", async () => {
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      id: "duplicate-pin-cashier",
+      name: "Duplicate Pin Cashier",
+      role: "Cashier",
+      pin: "7788",
+      branchId: "b_sip",
+      rights: ["sell"],
+    })
+    .expect(409)
+    .expect((res) => {
+      assert.equal(res.body.error, "duplicate_pin");
+    });
+});
+
 test("11. cloud login sessions can be validated and revoked", async () => {
   const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
@@ -652,6 +733,28 @@ test("11. cloud login sessions can be validated and revoked", async () => {
   await request(app)
     .post("/api/auth/session")
     .send({ sessionToken: token })
+    .expect(401);
+});
+
+test("11b. revoking a terminal invalidates employee sessions from that terminal", async () => {
+  const terminal = await activateTestTerminal("Session Revoke Till");
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal)
+    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
+    .expect(200);
+
+  await request(app)
+    .post(`/api/auth/terminals/${terminal.uuid}`)
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ action: "revoke" })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/session")
+    .send({ sessionToken: login.body.sessionToken })
+    .expect(401);
+
+  await withTerminalAuth(request(app).post("/api/sync/push"), terminal)
+    .send({ events: [] })
     .expect(401);
 });
 
@@ -707,9 +810,13 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
       assert.equal(hit.template, template);
     });
 
-  const login = await request(app)
+  await request(app)
     .post("/api/auth/fingerprints/login")
     .send({ userId: "cashier-cloud-001", deviceSerial: "HAMSTER-001" })
+    .expect(401);
+
+  const login = await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
+    .send({ userId: "cashier-cloud-001", branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
   assert.ok(login.body.sessionToken);
 

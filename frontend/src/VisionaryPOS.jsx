@@ -7302,7 +7302,8 @@ function TerminalsTab({ data, isAdmin }) {
   const [terminals, setTerminals] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [activation, setActivation] = useState({ terminalName: "", branchId: data.branches[0]?.id || "", code: "" });
+  const currentBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
+  const [activation, setActivation] = useState({ terminalName: "", code: "" });
   const loadTerminals = async () => {
     if (!isAdmin) return;
     setBusy(true);
@@ -7317,10 +7318,11 @@ function TerminalsTab({ data, isAdmin }) {
     }
   };
   const generateActivation = async () => {
-    if (!activation.terminalName.trim() || !activation.branchId) return setMsg("Enter terminal name and branch.");
+    if (!currentBranch?.id) return setMsg("Select your working branch before generating a terminal code.");
+    if (!activation.terminalName.trim()) return setMsg("Enter terminal name.");
     setBusy(true);
     try {
-      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim(), branchId: activation.branchId }, { device: true });
+      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim() }, { device: true });
       setActivation((p) => ({ ...p, code: result.code || "" }));
       setMsg("Activation code generated. Open VISIONPOS Cashier and enter this code once.");
     } catch (error) {
@@ -7332,7 +7334,9 @@ function TerminalsTab({ data, isAdmin }) {
   const updateTerminal = async (terminal, patch) => {
     setBusy(true);
     try {
-      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), patch, { device: true });
+      const safePatch = { ...patch };
+      delete safePatch.branchId;
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { device: true });
       await loadTerminals();
     } catch (error) {
       setMsg("Terminal update failed: " + error.message);
@@ -7344,12 +7348,12 @@ function TerminalsTab({ data, isAdmin }) {
   if (!isAdmin) return <div><PageHead title="Terminals" sub="Only the owner admin can manage cashier terminals." /><div className="notice">Sign in as the owner admin to generate terminal activation codes.</div></div>;
   return (
     <div>
-      <PageHead title="Terminals" sub="Register cashier desktop apps, assign them to branches, and revoke lost devices." />
+      <PageHead title="Terminals" sub="Register cashier desktop apps for the current branch and revoke lost devices." />
       <div className="addpanel fade" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ marginTop: 0 }}>Generate activation code</div>
         <div className="grid3">
           <div><label className="label">Terminal name</label><input className="input" value={activation.terminalName} onChange={(e) => setActivation({ ...activation, terminalName: e.target.value, code: "" })} placeholder="SIPCITY Till 1" /></div>
-          <div><label className="label">Branch</label><select className="select" value={activation.branchId} onChange={(e) => setActivation({ ...activation, branchId: e.target.value, code: "" })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <div><label className="label">Branch</label><div className="notice" style={{ minHeight: 56, display: "flex", alignItems: "center", margin: 0 }}><Building2 style={{ width: 16, height: 16 }} /> {currentBranch?.name || "No branch selected"}</div></div>
           <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" disabled={busy} onClick={generateActivation}><KeyRound /> Generate code</button></div>
         </div>
         {activation.code && (
@@ -7365,7 +7369,7 @@ function TerminalsTab({ data, isAdmin }) {
           {terminals.length === 0 ? <tr><td colSpan="6">No activated terminals yet. Generate a code, then activate the desktop app.</td></tr> : terminals.map((t) => (
             <tr key={t.uuid}>
               <td><b>{t.terminalName}</b><div className="muted mono">{String(t.uuid || "").slice(0, 8)}...</div></td>
-              <td><select className="select" value={t.branchId || ""} onChange={(e) => updateTerminal(t, { branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
+              <td>{bn(t.branchId) || "Unassigned"}</td>
               <td><span className={"ist " + (t.status === "ACTIVE" ? "paid" : t.status === "DISABLED" ? "hold" : "bad")}>{t.status}</span></td>
               <td>{t.appVersion || "-"}</td>
               <td>{t.lastSeen ? new Date(t.lastSeen).toLocaleString() : "Never"}</td>
@@ -7397,13 +7401,17 @@ function UsersTab({ data, update, isAdmin }) {
   const [terminals, setTerminals] = useState([]);
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [terminalMsg, setTerminalMsg] = useState("");
-  const [activation, setActivation] = useState({ terminalName: "", branchId: data.branches[0]?.id || "", code: "" });
+  const terminalBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
+  const [activation, setActivation] = useState({ terminalName: "", code: "" });
   const visibleEmployees = activeEmployees(data);
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
       await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
     } catch (error) {
-      setErr("User saved locally, but cloud login was not updated: " + error.message);
+      const msg = String(error.message || "");
+      setErr(msg.includes("duplicate_pin")
+        ? "User saved locally, but cloud login was not updated: that PIN is already assigned to another employee."
+        : "User saved locally, but cloud login was not updated: " + error.message);
     }
   };
   const openCred = (id) => { setCredEdit(id); setCredVal(""); setCredErr(""); setEditRights(null); };
@@ -7528,10 +7536,11 @@ function UsersTab({ data, update, isAdmin }) {
     }
   };
   const generateActivation = async () => {
-    if (!activation.terminalName.trim() || !activation.branchId) return setTerminalMsg("Enter terminal name and branch.");
+    if (!terminalBranch?.id) return setTerminalMsg("Select your working branch before generating a terminal code.");
+    if (!activation.terminalName.trim()) return setTerminalMsg("Enter terminal name.");
     setTerminalBusy(true);
     try {
-      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim(), branchId: activation.branchId }, { device: true });
+      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim() }, { device: true });
       setActivation((p) => ({ ...p, code: result.code || "" }));
       setTerminalMsg("Activation code generated. Use it once on the desktop app.");
     } catch (error) {
@@ -7543,7 +7552,9 @@ function UsersTab({ data, update, isAdmin }) {
   const updateTerminal = async (terminal, patch) => {
     setTerminalBusy(true);
     try {
-      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), patch, { device: true });
+      const safePatch = { ...patch };
+      delete safePatch.branchId;
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { device: true });
       await loadTerminals();
     } catch (error) {
       setTerminalMsg("Terminal update failed: " + error.message);
@@ -7582,7 +7593,7 @@ function UsersTab({ data, update, isAdmin }) {
           </div>
           <div className="grid3">
             <div><label className="label">Terminal name</label><input className="input" value={activation.terminalName} onChange={(e) => setActivation({ ...activation, terminalName: e.target.value, code: "" })} placeholder="Main Till 1" /></div>
-            <div><label className="label">Branch</label><select className="select" value={activation.branchId} onChange={(e) => setActivation({ ...activation, branchId: e.target.value, code: "" })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div><label className="label">Branch</label><div className="notice" style={{ minHeight: 56, display: "flex", alignItems: "center", margin: 0 }}><Building2 style={{ width: 16, height: 16 }} /> {terminalBranch?.name || "No branch selected"}</div></div>
             <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" disabled={terminalBusy} onClick={generateActivation}><KeyRound /> Generate code</button></div>
           </div>
           {activation.code && <div className="notice" style={{ marginTop: 12, fontSize: 18, fontWeight: 900, letterSpacing: ".08em", textAlign: "center" }}>{activation.code}</div>}
@@ -7592,7 +7603,7 @@ function UsersTab({ data, update, isAdmin }) {
               {terminals.length === 0 ? <tr><td colSpan="6">No activated terminals yet.</td></tr> : terminals.map((t) => (
                 <tr key={t.uuid}>
                   <td><b>{t.terminalName}</b><div className="muted mono">{String(t.uuid || "").slice(0, 8)}...</div></td>
-                  <td><select className="select" value={t.branchId || ""} onChange={(e) => updateTerminal(t, { branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></td>
+                  <td>{bn(t.branchId) || "Unassigned"}</td>
                   <td><span className={"ist " + (t.status === "ACTIVE" ? "paid" : t.status === "DISABLED" ? "hold" : "bad")}>{t.status}</span></td>
                   <td>{t.appVersion || "-"}</td>
                   <td>{t.lastSeen ? new Date(t.lastSeen).toLocaleString() : "Never"}</td>

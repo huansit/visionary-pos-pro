@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   email         varchar(255),
   phone         varchar(80),
   pin_hash      varchar(255),
+  pin_lookup_hash varchar(64),
   password_hash varchar(255),
   branch_id     varchar(191),
   rights        json NOT NULL,
@@ -130,11 +131,14 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE UNIQUE INDEX credentials_email_idx ON credentials (email);
 CREATE INDEX credentials_phone_idx ON credentials (phone);
 CREATE INDEX credentials_status_idx ON credentials (status);
+CREATE UNIQUE INDEX credentials_pin_lookup_hash_unique_idx ON credentials (pin_lookup_hash);
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id           varchar(191) PRIMARY KEY,
   user_id      varchar(191) NOT NULL,
   token_hash   varchar(255) NOT NULL UNIQUE,
+  device_id    varchar(191),
+  terminal_uuid varchar(191),
   device_name  varchar(255),
   ip_address   varchar(80),
   login_time   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -146,6 +150,8 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 
 CREATE INDEX user_sessions_user_active_idx ON user_sessions (user_id, is_active);
 CREATE INDEX user_sessions_expires_idx ON user_sessions (expires_at);
+CREATE INDEX user_sessions_terminal_idx ON user_sessions (terminal_uuid, is_active);
+CREATE INDEX user_sessions_device_idx ON user_sessions (device_id, is_active);
 
 CREATE TABLE IF NOT EXISTS auth_audit_log (
   id          bigint PRIMARY KEY AUTO_INCREMENT,

@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   email         text,
   phone         text,
   pin_hash      text,
+  pin_lookup_hash text,
   password_hash text,
   branch_id     text,
   rights        jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -150,11 +151,16 @@ CREATE TABLE IF NOT EXISTS credentials (
 CREATE UNIQUE INDEX IF NOT EXISTS credentials_email_idx ON credentials (lower(email)) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS credentials_phone_idx ON credentials (phone) WHERE phone IS NOT NULL;
 CREATE INDEX IF NOT EXISTS credentials_status_idx ON credentials (status);
+CREATE UNIQUE INDEX IF NOT EXISTS credentials_pin_lookup_hash_unique_idx
+  ON credentials (pin_lookup_hash)
+  WHERE pin_lookup_hash IS NOT NULL AND status <> 'deleted';
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id           text PRIMARY KEY,
   user_id      text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
   token_hash   text NOT NULL,
+  device_id    text,
+  terminal_uuid text,
   device_name  text,
   ip_address   text,
   login_time   timestamptz NOT NULL DEFAULT now(),
@@ -166,6 +172,8 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 CREATE UNIQUE INDEX IF NOT EXISTS user_sessions_token_hash_idx ON user_sessions (token_hash);
 CREATE INDEX IF NOT EXISTS user_sessions_user_active_idx ON user_sessions (user_id, is_active);
 CREATE INDEX IF NOT EXISTS user_sessions_expires_idx ON user_sessions (expires_at);
+CREATE INDEX IF NOT EXISTS user_sessions_terminal_idx ON user_sessions (terminal_uuid, is_active);
+CREATE INDEX IF NOT EXISTS user_sessions_device_idx ON user_sessions (device_id, is_active);
 
 CREATE TABLE IF NOT EXISTS auth_audit_log (
   id          bigserial PRIMARY KEY,

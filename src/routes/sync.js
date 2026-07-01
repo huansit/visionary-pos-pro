@@ -68,6 +68,28 @@ function hasPlainCredential(ev) {
   return "password" in payload || "pin" in payload || "plainPassword" in payload || "plainPin" in payload;
 }
 
+function eventBranchId(ev) {
+  return ev?.branchId ?? ev?.payload?.branchId ?? null;
+}
+
+function enforceTerminalBranch(req, ev, type) {
+  if (!req.terminalUuid || !req.deviceBranchId) return { ok: true, event: ev };
+  const submittedBranchId = eventBranchId(ev);
+  if (submittedBranchId && submittedBranchId !== req.deviceBranchId) {
+    return { ok: false, reason: "terminal_branch_mismatch" };
+  }
+  const payload = { ...(ev.payload || {}) };
+  if (EVENT_TYPES.has(type) || payload.branchId) payload.branchId = req.deviceBranchId;
+  return {
+    ok: true,
+    event: {
+      ...ev,
+      branchId: req.deviceBranchId,
+      payload,
+    },
+  };
+}
+
 router.post("/push", async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
@@ -87,20 +109,26 @@ router.post("/push", async (req, res) => {
       }
 
       const type = normalizeType(ev.type);
+      const branchGuard = enforceTerminalBranch(req, ev, type);
+      if (!branchGuard.ok) {
+        rejected.push({ id: ev.id, type, reason: branchGuard.reason });
+        continue;
+      }
+      const guardedEvent = branchGuard.event;
       if (hasPlainCredential(ev)) {
         rejected.push({ id: ev.id, type, reason: "plain_password_or_pin_not_allowed" });
         continue;
       }
 
       if (EVENT_TYPES.has(type)) {
-        const ts = await insertAppendOnlyEvent(client, ev, type, req.deviceId, nextServerTs());
-        accepted.push(ev.id);
-        serverTs[ev.id] = ts;
+        const ts = await insertAppendOnlyEvent(client, guardedEvent, type, req.deviceId, nextServerTs());
+        accepted.push(guardedEvent.id);
+        serverTs[guardedEvent.id] = ts;
       } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
-        const ts = await upsertMutableRecord(client, ev, type, req.deviceId, nextServerTs());
-        if (type === "product") await propagateProductGlobalFields(client, ev, req.deviceId, ts);
-        accepted.push(ev.id);
-        serverTs[ev.id] = ts;
+        const ts = await upsertMutableRecord(client, guardedEvent, type, req.deviceId, nextServerTs());
+        if (type === "product") await propagateProductGlobalFields(client, guardedEvent, req.deviceId, ts);
+        accepted.push(guardedEvent.id);
+        serverTs[guardedEvent.id] = ts;
       } else {
         rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
       }
