@@ -888,6 +888,40 @@ function desktopDownloadConfig() {
     ],
   };
 }
+function applyDesktopReleaseManifest(current, manifest) {
+  if (!manifest || typeof manifest !== "object") return current;
+  const version = manifest.version || current.version;
+  const windowsUrl = manifest.installer || current.apps.find((app) => app.platform === "Windows")?.url || "/downloads/VISIONPOS-Cashier-Setup.exe";
+  const releaseNotes = Array.isArray(manifest.releaseNotes) && manifest.releaseNotes.length ? manifest.releaseNotes : current.releaseNotes;
+  return {
+    ...current,
+    version,
+    releaseNotes,
+    apps: current.apps.map((app) => {
+      if (app.platform !== "Windows") return app;
+      return {
+        ...app,
+        url: windowsUrl,
+        available: Boolean(windowsUrl),
+        version,
+      };
+    }),
+  };
+}
+function useDesktopDownloads() {
+  const [downloads, setDownloads] = useState(() => desktopDownloadConfig());
+  useEffect(() => {
+    let active = true;
+    fetch("/downloads/release.json?v=" + Date.now(), { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        if (active && manifest) setDownloads((current) => applyDesktopReleaseManifest(current, manifest));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  return downloads;
+}
 function getOrCreateDeviceId() {
   const ls = typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
   if (!ls) return "device-" + Math.random().toString(36).slice(2);
@@ -2842,7 +2876,7 @@ function AuthShellV3({ children }) {
   );
 }
 function DesktopDownloadSection() {
-  const downloads = desktopDownloadConfig();
+  const downloads = useDesktopDownloads();
   const windows = downloads.apps.find((app) => app.platform === "Windows");
   return (
     <section className="authdownload-card" aria-label="Cashier desktop application download">
@@ -2860,7 +2894,7 @@ function DesktopDownloadSection() {
   );
 }
 function DownloadsPage() {
-  const downloads = desktopDownloadConfig();
+  const downloads = useDesktopDownloads();
   const configuredApps = downloads.apps;
   const notes = Array.isArray(downloads.releaseNotes) ? downloads.releaseNotes : String(downloads.releaseNotes || "").split("|").map((item) => item.trim()).filter(Boolean);
   return (
