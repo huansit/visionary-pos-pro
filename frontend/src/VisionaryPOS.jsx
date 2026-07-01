@@ -7302,6 +7302,7 @@ function TerminalsTab({ data, isAdmin }) {
   const [terminals, setTerminals] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const currentBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
   const [activation, setActivation] = useState({ terminalName: "", code: "" });
   const loadTerminals = async () => {
