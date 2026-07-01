@@ -3104,20 +3104,24 @@ body {
   grid-template-columns: 78px minmax(520px, 1fr) var(--vp-right);
 }
 
-.sidebar-collapse {
-  min-height: 38px;
+.sidebar-menu-button {
+  width: 46px;
+  height: 42px;
+  display: inline-grid;
+  place-items: center;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   background: #fff;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 900;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
 }
 
-.card.dark .sidebar-collapse,
-.left-panel > .sidebar-collapse {
-  width: 100%;
+.left-panel > .sidebar-menu-button {
   margin: 0 0 2px;
+}
+
+.layout.left-collapsed .sidebar-menu-button {
+  width: 100%;
 }
 
 .mini-sidebar {
@@ -3143,11 +3147,13 @@ body {
   color: #7dd3fc;
 }
 
-.open-invoices {
+.open-invoices,
+.sales-summary {
   min-height: clamp(210px, 34vh, 300px);
 }
 
-.open-invoices .card-head strong {
+.open-invoices .card-head strong,
+.sales-summary .card-head strong {
   font-size: clamp(18px, 1.25vw, 22px);
 }
 

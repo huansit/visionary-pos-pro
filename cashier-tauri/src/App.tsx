@@ -13,6 +13,7 @@ import {
   KeyRound,
   Lock,
   LogOut,
+  Menu,
   MonitorCheck,
   Search,
   Server,
@@ -278,7 +279,6 @@ export default function App() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
-  const [openInvoicesOpen, setOpenInvoicesOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
@@ -301,6 +301,8 @@ export default function App() {
   const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [myInvoices]);
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
+  const debtTrackerTotal = openInvoiceTotal + carriedDebtTotal;
+  const salesInvoiceTotal = myInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
 
   const categories = useMemo(() => {
     const names = Array.from(new Set(products.map((product) => product.category || "Uncategorised").filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -642,68 +644,49 @@ export default function App() {
 
       <section className={"layout" + (leftCollapsed ? " left-collapsed" : "")}>
         <aside className="left-panel">
-          <button className="sidebar-collapse" onClick={() => setLeftCollapsed((value) => !value)}>
-            {leftCollapsed ? "Show sidebar" : "Collapse sidebar"}
+          <button
+            className="sidebar-menu-button"
+            onClick={() => setLeftCollapsed((value) => !value)}
+            aria-label={leftCollapsed ? "Open cashier sidebar" : "Collapse cashier sidebar"}
+            title={leftCollapsed ? "Open menu" : "Collapse menu"}
+          >
+            <Menu size={22} />
           </button>
           {leftCollapsed ? (
             <div className="mini-sidebar">
-              <button onClick={() => setOpenInvoicesOpen(true)}><FileText size={18} /><span>{openInvoices.length}</span></button>
+              <button title="Sales"><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
               <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span><span>{carriedDebts.length}</span></button>
               <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} /></button>
               <button onClick={handleLogout}><LogOut size={18} /></button>
             </div>
           ) : (
           <>
-          <div
-            className="card dark open-invoices clickable-card"
-            role="button"
-            tabIndex={0}
-            onClick={() => setOpenInvoicesOpen(true)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                setOpenInvoicesOpen(true);
-              }
-            }}
-          >
+          <div className="card dark sales-summary">
             <div className="card-head">
               <div>
-                <h3>Open invoices</h3>
+                <h3>Sales</h3>
                 <strong>{branch?.name || terminal.branchId}</strong>
               </div>
-              <button
-                className={"scanner-pill" + (scannerOn ? " on" : "")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setScannerOn((value) => !value);
-                }}
-              >
-                <Barcode size={15} />{scannerOn ? "On" : "Off"}
-              </button>
             </div>
             <div className="invoice-total">
-              <span>{openInvoices.length} unpaid invoice{openInvoices.length === 1 ? "" : "s"}</span>
-              <b>{money(openInvoiceTotal)}</b>
+              <span>{myInvoices.length} invoice{myInvoices.length === 1 ? "" : "s"} recorded</span>
+              <b>{money(salesInvoiceTotal)}</b>
             </div>
-            {openInvoices.length === 0 ? (
+            {myInvoices.length === 0 ? (
               <div className="invoice-empty">
-                <b>No open invoices</b>
-                <span>Paid and closed invoices stay out of the cashier workspace.</span>
+                <b>No sales yet</b>
+                <span>Invoice totals recorded by this cashier will appear here.</span>
               </div>
             ) : (
               <div className="invoice-list">
-                {openInvoices.slice(0, 8).map((invoice) => (
-                  <button
+                {myInvoices.slice(0, 8).map((invoice) => (
+                  <div
                     key={invoice.id}
                     className="invoice-row"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOpenInvoicesOpen(true);
-                    }}
                   >
                     <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
-                    <strong>{money(outstanding(invoice))}</strong>
-                  </button>
+                    <strong>{money(invoice.totalCents)}</strong>
+                  </div>
                 ))}
               </div>
             )}
@@ -732,15 +715,15 @@ export default function App() {
                 View
               </button>
             </div>
-            <div className="debt-line"><span>Carried-over debts</span><b>{money(carriedDebtTotal)}</b></div>
-            <p>{carriedDebts.length} unpaid carried-over invoice{carriedDebts.length === 1 ? "" : "s"}</p>
-            {carriedDebts.length === 0 && <p>No carried-over debts for your login.</p>}
+            <div className="debt-line"><span>Open invoices & debts</span><b>{money(debtTrackerTotal)}</b></div>
+            <p>{openInvoices.length} open invoice{openInvoices.length === 1 ? "" : "s"} · {carriedDebts.length} carried over</p>
+            {openInvoices.length + carriedDebts.length === 0 && <p>No open invoices or carried-over debts for your login.</p>}
           </div>
           <div className="card dark quick-actions">
             <h3>Quick Actions</h3>
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
-            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
+            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{debtTrackerTotal > 0 ? ` - ${money(debtTrackerTotal)}` : ""}</button>
             <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
             <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
@@ -847,7 +830,7 @@ export default function App() {
           }}
         />
       )}
-      {(openInvoicesOpen || debtsOpen) && (
+      {debtsOpen && (
         <DebtsAndInvoicesModal
           cashierName={account.name}
           openInvoices={openInvoices}
@@ -855,7 +838,6 @@ export default function App() {
           openTotalCents={openInvoiceTotal}
           carriedTotalCents={carriedDebtTotal}
           onClose={() => {
-            setOpenInvoicesOpen(false);
             setDebtsOpen(false);
             focusSearch();
           }}
