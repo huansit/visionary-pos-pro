@@ -3,7 +3,7 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.12";
+export const APP_VERSION = "2.0.13";
 
 export function connectSyncStream(terminal: TerminalCredentials, onSync: () => void, onState?: (state: "connected" | "reconnecting") => void) {
   const controller = new AbortController();

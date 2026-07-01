@@ -637,8 +637,10 @@ export default function App() {
         <div className="topmeta">
           <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
           <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
-          <button className="update-chip" onClick={() => checkForUpdates(true)} title={`Check updates. Running ${APP_VERSION}`}><Download size={16} />v{APP_VERSION}</button>
-          <button className="window-close-button" onClick={handleCloseApp} title="Close app" aria-label="Close app"><X size={20} /></button>
+          <div className={"header-online " + (realtimeState === "connected" ? "online" : "reconnecting")}>
+            <i />
+            <span>{realtimeState === "connected" ? "Online" : "Reconnecting"}</span>
+          </div>
         </div>
       </header>
 
