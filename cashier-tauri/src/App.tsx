@@ -26,6 +26,7 @@ import {
   X
 } from "lucide-react";
 import {
+  API_BASE_URL,
   APP_VERSION,
   activateTerminal,
   connectSyncStream,
@@ -47,7 +48,15 @@ type UpdatePrompt = {
   version: string;
   currentVersion: string;
   releaseNotes: string[];
-  update: NonNullable<Awaited<ReturnType<typeof check>>>;
+  update?: NonNullable<Awaited<ReturnType<typeof check>>>;
+  installerUrl?: string;
+  nativeInstall: boolean;
+};
+
+type ReleaseManifest = {
+  version?: string;
+  installer?: string;
+  releaseNotes?: string[];
 };
 
 function money(cents: number) {
@@ -64,6 +73,44 @@ function logUpdateEvent(event: string, details: Record<string, unknown> = {}) {
     localStorage.setItem(UPDATE_LOG_KEY, JSON.stringify([entry]));
   }
   console.info("[visionpos:update]", entry);
+}
+
+function compareVersions(left: string, right: string) {
+  const a = left.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const b = right.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const max = Math.max(a.length, b.length);
+  for (let index = 0; index < max; index += 1) {
+    const diff = (a[index] || 0) - (b[index] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function absoluteDownloadUrl(path = "/downloads/VISIONPOS-Cashier-Setup.exe") {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+async function checkReleaseManifest(): Promise<UpdatePrompt | null> {
+  const response = await fetch(`${API_BASE_URL}/downloads/release.json?v=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache"
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`release_manifest_${response.status}`);
+  }
+  const manifest = await response.json() as ReleaseManifest;
+  if (!manifest.version || compareVersions(manifest.version, APP_VERSION) <= 0) return null;
+  return {
+    version: manifest.version,
+    currentVersion: APP_VERSION,
+    releaseNotes: Array.isArray(manifest.releaseNotes) ? manifest.releaseNotes : [],
+    installerUrl: absoluteDownloadUrl(manifest.installer),
+    nativeInstall: false
+  };
 }
 
 function escapeHtml(value: string) {
@@ -368,17 +415,45 @@ export default function App() {
           version: update.version,
           currentVersion: APP_VERSION,
           releaseNotes: update.body ? update.body.split(/\r?\n/).filter(Boolean) : [],
-          update
+          update,
+          nativeInstall: true
         });
         if (manual) setStatus(`Update ${update.version} is available.`);
-      } else if (manual) {
-        logUpdateEvent("already_current", { currentVersion: APP_VERSION });
-        setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
-        setLatestUpdateNotice(true);
+      } else {
+        const manifestUpdate = await checkReleaseManifest();
+        if (manifestUpdate) {
+          logUpdateEvent("manifest_update_available", {
+            currentVersion: APP_VERSION,
+            version: manifestUpdate.version
+          });
+          setUpdatePrompt(manifestUpdate);
+          if (manual) setStatus(`Update ${manifestUpdate.version} is available.`);
+        } else if (manual) {
+          logUpdateEvent("already_current", { currentVersion: APP_VERSION });
+          setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
+          setLatestUpdateNotice(true);
+        }
       }
     } catch (err) {
-      logUpdateEvent("check_failed", { message: String(err) });
-      if (manual) setError(`Update check failed: ${String(err)}`);
+      logUpdateEvent("native_check_failed", { message: String(err) });
+      try {
+        const manifestUpdate = await checkReleaseManifest();
+        if (manifestUpdate) {
+          logUpdateEvent("manifest_update_available", {
+            currentVersion: APP_VERSION,
+            version: manifestUpdate.version
+          });
+          setUpdatePrompt(manifestUpdate);
+          if (manual) setStatus(`Update ${manifestUpdate.version} is available.`);
+        } else if (manual) {
+          logUpdateEvent("already_current", { currentVersion: APP_VERSION, source: "manifest_fallback" });
+          setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
+          setLatestUpdateNotice(true);
+        }
+      } catch (fallbackErr) {
+        logUpdateEvent("check_failed", { message: String(fallbackErr) });
+        if (manual) setError(`Update check failed: ${String(fallbackErr)}`);
+      }
     } finally {
       updateCheckInFlight.current = false;
     }
@@ -895,6 +970,14 @@ function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose:
     setContentLength(0);
     setPhase("Preparing secure download...");
     try {
+      if (!update.nativeInstall) {
+        if (!update.installerUrl) throw new Error("Installer download URL is missing.");
+        logUpdateEvent("manual_download_opened", { version: update.version, installerUrl: update.installerUrl });
+        setPhase("Opening installer download...");
+        window.location.href = update.installerUrl;
+        return;
+      }
+      if (!update.update) throw new Error("Native updater package is missing.");
       logUpdateEvent("download_started", { version: update.version });
       let received = 0;
       await update.update.downloadAndInstall((event) => {
@@ -933,7 +1016,11 @@ function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose:
         <div className="update-icon"><Download size={28} /></div>
         <span>Update available</span>
         <h2 id="update-title">VISIONPOS Cashier {update.version}</h2>
-        <p>You are using version {update.currentVersion}. The update will download, verify, install, and restart VISIONPOS automatically.</p>
+        <p>
+          You are using version {update.currentVersion}. {update.nativeInstall
+            ? "The update will download, verify, install, and restart VISIONPOS automatically."
+            : "This update is available from the VisionPOS download manifest. Download and run the installer once to move this terminal onto the new update path."}
+        </p>
         {update.releaseNotes.length > 0 && (
           <ul>
             {update.releaseNotes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}
@@ -945,7 +1032,7 @@ function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose:
         </div>
         {failure && <p className="update-error">Update failed: {failure}. You can retry the download.</p>}
         <div className="update-actions">
-          <button onClick={installUpdate} disabled={busy}>{busy ? "Updating..." : failure ? "Retry update" : "Update now"}</button>
+          <button onClick={installUpdate} disabled={busy}>{busy ? "Updating..." : update.nativeInstall ? failure ? "Retry update" : "Update now" : "Download installer"}</button>
           <button className="ghost" onClick={onClose}>Remind me later</button>
         </div>
       </section>

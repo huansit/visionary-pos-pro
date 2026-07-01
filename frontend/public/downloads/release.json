@@ -1,10 +1,11 @@
 {
-  "version": "2.0.16",
+  "version": "2.0.17",
   "platform": "windows",
   "installer": "/downloads/VISIONPOS-Cashier-Setup.exe",
-  "size": 3129791,
-  "sha512": "F35826BB3CE8E152DE7D92C9D515A5B9EEC0693D0CAF1639F68D8898D36D62C73296735A8E3FBD4904ABE09258856F7F21D01E5632D165C1F371223BFAE06CC8",
+  "size": 3130553,
+  "sha512": "9A5826FBF4EFC3974ACE5C7DCBE26B28ED2C5D288F3CB7E39183769EE47D81BE6423724EEC386EA21EC2CD044457E190650BDE1A8BC45EA063C85E345EA17DAE",
   "releaseNotes": [
+    "Update checks now fall back to the live VisionPOS release manifest when the native signed updater manifest is stale or unavailable.",
     "Restored the functional cashier workstation layout with Sales, Debt Tracker, Quick Actions, products, and cart visible together.",
     "Removed the broken left-panel tab-only workflow from the cashier app.",
     "Removed the visible synced-products/invoices footer from the cart.",
