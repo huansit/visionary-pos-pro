@@ -128,11 +128,11 @@
         <div class="download">
           <div>
             <div class="title">Windows Installer (.exe)</div>
-            <div class="meta">Version 2.0.0</div>
+            <div class="meta" id="download-version">Version 2.0.15</div>
           </div>
-          <a class="btn" href="/downloads/VISIONPOS-Cashier-Setup.exe">Download</a>
+          <a class="btn" id="download-link" href="/downloads/VISIONPOS-Cashier-Setup.exe">Download</a>
         </div>
-        <div class="notes" aria-label="Release notes">
+        <div class="notes" id="release-notes" aria-label="Release notes">
           <div class="note">Secure first-run terminal activation with admin-generated codes.</div>
           <div class="note">Cashier-only desktop interface connected to the VisionPOS cloud backend.</div>
           <div class="note">USB barcode scanner workflow with persistent search focus.</div>
@@ -147,5 +147,27 @@
         </div>
       </section>
     </main>
+    <script>
+      (function () {
+        var versionEl = document.getElementById("download-version");
+        var linkEl = document.getElementById("download-link");
+        var notesEl = document.getElementById("release-notes");
+        fetch("/downloads/release.json?v=" + Date.now(), { cache: "no-store" })
+          .then(function (response) { return response.ok ? response.json() : null; })
+          .then(function (release) {
+            if (!release) return;
+            if (release.version && versionEl) versionEl.textContent = "Version " + release.version;
+            if (release.installer && linkEl) linkEl.href = release.installer;
+            if (Array.isArray(release.releaseNotes) && release.releaseNotes.length && notesEl) {
+              notesEl.innerHTML = release.releaseNotes.map(function (note) {
+                return '<div class="note">' + String(note).replace(/[&<>"]/g, function (ch) {
+                  return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch];
+                }) + "</div>";
+              }).join("");
+            }
+          })
+          .catch(function () {});
+      })();
+    </script>
   </body>
 </html>
