@@ -1,10 +1,10 @@
 {
-  "version": "2.0.13",
-  "notes": "Cashier header simplified for retail use: only VisionPOS logo, branch, cashier, and online status remain.\nRemoved distracting update and close controls from the checkout header.\nOnline status now appears as a compact operational indicator beside branch and cashier details.",
+  "version": "2.0.14",
+  "notes": "Sales card now shows today's invoice total without listing paid invoices on the dashboard.\nDebt Tracker now contains pending open invoices and carried-over debt previews.\nCart panel renamed and simplified with sale note, checkout helper text, and visible sync pills removed.\nProduct cards now show bold product details with compact stock and Add / Out of stock actions.\nBranch pill now carries the live connection indicator without a separate reconnecting label.",
   "pub_date": "2026-06-30T00:00:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVURm42bVUvTFBuQmg5bjlzVVhmdFQyOFA4V2Rja2o2WTVldWJmMkZQblplckF3QzFRK3kwdjN6YXg3TndLKzFBcjNNUTJKdVJwRHJ1OVRKZG5wMk1pcFdUK2ZOYmJUd3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODY1NjczCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjEzX3g2NC1zZXR1cC5leGUKQ3EvOVA4Y21XSldzUWFOcHdTb21RT0VVK3pTM1c4cWdsU3ZkWFc5czZ5cEJOb3Q3Nno3RjB2VHFTZjNtZWgvMGJwVlgwdVByS2dickpMakpHQndLQ3c9PQo=",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVURm42bVUvTFBuQnZMNmV2OGxHQmpTVjdTK2FINlJLUmFldEg3NDBuWXdBUUsweGdxSEs4MEdWYXorZXpHVTlQc3dTYmwxU3BKb09OMXZSTG9UVzc1azlvOWJWeWlzZ3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODY3NjQ0CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjE0X3g2NC1zZXR1cC5leGUKeSt0d2YvTHpGSHAxVXdVTE5BQWszdmhiR1lTOFRDeURDeUZFSnpRR3JYYmNDTGQ1OG5OQjhmWHBGSm0vb2JXS3BUUGx6NlZNUnI4YjRkVGlEakYyRGc9PQo=",
       "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier-Setup.exe"
     }
   }

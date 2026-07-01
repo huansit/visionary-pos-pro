@@ -18,6 +18,7 @@ import {
   Search,
   Server,
   ShieldCheck,
+  ShoppingCart,
   UserRound,
   WalletCards,
   Wine,
@@ -94,8 +95,8 @@ function productSaleBlockReason(product: Product, currentQty = 0) {
   return "";
 }
 
-function productStatusText(product: Product) {
-  const stock = productStock(product);
+function productStatusText(product: Product, reservedQty = 0) {
+  const stock = Math.max(0, productStock(product) - reservedQty);
   if (stock <= 0) return "Out";
   if (product.priceCents <= 0) return "No price";
   if (product.costCents > 0 && product.priceCents < product.costCents) return "Below cost";
@@ -103,15 +104,15 @@ function productStatusText(product: Product) {
   return `${stock} in`;
 }
 
-function productStatusClass(product: Product) {
-  const stock = productStock(product);
-  if (productSaleBlockReason(product, 0)) return "out";
+function productStatusClass(product: Product, reservedQty = 0) {
+  const stock = Math.max(0, productStock(product) - reservedQty);
+  if (productSaleBlockReason(product, reservedQty)) return "out";
   if (stock <= 5) return "low";
   return "ok";
 }
 
-function productStockLabel(product: Product) {
-  const stock = productStock(product);
+function productStockLabel(product: Product, reservedQty = 0) {
+  const stock = Math.max(0, productStock(product) - reservedQty);
   return `${stock} stock`;
 }
 
@@ -224,6 +225,15 @@ function outstanding(invoice: Invoice) {
   return Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
 }
 
+function isToday(ts?: number) {
+  if (!ts) return false;
+  const date = new Date(ts);
+  const today = new Date();
+  return date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
+}
+
 function invoiceDate(invoice: Invoice) {
   return invoice.ts ? new Date(invoice.ts).toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Not dated";
 }
@@ -299,10 +309,11 @@ export default function App() {
   }, [account?.id, invoices]);
   const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [myInvoices]);
   const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [myInvoices]);
+  const todayInvoices = useMemo(() => myInvoices.filter((invoice) => isToday(invoice.ts)), [myInvoices]);
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const debtTrackerTotal = openInvoiceTotal + carriedDebtTotal;
-  const salesInvoiceTotal = myInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
+  const salesInvoiceTotal = todayInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
 
   const categories = useMemo(() => {
     const names = Array.from(new Set(products.map((product) => product.category || "Uncategorised").filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -526,6 +537,13 @@ export default function App() {
         const { [productId]: _removed, ...rest } = current;
         return rest;
       }
+      const blocked = productSaleBlockReason(line.product, qty - 1);
+      if (blocked) {
+        setError(blocked);
+        setStatus("Sale blocked.");
+        return current;
+      }
+      setError("");
       return { ...current, [productId]: { ...line, qty } };
     });
     focusSearch();
@@ -635,12 +653,13 @@ export default function App() {
       <header className="topbar">
         <div className="brand"><span>V</span><strong>Vision<b>POS</b></strong></div>
         <div className="topmeta">
-          <div className="branch-pill"><Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small></div>
-          <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
-          <div className={"header-online " + (realtimeState === "connected" ? "online" : "reconnecting")}>
-            <i />
-            <span>{realtimeState === "connected" ? "Online" : "Reconnecting"}</span>
+          <div
+            className={"branch-pill " + (realtimeState === "connected" ? "online" : "reconnecting")}
+            title={realtimeState === "connected" ? "Cloud connection active" : "Reconnecting to cloud"}
+          >
+            <Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small>
           </div>
+          <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
         </div>
       </header>
 
@@ -667,29 +686,21 @@ export default function App() {
             <div className="card-head">
               <div>
                 <h3>Sales</h3>
-                <strong>{branch?.name || terminal.branchId}</strong>
               </div>
             </div>
             <div className="invoice-total">
-              <span>{myInvoices.length} invoice{myInvoices.length === 1 ? "" : "s"} recorded</span>
+              <span>{todayInvoices.length} invoice{todayInvoices.length === 1 ? "" : "s"} today</span>
               <b>{money(salesInvoiceTotal)}</b>
             </div>
-            {myInvoices.length === 0 ? (
+            {todayInvoices.length === 0 ? (
               <div className="invoice-empty">
                 <b>No sales yet</b>
-                <span>Invoice totals recorded by this cashier will appear here.</span>
+                <span>Today's invoice totals will appear here before end of day close.</span>
               </div>
             ) : (
-              <div className="invoice-list">
-                {myInvoices.slice(0, 8).map((invoice) => (
-                  <div
-                    key={invoice.id}
-                    className="invoice-row"
-                  >
-                    <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
-                    <strong>{money(invoice.totalCents)}</strong>
-                  </div>
-                ))}
+              <div className="sales-note">
+                <b>Today</b>
+                <span>Paid, open, and pending invoices count here until end of day close.</span>
               </div>
             )}
           </div>
@@ -717,15 +728,34 @@ export default function App() {
                 View
               </button>
             </div>
-            <div className="debt-line"><span>Open invoices & debts</span><b>{money(debtTrackerTotal)}</b></div>
-            <p>{openInvoices.length} open invoice{openInvoices.length === 1 ? "" : "s"} · {carriedDebts.length} carried over</p>
-            {openInvoices.length + carriedDebts.length === 0 && <p>No open invoices or carried-over debts for your login.</p>}
+            <div className="debt-line"><span>Pending invoices & carried debt</span><b>{money(debtTrackerTotal)}</b></div>
+            <p>{openInvoices.length} pending invoice{openInvoices.length === 1 ? "" : "s"} · {carriedDebts.length} carried over</p>
+            {openInvoices.length === 0 ? (
+              <p>No pending invoices for your login.</p>
+            ) : (
+              <div className="debt-preview-list">
+                {openInvoices.slice(0, 3).map((invoice) => (
+                  <button
+                    key={invoice.id}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setDebtsOpen(true);
+                    }}
+                  >
+                    <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
+                    <strong>{money(outstanding(invoice))}</strong>
+                  </button>
+                ))}
+              </div>
+            )}
+            {openInvoices.length === 0 && carriedDebts.length === 0 && <p>No carried-over debts for your login.</p>}
           </div>
           <div className="card dark quick-actions">
             <h3>Quick Actions</h3>
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
-            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{debtTrackerTotal > 0 ? ` - ${money(debtTrackerTotal)}` : ""}</button>
+            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
             <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
             <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
@@ -765,30 +795,40 @@ export default function App() {
             <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
           </div>
           <div className="product-grid">
-            {filteredProducts.map((product) => (
-              <button className="product-card" key={product.id} disabled={Boolean(productSaleBlockReason(product, 0))} onClick={() => addToCart(product)}>
-                <span className="product-name">{product.name}</span>
-                <b className="product-price">{money(product.priceCents)}</b>
-                <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
-                <span className={"product-stock-row " + productStatusClass(product)}>
-                  <i />
-                  <b>{productStockLabel(product)}</b>
-                  <small>{productStatusText(product)}</small>
-                </span>
-              </button>
-            ))}
+            {filteredProducts.map((product) => {
+              const reservedQty = cart[product.id]?.qty || 0;
+              const blocked = productSaleBlockReason(product, reservedQty);
+              return (
+                <button className="product-card" key={product.id} disabled={Boolean(blocked)} onClick={() => addToCart(product)}>
+                  <span className="product-name">{product.name}</span>
+                  <b className="product-price">{money(product.priceCents)}</b>
+                  <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
+                  <span className={"product-stock-row " + productStatusClass(product, reservedQty)}>
+                    <i />
+                    <b>{productStockLabel(product, reservedQty)}</b>
+                  </span>
+                  <span className={"product-action " + (blocked ? "blocked" : "available")}>{blocked ? "Out of stock" : "Add"}</span>
+                </button>
+              );
+            })}
           </div>
         </section>
 
         <aside className="cart-panel">
           <div className="cart-head">
             <div>
-              <h2>Current Invoice</h2>
-              <span>{itemCount} item(s) · {branch?.name || terminal.branchId}</span>
+              <h2>Cart</h2>
+              <span>{itemCount} item{itemCount === 1 ? "" : "s"}</span>
             </div>
           </div>
           <div className="cart-lines">
-            {cartLines.length === 0 && <div className="empty">Scan or tap products to start.</div>}
+            {cartLines.length === 0 && (
+              <div className="cart-empty-state">
+                <ShoppingCart size={26} />
+                <b>Cart is empty</b>
+                <span>Scan a barcode or tap a product.</span>
+              </div>
+            )}
             {cartLines.map((line) => (
               <div className="cart-line" key={line.product.id}>
                 <div><b>{line.product.name}</b><span>{money(line.product.priceCents)}</span></div>
@@ -798,8 +838,6 @@ export default function App() {
           </div>
           <label>Customer name / identifier <em>*</em></label>
           <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
-          <label>Sale note</label>
-          <input value={saleNote} onChange={(event) => setSaleNote(event.target.value)} placeholder="Optional receipt note" />
           <div className="subtotal"><span>Subtotal</span><b>{money(totalCents)}</b></div>
           <div className="total-row"><span>Total</span><strong>{money(totalCents)}</strong></div>
           <button className="checkout" disabled={!cartLines.length || !customerName.trim()} onClick={completeSale}><Check size={21} />Complete Sale <span>F4</span></button>
@@ -808,14 +846,13 @@ export default function App() {
             <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setQuery(""); focusSearch(); }}>Clear</button>
           </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
-          <p className="hint muted">Issues an open invoice cleared by admin or supervisor.</p>
-          <div className={"sync-indicator " + (realtimeState === "connected" ? "connected" : "reconnecting")}>
-            <i />
-            <span>Sync {realtimeState === "connected" ? "connected" : "reconnecting"}</span>
-          </div>
-          {(error || status) && <p className={"status-note " + (error ? "bad" : "good")}>{error || status}</p>}
         </aside>
       </section>
+
+      <footer className="cashier-footer">
+        <span>{products.length} products · {invoices.length} invoices · Last sync {syncLabel(lastSyncAt)}</span>
+        {(error || status) && <b className={error ? "bad" : "good"}>{error || status}</b>}
+      </footer>
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
       {updateModal}
