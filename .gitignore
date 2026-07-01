@@ -8,5 +8,6 @@ desktop/dist/
 desktop/release/
 cashier-tauri/dist/
 cashier-tauri/release/
+cashier-tauri/release-out/
 cashier-tauri/src-tauri/gen/
 cashier-tauri/src-tauri/target/

@@ -1,12 +1,13 @@
 {
   "name": "visionpos-tauri-cashier",
-  "version": "2.0.17",
+  "version": "2.0.18",
   "private": true,
   "type": "module",
   "description": "Tauri cashier workstation for VISIONPOS",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5174",
     "build": "tsc && vite build",
+    "release": "node scripts/release.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
