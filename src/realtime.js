@@ -52,6 +52,10 @@ export function addRealtimeClient(req, res) {
   });
 }
 
+export function getRealtimeVersion() {
+  return latestVersion;
+}
+
 export function publishSyncChange(change) {
   latestVersion = Math.max(Date.now(), latestVersion + 1);
   const payload = {

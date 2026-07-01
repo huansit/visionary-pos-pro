@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { isMySql, pool, q, serverNow } from "../db.js";
 import { requireDevice } from "../auth.js";
-import { addRealtimeClient, publishSyncChange } from "../realtime.js";
+import { addRealtimeClient, getRealtimeVersion, publishSyncChange } from "../realtime.js";
 
 const router = Router();
 router.use(requireDevice);
@@ -19,6 +19,10 @@ router.use((req, res, next) => {
 
 router.get("/stream", (req, res) => {
   addRealtimeClient(req, res);
+});
+
+router.get("/version", (_req, res) => {
+  res.json({ version: getRealtimeVersion(), ts: Date.now() });
 });
 
 const EVENT_TYPES = new Set([

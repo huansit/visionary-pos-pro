@@ -42,6 +42,7 @@ import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCred
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
+type LeftPanelView = "sales" | "openInvoices" | "debts" | "expense";
 
 type UpdatePrompt = {
   version: string;
@@ -288,8 +289,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
-  const [expenseOpen, setExpenseOpen] = useState(false);
-  const [debtsOpen, setDebtsOpen] = useState(false);
+  const [leftView, setLeftView] = useState<LeftPanelView>("sales");
+  const [selectedLeftInvoice, setSelectedLeftInvoice] = useState<Invoice | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -466,7 +467,7 @@ export default function App() {
       setProducts(pulled.products);
       setInvoices(pulled.invoices);
       setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
-      setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
+      if (!options.silent) setStatus("Catalog synced.");
       setError("");
     } catch (err) {
       if (String(err).includes("terminal_not_authorized")) {
@@ -675,14 +676,44 @@ export default function App() {
           </button>
           {leftCollapsed ? (
             <div className="mini-sidebar">
-              <button title="Sales"><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
-              <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span><span>{carriedDebts.length}</span></button>
-              <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} /></button>
+              <button title="Sales" onClick={() => { setLeftView("sales"); setSelectedLeftInvoice(null); }}><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
+              <button title="Open invoices" onClick={() => { setLeftView("openInvoices"); setSelectedLeftInvoice(null); }}><FileText size={18} /><span>{openInvoices.length}</span></button>
+              <button title="Debts" onClick={() => { setLeftView("debts"); setSelectedLeftInvoice(null); }}><span className="info-dot">!</span><span>{carriedDebts.length}</span></button>
+              <button title="Expense" onClick={() => { setLeftView("expense"); setSelectedLeftInvoice(null); }}><WalletCards size={18} /></button>
               <button onClick={handleLogout}><LogOut size={18} /></button>
             </div>
           ) : (
           <>
-          <div className="card dark sales-summary">
+          <div className="left-tabs" role="tablist" aria-label="Cashier left panel">
+            <button className={leftView === "sales" ? "active" : ""} onClick={() => { setLeftView("sales"); setSelectedLeftInvoice(null); }}><FileText size={15} />Sales</button>
+            <button className={leftView === "openInvoices" ? "active" : ""} onClick={() => { setLeftView("openInvoices"); setSelectedLeftInvoice(null); }}><FileText size={15} />Open <b>{openInvoices.length}</b></button>
+            <button className={leftView === "debts" ? "active" : ""} onClick={() => { setLeftView("debts"); setSelectedLeftInvoice(null); }}><span className="info-dot">!</span>Debts <b>{carriedDebts.length}</b></button>
+          </div>
+          <div className="card dark left-workspace">
+            {selectedLeftInvoice ? (
+              <LeftInvoiceDetail invoice={selectedLeftInvoice} cashierName={account.name} onBack={() => setSelectedLeftInvoice(null)} />
+            ) : leftView === "openInvoices" ? (
+              <LeftInvoiceList title="Open invoices" subtitle="Pending cashier invoices" invoices={openInvoices} totalCents={openInvoiceTotal} empty="No open invoices for your login." onOpen={setSelectedLeftInvoice} />
+            ) : leftView === "debts" ? (
+              <LeftInvoiceList title="Debts" subtitle="Carried-over invoices" invoices={carriedDebts} totalCents={carriedDebtTotal} empty="No carried-over debts for your login." onOpen={setSelectedLeftInvoice} />
+            ) : leftView === "expense" ? (
+              <ExpensePanel
+                onCancel={() => { setLeftView("sales"); focusSearch(); }}
+                onSave={async (expense) => {
+                  if (!terminal || !account) return;
+                  setError("");
+                  await pushExpense(terminal, account, expense);
+                  setStatus(expense.amountCents > 50000 ? "Expense sent for admin approval." : "Expense recorded.");
+                  setLeftView("sales");
+                  await refreshCatalog(terminal);
+                  focusSearch();
+                }}
+              />
+            ) : (
+              <SalesPanel todayInvoices={todayInvoices} totalCents={salesInvoiceTotal} />
+            )}
+          </div>
+          <div className="card dark sales-summary removed">
             <div className="card-head">
               <div>
                 <h3>Sales</h3>
@@ -705,14 +736,15 @@ export default function App() {
             )}
           </div>
           <div
-            className="card dark debt-card clickable-card"
+            className="card dark debt-card clickable-card removed"
             role="button"
             tabIndex={0}
-            onClick={() => setDebtsOpen(true)}
+            onClick={() => { setLeftView("debts"); setSelectedLeftInvoice(null); }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                setDebtsOpen(true);
+                setLeftView("debts");
+                setSelectedLeftInvoice(null);
               }
             }}
           >
@@ -722,7 +754,8 @@ export default function App() {
                 className="text-link"
                 onClick={(event) => {
                   event.stopPropagation();
-                  setDebtsOpen(true);
+                  setLeftView("debts");
+                  setSelectedLeftInvoice(null);
                 }}
               >
                 View
@@ -740,7 +773,8 @@ export default function App() {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setDebtsOpen(true);
+                      setLeftView("openInvoices");
+                      setSelectedLeftInvoice(invoice);
                     }}
                   >
                     <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
@@ -753,9 +787,9 @@ export default function App() {
           </div>
           <div className="card dark quick-actions">
             <h3>Quick Actions</h3>
-            <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
+            <button onClick={() => { setLeftView("expense"); setSelectedLeftInvoice(null); }}><WalletCards size={17} />Expense</button>
             <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
-            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
+            <button onClick={() => { setLeftView("debts"); setSelectedLeftInvoice(null); }}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
             <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
             <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
           </div>
@@ -849,40 +883,168 @@ export default function App() {
         </aside>
       </section>
 
-      <footer className="cashier-footer">
-        <span>{products.length} products · {invoices.length} invoices · Last sync {syncLabel(lastSyncAt)}</span>
-        {(error || status) && <b className={error ? "bad" : "good"}>{error || status}</b>}
-      </footer>
-
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
       {updateModal}
-      {expenseOpen && terminal && account && (
-        <ExpenseModal
-          onClose={() => { setExpenseOpen(false); focusSearch(); }}
-          onSave={async (expense) => {
-            setError("");
-            await pushExpense(terminal, account, expense);
-            setStatus(expense.amountCents > 50000 ? "Expense sent for admin approval." : "Expense recorded.");
-            setExpenseOpen(false);
-            await refreshCatalog(terminal);
-            focusSearch();
-          }}
-        />
-      )}
-      {debtsOpen && (
-        <DebtsAndInvoicesModal
-          cashierName={account.name}
-          openInvoices={openInvoices}
-          carriedDebts={carriedDebts}
-          openTotalCents={openInvoiceTotal}
-          carriedTotalCents={carriedDebtTotal}
-          onClose={() => {
-            setDebtsOpen(false);
-            focusSearch();
-          }}
-        />
-      )}
     </main>
+  );
+}
+
+function SalesPanel({ todayInvoices, totalCents }: { todayInvoices: Invoice[]; totalCents: number }) {
+  return (
+    <section className="left-panel-view">
+      <div className="left-panel-title">
+        <span>Sales</span>
+        <h3>Today</h3>
+      </div>
+      <div className="left-metric">
+        <span>{todayInvoices.length} invoice{todayInvoices.length === 1 ? "" : "s"} recorded</span>
+        <b>{money(totalCents)}</b>
+      </div>
+      {todayInvoices.length === 0 ? (
+        <div className="left-empty">
+          <FileText size={26} />
+          <b>No sales yet</b>
+          <span>Today's invoice totals appear here before end of day close.</span>
+        </div>
+      ) : (
+        <div className="left-list compact">
+          {todayInvoices.slice(0, 5).map((invoice) => (
+            <div className="left-list-row" key={invoice.id}>
+              <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
+              <strong>{money(invoice.totalCents)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LeftInvoiceList({
+  title,
+  subtitle,
+  invoices,
+  totalCents,
+  empty,
+  onOpen
+}: {
+  title: string;
+  subtitle: string;
+  invoices: Invoice[];
+  totalCents: number;
+  empty: string;
+  onOpen: (invoice: Invoice) => void;
+}) {
+  return (
+    <section className="left-panel-view">
+      <div className="left-panel-title">
+        <span>{subtitle}</span>
+        <h3>{title}</h3>
+      </div>
+      <div className="left-metric">
+        <span>{invoices.length} invoice{invoices.length === 1 ? "" : "s"}</span>
+        <b>{money(totalCents)}</b>
+      </div>
+      {invoices.length === 0 ? (
+        <div className="left-empty">
+          <FileText size={26} />
+          <b>{empty}</b>
+          <span>New activity appears here after sync.</span>
+        </div>
+      ) : (
+        <div className="left-list">
+          {invoices.map((invoice) => (
+            <button className="left-list-row clickable" key={invoice.id} onClick={() => onOpen(invoice)}>
+              <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"} · {invoiceDate(invoice)}</small></span>
+              <strong>{money(outstanding(invoice))}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LeftInvoiceDetail({ invoice, cashierName, onBack }: { invoice: Invoice; cashierName: string; onBack: () => void }) {
+  const items = invoice.items || [];
+  return (
+    <section className="left-panel-view">
+      <button className="left-back" onClick={onBack}>Back</button>
+      <div className="left-panel-title">
+        <span>Invoice</span>
+        <h3>{invoice.number}</h3>
+      </div>
+      <div className="left-detail-grid">
+        <div><span>Customer</span><b>{invoice.customerName || "Walk-in"}</b></div>
+        <div><span>Cashier</span><b>{invoice.cashierName || cashierName}</b></div>
+        <div><span>Total</span><b>{money(invoice.totalCents)}</b></div>
+        <div><span>Outstanding</span><b>{money(outstanding(invoice))}</b></div>
+      </div>
+      <div className="left-list compact">
+        {items.length === 0 ? (
+          <div className="left-empty small">No item lines were synced for this invoice yet.</div>
+        ) : items.map((item, index) => (
+          <div className="left-list-row" key={(item.productId || item.name) + index}>
+            <span><b>{item.name}</b><small>{item.qty} x {money(item.priceCents)}</small></span>
+            <strong>{money(item.qty * item.priceCents)}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ExpensePanel({
+  onCancel,
+  onSave
+}: {
+  onCancel: () => void;
+  onSave: (expense: { category: string; amountCents: number; note?: string }) => Promise<void>;
+}) {
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const amountCents = Math.round((Number(amount) || 0) * 100);
+
+  async function submit() {
+    if (amountCents <= 0) {
+      setMessage("Enter a valid expense amount.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await onSave({ category, amountCents, note: note.trim() });
+    } catch (err) {
+      setMessage(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="left-panel-view expense-inline">
+      <div className="left-panel-title">
+        <span>Quick action</span>
+        <h3>Expense</h3>
+      </div>
+      <label>Category</label>
+      <select value={category} onChange={(event) => setCategory(event.target.value)}>
+        {EXPENSE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
+      </select>
+      <label>Amount (KES)</label>
+      <input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="0.00" />
+      <label>Note</label>
+      <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional expense note" />
+      {amountCents > 50000 && <div className="notice">Expenses above KES 500 are sent for admin approval.</div>}
+      {message && <div className="error">{message}</div>}
+      <div className="left-form-actions">
+        <button className="modal-primary" disabled={busy || amountCents <= 0} onClick={submit}><Check size={18} />{busy ? "Saving..." : "Save"}</button>
+        <button className="left-secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </section>
   );
 }
 

@@ -3279,6 +3279,237 @@ body {
   color: #b91c1c;
 }
 
+/* Left-panel cashier prompts */
+.sales-summary.removed,
+.debt-card.removed,
+.cashier-footer {
+  display: none !important;
+}
+
+.left-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.left-tabs button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 14px;
+  border: 1px solid #E5E7EB;
+  background: #fff;
+  color: #475569;
+  font-weight: 900;
+  font-size: 13px;
+}
+
+.left-tabs button.active {
+  border-color: #67E8F9;
+  background: linear-gradient(135deg, #2563EB, #2DD4BF);
+  color: #fff;
+}
+
+.left-tabs button b {
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .08);
+  font-size: 12px;
+}
+
+.left-tabs button.active b {
+  background: rgba(255, 255, 255, .18);
+}
+
+.left-workspace {
+  min-height: clamp(245px, 39vh, 420px);
+  overflow: hidden;
+}
+
+.left-panel-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.left-panel-title span {
+  display: block;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.left-panel-title h3 {
+  margin: 4px 0 0;
+  color: #F8FAFC;
+  font-size: clamp(20px, 1.45vw, 28px);
+  letter-spacing: -.04em;
+  text-transform: none;
+}
+
+.left-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(255, 255, 255, .035);
+}
+
+.left-metric span,
+.left-empty span,
+.left-list-row small {
+  color: #94A3B8;
+}
+
+.left-metric b {
+  color: #F8FAFC;
+  font-size: clamp(20px, 1.6vw, 30px);
+  white-space: nowrap;
+}
+
+.left-empty {
+  flex: 1;
+  min-height: 150px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px dashed rgba(148, 163, 184, .22);
+  color: #CBD5E1;
+}
+
+.left-empty.small {
+  min-height: 92px;
+  place-items: center;
+}
+
+.left-list {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.left-list-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, .18);
+  background: rgba(255, 255, 255, .035);
+  color: #F8FAFC;
+  text-align: left;
+}
+
+.left-list-row.clickable:hover {
+  border-color: rgba(45, 212, 191, .5);
+  background: rgba(45, 212, 191, .08);
+}
+
+.left-list-row span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.left-list-row b,
+.left-list-row strong {
+  color: #F8FAFC;
+}
+
+.left-list-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.left-back {
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, .22);
+  background: rgba(255, 255, 255, .04);
+  color: #CBD5E1;
+  font-weight: 850;
+}
+
+.left-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.left-detail-grid div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 13px;
+  border: 1px solid rgba(148, 163, 184, .16);
+  background: rgba(255, 255, 255, .03);
+}
+
+.left-detail-grid span,
+.expense-inline label {
+  color: #94A3B8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.left-detail-grid b {
+  color: #F8FAFC;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.expense-inline input,
+.expense-inline select {
+  min-height: 44px;
+  border-radius: 13px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(2, 6, 23, .35);
+  color: #F8FAFC;
+  padding: 0 12px;
+}
+
+.left-form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.left-form-actions .modal-primary,
+.left-secondary {
+  min-height: 44px;
+  border-radius: 13px;
+}
+
+.left-secondary {
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(255, 255, 255, .04);
+  color: #CBD5E1;
+  font-weight: 900;
+}
+
 .sync-indicator {
   min-height: 34px;
   display: inline-flex;

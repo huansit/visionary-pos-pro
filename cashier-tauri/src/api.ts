@@ -3,63 +3,46 @@ import { productDisplayImage } from "./productImages";
 import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
-export const APP_VERSION = "2.0.14";
+export const APP_VERSION = "2.0.15";
 
 export function connectSyncStream(terminal: TerminalCredentials, onSync: () => void, onState?: (state: "connected" | "reconnecting") => void) {
-  const controller = new AbortController();
   let stopped = false;
-  let retryMs = 1000;
+  let retryMs = 1200;
+  let lastVersion = 0;
 
   async function wait(ms: number) {
     await new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
-  function parseSseBlock(block: string) {
-    const lines = block.split(/\r?\n/);
-    const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim() || "message";
-    const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
-    return { event, data };
-  }
-
   async function run() {
-    while (!stopped && !controller.signal.aborted) {
+    while (!stopped) {
       try {
-        onState?.("reconnecting");
-        const response = await fetch(`${API_BASE_URL}/api/sync/stream?t=${Date.now()}`, {
-          headers: terminalHeaders(terminal),
-          cache: "no-store",
-          signal: controller.signal
+        const data = await jsonFetch<{ version?: number }>(`/api/sync/version?t=${Date.now()}`, {
+          method: "GET",
+          headers: terminalHeaders(terminal)
         });
-        if (!response.ok || !response.body) throw new Error(`stream_failed_${response.status}`);
+        const nextVersion = Number(data.version || 0);
         onState?.("connected");
         retryMs = 1000;
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (!stopped) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const blocks = buffer.split(/\n\n/);
-          buffer = blocks.pop() || "";
-          for (const block of blocks) {
-            const parsed = parseSseBlock(block);
-            if (parsed.event === "sync" || parsed.event === "connected") onSync();
-          }
+        if (!lastVersion) {
+          lastVersion = nextVersion;
+        } else if (nextVersion && nextVersion !== lastVersion) {
+          lastVersion = nextVersion;
+          onSync();
         }
+        await wait(3000);
       } catch (_) {
-        if (stopped || controller.signal.aborted) break;
+        if (stopped) break;
+        onState?.("reconnecting");
+        await wait(retryMs);
+        retryMs = Math.min(retryMs * 1.6, 15000);
       }
-      onState?.("reconnecting");
-      await wait(retryMs);
-      retryMs = Math.min(retryMs * 1.6, 15000);
     }
   }
 
   run();
   return () => {
     stopped = true;
-    controller.abort();
   };
 }
 
