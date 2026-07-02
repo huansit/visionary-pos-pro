@@ -105,6 +105,9 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE INDEX IF NOT EXISTS products_barcode_catalog_idx ON products (barcode_catalog_id);
 CREATE INDEX IF NOT EXISTS products_sku_idx ON products (sku);
+CREATE UNIQUE INDEX IF NOT EXISTS products_sku_unique_idx
+  ON products (lower(sku))
+  WHERE sku IS NOT NULL AND sku <> '';
 CREATE INDEX IF NOT EXISTS products_status_idx ON products (status);
 
 CREATE TABLE IF NOT EXISTS branch_products (

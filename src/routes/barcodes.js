@@ -55,6 +55,16 @@ async function findProductByCatalog(client, barcodeCatalogId) {
   return result.rows[0] || null;
 }
 
+async function findProductBySku(client, sku) {
+  const normalizedSku = String(sku || "").trim();
+  if (!normalizedSku) return null;
+  const result = await client.query(
+    "SELECT id FROM products WHERE lower(sku) = lower($1) AND status = 'active' ORDER BY updated_at DESC, created_at DESC, id ASC LIMIT 1",
+    [normalizedSku]
+  );
+  return result.rows[0] || null;
+}
+
 async function selectBranchProductView(client, productId, branchId) {
   const result = await client.query(
     `SELECT
@@ -194,13 +204,14 @@ router.post("/products", async (req, res, next) => {
 
     const result = await tx(async (client) => {
       const catalog = await ensureCatalog(client, barcode, req.body?.barcodeType || "code128");
-      const existingGlobal = await findProductByCatalog(client, catalog.id);
+      const sku = String(req.body.sku || barcode).trim();
+      const existingGlobal = await findProductByCatalog(client, catalog.id) || await findProductBySku(client, sku);
       const id = existingGlobal?.id || req.body?.id || uid("p");
       const productValues = [
         id,
         catalog.id,
         String(req.body.name).trim(),
-        req.body.sku || barcode,
+        sku,
         req.body.categoryId || req.body.category || null,
         req.body.brand || null,
         req.body.unit || null,
