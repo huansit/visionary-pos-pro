@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Barcode,
   Building2,
+  ChevronLeft,
   ChevronRight,
   Check,
   Delete,
@@ -64,6 +65,7 @@ type UpdatePrompt = {
 };
 
 type CashierUpdateState = "idle" | "downloading" | "ready";
+type DrawerSide = "left" | "right";
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -378,7 +380,7 @@ export default function App() {
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
-  const [invoiceDetail, setInvoiceDetail] = useState<Invoice | null>(null);
+  const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [updateState, setUpdateState] = useState<CashierUpdateState>("idle");
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false);
@@ -1005,7 +1007,7 @@ export default function App() {
                   <button
                     className="rail-invoice-row"
                     key={invoice.id}
-                    onClick={() => setInvoiceDetail(invoice)}
+                    onClick={() => setInvoiceDetail({ invoice, side: "left" })}
                     title={`Open ${invoice.number}`}
                   >
                     <span className="rail-avatar">{avatarInitial(label)}</span>
@@ -1096,20 +1098,7 @@ export default function App() {
           )}
         </aside>
 
-        {debtsOpen ? (
-          <DebtsCenterView
-            openInvoices={openInvoices}
-            carriedDebts={carriedDebts}
-            openTotalCents={openInvoiceTotal}
-            carriedTotalCents={carriedDebtTotal}
-            onBack={() => {
-              setDebtsOpen(false);
-              focusSearch();
-            }}
-            onSelect={(invoice) => setInvoiceDetail(invoice)}
-          />
-        ) : (
-          <section className="products-panel">
+        <section className="products-panel">
             <div className="search-row">
               <label className="searchbar">
                 <Search size={24} />
@@ -1158,8 +1147,7 @@ export default function App() {
                 );
               })}
             </div>
-          </section>
-        )}
+        </section>
 
         <aside className="cart-panel">
           <div className="cart-head">
@@ -1244,22 +1232,43 @@ export default function App() {
         />
       )}
       {expenseOpen && terminal && account && (
-        <ExpenseModal
-          cashierName={account.name}
-          onClose={() => { setExpenseOpen(false); focusSearch(); }}
-          onSave={async (expense) => {
-            setError("");
-            await pushExpense(terminal, account, expense);
-            setStatus(expense.amountCents > 50000 ? "Expense sent for supervisor approval." : "Expense recorded.");
-            setExpenseOpen(false);
-            await refreshCatalog(terminal);
-            focusSearch();
-          }}
-        />
+        <Drawer side="left" onClose={() => { setExpenseOpen(false); focusSearch(); }} labelledBy="expense-sheet-title">
+          <ExpenseModal
+            cashierName={account.name}
+            onClose={() => { setExpenseOpen(false); focusSearch(); }}
+            onSave={async (expense) => {
+              setError("");
+              await pushExpense(terminal, account, expense);
+              setStatus(expense.amountCents > 50000 ? "Expense sent for supervisor approval." : "Expense recorded.");
+              setExpenseOpen(false);
+              await refreshCatalog(terminal);
+              focusSearch();
+            }}
+          />
+        </Drawer>
+      )}
+      {debtsOpen && (
+        <Drawer side="left" onClose={() => { setDebtsOpen(false); focusSearch(); }} labelledBy="debts-center-title">
+          <DebtsCenterView
+            openInvoices={openInvoices}
+            carriedDebts={carriedDebts}
+            openTotalCents={openInvoiceTotal}
+            carriedTotalCents={carriedDebtTotal}
+            onBack={() => {
+              setDebtsOpen(false);
+              focusSearch();
+            }}
+            onSelect={(invoice) => {
+              setDebtsOpen(false);
+              setInvoiceDetail({ invoice, side: "left" });
+            }}
+          />
+        </Drawer>
       )}
       {invoiceDetail && (
         <InvoiceDetailSlideOver
-          invoice={invoiceDetail}
+          invoice={invoiceDetail.invoice}
+          side={invoiceDetail.side}
           cashierName={account.name}
           branchName={branch?.name || terminal.branchId}
           onReprint={(invoice) => {
@@ -1294,8 +1303,46 @@ export default function App() {
   );
 }
 
+function Drawer({
+  side,
+  onClose,
+  labelledBy,
+  children
+}: {
+  side: DrawerSide;
+  onClose: () => void;
+  labelledBy?: string;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className={"drawer-backdrop " + side} onClick={onClose}>
+      <aside
+        className={"app-drawer " + side}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button className="drawer-close" onClick={onClose} aria-label="Close panel">
+          {side === "left" ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
+        </button>
+        {children}
+      </aside>
+    </div>
+  );
+}
+
 function InvoiceDetailSlideOver({
   invoice,
+  side,
   cashierName,
   branchName,
   onReprint,
@@ -1303,6 +1350,7 @@ function InvoiceDetailSlideOver({
   onClose
 }: {
   invoice: Invoice;
+  side: DrawerSide;
   cashierName: string;
   branchName: string;
   onReprint: (invoice: Invoice) => void;
@@ -1315,9 +1363,8 @@ function InvoiceDetailSlideOver({
   const paidCents = Number(invoice.paidCents || 0);
   const balanceCents = outstanding(invoice);
   return (
-    <div className="invoice-slide-backdrop" onClick={onClose}>
-      <aside className="invoice-slide" role="dialog" aria-modal="true" aria-labelledby="invoice-slide-title" onClick={(event) => event.stopPropagation()}>
-        <button className="invoice-slide-close" onClick={onClose} aria-label="Close invoice detail"><X size={20} /></button>
+    <Drawer side={side} onClose={onClose} labelledBy="invoice-slide-title">
+      <section className="invoice-slide">
         <header className="invoice-slide-header">
           <span className="invoice-slide-avatar">{avatarInitial(customer)}</span>
           <div>
@@ -1361,8 +1408,8 @@ function InvoiceDetailSlideOver({
           <button type="button" onClick={() => onReprint(invoice)}><FileText size={18} />Reprint</button>
           <button type="button" onClick={() => onFlag(invoice)}><Flag size={18} />Flag supervisor</button>
         </footer>
-      </aside>
-    </div>
+      </section>
+    </Drawer>
   );
 }
 
@@ -1401,7 +1448,7 @@ function DebtsCenterView({
       <header className="debts-center-header">
         <button className="debts-back" type="button" onClick={onBack} aria-label="Back to products"><ArrowLeft size={18} /></button>
         <div>
-          <h2>Open invoices</h2>
+          <h2 id="debts-center-title">Open invoices</h2>
           <p>{openInvoices.length} pending &middot; {carriedDebts.length} carried over</p>
         </div>
         <div className="debts-total">
@@ -1931,12 +1978,11 @@ function ExpenseModal({
   }
 
   return (
-    <div className="expense-sheet-backdrop">
       <div className="expense-sheet">
         <div className="expense-sheet-head">
           <div className="expense-head-icon"><WalletCards size={22} /></div>
           <div>
-            <h2>Record expense</h2>
+            <h2 id="expense-sheet-title">Record expense</h2>
             <p>{cashierName} · {new Date(openedAt).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
           </div>
           <button className="expense-close" onClick={onClose} aria-label="Close expense sheet"><X size={20} /></button>
@@ -2009,7 +2055,6 @@ function ExpenseModal({
         </button>
         <p className="expense-footer-copy">{footerText}</p>
       </div>
-    </div>
   );
 }
 

@@ -4511,6 +4511,97 @@ body {
   background: #2563eb;
 }
 
+.drawer-backdrop {
+  position: fixed;
+  inset: var(--vp-header-h, 86px) 0 0;
+  z-index: 35;
+  background: rgba(15, 23, 42, .22);
+  backdrop-filter: blur(5px);
+}
+
+.app-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: clamp(320px, 360px, 420px);
+  overflow: hidden;
+  background: #0f172a;
+  color: #f8fafc;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-drawer.left {
+  left: 0;
+  border-right: 1px solid rgba(148, 163, 184, .22);
+  box-shadow: 30px 0 60px rgba(15, 23, 42, .26);
+  animation: drawerInLeft .18s ease-out;
+}
+
+.app-drawer.right {
+  right: 0;
+  border-left: 1px solid rgba(148, 163, 184, .22);
+  box-shadow: -30px 0 60px rgba(15, 23, 42, .26);
+  animation: drawerInRight .18s ease-out;
+}
+
+.drawer-close {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, .24);
+  background: rgba(15, 23, 42, .72);
+  color: #f8fafc;
+  display: grid;
+  place-items: center;
+}
+
+.app-drawer.left .drawer-close {
+  right: 18px;
+}
+
+.app-drawer.right .drawer-close {
+  left: 18px;
+}
+
+.app-drawer .expense-sheet,
+.app-drawer .debts-center-panel {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-drawer .expense-sheet {
+  overflow: auto;
+}
+
+.app-drawer .expense-close {
+  display: none;
+}
+
+@keyframes drawerInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes drawerInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@media (max-width: 900px) {
+  .app-drawer {
+    width: 100%;
+  }
+}
+
 .invoice-slide-backdrop {
   position: fixed;
   inset: 0;
@@ -4522,29 +4613,13 @@ body {
 }
 
 .invoice-slide {
-  width: min(440px, 92vw);
-  height: 100%;
-  overflow: auto;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: #0f172a;
   color: #f8fafc;
-  border-left: 1px solid rgba(148, 163, 184, .22);
   padding: 28px;
   position: relative;
-  box-shadow: -30px 0 60px rgba(15, 23, 42, .26);
-}
-
-.invoice-slide-close {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, .24);
-  background: rgba(15, 23, 42, .72);
-  color: #f8fafc;
-  display: grid;
-  place-items: center;
 }
 
 .invoice-slide-kicker {
@@ -4604,6 +4679,8 @@ body {
 .invoice-slide-items {
   display: grid;
   gap: 9px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .invoice-slide-item,
@@ -4641,7 +4718,9 @@ body {
 }
 
 .invoice-slide {
-  width: min(500px, 94vw);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
