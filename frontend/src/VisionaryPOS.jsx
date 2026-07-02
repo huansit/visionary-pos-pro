@@ -919,8 +919,8 @@ function envValue(key, fallback = "") {
 }
 function desktopDownloadConfig() {
   const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
-  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.17");
-  const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier-Setup.exe");
+  const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "2.0.25");
+  const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier_2.0.25_x64-setup.exe");
   const releaseNotes = runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", [
     "Secure first-run terminal activation with admin-generated codes.",
     "Cashier-only desktop interface connected to the VisionPOS cloud backend.",
@@ -959,7 +959,7 @@ function desktopDownloadConfig() {
 function applyDesktopReleaseManifest(current, manifest) {
   if (!manifest || typeof manifest !== "object") return current;
   const version = manifest.version || current.version;
-  const windowsUrl = manifest.installer || current.apps.find((app) => app.platform === "Windows")?.url || "/downloads/VISIONPOS-Cashier-Setup.exe";
+  const windowsUrl = manifest.installer || current.apps.find((app) => app.platform === "Windows")?.url || "/downloads/VISIONPOS-Cashier_2.0.25_x64-setup.exe";
   const releaseNotes = Array.isArray(manifest.releaseNotes) && manifest.releaseNotes.length ? manifest.releaseNotes : current.releaseNotes;
   return {
     ...current,

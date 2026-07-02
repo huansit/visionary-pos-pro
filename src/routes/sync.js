@@ -29,6 +29,7 @@ router.get("/version", (_req, res) => {
 const EVENT_TYPES = new Set([
   "invoice",
   "payment",
+  "invoiceNote",
   "stockMovement",
   "expense",
   "borrowing",

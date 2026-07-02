@@ -23,6 +23,7 @@ import {
   Menu,
   Minus,
   MonitorCheck,
+  Pencil,
   Search,
   Server,
   ShieldCheck,
@@ -42,6 +43,7 @@ import {
   type SyncVersionChange,
   loginCashier,
   logout,
+  patchInvoiceNote,
   pullCatalog,
   pushCheckout,
   pushExpense,
@@ -371,8 +373,6 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Products");
   const [customerName, setCustomerName] = useState("");
-  const [saleNote, setSaleNote] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa" | "credit">("cash");
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -447,7 +447,7 @@ export default function App() {
   const creditLocked = customerOutstandingDebt > 0;
   const canCompleteSale = cartLines.length > 0
     && Boolean(customerName.trim())
-    && (!creditLocked || paymentMethod === "cash" || paymentMethod === "mpesa");
+    && !creditLocked;
   const updateStatusLabel = updatePrompt
     ? `v${updatePrompt.version} ready`
     : updateState === "downloading"
@@ -478,12 +478,6 @@ export default function App() {
   }, [products, query, selectedCategory]);
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);
-
-  useEffect(() => {
-    if (creditLocked && paymentMethod === "credit") {
-      setPaymentMethod("cash");
-    }
-  }, [creditLocked, paymentMethod]);
 
   useEffect(() => {
     loadTerminalCredentials().then((stored) => {
@@ -673,7 +667,6 @@ export default function App() {
         if (cartLines.length) {
           setCart({});
           setCustomerName("");
-          setSaleNote("");
           setStatus("Sale held. Start a new invoice when ready.");
         }
       }
@@ -797,7 +790,7 @@ export default function App() {
       branchName: branch?.name || terminal.branchId,
       cashierName: account.name,
       customerName: customerName.trim(),
-      note: saleNote.trim(),
+      note: "",
       totalCents,
       ts: Date.now(),
       items: cartLines.map((line) => ({
@@ -813,8 +806,6 @@ export default function App() {
       setLastReceipt(nextReceipt);
       setCart({});
       setCustomerName("");
-      setSaleNote("");
-      setPaymentMethod("cash");
       setStatus(`Open invoice ${receiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
@@ -829,7 +820,6 @@ export default function App() {
     setAccount(null);
     setSessionToken("");
     setCart({});
-    setPaymentMethod("cash");
     setStatus("Signed out.");
   }
 
@@ -1152,16 +1142,16 @@ export default function App() {
         <aside className="cart-panel">
           <div className="cart-head">
             <div>
-              <h2>Invoice</h2>
-              <span>{itemCount} item{itemCount === 1 ? "" : "s"} - cleared by admin</span>
+              <h2>Cart</h2>
+              <span>{itemCount} item{itemCount === 1 ? "" : "s"}</span>
             </div>
           </div>
           <div className="cart-lines">
             {cartLines.length === 0 && (
               <div className="cart-empty-state">
                 <ShoppingCart size={26} />
-                <b>Invoice is empty</b>
-                <span>Scan a barcode or tap a product.</span>
+                <b>Cart is empty</b>
+                <span>Scan or tap a product</span>
               </div>
             )}
             {cartLines.map((line) => (
@@ -1174,38 +1164,18 @@ export default function App() {
           </div>
           <label>Customer name / ID <em>*</em></label>
           <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
-          <label>Cashier tracking note</label>
-          <textarea
-            className="invoice-tracking-note"
-            value={saleNote}
-            onChange={(event) => setSaleNote(event.target.value)}
-            placeholder="Follow-up, collection note, reason for credit..."
-            rows={2}
-          />
           {creditLocked && (
             <div className="credit-lock-warning" role="alert">
               <b>Owes {money(customerOutstandingDebt)} &middot; {customerDebtInvoices.length} open invoice{customerDebtInvoices.length === 1 ? "" : "s"}</b>
-              <span>No new credit until cleared by a supervisor. Cash or M-Pesa only.</span>
+              <span>No new invoice until existing debt is cleared by a supervisor.</span>
             </div>
           )}
-          <div className="payment-method-row" aria-label="Payment method">
-            <button className={paymentMethod === "cash" ? "active" : ""} onClick={() => setPaymentMethod("cash")}>Cash</button>
-            <button className={paymentMethod === "mpesa" ? "active" : ""} onClick={() => setPaymentMethod("mpesa")}>M-Pesa</button>
-            <button
-              className={(paymentMethod === "credit" ? "active " : "") + (creditLocked ? "locked" : "")}
-              disabled={creditLocked}
-              onClick={() => setPaymentMethod("credit")}
-            >
-              {creditLocked && <Lock size={14} />}
-              Credit
-            </button>
-          </div>
           <div className="subtotal"><span>Subtotal</span><b>{money(totalCents)}</b></div>
           <div className="total-row"><span>Total</span><strong>{money(totalCents)}</strong></div>
-          <button className="checkout" disabled={!canCompleteSale} onClick={completeSale}><Check size={21} />{creditLocked ? "Issue cash invoice" : "Issue invoice"} <span>F4</span></button>
+          <button className="checkout" disabled={!canCompleteSale} onClick={completeSale}><Check size={21} />Issue invoice <span>F4</span></button>
           <div className="cart-actions">
-            <button disabled={!cartLines.length || creditLocked} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
-            <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setQuery(""); focusSearch(); }}>Clear</button>
+            <button disabled={!cartLines.length || creditLocked} onClick={() => { setCart({}); setCustomerName(""); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
+            <button disabled={!cartLines.length && !customerName} onClick={() => { setCart({}); setCustomerName(""); setQuery(""); focusSearch(); }}>Clear</button>
           </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
         </aside>
@@ -1299,6 +1269,17 @@ export default function App() {
             setStatus(`Ready to reprint ${invoice.number}.`);
           }}
           onFlag={(invoice) => setStatus(`Supervisor flag noted for ${invoice.number}.`)}
+          onSaveNote={async (invoice, note) => {
+            if (!terminal || !account) return;
+            await patchInvoiceNote(terminal, account, invoice, note);
+            setInvoices((current) => current.map((item) => item.id === invoice.id ? { ...item, note } : item));
+            setInvoiceDetail((current) => current && current.invoice.id === invoice.id ? {
+              ...current,
+              invoice: { ...current.invoice, note }
+            } : current);
+            setStatus(`Open note saved for ${invoice.number}.`);
+            void refreshCatalog(terminal, { silent: true });
+          }}
           onClose={() => {
             setInvoiceDetail(null);
             focusSearch();
@@ -1354,6 +1335,7 @@ function InvoiceDetailSlideOver({
   branchName,
   onReprint,
   onFlag,
+  onSaveNote,
   onClose
 }: {
   invoice: Invoice;
@@ -1362,6 +1344,7 @@ function InvoiceDetailSlideOver({
   branchName: string;
   onReprint: (invoice: Invoice) => void;
   onFlag: (invoice: Invoice) => void;
+  onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
   onClose: () => void;
 }) {
   const items = invoice.items || [];
@@ -1369,6 +1352,27 @@ function InvoiceDetailSlideOver({
   const overdue = isOverdueDebtInvoice(invoice);
   const paidCents = Number(invoice.paidCents || 0);
   const balanceCents = outstanding(invoice);
+  const [openNote, setOpenNote] = useState(invoice.note || "");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    setOpenNote(invoice.note || "");
+    setNoteStatus("idle");
+  }, [invoice.id, invoice.note]);
+
+  async function saveOpenNote() {
+    const nextNote = openNote.trim();
+    if (nextNote === (invoice.note || "").trim() || noteStatus === "saving") return;
+    setNoteStatus("saving");
+    try {
+      await onSaveNote(invoice, nextNote);
+      setNoteStatus("saved");
+      window.setTimeout(() => setNoteStatus("idle"), 1800);
+    } catch {
+      setNoteStatus("error");
+    }
+  }
+
   return (
     <Drawer side={side} onClose={onClose} labelledBy="invoice-slide-title">
       <section className="invoice-slide">
@@ -1409,6 +1413,31 @@ function InvoiceDetailSlideOver({
         <div className="invoice-lock-notice">
           <ShieldCheck size={20} />
           <span>Payments and clearing are done by a supervisor in the admin dashboard. You can view and reprint only.</span>
+        </div>
+
+        <div className="invoice-open-note">
+          <div className="invoice-open-note-head">
+            <span><Pencil size={15} />OPEN NOTE</span>
+            <em>{noteStatus === "saved" ? "Saved" : noteStatus === "saving" ? "Saving..." : noteStatus === "error" ? "Try again" : "only you can edit"}</em>
+          </div>
+          <textarea
+            value={openNote}
+            onChange={(event) => {
+              setOpenNote(event.target.value);
+              if (noteStatus !== "idle") setNoteStatus("idle");
+            }}
+            onBlur={() => { void saveOpenNote(); }}
+            placeholder="Follow-up or collection note…"
+            rows={3}
+          />
+          <button
+            type="button"
+            className="invoice-save-note"
+            disabled={noteStatus === "saving" || openNote.trim() === (invoice.note || "").trim()}
+            onClick={() => { void saveOpenNote(); }}
+          >
+            <Check size={16} />Save note
+          </button>
         </div>
 
         <footer className="invoice-slide-actions">

@@ -1295,27 +1295,12 @@ button.ghost, .ghost {
 }
 .cart-panel label { color: #9aa8b7; font-size: 14px; margin: 10px 0 7px; }
 .cart-panel label em { color: #e5484d; font-style: normal; }
-.cart-panel input,
-.cart-panel textarea {
+.cart-panel input {
   min-height: 62px;
   border-radius: 16px;
   font-size: 17px;
   background: #081018;
   color: #f8fafc;
-}
-.cart-panel textarea {
-  width: 100%;
-  min-height: 76px;
-  padding: 14px 16px;
-  resize: vertical;
-  border: 1px solid #d6dde6;
-  font: inherit;
-  font-weight: 800;
-  outline: none;
-}
-.cart-panel textarea:focus {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, .18);
 }
 .subtotal {
   margin-top: 8px;
@@ -4984,6 +4969,85 @@ body {
   color: #60a5fa;
 }
 
+.invoice-open-note {
+  border: 1px solid rgba(96, 165, 250, .55);
+  border-radius: 16px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, .86), rgba(8, 15, 27, .92));
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .08), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.invoice-open-note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.invoice-open-note-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #bfdbfe;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .14em;
+}
+
+.invoice-open-note-head em {
+  color: #94a3b8;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.invoice-open-note textarea {
+  width: 100%;
+  min-height: 88px;
+  border: 1px solid rgba(96, 165, 250, .32);
+  border-radius: 14px;
+  background: rgba(2, 6, 23, .78);
+  color: #f8fafc;
+  resize: vertical;
+  padding: 12px 13px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.invoice-open-note textarea::placeholder {
+  color: rgba(148, 163, 184, .72);
+}
+
+.invoice-open-note textarea:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .16);
+}
+
+.invoice-save-note {
+  margin-top: 9px;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(96, 165, 250, .44);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, .18);
+  color: #dbeafe;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.invoice-save-note:disabled {
+  opacity: .52;
+  cursor: not-allowed;
+}
+
 .invoice-slide-actions {
   margin-top: auto;
   padding-top: 14px;
@@ -5774,41 +5838,6 @@ body {
   font-weight: 950;
   text-align: right;
   min-width: 72px;
-}
-
-.payment-method-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin: 10px 0 4px;
-}
-
-.payment-method-row button {
-  min-height: 42px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #f8fafc;
-  color: #334155;
-  font-weight: 950;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-.payment-method-row button.active {
-  border-color: #2563eb;
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.payment-method-row button.locked,
-.payment-method-row button:disabled {
-  cursor: not-allowed;
-  border-color: #fecaca;
-  background: #fff1f2;
-  color: #b91c1c;
-  opacity: 1;
 }
 
 .credit-lock-warning {

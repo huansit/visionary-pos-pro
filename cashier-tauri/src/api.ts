@@ -204,6 +204,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const productIdsByKey = new Map<string, string[]>();
   const baseStockByKey = new Map<string, number>();
   const invoiceRecords = new Map<string, Invoice>();
+  const invoiceNotes = new Map<string, { note: string; ts: number }>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
 
@@ -254,6 +255,17 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
       const amount = centsFromPayload(payload, ["amountCents", "amount_cents"], moneyToCentsFromPayload(payload, ["amount"]));
       if (invoiceId) paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + amount);
     }
+    if (item.type === "invoiceNote") {
+      const payload = item.payload || {};
+      const invoiceId = payload.invoiceId || payload.id;
+      if (invoiceId) {
+        const ts = Number(payload.ts || item.serverTs || item.clientTs || 0);
+        const previous = invoiceNotes.get(invoiceId);
+        if (!previous || ts >= previous.ts) {
+          invoiceNotes.set(invoiceId, { note: String(payload.note || ""), ts });
+        }
+      }
+    }
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
@@ -302,7 +314,14 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   return {
     branches,
     invoices: Array.from(invoiceRecords.values())
-      .map((invoice) => ({ ...invoice, paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0) }))
+      .map((invoice) => {
+        const notePatch = invoiceNotes.get(invoice.id);
+        return {
+          ...invoice,
+          note: notePatch ? notePatch.note : invoice.note,
+          paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0)
+        };
+      })
       .filter((invoice) => invoice.branchId === terminal.branchId)
       .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)),
     products: Array.from(productDeduped.entries())
@@ -398,6 +417,37 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
       }
     }))
   ];
+
+  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> }>("/api/sync/push", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({ events })
+  });
+  assertSyncAccepted(result, events);
+}
+
+export async function patchInvoiceNote(
+  terminal: TerminalCredentials,
+  account: Account,
+  invoice: Invoice,
+  note: string
+): Promise<void> {
+  const ts = Date.now();
+  const events = [{
+    id: uid("note"),
+    type: "invoiceNote",
+    branchId: terminal.branchId,
+    clientTs: ts,
+    payload: {
+      invoiceId: invoice.id,
+      receiptNo: invoice.number,
+      note,
+      branchId: terminal.branchId,
+      cashierId: account.id,
+      cashierName: account.name,
+      ts
+    }
+  }];
 
   const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> }>("/api/sync/push", {
     method: "POST",
