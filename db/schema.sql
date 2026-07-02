@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS records (
 CREATE INDEX IF NOT EXISTS records_server_ts_idx ON records (server_ts);
 CREATE INDEX IF NOT EXISTS records_type_idx ON records (type);
 CREATE INDEX IF NOT EXISTS records_branch_idx ON records (branch_id);
+CREATE UNIQUE INDEX IF NOT EXISTS records_product_sku_unique_idx
+  ON records (lower((payload->>'sku')))
+  WHERE type = 'product'
+    AND deleted = false
+    AND payload->>'sku' IS NOT NULL
+    AND payload->>'sku' <> '';
 
 CREATE TABLE IF NOT EXISTS barcode_catalog (
   id           text PRIMARY KEY,

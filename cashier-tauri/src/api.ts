@@ -281,7 +281,8 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   });
 
   for (const item of productRecords.values()) {
-    if ((item.branchId || item.payload?.branchId) === terminal.branchId) {
+    const productBranchId = item.branchId || item.payload?.branchId || item.payload?.branch_id || "";
+    if (!productBranchId || productBranchId === terminal.branchId) {
       const payload = item.payload || {};
       const product: Product = {
         id: String(item.id),

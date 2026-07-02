@@ -395,7 +395,7 @@ test("6. product record last-write-wins keeps newer updatedAt and ignores older"
     });
 });
 
-test("6b. product records sync global fields while preserving branch-specific selling price", async () => {
+test("6b. product records are shared globally by SKU and duplicate pushes tombstone the extra id", async () => {
   const sipProduct = {
     id: "prod-global-sip",
     type: "product",
@@ -456,12 +456,19 @@ test("6b. product records sync global fields while preserving branch-specific se
     .set("Authorization", `Bearer ${state.tokenB}`)
     .expect(200)
     .expect((res) => {
-      const cpt = res.body.events.find((event) => event.id === "prod-global-cpt" && event.type === "product");
-      assert.ok(cpt);
-      assert.equal(cpt.payload.name, "Shared Gin Updated");
-      assert.equal(cpt.payload.costCents, 51000);
-      assert.equal(cpt.payload.priceCents, 72000);
-      assert.equal(cpt.payload.branchId, "b_cpt");
+      const active = res.body.events.filter((event) => event.type === "product" && !event.deleted && event.payload?.sku === "GIN001");
+      assert.equal(active.length, 1);
+      assert.equal(active[0].id, "prod-global-sip");
+      assert.equal(active[0].branchId, null);
+      assert.equal(active[0].payload.name, "Shared Gin Updated");
+      assert.equal(active[0].payload.costCents, 51000);
+      assert.equal(active[0].payload.priceCents, 66000);
+      assert.equal(active[0].payload.branchId, undefined);
+
+      const tombstone = res.body.events.find((event) => event.id === "prod-global-cpt" && event.type === "product");
+      assert.ok(tombstone);
+      assert.equal(tombstone.deleted, true);
+      assert.equal(tombstone.payload.dedupedInto, "prod-global-sip");
     });
 });
 

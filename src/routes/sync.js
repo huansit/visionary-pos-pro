@@ -238,8 +238,125 @@ async function insertAppendOnlyEvent(client, ev, type, deviceId, ts) {
   return existing.rows[0].server_ts;
 }
 
+function productSkuKey(payload = {}) {
+  return String(payload.sku || "").trim().toLowerCase();
+}
+
+function sanitizeSharedProductPayload(payload = {}) {
+  const next = { ...payload };
+  delete next.branchId;
+  delete next.branch_id;
+  delete next.branch;
+  for (const key of ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"]) {
+    if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = 0;
+  }
+  return next;
+}
+
+async function upsertProductRecordBySku(client, ev, deviceId, ts) {
+  const updatedAt = Number(ev.updatedAt ?? ev.clientTs ?? ts);
+  const payload = sanitizeSharedProductPayload(ev.payload ?? {});
+  const skuKey = productSkuKey(payload);
+
+  if (!skuKey || ev.deleted) {
+    await client.query(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1,'product',NULL,$2,$3,$4,$5,$6)
+       ON CONFLICT (type, id) DO UPDATE SET
+         branch_id = NULL,
+         device_id = EXCLUDED.device_id,
+         updated_at = EXCLUDED.updated_at,
+         deleted = EXCLUDED.deleted,
+         payload = EXCLUDED.payload,
+         server_ts = EXCLUDED.server_ts
+       WHERE EXCLUDED.updated_at >= records.updated_at`,
+      [ev.id, deviceId, updatedAt, ts, !!ev.deleted, payload]
+    );
+    const existing = await client.query("SELECT server_ts FROM records WHERE type = 'product' AND id = $1", [ev.id]);
+    return existing.rows[0].server_ts;
+  }
+
+  const existing = await client.query(
+    `SELECT id, payload, updated_at AS "updatedAt"
+     FROM records
+     WHERE type = 'product'
+       AND deleted = false
+       AND lower(payload->>'sku') = $1
+     ORDER BY updated_at DESC, server_ts DESC, id ASC
+     LIMIT 1`,
+    [skuKey]
+  );
+  const existingProduct = existing.rows[0];
+
+  if (existingProduct && existingProduct.id === ev.id) {
+    if (Number(existingProduct.updatedAt || 0) <= updatedAt) {
+      const merged = sanitizeSharedProductPayload({ ...(existingProduct.payload || {}), ...payload });
+      await client.query(
+        `UPDATE records
+         SET branch_id = NULL,
+             device_id = $2,
+             updated_at = $3,
+             deleted = false,
+             payload = $4,
+             server_ts = $5
+         WHERE type = 'product' AND id = $1`,
+        [ev.id, deviceId, updatedAt, merged, ts]
+      );
+    }
+    const updated = await client.query("SELECT server_ts FROM records WHERE type = 'product' AND id = $1", [ev.id]);
+    return updated.rows[0].server_ts;
+  }
+
+  if (existingProduct && existingProduct.id !== ev.id) {
+    const merged = sanitizeSharedProductPayload({ ...(existingProduct.payload || {}), ...payload });
+    await client.query(
+      `UPDATE records
+       SET branch_id = NULL,
+           device_id = $2,
+           updated_at = GREATEST(updated_at, $3),
+           deleted = false,
+           payload = $4,
+           server_ts = $5
+       WHERE type = 'product' AND id = $1`,
+      [existingProduct.id, deviceId, updatedAt, merged, ts]
+    );
+    await client.query(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1,'product',NULL,$2,$3,$4,true,$5)
+       ON CONFLICT (type, id) DO UPDATE SET
+         branch_id = NULL,
+         device_id = EXCLUDED.device_id,
+         updated_at = EXCLUDED.updated_at,
+         deleted = true,
+         payload = EXCLUDED.payload,
+         server_ts = EXCLUDED.server_ts
+       WHERE EXCLUDED.updated_at >= records.updated_at`,
+      [ev.id, deviceId, updatedAt, ts, { ...payload, dedupedInto: existingProduct.id }]
+    );
+    const updated = await client.query("SELECT server_ts FROM records WHERE type = 'product' AND id = $1", [existingProduct.id]);
+    return updated.rows[0].server_ts;
+  }
+
+  await client.query(
+    `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+     VALUES ($1,'product',NULL,$2,$3,$4,false,$5)
+     ON CONFLICT (type, id) DO UPDATE SET
+       branch_id = NULL,
+       device_id = EXCLUDED.device_id,
+       updated_at = EXCLUDED.updated_at,
+       deleted = false,
+       payload = EXCLUDED.payload,
+       server_ts = EXCLUDED.server_ts
+     WHERE EXCLUDED.updated_at >= records.updated_at`,
+    [ev.id, deviceId, updatedAt, ts, payload]
+  );
+  const inserted = await client.query("SELECT server_ts FROM records WHERE type = 'product' AND id = $1", [ev.id]);
+  return inserted.rows[0].server_ts;
+}
+
 async function upsertMutableRecord(client, ev, type, deviceId, ts) {
   const updatedAt = Number(ev.updatedAt ?? ev.clientTs ?? ts);
+  if (!isMySql && type === "product") return upsertProductRecordBySku(client, ev, deviceId, ts);
   if (isMySql) {
     await client.query(
       `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
@@ -322,6 +439,7 @@ async function propagateProductGlobalFields(client, ev, deviceId, ts) {
   if (!key) return;
   const patch = productGlobalPatch(incomingPayload);
   if (!Object.keys(patch).length) return;
+  const updatedAt = Number(ev.updatedAt ?? ev.clientTs ?? ts);
 
   const existing = await client.query(
     "SELECT id, payload FROM records WHERE type = $1 AND deleted = $2",
@@ -336,9 +454,9 @@ async function propagateProductGlobalFields(client, ev, deviceId, ts) {
        SET payload = $3,
            device_id = $4,
            updated_at = $5,
-           server_ts = $5
+           server_ts = $6
        WHERE type = $1 AND id = $2`,
-      ["product", row.id, { ...payload, ...patch }, deviceId, ts]
+      ["product", row.id, { ...payload, ...patch }, deviceId, updatedAt, ts]
     );
   }
 }

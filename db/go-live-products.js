@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import "dotenv/config";
-import { pool, ready } from "../src/db.js";
+import { pool, ready, serverNow } from "../src/db.js";
 
 const args = new Set(process.argv.slice(2));
 const confirm = args.has("--confirm");
@@ -21,394 +21,371 @@ function usage() {
   ].join("\n");
 }
 
-function normalizeSku(sku) {
-  return String(sku || "").trim().toLowerCase();
+function normalizeSku(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
-function safeIdPart(value) {
-  return String(value || "branch").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+function safePart(value) {
+  return String(value || "x").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
 }
 
-function bpId(branchId, productId) {
-  return `bp_${safeIdPart(branchId)}_${safeIdPart(productId)}`.slice(0, 180);
+function asNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
-function rowCompleteness(row) {
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function hasMoney(payload, keys) {
+  return keys.some((key) => asNumber(payload?.[key], 0) > 0);
+}
+
+function productScore(row) {
+  const p = row.payload || {};
   return [
-    Number(row.cost_price || 0) > 0 ? 1000 : 0,
-    Number(row.max_selling_price || 0) > 0 ? 800 : 0,
-    String(row.image || "").trim() ? 500 : 0,
-    String(row.name || "").trim() ? 200 : 0,
-    String(row.category_id || "").trim() ? 80 : 0,
-    String(row.brand || "").trim() ? 40 : 0,
-    String(row.unit || "").trim() ? 20 : 0,
-    String(row.status || "active").toLowerCase() === "active" ? 10 : 0,
-  ].reduce((sum, n) => sum + n, 0);
+    hasMoney(p, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents", "price", "sellingPrice", "selling_price"]) ? 1000 : 0,
+    hasMoney(p, ["costCents", "costPriceCents", "cost_price_cents", "costPrice", "cost_price", "cost"]) ? 900 : 0,
+    hasValue(p.image || p.imageUrl || p.image_url || p.photo) ? 600 : 0,
+    hasValue(p.name) ? 300 : 0,
+    hasValue(p.barcode || (Array.isArray(p.barcodes) && p.barcodes[0])) ? 160 : 0,
+    hasValue(p.category || p.categoryId) ? 90 : 0,
+    hasValue(p.brand) ? 40 : 0,
+    hasValue(p.unit || p.size) ? 30 : 0,
+    String(p.status || "active").toLowerCase() === "active" ? 10 : 0,
+  ].reduce((sum, value) => sum + value, 0);
 }
 
-function sortCanonical(a, b) {
-  const complete = rowCompleteness(b) - rowCompleteness(a);
-  if (complete) return complete;
-  const updated = new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
-  if (updated) return updated;
+function canonicalSort(a, b) {
+  const score = productScore(b) - productScore(a);
+  if (score) return score;
+  const time = asNumber(b.server_ts ?? b.serverTs ?? b.updated_at ?? b.updatedAt) - asNumber(a.server_ts ?? a.serverTs ?? a.updated_at ?? a.updatedAt);
+  if (time) return time;
   return String(a.id).localeCompare(String(b.id));
 }
 
-async function tableExists(client, tableName) {
-  const result = await client.query("SELECT to_regclass($1) AS name", [`public.${tableName}`]);
-  return Boolean(result.rows[0]?.name);
-}
-
-async function columnExists(client, tableName, columnName) {
-  const result = await client.query(
-    `SELECT 1
-       FROM information_schema.columns
-      WHERE table_schema = current_schema()
-        AND table_name = $1
-        AND column_name = $2
-      LIMIT 1`,
-    [tableName, columnName]
-  );
-  return Boolean(result.rows[0]);
-}
-
-async function listBranches(client) {
-  const branches = new Map();
-  if (await tableExists(client, "products") && await columnExists(client, "products", "branch_id")) {
-    const result = await client.query("SELECT branch_id, count(*)::int AS productRows FROM products WHERE branch_id IS NOT NULL GROUP BY branch_id ORDER BY branch_id");
-    result.rows.forEach((row) => branches.set(row.branch_id, { ...(branches.get(row.branch_id) || { id: row.branch_id }), productRows: row.productrows ?? row.productRows }));
+function stripBranchAndStock(payload = {}) {
+  const next = { ...payload };
+  delete next.branchId;
+  delete next.branch_id;
+  delete next.branch;
+  for (const key of ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"]) {
+    if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = 0;
   }
-  if (await tableExists(client, "branch_products")) {
-    const result = await client.query("SELECT branch_id, count(*)::int AS rows FROM branch_products WHERE branch_id IS NOT NULL GROUP BY branch_id ORDER BY branch_id");
-    result.rows.forEach((row) => branches.set(row.branch_id, { id: row.branch_id, branchProductRows: row.rows }));
-  }
-  if (await tableExists(client, "devices")) {
-    const result = await client.query("SELECT branch_id, count(*)::int AS devices FROM devices WHERE branch_id IS NOT NULL GROUP BY branch_id");
-    result.rows.forEach((row) => branches.set(row.branch_id, { ...(branches.get(row.branch_id) || { id: row.branch_id }), devices: row.devices }));
-  }
-  if (await tableExists(client, "records")) {
-    const result = await client.query("SELECT id, payload->>'name' AS name FROM records WHERE type = 'branch' AND deleted = false ORDER BY id");
-    result.rows.forEach((row) => branches.set(row.id, { ...(branches.get(row.id) || { id: row.id }), name: row.name || row.id }));
-  }
-  return [...branches.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return next;
 }
 
-async function diagnose(client) {
-  const hasProducts = await tableExists(client, "products");
-  const hasBranchProducts = await tableExists(client, "branch_products");
-  if (!hasProducts) throw new Error("products table does not exist");
-
-  const columns = {
-    productsBranchId: await columnExists(client, "products", "branch_id"),
-    productsStock: await columnExists(client, "products", "stock"),
-    productsQuantity: await columnExists(client, "products", "quantity"),
-    productsSellingPrice: await columnExists(client, "products", "selling_price"),
-    branchProducts: hasBranchProducts,
-  };
-
-  const counts = await client.query(
-    `SELECT
-       count(*)::int AS total_rows,
-       count(DISTINCT lower(trim(sku))) FILTER (WHERE sku IS NOT NULL AND trim(sku) <> '')::int AS distinct_skus,
-       count(*) FILTER (WHERE sku IS NULL OR trim(sku) = '')::int AS missing_sku_rows
-     FROM products`
-  );
-  const duplicateSkuCount = await client.query(
-    `SELECT count(*)::int AS n
-       FROM (
-         SELECT lower(trim(sku)) AS sku_key
-         FROM products
-         WHERE sku IS NOT NULL AND trim(sku) <> ''
-         GROUP BY lower(trim(sku))
-         HAVING count(*) > 1
-       ) d`
-  );
-  const duplicateRows = await client.query(
-    `SELECT lower(trim(sku)) AS sku_key, count(*)::int AS rows
-       FROM products
-      WHERE sku IS NOT NULL AND trim(sku) <> ''
-      GROUP BY lower(trim(sku))
-     HAVING count(*) > 1
-      ORDER BY rows DESC, sku_key
-      LIMIT 20`
-  );
-  const branches = await listBranches(client);
-  const stockCounts = hasBranchProducts
-    ? await client.query(
-        `SELECT
-           count(*)::int AS rows,
-           count(*) FILTER (WHERE stock = 0)::int AS zero_stock_rows,
-           count(DISTINCT branch_id)::int AS branches,
-           count(DISTINCT product_id)::int AS products
-         FROM branch_products`
-      )
-    : { rows: [{ rows: 0, zero_stock_rows: 0, branches: 0, products: 0 }] };
-
-  return {
-    columns,
-    productCounts: {
-      totalRows: counts.rows[0].total_rows,
-      distinctSkus: counts.rows[0].distinct_skus,
-      missingSkuRows: counts.rows[0].missing_sku_rows,
-      duplicateSkuCount: duplicateSkuCount.rows[0].n,
-    },
-    duplicateExamples: duplicateRows.rows,
-    branches,
-    stockCounts: stockCounts.rows[0],
-  };
+function mergeProductPayload(canonical, candidates) {
+  const merged = { ...(canonical || {}) };
+  const fillKeys = [
+    "name",
+    "sku",
+    "barcode",
+    "barcodes",
+    "barcodeCatalogId",
+    "barcodeCatalogIds",
+    "category",
+    "categoryId",
+    "brand",
+    "unit",
+    "size",
+    "image",
+    "imageUrl",
+    "image_url",
+    "photo",
+    "description",
+    "status",
+    "priceCents",
+    "sellingPriceCents",
+    "selling_price_cents",
+    "sellPriceCents",
+    "price",
+    "sellingPrice",
+    "selling_price",
+    "costCents",
+    "costPriceCents",
+    "cost_price_cents",
+    "costPrice",
+    "cost_price",
+    "cost",
+  ];
+  for (const row of candidates) {
+    const payload = row.payload || {};
+    for (const key of fillKeys) {
+      if (!hasValue(merged[key]) && hasValue(payload[key])) merged[key] = payload[key];
+    }
+  }
+  return stripBranchAndStock(merged);
 }
 
-async function productRows(client) {
-  const result = await client.query(
-    `SELECT
-       p.*,
-       COALESCE((SELECT max(bp.selling_price) FROM branch_products bp WHERE bp.product_id = p.id), 0) AS max_selling_price,
-       COALESCE((SELECT sum(bp.stock) FROM branch_products bp WHERE bp.product_id = p.id), 0) AS branch_stock_total
-     FROM products p
-     ORDER BY lower(trim(p.sku)), p.id`
-  );
-  return result.rows;
+function rewriteProductRefs(value, idMap) {
+  if (Array.isArray(value)) return value.map((item) => rewriteProductRefs(item, idMap));
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if ((key === "productId" || key === "product_id") && idMap.has(String(child))) {
+      out[key] = idMap.get(String(child));
+    } else {
+      out[key] = rewriteProductRefs(child, idMap);
+    }
+  }
+  return out;
 }
 
-function buildCanonicalPlan(rows) {
+function jsonChanged(a, b) {
+  return JSON.stringify(a || {}) !== JSON.stringify(b || {});
+}
+
+function buildDedupePlan(products) {
   const bySku = new Map();
-  for (const row of rows) {
-    const key = normalizeSku(row.sku);
+  for (const row of products) {
+    const key = normalizeSku(row.payload?.sku);
     if (!key) continue;
     if (!bySku.has(key)) bySku.set(key, []);
     bySku.get(key).push(row);
   }
   const groups = [];
-  const remap = new Map();
-  for (const [skuKey, skuRows] of bySku.entries()) {
-    const sorted = [...skuRows].sort(sortCanonical);
+  const idMap = new Map();
+  for (const [sku, rows] of bySku.entries()) {
+    const sorted = [...rows].sort(canonicalSort);
     const keep = sorted[0];
     const remove = sorted.slice(1);
-    if (!remove.length) continue;
-    groups.push({ skuKey, keep, remove });
-    remove.forEach((row) => remap.set(row.id, keep.id));
+    groups.push({ sku, keep, remove, rows: sorted });
+    for (const row of remove) idMap.set(row.id, keep.id);
   }
-  return { groups, remap };
+  return { groups, idMap };
 }
 
-async function mergeBranchProducts(client, duplicateId, keepId) {
-  const rows = await client.query("SELECT * FROM branch_products WHERE product_id = $1", [duplicateId]);
-  for (const row of rows.rows) {
-    await client.query(
-      `INSERT INTO branch_products (
-         id, product_id, branch_id, selling_price, stock, reorder_level, shelf_location, availability, created_at, updated_at
-       ) VALUES ($1,$2,$3,$4,0,$5,$6,$7,COALESCE($8, now()), now())
-       ON CONFLICT (branch_id, product_id) DO UPDATE SET
-         selling_price = CASE
-           WHEN EXCLUDED.selling_price > 0 THEN EXCLUDED.selling_price
-           ELSE branch_products.selling_price
-         END,
-         stock = 0,
-         reorder_level = GREATEST(branch_products.reorder_level, EXCLUDED.reorder_level),
-         shelf_location = COALESCE(branch_products.shelf_location, EXCLUDED.shelf_location),
-         availability = branch_products.availability OR EXCLUDED.availability,
-         updated_at = now()`,
-      [
-        bpId(row.branch_id, keepId),
-        keepId,
-        row.branch_id,
-        row.selling_price || 0,
-        row.reorder_level || 0,
-        row.shelf_location || null,
-        row.availability !== false,
-        row.created_at || null,
-      ]
-    );
-  }
-  await client.query("DELETE FROM branch_products WHERE product_id = $1", [duplicateId]);
-}
-
-async function splitLegacyProductStock(client, columns) {
-  if (!columns.productsBranchId) return { movedRows: 0, droppedColumns: [] };
-
-  const selectStock = columns.productsStock
-    ? "COALESCE(stock, 0)"
-    : columns.productsQuantity
-      ? "COALESCE(quantity, 0)"
-      : "0";
-  const selectSellingPrice = columns.productsSellingPrice ? "COALESCE(selling_price, 0)" : "0";
-  const hasReorderLevel = await columnExists(client, "products", "reorder_level");
-  const selectReorderLevel = hasReorderLevel ? "COALESCE(reorder_level, 0)" : "0";
-
-  const legacyRows = await client.query(
-    `SELECT id, branch_id, ${selectStock} AS stock, ${selectSellingPrice} AS selling_price, ${selectReorderLevel} AS reorder_level
-       FROM products
-      WHERE branch_id IS NOT NULL`
+async function diagnose(client) {
+  const counts = await client.query(
+    `SELECT
+       count(*)::int AS total,
+       count(DISTINCT lower(trim(payload->>'sku'))) FILTER (WHERE payload->>'sku' IS NOT NULL AND trim(payload->>'sku') <> '')::int AS skus,
+       count(*) FILTER (WHERE payload->>'sku' IS NULL OR trim(payload->>'sku') = '')::int AS missing_sku
+     FROM records
+     WHERE type = 'product' AND deleted = false`
   );
-
-  for (const row of legacyRows.rows) {
-    await client.query(
-      `INSERT INTO branch_products (id, product_id, branch_id, selling_price, stock, reorder_level, availability)
-       VALUES ($1,$2,$3,$4,$5,$6,true)
-       ON CONFLICT (branch_id, product_id) DO UPDATE SET
-         selling_price = CASE
-           WHEN EXCLUDED.selling_price > 0 THEN EXCLUDED.selling_price
-           ELSE branch_products.selling_price
-         END,
-         stock = EXCLUDED.stock,
-         reorder_level = GREATEST(branch_products.reorder_level, EXCLUDED.reorder_level),
-         updated_at = now()`,
-      [bpId(row.branch_id, row.id), row.id, row.branch_id, row.selling_price || 0, row.stock || 0, row.reorder_level || 0]
-    );
-  }
-
-  const columnsToDrop = [
-    "branch_id",
-    columns.productsStock ? "stock" : null,
-    columns.productsQuantity ? "quantity" : null,
-    columns.productsSellingPrice ? "selling_price" : null,
-    hasReorderLevel ? "reorder_level" : null,
-  ].filter(Boolean);
-
-  for (const column of columnsToDrop) {
-    await client.query(`ALTER TABLE products DROP COLUMN IF EXISTS ${column}`);
-  }
-
-  return { movedRows: legacyRows.rowCount || 0, droppedColumns: columnsToDrop };
-}
-
-async function updateJsonProductRefs(client, fromId, toId) {
-  let changed = 0;
-  const topLevelEvents = await client.query(
-    `UPDATE events
-        SET payload = jsonb_set(payload, '{productId}', to_jsonb($2::text), false)
-      WHERE payload->>'productId' = $1`,
-    [fromId, toId]
+  const duplicates = await client.query(
+    `SELECT lower(trim(payload->>'sku')) AS sku, count(*)::int AS rows
+     FROM records
+     WHERE type = 'product' AND deleted = false AND payload->>'sku' IS NOT NULL AND trim(payload->>'sku') <> ''
+     GROUP BY lower(trim(payload->>'sku'))
+     HAVING count(*) > 1
+     ORDER BY rows DESC, sku
+     LIMIT 20`
   );
-  changed += topLevelEvents.rowCount || 0;
-
-  const topLevelRecords = await client.query(
-    `UPDATE records
-        SET payload = jsonb_set(payload, '{productId}', to_jsonb($2::text), false)
-      WHERE payload->>'productId' = $1`,
-    [fromId, toId]
+  const duplicateCount = await client.query(
+    `SELECT count(*)::int AS dupes
+     FROM (
+       SELECT lower(trim(payload->>'sku')) AS sku
+       FROM records
+       WHERE type = 'product' AND deleted = false AND payload->>'sku' IS NOT NULL AND trim(payload->>'sku') <> ''
+       GROUP BY lower(trim(payload->>'sku'))
+       HAVING count(*) > 1
+     ) d`
   );
-  changed += topLevelRecords.rowCount || 0;
-
-  for (const table of ["events", "records"]) {
-    for (const field of ["items", "lines"]) {
-      const result = await client.query(
-        `UPDATE ${table}
-            SET payload = jsonb_set(
-              payload,
-              $3::text[],
-              (
-                SELECT jsonb_agg(
-                  CASE
-                    WHEN item->>'productId' = $1 THEN jsonb_set(item, '{productId}', to_jsonb($2::text), false)
-                    ELSE item
-                  END
-                  ORDER BY ordinality
-                )
-                FROM jsonb_array_elements(payload->$4) WITH ORDINALITY AS arr(item, ordinality)
-              ),
-              false
-            )
-          WHERE jsonb_typeof(payload->$4) = 'array'
-            AND EXISTS (
-              SELECT 1 FROM jsonb_array_elements(payload->$4) item WHERE item->>'productId' = $1
-            )`,
-        [fromId, toId, [field], field]
-      );
-      changed += result.rowCount || 0;
-    }
-  }
-  return changed;
-}
-
-async function updateForeignKeys(client, fromId, toId) {
-  const fks = await client.query(
-    `SELECT kcu.table_name, kcu.column_name
-       FROM information_schema.table_constraints tc
-       JOIN information_schema.key_column_usage kcu
-         ON tc.constraint_name = kcu.constraint_name
-        AND tc.table_schema = kcu.table_schema
-       JOIN information_schema.constraint_column_usage ccu
-         ON ccu.constraint_name = tc.constraint_name
-        AND ccu.table_schema = tc.table_schema
-      WHERE tc.constraint_type = 'FOREIGN KEY'
-        AND ccu.table_name = 'products'
-        AND ccu.column_name = 'id'
-        AND kcu.table_schema = current_schema()`
+  const branches = await client.query(
+    `SELECT id, payload->>'name' AS name
+     FROM records
+     WHERE type = 'branch' AND deleted = false
+     ORDER BY id`
   );
-  const changed = [];
-  for (const fk of fks.rows) {
-    if (fk.table_name === "branch_products") continue;
-    const result = await client.query(
-      `UPDATE ${fk.table_name} SET ${fk.column_name} = $2 WHERE ${fk.column_name} = $1`,
-      [fromId, toId]
-    );
-    if (result.rowCount) changed.push({ table: fk.table_name, column: fk.column_name, rows: result.rowCount });
-  }
-  return changed;
+  const stock = await client.query(
+    "SELECT count(*)::int AS total FROM events WHERE type = 'stockMovement'"
+  );
+  return {
+    source: "sync records table",
+    productRecords: {
+      total: counts.rows[0].total,
+      distinctSkus: counts.rows[0].skus,
+      missingSkuRows: counts.rows[0].missing_sku,
+      duplicateSkuCount: duplicateCount.rows[0].dupes,
+    },
+    duplicateExamples: duplicates.rows,
+    branches: branches.rows,
+    stockMovementEvents: stock.rows[0].total,
+  };
 }
 
-async function ensureBranchStockRows(client, branches) {
-  for (const branch of branches) {
-    const products = await client.query("SELECT id FROM products ORDER BY id");
-    for (const product of products.rows) {
-      await client.query(
-        `INSERT INTO branch_products (id, product_id, branch_id, selling_price, stock, reorder_level, availability)
-         VALUES ($1,$2,$3,0,0,0,true)
-         ON CONFLICT (branch_id, product_id) DO UPDATE SET stock = 0, updated_at = now()`,
-        [bpId(branch.id, product.id), product.id, branch.id]
-      );
-    }
-  }
-}
-
-async function takeBackup() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for backup");
-  const backupDir = join(repoRoot, "backups");
-  mkdirSync(backupDir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const file = join(backupDir, `visionpos-products-go-live-${stamp}.sql`);
-  const result = spawnSync("pg_dump", ["--dbname", process.env.DATABASE_URL, "--file", file, "--format", "plain", "--no-owner"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  if (result.status !== 0) {
-    throw new Error(`pg_dump failed. Install PostgreSQL client tools or run on the VPS.\n${result.stderr || result.stdout}`);
-  }
+async function backupDatabase() {
+  mkdirSync(join(repoRoot, "backups"), { recursive: true });
+  const file = join(repoRoot, "backups", `visionpos-record-products-go-live-${new Date().toISOString().replace(/[:.]/g, "-")}.sql`);
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required for pg_dump backup.");
+  const result = spawnSync("pg_dump", [url, "-f", file], { stdio: "inherit" });
+  if (result.status !== 0) throw new Error("pg_dump backup failed; no changes were made.");
   return file;
 }
 
-async function run() {
-  console.log(usage());
-  if (args.has("--confirm") && args.has("--dry-run")) throw new Error("Use either --dry-run or --confirm, not both.");
-  await ready;
+async function loadProducts(client) {
+  const result = await client.query(
+    `SELECT id, branch_id, device_id, updated_at, server_ts, deleted, payload
+     FROM records
+     WHERE type = 'product' AND deleted = false
+     ORDER BY lower(trim(payload->>'sku')), server_ts DESC, id ASC`
+  );
+  return result.rows;
+}
 
+function currentStockSums(stockEvents, idMap) {
+  const sums = new Map();
+  for (const row of stockEvents) {
+    const payload = row.payload || {};
+    const rawProductId = String(payload.productId || payload.product_id || "");
+    const productId = idMap.get(rawProductId) || rawProductId;
+    const branchId = String(payload.branchId || payload.branch_id || row.branch_id || "");
+    if (!productId || !branchId) continue;
+    const qty = asNumber(payload.qty ?? payload.quantity, 0);
+    if (!qty) continue;
+    const key = `${branchId}::${productId}`;
+    sums.set(key, (sums.get(key) || 0) + qty);
+  }
+  return sums;
+}
+
+async function executeGoLive(client, before) {
+  if (before.productRecords.missingSkuRows) {
+    throw new Error(`Cannot continue: ${before.productRecords.missingSkuRows} active product record(s) have no SKU.`);
+  }
+
+  const products = await loadProducts(client);
+  const plan = buildDedupePlan(products);
+  const branchIds = before.branches.map((branch) => branch.id);
+  let ts = Math.max(serverNow(), ...products.map((row) => asNumber(row.server_ts, 0))) + 1;
+  const nextTs = () => ts++;
+  const stats = {
+    canonicalUpdated: 0,
+    tombstonedDuplicates: 0,
+    recordPayloadRefsRepointed: 0,
+    eventPayloadRefsRepointed: 0,
+    stockZeroingEventsInserted: 0,
+  };
+
+  for (const group of plan.groups) {
+    const payload = mergeProductPayload(group.keep.payload, group.rows);
+    const changed = group.keep.branch_id || jsonChanged(payload, group.keep.payload);
+    if (changed) {
+      await client.query(
+        `UPDATE records
+         SET branch_id = NULL, payload = $3, updated_at = $4, server_ts = $4
+         WHERE type = 'product' AND id = $1`,
+        [group.keep.id, "product", payload, nextTs()]
+      );
+      stats.canonicalUpdated++;
+    }
+
+    for (const duplicate of group.remove) {
+      await client.query(
+        `UPDATE records
+         SET branch_id = NULL,
+             deleted = true,
+             payload = $3,
+             updated_at = $4,
+             server_ts = $4
+         WHERE type = 'product' AND id = $1`,
+        [
+          duplicate.id,
+          "product",
+          { ...stripBranchAndStock(duplicate.payload || {}), dedupedInto: group.keep.id },
+          nextTs(),
+        ]
+      );
+      stats.tombstonedDuplicates++;
+    }
+  }
+
+  const records = await client.query("SELECT id, type, payload FROM records");
+  for (const row of records.rows) {
+    if (row.type === "product") continue;
+    const rewritten = rewriteProductRefs(row.payload || {}, plan.idMap);
+    if (!jsonChanged(rewritten, row.payload)) continue;
+    await client.query(
+      `UPDATE records SET payload = $3, updated_at = $4, server_ts = $4 WHERE type = $1 AND id = $2`,
+      [row.type, row.id, rewritten, nextTs()]
+    );
+    stats.recordPayloadRefsRepointed++;
+  }
+
+  const events = await client.query("SELECT id, type, branch_id, payload FROM events");
+  for (const row of events.rows) {
+    const rewritten = rewriteProductRefs(row.payload || {}, plan.idMap);
+    if (!jsonChanged(rewritten, row.payload)) continue;
+    await client.query("UPDATE events SET payload = $2, server_ts = $3 WHERE id = $1", [row.id, rewritten, nextTs()]);
+    stats.eventPayloadRefsRepointed++;
+  }
+
+  const updatedEvents = await client.query("SELECT id, type, branch_id, payload FROM events WHERE type = 'stockMovement'");
+  const stockSums = currentStockSums(updatedEvents.rows, plan.idMap);
+  const canonicalIds = plan.groups.map((group) => group.keep.id);
+  for (const branchId of branchIds) {
+    for (const productId of canonicalIds) {
+      const key = `${branchId}::${productId}`;
+      const current = stockSums.get(key) || 0;
+      if (!current) continue;
+      const eventTs = nextTs();
+      await client.query(
+        `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+         VALUES ($1, 'stockMovement', $2, NULL, $3, $4, $5)`,
+        [
+          `gl_zero_${safePart(branchId)}_${safePart(productId)}_${eventTs}`,
+          branchId,
+          eventTs,
+          eventTs,
+          {
+            productId,
+            branchId,
+            qty: -current,
+            reason: "Go-live stock reset",
+            mode: "goLiveZero",
+            ts: Date.now(),
+          },
+        ]
+      );
+      stats.stockZeroingEventsInserted++;
+    }
+  }
+
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS records_product_sku_unique_idx
+     ON records (lower((payload->>'sku')))
+     WHERE type = 'product'
+       AND deleted = false
+       AND payload->>'sku' IS NOT NULL
+       AND trim(payload->>'sku') <> ''`
+  );
+
+  return stats;
+}
+
+async function main() {
+  console.log(usage());
+  await ready;
   const client = await pool.connect();
   try {
     const before = await diagnose(client);
     console.log("\nSTEP 1 - DIAGNOSE");
     console.log(JSON.stringify(before, null, 2));
+    console.log("\nSchema situation: sync-record catalogue; SQL products table is not the live source.");
 
-    const schemaSituation = before.columns.productsBranchId || before.columns.productsStock || before.columns.productsQuantity
-      ? "legacy: products table still carries branch/stock fields and must be split"
-      : "current: products is shared; branch_products carries per-branch stock/pricing";
-    console.log(`\nSchema situation: ${schemaSituation}`);
-
-    if (!before.columns.branchProducts) throw new Error("branch_products table is required before cleanup.");
-    if (before.productCounts.missingSkuRows > 0) throw new Error(`Cannot safely dedupe: ${before.productCounts.missingSkuRows} product rows have no SKU.`);
-
-    const rows = await productRows(client);
-    const { groups, remap } = buildCanonicalPlan(rows);
+    const products = await loadProducts(client);
+    const plan = buildDedupePlan(products);
     console.log("\nSTEP 3 - DEDUPE PLAN");
-    console.log(`Duplicate SKU groups: ${groups.length}`);
-    console.log(`Product rows to remove: ${remap.size}`);
-    console.log("Examples:");
-    console.log(groups.slice(0, 12).map((group) => ({
-      sku: group.skuKey,
-      keep: group.keep.id,
-      remove: group.remove.map((row) => row.id),
-    })));
+    console.log(JSON.stringify({
+      activeProductRecords: products.length,
+      uniqueSkus: plan.groups.length,
+      duplicateSkuGroups: plan.groups.filter((group) => group.remove.length).length,
+      productRecordsToTombstone: plan.idMap.size,
+      examples: plan.groups
+        .filter((group) => group.remove.length)
+        .slice(0, 12)
+        .map((group) => ({
+          sku: group.sku,
+          keep: group.keep.id,
+          remove: group.remove.map((row) => row.id),
+          score: productScore(group.keep),
+        })),
+    }, null, 2));
 
     if (dryRun) {
       console.log("\nDRY RUN ONLY - no database changes made. Re-run with --confirm to back up and execute.");
@@ -416,62 +393,28 @@ async function run() {
     }
 
     console.log("\nSTEP 0 - BACKUP");
-    const backupFile = await takeBackup();
-    console.log(`Backup complete: ${backupFile}`);
+    const backup = await backupDatabase();
+    console.log(`Backup complete: ${backup}`);
 
     await client.query("BEGIN");
-    const legacySplit = await splitLegacyProductStock(client, before.columns);
-    const fkChanges = [];
-    let jsonRefChanges = 0;
-    for (const group of groups) {
-      for (const duplicate of group.remove) {
-        await mergeBranchProducts(client, duplicate.id, group.keep.id);
-        fkChanges.push(...await updateForeignKeys(client, duplicate.id, group.keep.id));
-        jsonRefChanges += await updateJsonProductRefs(client, duplicate.id, group.keep.id);
-        await client.query("DELETE FROM products WHERE id = $1", [duplicate.id]);
-      }
-    }
-
-    await client.query("CREATE UNIQUE INDEX IF NOT EXISTS products_sku_unique_idx ON products (lower(sku)) WHERE sku IS NOT NULL AND sku <> ''");
-    await ensureBranchStockRows(client, before.branches);
+    const stats = await executeGoLive(client, before);
     await client.query("COMMIT");
 
     const after = await diagnose(client);
-    const duplicateCheck = await client.query(
-      `SELECT lower(trim(sku)) AS sku_key, count(*)::int AS rows
-         FROM products
-        WHERE sku IS NOT NULL AND trim(sku) <> ''
-        GROUP BY lower(trim(sku))
-       HAVING count(*) > 1
-        ORDER BY sku_key`
-    );
-    const stockVerification = await client.query(
-      `SELECT branch_id, count(*)::int AS rows, count(*) FILTER (WHERE stock = 0)::int AS zero_rows
-         FROM branch_products
-        GROUP BY branch_id
-        ORDER BY branch_id`
-    );
-
     console.log("\nSTEP 7 - VERIFY & REPORT");
-    console.log("Before:", before.productCounts);
-    console.log("After:", after.productCounts);
-    console.log("Remaining duplicate SKU groups:", duplicateCheck.rows);
-    console.log("Branch stock rows:", stockVerification.rows);
-    console.log("JSON product references repointed:", jsonRefChanges);
-    console.log("FK repoints:", fkChanges);
-    console.log("Legacy product stock split:", legacySplit);
-    console.log("Backup:", backupFile);
+    console.log(JSON.stringify({ before, after, stats, backup }, null, 2));
   } catch (error) {
-    try { await client.query("ROLLBACK"); } catch (_) {}
-    throw error;
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // no open transaction
+    }
+    console.error(error);
+    process.exitCode = 1;
   } finally {
     client.release();
     await pool.end();
   }
 }
 
-run().catch((error) => {
-  console.error("\nproducts go-live failed:");
-  console.error(error);
-  process.exit(1);
-});
+main();
