@@ -1,11 +1,11 @@
 {
-  "version": "2.0.14",
-  "notes": "Sales card now shows today's invoice total without listing paid invoices on the dashboard.\nDebt Tracker now contains pending open invoices and carried-over debt previews.\nCart panel renamed and simplified with sale note, checkout helper text, and visible sync pills removed.\nProduct cards now show bold product details with compact stock and Add / Out of stock actions.\nBranch pill now carries the live connection indicator without a separate reconnecting label.",
-  "pub_date": "2026-06-30T00:00:00Z",
+  "version": "2.0.19",
+  "notes": "VISIONPOS Cashier 2.0.19\nNative Tauri auto-update package.\nDownload, verification, install, and restart are handled inside the app.",
+  "pub_date": "2026-07-01T22:52:51.383Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVURm42bVUvTFBuQnZMNmV2OGxHQmpTVjdTK2FINlJLUmFldEg3NDBuWXdBUUsweGdxSEs4MEdWYXorZXpHVTlQc3dTYmwxU3BKb09OMXZSTG9UVzc1azlvOWJWeWlzZ3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyODY3NjQ0CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjE0X3g2NC1zZXR1cC5leGUKeSt0d2YvTHpGSHAxVXdVTE5BQWszdmhiR1lTOFRDeURDeUZFSnpRR3JYYmNDTGQ1OG5OQjhmWHBGSm0vb2JXS3BUUGx6NlZNUnI4YjRkVGlEakYyRGc9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier-Setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmNSMjBMR1VpcGhETnBXMm5ZMm0yeVZTcTF6ZkNPTjRzWms5MXVubk9CM3d0bEE1MGJPR0NtUU5aMVVnd0hLK0VFVDFaR2xMR2phUVdXQVlXcFdMdUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyOTQ2MzcxCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjE5X3g2NC1zZXR1cC5leGUKdEozY2E3MkdYYWxqa1dNSjNsYVNKTjJpeEJHallFcFBEQWpKbEpicTR5R3VnaGNrYXR3WmlkSHJMdlJRdTg4Mml3cmIzbVFPZ1lUZG5IZUFJSHFTQlE9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.19_x64-setup.exe"
     }
   }
 }
