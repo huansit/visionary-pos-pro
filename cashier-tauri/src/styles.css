@@ -3569,10 +3569,11 @@ body {
 }
 
 .debts-center-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-right: 56px;
   padding-bottom: 10px;
   border-bottom: 1px solid #e5e7eb;
 }
@@ -3592,9 +3593,11 @@ body {
 .debts-center-header h2 {
   margin: 0;
   color: #0f172a;
-  font-size: clamp(22px, 2.3vw, 34px);
-  font-weight: 950;
-  letter-spacing: -0.03em;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .debts-center-header p {
@@ -3605,8 +3608,10 @@ body {
 }
 
 .debts-total {
+  width: 100%;
   text-align: right;
-  min-width: 160px;
+  min-width: 0;
+  margin-top: 2px;
 }
 
 .debts-total span {
@@ -3621,9 +3626,9 @@ body {
 .debts-total b {
   display: block;
   color: #be123c;
-  font-size: clamp(22px, 2.1vw, 32px);
-  font-weight: 950;
-  letter-spacing: -0.03em;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .debts-search {
@@ -3651,9 +3656,8 @@ body {
 }
 
 .debts-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
   min-width: 0;
 }
@@ -3661,9 +3665,15 @@ body {
 .debts-filter-chips {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.debts-filter-chips::-webkit-scrollbar {
+  display: none;
 }
 
 .debts-filter-chips button,
@@ -3704,6 +3714,9 @@ body {
 
 .debts-sort {
   color: #0f172a;
+  justify-self: end;
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 .debts-list {
@@ -3724,10 +3737,10 @@ body {
   background: #ffffff;
   color: #0f172a;
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 9px 10px;
   text-align: left;
   transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
 }
@@ -3739,15 +3752,15 @@ body {
 }
 
 .debts-avatar {
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 950;
 }
 
@@ -3766,20 +3779,20 @@ body {
 
 .debts-main b {
   color: #111827;
-  font-size: 17px;
-  font-weight: 950;
+  font-size: 14px;
+  font-weight: 850;
 }
 
 .debts-main small {
   color: #64748b;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 750;
 }
 
 .debts-age {
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 5px 8px;
+  font-size: 11px;
   font-weight: 950;
   white-space: nowrap;
 }
@@ -3795,10 +3808,10 @@ body {
 }
 
 .debts-row strong {
-  min-width: 100px;
+  min-width: 68px;
   text-align: right;
   color: #0f172a;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 950;
 }
 
@@ -3831,6 +3844,15 @@ body {
   color: #2563eb;
   font-size: 13px;
   font-weight: 850;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.debts-footer-note b {
+  color: #0f172a;
+  white-space: nowrap;
 }
 
 @media (max-width: 1180px) {
@@ -3845,6 +3867,18 @@ body {
   .debts-age {
     display: none;
   }
+}
+
+.app-drawer .debts-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
+}
+
+.app-drawer .debts-age {
+  display: inline-flex;
+}
+
+.app-drawer .debts-row svg {
+  display: block;
 }
 
 /* Final shell overrides: keep header/body and collapsed rail predictable. */

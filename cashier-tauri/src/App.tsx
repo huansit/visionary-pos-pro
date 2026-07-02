@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import {
-  ArrowLeft,
   Barcode,
   Building2,
   ChevronLeft,
@@ -66,9 +65,18 @@ type UpdatePrompt = {
 
 type CashierUpdateState = "idle" | "downloading" | "ready";
 type DrawerSide = "left" | "right";
+type InvoiceListMode = "today" | "debts";
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
+}
+
+function middleReceipt(receiptNo: string, maxLength = 16) {
+  const value = String(receiptNo || "").trim();
+  if (value.length <= maxLength) return value;
+  const keepStart = Math.max(4, Math.floor((maxLength - 1) / 2));
+  const keepEnd = Math.max(6, maxLength - keepStart - 1);
+  return `${value.slice(0, keepStart)}…${value.slice(-keepEnd)}`;
 }
 
 function logUpdateEvent(event: string, details: Record<string, unknown> = {}) {
@@ -290,15 +298,6 @@ function isOverdueDebtInvoice(invoice: Invoice) {
   return Boolean(invoice.carriedOver) || invoiceAgeDays(invoice) > 7;
 }
 
-function isThisWeekDebtInvoice(invoice: Invoice) {
-  return invoiceAgeDays(invoice) <= 7;
-}
-
-function debtIssuedDate(invoice: Invoice) {
-  if (!invoice.ts) return "not dated";
-  return new Date(invoice.ts).toLocaleDateString([], { day: "2-digit", month: "short" });
-}
-
 function invoiceDueDate(invoice: Invoice) {
   if (!invoice.ts) return "Not set";
   return new Date(Number(invoice.ts) + 7 * DAY_MS).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
@@ -379,7 +378,7 @@ export default function App() {
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
-  const [debtsOpen, setDebtsOpen] = useState(false);
+  const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [updateState, setUpdateState] = useState<CashierUpdateState>("idle");
@@ -944,12 +943,12 @@ export default function App() {
               </button>
               <div className="mini-sidebar">
                 <button title={`Sales today: ${money(salesInvoiceTotal)}`}><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
-                <button className="mini-badge-button" onClick={() => setDebtsOpen(true)} title={`${openInvoicesToday.length} open invoices`}>
+                <button className="mini-badge-button" onClick={() => setInvoiceListMode("today")} title={`${openInvoicesToday.length} open invoices`}>
                   <FileText size={18} />
                   {openInvoicesToday.length > 0 && <b>{openInvoicesToday.length}</b>}
                 </button>
                 <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
-                <button className="mini-badge-button" onClick={() => setDebtsOpen(true)} title={`${carriedDebts.length} outstanding debts`}>
+                <button className="mini-badge-button" onClick={() => setInvoiceListMode("debts")} title={`${carriedDebts.length} outstanding debts`}>
                   <span className="info-dot">!</span>
                   {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
                 </button>
@@ -1029,11 +1028,11 @@ export default function App() {
             className="card dark debt-card clickable-card rail-hidden"
             role="button"
             tabIndex={0}
-            onClick={() => setDebtsOpen(true)}
+            onClick={() => setInvoiceListMode("debts")}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                setDebtsOpen(true);
+                setInvoiceListMode("debts");
               }
             }}
           >
@@ -1043,7 +1042,7 @@ export default function App() {
                 className="text-link"
                 onClick={(event) => {
                   event.stopPropagation();
-                  setDebtsOpen(true);
+                  setInvoiceListMode("debts");
                 }}
               >
                 View
@@ -1061,7 +1060,7 @@ export default function App() {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      setDebtsOpen(true);
+                      setInvoiceListMode("debts");
                     }}
                   >
                     <span><b>{invoice.number}</b><small>{invoice.customerName || "Walk-in"}</small></span>
@@ -1074,7 +1073,7 @@ export default function App() {
           </div>
           <section className="rail-quick-actions">
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
-            <button className="rail-action-badge" onClick={() => setDebtsOpen(true)}>
+            <button className="rail-action-badge" onClick={() => setInvoiceListMode("debts")}>
               <span className="info-dot">!</span>
               Debts
               {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
@@ -1247,19 +1246,18 @@ export default function App() {
           />
         </Drawer>
       )}
-      {debtsOpen && (
-        <Drawer side="left" onClose={() => { setDebtsOpen(false); focusSearch(); }} labelledBy="debts-center-title">
+      {invoiceListMode && (
+        <Drawer side="left" onClose={() => { setInvoiceListMode(null); focusSearch(); }} labelledBy="debts-center-title">
           <DebtsCenterView
+            mode={invoiceListMode}
+            todayInvoices={openInvoicesToday}
             openInvoices={openInvoices}
             carriedDebts={carriedDebts}
+            todayTotalCents={openInvoicesTodayTotal}
             openTotalCents={openInvoiceTotal}
             carriedTotalCents={carriedDebtTotal}
-            onBack={() => {
-              setDebtsOpen(false);
-              focusSearch();
-            }}
             onSelect={(invoice) => {
-              setDebtsOpen(false);
+              setInvoiceListMode(null);
               setInvoiceDetail({ invoice, side: "left" });
             }}
           />
@@ -1414,47 +1412,70 @@ function InvoiceDetailSlideOver({
 }
 
 function DebtsCenterView({
+  mode,
+  todayInvoices,
   openInvoices,
   carriedDebts,
+  todayTotalCents,
   openTotalCents,
   carriedTotalCents,
-  onBack,
   onSelect
 }: {
+  mode: InvoiceListMode;
+  todayInvoices: Invoice[];
   openInvoices: Invoice[];
   carriedDebts: Invoice[];
+  todayTotalCents: number;
   openTotalCents: number;
   carriedTotalCents: number;
-  onBack: () => void;
   onSelect: (invoice: Invoice) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "overdue" | "week">("all");
-  const [oldestFirst, setOldestFirst] = useState(true);
-  const allInvoices = useMemo(() => [...openInvoices, ...carriedDebts], [openInvoices, carriedDebts]);
-  const overdueInvoices = useMemo(() => allInvoices.filter(isOverdueDebtInvoice), [allInvoices]);
-  const weekInvoices = useMemo(() => allInvoices.filter(isThisWeekDebtInvoice), [allInvoices]);
+  const [filter, setFilter] = useState<"all" | "unpaid" | "overdue" | "carried">("all");
+  const [oldestFirst, setOldestFirst] = useState(mode === "debts");
+  const debtInvoices = useMemo(() => [...openInvoices, ...carriedDebts], [openInvoices, carriedDebts]);
+  const overdueInvoices = useMemo(() => debtInvoices.filter(isOverdueDebtInvoice), [debtInvoices]);
+  const title = mode === "today" ? "Open invoices" : "Debts";
+  const subline = mode === "today"
+    ? `${todayInvoices.length} open today`
+    : `${openInvoices.length} pending · ${carriedDebts.length} carried over`;
+  const scopeInvoices = mode === "today" ? todayInvoices : debtInvoices;
   const totalOwed = openTotalCents + carriedTotalCents;
+  const totalForMode = mode === "today" ? todayTotalCents : totalOwed;
   const searchTerm = query.trim().toLowerCase();
+
+  useEffect(() => {
+    setFilter("all");
+    setOldestFirst(mode === "debts");
+  }, [mode]);
+
   const visibleInvoices = useMemo(() => {
-    const source = filter === "overdue" ? overdueInvoices : filter === "week" ? weekInvoices : allInvoices;
+    const source =
+      mode === "today"
+        ? (filter === "unpaid" ? todayInvoices.filter((invoice) => outstanding(invoice) > 0) : todayInvoices)
+        : filter === "overdue"
+          ? overdueInvoices
+          : filter === "carried"
+            ? carriedDebts
+            : debtInvoices;
     return source
       .filter((invoice) => !searchTerm || invoiceSearchText(invoice).includes(searchTerm))
       .sort((a, b) => oldestFirst ? Number(a.ts || 0) - Number(b.ts || 0) : Number(b.ts || 0) - Number(a.ts || 0));
-  }, [allInvoices, filter, oldestFirst, overdueInvoices, searchTerm, weekInvoices]);
+  }, [carriedDebts, debtInvoices, filter, mode, oldestFirst, overdueInvoices, searchTerm, todayInvoices]);
 
   return (
     <section className="debts-center-panel">
       <header className="debts-center-header">
-        <button className="debts-back" type="button" onClick={onBack} aria-label="Back to products"><ArrowLeft size={18} /></button>
         <div>
-          <h2 id="debts-center-title">Open invoices</h2>
-          <p>{openInvoices.length} pending &middot; {carriedDebts.length} carried over</p>
+          <h2 id="debts-center-title">{title}</h2>
+          <p>{subline}</p>
         </div>
-        <div className="debts-total">
-          <span>Total owed</span>
-          <b>{money(totalOwed)}</b>
-        </div>
+        {mode === "debts" && (
+          <div className="debts-total">
+            <span>Total owed</span>
+            <b>{money(totalOwed)}</b>
+          </div>
+        )}
       </header>
 
       <label className="debts-search">
@@ -1468,9 +1489,15 @@ function DebtsCenterView({
 
       <div className="debts-controls">
         <div className="debts-filter-chips" role="tablist" aria-label="Debt filters">
-          <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({allInvoices.length})</button>
-          <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
-          <button className={filter === "week" ? "active amber" : "amber"} type="button" onClick={() => setFilter("week")}>This week ({weekInvoices.length})</button>
+          <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({scopeInvoices.length})</button>
+          {mode === "today" ? (
+            <button className={filter === "unpaid" ? "active amber" : "amber"} type="button" onClick={() => setFilter("unpaid")}>Unpaid ({todayInvoices.length})</button>
+          ) : (
+            <>
+              <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
+              <button className={filter === "carried" ? "active amber" : "amber"} type="button" onClick={() => setFilter("carried")}>Carried over ({carriedDebts.length})</button>
+            </>
+          )}
         </div>
         <button className="debts-sort" type="button" onClick={() => setOldestFirst((value) => !value)}>
           {oldestFirst ? "Oldest first" : "Newest first"}
@@ -1486,16 +1513,18 @@ function DebtsCenterView({
           </div>
         ) : visibleInvoices.map((invoice) => {
           const label = invoiceCustomerLabel(invoice);
+          const displayLabel = label.trim().length > 1 ? label : invoice.number;
           const ageDays = invoiceAgeDays(invoice);
           const overdue = isOverdueDebtInvoice(invoice);
+          const ageText = ageDays <= 0 ? "Today" : `${ageDays}d`;
           return (
             <button className="debts-row" type="button" key={invoice.id} onClick={() => onSelect(invoice)}>
-              <span className="debts-avatar">{avatarInitial(label)}</span>
+              <span className="debts-avatar">{avatarInitial(displayLabel)}</span>
               <span className="debts-main">
-                <b>{label}</b>
-                <small>{invoice.number} &middot; issued {debtIssuedDate(invoice)}</small>
+                <b>{displayLabel}</b>
+                <small title={invoice.number}>{middleReceipt(invoice.number)} &middot; {ageText}</small>
               </span>
-              <span className={"debts-age " + (overdue ? "overdue" : "recent")}>{ageDays <= 0 ? "Today" : `${ageDays}d`}</span>
+              {mode === "debts" && <span className={"debts-age " + (overdue ? "overdue" : "recent")}>{ageText}</span>}
               <strong>{money(outstanding(invoice))}</strong>
               <ChevronRight size={18} />
             </button>
@@ -1503,7 +1532,10 @@ function DebtsCenterView({
         })}
       </div>
 
-      <footer className="debts-footer-note">View only &middot; settlement is done by a supervisor.</footer>
+      <footer className="debts-footer-note">
+        <span>View only &middot; settlement is done by a supervisor.</span>
+        {mode === "today" && <b>{money(totalForMode)}</b>}
+      </footer>
     </section>
   );
 }
