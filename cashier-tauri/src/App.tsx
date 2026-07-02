@@ -12,7 +12,6 @@ import {
   Delete,
   Download,
   FileText,
-  Flag,
   Grid2X2,
   GripHorizontal,
   Heart,
@@ -1268,7 +1267,6 @@ export default function App() {
             setReceipt(nextReceipt);
             setStatus(`Ready to reprint ${invoice.number}.`);
           }}
-          onFlag={(invoice) => setStatus(`Supervisor flag noted for ${invoice.number}.`)}
           onSaveNote={async (invoice, note) => {
             if (!terminal || !account) return;
             await patchInvoiceNote(terminal, account, invoice, note);
@@ -1334,7 +1332,6 @@ function InvoiceDetailSlideOver({
   cashierName,
   branchName,
   onReprint,
-  onFlag,
   onSaveNote,
   onClose
 }: {
@@ -1343,7 +1340,6 @@ function InvoiceDetailSlideOver({
   cashierName: string;
   branchName: string;
   onReprint: (invoice: Invoice) => void;
-  onFlag: (invoice: Invoice) => void;
   onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -1442,7 +1438,6 @@ function InvoiceDetailSlideOver({
 
         <footer className="invoice-slide-actions">
           <button type="button" onClick={() => onReprint(invoice)}><FileText size={18} />Reprint</button>
-          <button type="button" onClick={() => onFlag(invoice)}><Flag size={18} />Flag supervisor</button>
         </footer>
       </section>
     </Drawer>
