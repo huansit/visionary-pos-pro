@@ -1,34 +1,44 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import {
+  ArrowLeft,
   Barcode,
   Building2,
+  ChevronRight,
   Check,
+  Delete,
   Download,
   FileText,
+  Flag,
   Grid2X2,
+  GripHorizontal,
   Heart,
   KeyRound,
+  Keyboard,
   Lock,
   LogOut,
   Menu,
+  Minus,
   MonitorCheck,
   Search,
   Server,
   ShieldCheck,
   ShoppingCart,
+  Send,
   UserRound,
   WalletCards,
   Wine,
   Wifi,
+  WifiOff,
   X
 } from "lucide-react";
 import {
   APP_VERSION,
   activateTerminal,
   connectSyncStream,
+  type SyncVersionChange,
   loginCashier,
   logout,
   pullCatalog,
@@ -41,7 +51,10 @@ import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCred
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
-const EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
+const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v1";
+const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
+const VIRTUAL_KEYBOARD_POSITION_KEY = "visionpos:cashier:virtual-keyboard-position:v1";
+const SUPERVISOR_EXPENSE_CATEGORIES = ["Transport", "Repairs", "Supplies", "Airtime", "Police", "Utilities", "Other"];
 
 type UpdatePrompt = {
   version: string;
@@ -49,6 +62,8 @@ type UpdatePrompt = {
   releaseNotes: string[];
   nativeUpdate: NonNullable<Awaited<ReturnType<typeof check>>>;
 };
+
+type CashierUpdateState = "idle" | "downloading" | "ready";
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -235,6 +250,76 @@ function isToday(ts?: number) {
     && date.getDate() === today.getDate();
 }
 
+function isPendingInvoice(invoice: Invoice) {
+  const status = String(invoice.status || "").toLowerCase();
+  return status.includes("pending") || status.includes("approval");
+}
+
+function timeShort(ts?: number) {
+  if (!ts) return "--:--";
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function railDateLabel(ts: number) {
+  return new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
+
+function railTimeLabel(ts: number) {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function invoiceCustomerLabel(invoice: Invoice) {
+  const name = String(invoice.customerName || "").trim();
+  return name.length > 1 ? name : invoice.number || "Open invoice";
+}
+
+function avatarInitial(label: string) {
+  return (label.trim().charAt(0) || "I").toUpperCase();
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function invoiceAgeDays(invoice: Invoice) {
+  if (!invoice.ts) return 0;
+  return Math.max(0, Math.floor((Date.now() - Number(invoice.ts)) / DAY_MS));
+}
+
+function isOverdueDebtInvoice(invoice: Invoice) {
+  return Boolean(invoice.carriedOver) || invoiceAgeDays(invoice) > 7;
+}
+
+function isThisWeekDebtInvoice(invoice: Invoice) {
+  return invoiceAgeDays(invoice) <= 7;
+}
+
+function debtIssuedDate(invoice: Invoice) {
+  if (!invoice.ts) return "not dated";
+  return new Date(invoice.ts).toLocaleDateString([], { day: "2-digit", month: "short" });
+}
+
+function invoiceDueDate(invoice: Invoice) {
+  if (!invoice.ts) return "Not set";
+  return new Date(Number(invoice.ts) + 7 * DAY_MS).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function invoiceAgeText(invoice: Invoice) {
+  const ageDays = invoiceAgeDays(invoice);
+  if (isOverdueDebtInvoice(invoice)) return `${Math.max(1, ageDays - 7)}d overdue`;
+  if (ageDays <= 0) return "Due today";
+  return `${ageDays}d old`;
+}
+
+function invoiceSearchText(invoice: Invoice) {
+  const extra = invoice as Invoice & { customerPhone?: string; phone?: string; customerId?: string };
+  return [
+    invoice.customerName,
+    invoice.number,
+    extra.customerPhone,
+    extra.phone,
+    extra.customerId
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
 function invoiceDate(invoice: Invoice) {
   return invoice.ts ? new Date(invoice.ts).toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Not dated";
 }
@@ -285,20 +370,45 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("All Products");
   const [customerName, setCustomerName] = useState("");
   const [saleNote, setSaleNote] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "mpesa" | "credit">("cash");
   const [status, setStatus] = useState("Starting VISIONPOS Cashier...");
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [debtsOpen, setDebtsOpen] = useState(false);
+  const [invoiceDetail, setInvoiceDetail] = useState<Invoice | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
+  const [updateState, setUpdateState] = useState<CashierUpdateState>("idle");
+  const [updateToastDismissed, setUpdateToastDismissed] = useState(false);
+  const [restartWhenCartEmpty, setRestartWhenCartEmpty] = useState(false);
   const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [dayClosedAt, setDayClosedAt] = useState<number | null>(null);
+  const [dayCloseNoticeAt, setDayCloseNoticeAt] = useState<number | null>(null);
+  const [virtualKeyboardEnabled] = useState(() => {
+    try {
+      const stored = localStorage.getItem(VIRTUAL_KEYBOARD_ENABLED_KEY);
+      return stored == null ? true : stored === "1";
+    } catch {
+      return true;
+    }
+  });
+  const [leftCollapsed, setLeftCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(LEFT_RAIL_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [now, setNow] = useState(Date.now());
   const [realtimeState, setRealtimeState] = useState<"connected" | "reconnecting">("reconnecting");
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const catalogSyncInFlight = useRef(false);
   const updateCheckInFlight = useRef(false);
+  const updateStateRef = useRef<CashierUpdateState>("idle");
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
@@ -311,10 +421,42 @@ export default function App() {
   const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [myInvoices]);
   const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [myInvoices]);
   const todayInvoices = useMemo(() => myInvoices.filter((invoice) => isToday(invoice.ts)), [myInvoices]);
+  const activeTodayInvoices = useMemo(
+    () => todayInvoices.filter((invoice) => !dayClosedAt || Number(invoice.ts || 0) > dayClosedAt),
+    [dayClosedAt, todayInvoices]
+  );
+  const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [activeTodayInvoices]);
+  const paidTodayCount = activeTodayInvoices.filter((invoice) => outstanding(invoice) <= 0).length;
+  const pendingTodayCount = activeTodayInvoices.filter(isPendingInvoice).length;
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
+  const openInvoicesTodayTotal = openInvoicesToday.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const debtTrackerTotal = openInvoiceTotal + carriedDebtTotal;
-  const salesInvoiceTotal = todayInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
+  const salesInvoiceTotal = activeTodayInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
+  const customerDebtInvoices = useMemo(() => {
+    const customerKey = normalize(customerName);
+    if (customerKey.length < 2) return [];
+    return [...openInvoices, ...carriedDebts].filter((invoice) => {
+      const invoiceCustomer = normalize(invoice.customerName || "");
+      return invoiceCustomer === customerKey;
+    });
+  }, [carriedDebts, customerName, openInvoices]);
+  const customerOutstandingDebt = customerDebtInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
+  const creditLocked = customerOutstandingDebt > 0;
+  const canCompleteSale = cartLines.length > 0
+    && Boolean(customerName.trim())
+    && (!creditLocked || paymentMethod === "cash" || paymentMethod === "mpesa");
+  const updateStatusLabel = updatePrompt
+    ? `v${updatePrompt.version} ready`
+    : updateState === "downloading"
+      ? `v${APP_VERSION} · downloading`
+      : `v${APP_VERSION} · up to date`;
+  const session = useMemo(() => ({
+    businessName: "VisionPOS",
+    cashierName: account?.name || "Cashier",
+    dateTime: now,
+    online
+  }), [account?.name, now, online]);
 
   const categories = useMemo(() => {
     const names = Array.from(new Set(products.map((product) => product.category || "Uncategorised").filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -334,6 +476,12 @@ export default function App() {
   }, [products, query, selectedCategory]);
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);
+
+  useEffect(() => {
+    if (creditLocked && paymentMethod === "credit") {
+      setPaymentMethod("cash");
+    }
+  }, [creditLocked, paymentMethod]);
 
   useEffect(() => {
     loadTerminalCredentials().then((stored) => {
@@ -356,8 +504,46 @@ export default function App() {
     if (account) focusSearch();
   }, [account]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setOnline(true);
+    const handleOffline = () => setOnline(false);
+    const handleResize = () => {
+      if (window.innerWidth < 1100) setLeftCollapsed(true);
+    };
+    handleResize();
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LEFT_RAIL_COLLAPSED_KEY, leftCollapsed ? "1" : "0");
+    } catch {
+      // Local storage is best-effort. The layout still works without persistence.
+    }
+  }, [leftCollapsed]);
+
+  useEffect(() => {
+    updateStateRef.current = updateState;
+  }, [updateState]);
+
   async function checkForUpdates(manual = false) {
     if (updateCheckInFlight.current) return;
+    if (updateStateRef.current === "downloading" || updateStateRef.current === "ready") {
+      if (manual && updatePrompt) setStatus(`Update ${updatePrompt.version} is ready to install.`);
+      return;
+    }
     updateCheckInFlight.current = true;
     if (manual) setStatus("Checking for desktop updates...");
     try {
@@ -374,16 +560,34 @@ export default function App() {
       }
 
       logUpdateEvent("update_available", { currentVersion: APP_VERSION, version: update.version });
+      setUpdateState("downloading");
+      setStatus(`Downloading update ${update.version} in the background...`);
+      logUpdateEvent("download_started", { version: update.version, silent: true });
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          logUpdateEvent("download_payload_started", {
+            version: update.version,
+            contentLength: Number(event.data.contentLength || 0)
+          });
+        }
+        if (event.event === "Finished") {
+          logUpdateEvent("download_finished", { version: update.version });
+        }
+      });
+      logUpdateEvent("install_ready_for_restart", { version: update.version });
       setUpdatePrompt({
         version: update.version,
         currentVersion: APP_VERSION,
         releaseNotes: update.body ? update.body.split(/\r?\n/).filter(Boolean) : [],
         nativeUpdate: update
       });
-      if (manual) setStatus(`Update ${update.version} is available.`);
+      setUpdateToastDismissed(false);
+      setUpdateState("ready");
+      setStatus(`Update ${update.version} is ready. Restart when the cart is clear.`);
     } catch (err) {
       const message = String(err);
       logUpdateEvent("check_failed", { manual, currentVersion: APP_VERSION, message });
+      setUpdateState("idle");
       if (manual) setError(`Update check failed: ${message}`);
     } finally {
       updateCheckInFlight.current = false;
@@ -392,7 +596,7 @@ export default function App() {
 
   useEffect(() => {
     checkForUpdates(false);
-    const intervalId = window.setInterval(() => checkForUpdates(false), 60 * 60 * 1000);
+    const intervalId = window.setInterval(() => checkForUpdates(false), 30 * 60 * 1000);
     const onFocus = () => checkForUpdates(false);
     window.addEventListener("focus", onFocus);
     return () => {
@@ -402,10 +606,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (restartWhenCartEmpty && updateState === "ready" && cartLines.length === 0) {
+      void restartForUpdate();
+    }
+  }, [cartLines.length, restartWhenCartEmpty, updateState]);
+
+  useEffect(() => {
     if (!terminal) return;
     const syncQuietly = () => refreshCatalog(terminal, { silent: true });
     let realtimeTimer: number | undefined;
-    const scheduleRealtimeSync = () => {
+    const scheduleRealtimeSync = (change?: SyncVersionChange) => {
+      const marker = JSON.stringify(change || {}).toLowerCase();
+      if (marker.includes("day_closed") || marker.includes("endofday") || marker.includes("end_of_day")) {
+        const nestedPayload = change?.payload || {};
+        const nestedChange = change?.change || {};
+        const tsValue = Number(
+          change?.ts ||
+          nestedPayload.ts ||
+          nestedPayload.closedAt ||
+          nestedChange.ts ||
+          nestedChange.closedAt ||
+          Date.now()
+        );
+        handleDayClosed(Number.isFinite(tsValue) ? tsValue : Date.now());
+      }
       window.clearTimeout(realtimeTimer);
       realtimeTimer = window.setTimeout(syncQuietly, 150);
     };
@@ -556,7 +780,7 @@ export default function App() {
   }
 
   async function completeSale() {
-    if (!terminal || !account || !cartLines.length || !customerName.trim()) return;
+    if (!terminal || !account || !canCompleteSale) return;
     setError("");
     const unavailable = cartLines.find((line) => productSaleBlockReason(line.product, line.qty - 1));
     if (unavailable) {
@@ -584,9 +808,11 @@ export default function App() {
     try {
       await pushCheckout(terminal, account, nextReceipt);
       setReceipt(nextReceipt);
+      setLastReceipt(nextReceipt);
       setCart({});
       setCustomerName("");
       setSaleNote("");
+      setPaymentMethod("cash");
       setStatus(`Open invoice ${receiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
@@ -601,6 +827,7 @@ export default function App() {
     setAccount(null);
     setSessionToken("");
     setCart({});
+    setPaymentMethod("cash");
     setStatus("Signed out.");
   }
 
@@ -609,9 +836,34 @@ export default function App() {
     await invoke("close_app");
   }
 
-  const updateModal = updatePrompt
-    ? <UpdatePromptModal update={updatePrompt} onClose={() => setUpdatePrompt(null)} />
-    : latestUpdateNotice
+  function handleDayClosed(ts = Date.now()) {
+    setDayClosedAt(ts);
+    setDayCloseNoticeAt(ts);
+    setInvoices((current) => current
+      .filter((invoice) => !(isToday(invoice.ts) && outstanding(invoice) <= 0))
+      .map((invoice) => (
+        isToday(invoice.ts) && outstanding(invoice) > 0
+          ? { ...invoice, carriedOver: true }
+          : invoice
+      )));
+    setStatus("Day closed by supervisor. New day started.");
+  }
+
+  async function restartForUpdate() {
+    if (!updatePrompt) return;
+    if (cartLines.length > 0) {
+      setRestartWhenCartEmpty(true);
+      setUpdateToastDismissed(true);
+      setStatus("Update is ready. VISIONPOS will restart after this cart is empty.");
+      logUpdateEvent("restart_waiting_for_empty_cart", { version: updatePrompt.version });
+      return;
+    }
+    setRestartWhenCartEmpty(false);
+    logUpdateEvent("restart_requested", { version: updatePrompt.version });
+    await relaunch();
+  }
+
+  const updateModal = latestUpdateNotice
       ? <LatestUpdateModal version={APP_VERSION} onClose={() => setLatestUpdateNotice(false)} />
     : null;
 
@@ -660,8 +912,15 @@ export default function App() {
         <div className="brand"><span>V</span><strong>Vision<b>POS</b></strong></div>
         <div className="topmeta">
           <div
-            className={"branch-pill " + (realtimeState === "connected" ? "online" : "reconnecting")}
-            title={realtimeState === "connected" ? "Cloud connection active" : "Reconnecting to cloud"}
+            className={"connectivity-pill " + (session.online ? "online" : "offline")}
+            title={session.online ? "Internet connection active" : "No internet connection"}
+          >
+            <i />
+            <span>{session.online ? "Online" : "Offline"}</span>
+          </div>
+          <div
+            className="branch-pill online"
+            title="Store terminal"
           >
             <Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small>
           </div>
@@ -671,47 +930,101 @@ export default function App() {
 
       <section className={"layout" + (leftCollapsed ? " left-collapsed" : "")}>
         <aside className="left-panel">
-          <button
-            className="sidebar-menu-button"
-            onClick={() => setLeftCollapsed((value) => !value)}
-            aria-label={leftCollapsed ? "Open cashier sidebar" : "Collapse cashier sidebar"}
-            title={leftCollapsed ? "Open menu" : "Collapse menu"}
-          >
-            <Menu size={22} />
-          </button>
           {leftCollapsed ? (
-            <div className="mini-sidebar">
-              <button title="Sales"><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
-              <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span><span>{carriedDebts.length}</span></button>
-              <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} /></button>
-              <button onClick={handleLogout}><LogOut size={18} /></button>
-            </div>
+            <>
+              <button
+                className="sidebar-menu-button"
+                onClick={() => setLeftCollapsed(false)}
+                aria-label="Open cashier sidebar"
+                title="Open menu"
+              >
+                <Menu size={22} />
+              </button>
+              <div className="mini-sidebar">
+                <button title={`Sales today: ${money(salesInvoiceTotal)}`}><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
+                <button className="mini-badge-button" onClick={() => setDebtsOpen(true)} title={`${openInvoicesToday.length} open invoices`}>
+                  <FileText size={18} />
+                  {openInvoicesToday.length > 0 && <b>{openInvoicesToday.length}</b>}
+                </button>
+                <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
+                <button className="mini-badge-button" onClick={() => setDebtsOpen(true)} title={`${carriedDebts.length} outstanding debts`}>
+                  <span className="info-dot">!</span>
+                  {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
+                </button>
+                <button onClick={() => lastReceipt ? setReceipt(lastReceipt) : setStatus("No receipt to reprint yet.")} title="Reprint receipt"><FileText size={18} /></button>
+                <button className="mini-logout" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
+              </div>
+            </>
           ) : (
           <>
-          <div className="card dark sales-summary">
-            <div className="card-head">
-              <div>
-                <h3>Sales</h3>
-              </div>
-            </div>
-            <div className="invoice-total">
-              <span>{todayInvoices.length} invoice{todayInvoices.length === 1 ? "" : "s"} today</span>
-              <b>{money(salesInvoiceTotal)}</b>
-            </div>
-            {todayInvoices.length === 0 ? (
-              <div className="invoice-empty">
-                <b>No sales yet</b>
-                <span>Today's invoice totals will appear here before end of day close.</span>
-              </div>
-            ) : (
-              <div className="sales-note">
-                <b>Today</b>
-                <span>Paid, open, and pending invoices count here until end of day close.</span>
-              </div>
-            )}
+          <div className="rail-header-row">
+            <button
+              className="sidebar-menu-button"
+              onClick={() => setLeftCollapsed(true)}
+              aria-label="Collapse cashier sidebar"
+              title="Collapse menu"
+            >
+              <Menu size={22} />
+            </button>
+            <time dateTime={new Date(session.dateTime).toISOString()}>
+              <span>{railDateLabel(session.dateTime)}</span>
+              <b>{railTimeLabel(session.dateTime)}</b>
+            </time>
           </div>
+
+          <section className="rail-card rail-sales-card">
+            <div className="rail-card-head">
+              <span>Sales today</span>
+              <strong>{money(salesInvoiceTotal)}</strong>
+            </div>
+            <div className="rail-sales-chips">
+              <div className="rail-chip paid"><b>{paidTodayCount}</b><span>Paid</span></div>
+              <div className="rail-chip open"><b>{openInvoicesToday.length}</b><span>Open</span></div>
+              <div className="rail-chip pending"><b>{pendingTodayCount}</b><span>Pending</span></div>
+            </div>
+            {dayClosedAt && activeTodayInvoices.length === 0 && (
+              <p className="rail-fresh-start">Fresh start - sell to fill this up.</p>
+            )}
+          </section>
+
+          <section className="rail-card rail-open-card">
+            <div className="rail-card-title">
+              <h3>Today's open invoices</h3>
+              <b>{openInvoicesToday.length}</b>
+            </div>
+            <div className="rail-invoice-list">
+              {openInvoicesToday.length === 0 ? (
+                <div className="rail-empty">
+                  <FileText size={24} />
+                  <b>No open invoices</b>
+                  <span>Paid and closed invoices stay out of the cashier workspace.</span>
+                </div>
+              ) : openInvoicesToday.map((invoice) => {
+                const label = invoiceCustomerLabel(invoice);
+                return (
+                  <button
+                    className="rail-invoice-row"
+                    key={invoice.id}
+                    onClick={() => setInvoiceDetail(invoice)}
+                    title={`Open ${invoice.number}`}
+                  >
+                    <span className="rail-avatar">{avatarInitial(label)}</span>
+                    <span className="rail-invoice-main">
+                      <b>{label}</b>
+                      <small>{invoice.number} - opened {timeShort(invoice.ts)}</small>
+                    </span>
+                    <strong>{money(outstanding(invoice))}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="rail-open-footer">
+              <span>Open total</span>
+              <b>{money(openInvoicesTodayTotal)}</b>
+            </div>
+          </section>
           <div
-            className="card dark debt-card clickable-card"
+            className="card dark debt-card clickable-card rail-hidden"
             role="button"
             tabIndex={0}
             onClick={() => setDebtsOpen(true)}
@@ -757,68 +1070,96 @@ export default function App() {
             )}
             {openInvoices.length === 0 && carriedDebts.length === 0 && <p>No carried-over debts for your login.</p>}
           </div>
-          <div className="card dark quick-actions">
-            <h3>Quick Actions</h3>
-            <button onClick={() => setExpenseOpen(true)}><WalletCards size={17} />Expense</button>
-            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}><FileText size={17} />Hold Sale</button>
-            <button onClick={() => setDebtsOpen(true)}><span className="info-dot">!</span>My Debts{carriedDebtTotal > 0 ? ` - ${money(carriedDebtTotal)}` : ""}</button>
-            <button onClick={() => checkForUpdates(true)}><Download size={17} />Check update <span className="button-version">v{APP_VERSION}</span></button>
-            <button className="logout-action" onClick={handleLogout}><LogOut size={18} />Logout</button>
-          </div>
+          <section className="rail-quick-actions">
+            <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
+            <button className="rail-action-badge" onClick={() => setDebtsOpen(true)}>
+              <span className="info-dot">!</span>
+              Debts
+              {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
+            </button>
+            <button onClick={() => lastReceipt ? setReceipt(lastReceipt) : setStatus("No receipt to reprint yet.")}><FileText size={18} />Reprint</button>
+          </section>
+
+          <footer className="rail-footer">
+            <div className="rail-update-wrap">
+              <button className={"rail-update-status " + updateState} onClick={() => checkForUpdates(true)}>
+                {updateState === "ready" ? <Download size={14} /> : <Check size={14} />}
+                {updateStatusLabel}
+              </button>
+              {updatePrompt && updateState === "ready" && (
+                <button className="rail-update-pill" onClick={restartForUpdate}>Update</button>
+              )}
+            </div>
+            <button className="rail-logout-small" onClick={handleLogout}><LogOut size={15} />Logout</button>
+          </footer>
           </>
           )}
         </aside>
 
-        <section className="products-panel">
-          <div className="search-row">
-            <label className="searchbar">
-              <Search size={24} />
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && filteredProducts[0]) addToCart(filteredProducts[0]);
-                }}
-                placeholder="Scan barcode or search product, SKU, or barcode..."
-                autoFocus
-              />
-            </label>
-            <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
-          </div>
-          <div className="product-strip">
-            <button className="category-chip"><Heart size={16} />Favorites</button>
-            {categories.map((category) => (
-              <button
-                key={category}
-                className={"category-chip" + categoryAccentClass(category) + (selectedCategory === category ? " active" : "")}
-                onClick={() => setSelectedCategory(category)}
-              >
-                {category === "All Products" ? <Grid2X2 size={16} /> : <Wine size={16} />}
-                {category}
-              </button>
-            ))}
-            <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
-          </div>
-          <div className="product-grid">
-            {filteredProducts.map((product) => {
-              const reservedQty = cart[product.id]?.qty || 0;
-              const blocked = productSaleBlockReason(product, reservedQty);
-              return (
-                <button className="product-card" key={product.id} disabled={Boolean(blocked)} onClick={() => addToCart(product)}>
-                  <span className="product-name">{product.name}</span>
-                  <b className="product-price">{money(product.priceCents)}</b>
-                  <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
-                  <span className={"product-stock-row " + productStatusClass(product, reservedQty)}>
-                    <i />
-                    <b>{productStockLabel(product, reservedQty)}</b>
-                  </span>
-                  <span className={"product-action " + (blocked ? "blocked" : "available")}>{blocked ? "Out of stock" : "Add"}</span>
+        {debtsOpen ? (
+          <DebtsCenterView
+            openInvoices={openInvoices}
+            carriedDebts={carriedDebts}
+            openTotalCents={openInvoiceTotal}
+            carriedTotalCents={carriedDebtTotal}
+            onBack={() => {
+              setDebtsOpen(false);
+              focusSearch();
+            }}
+            onSelect={(invoice) => setInvoiceDetail(invoice)}
+          />
+        ) : (
+          <section className="products-panel">
+            <div className="search-row">
+              <label className="searchbar">
+                <Search size={24} />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && filteredProducts[0]) addToCart(filteredProducts[0]);
+                  }}
+                  placeholder="Scan barcode or search product, SKU, or barcode..."
+                  autoFocus
+                />
+              </label>
+              <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
+            </div>
+            <div className="product-strip">
+              <button className="category-chip"><Heart size={16} />Favorites</button>
+              {categories.map((category) => (
+                <button
+                  key={category}
+                  className={"category-chip" + categoryAccentClass(category) + (selectedCategory === category ? " active" : "")}
+                  onClick={() => setSelectedCategory(category)}
+                >
+                  {category === "All Products" ? <Grid2X2 size={16} /> : <Wine size={16} />}
+                  {category}
                 </button>
-              );
-            })}
-          </div>
-        </section>
+              ))}
+              <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
+            </div>
+            <div className="product-grid">
+              {filteredProducts.map((product) => {
+                const reservedQty = cart[product.id]?.qty || 0;
+                const blocked = productSaleBlockReason(product, reservedQty);
+                return (
+                  <button className="product-card" key={product.id} disabled={Boolean(blocked)} onClick={() => addToCart(product)}>
+                    <span className="product-name">{product.name}</span>
+                    <b className="product-price">{money(product.priceCents)}</b>
+                    <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
+                    <span className={"product-stock-row " + productStatusClass(product, reservedQty)}>
+                      <i />
+                      <b>{productStockLabel(product, reservedQty)}</b>
+                    </span>
+                    <span className={"product-action " + (blocked ? "blocked" : "available")}>{blocked ? "Out of stock" : "Add"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         <aside className="cart-panel">
           <div className="cart-head">
@@ -837,53 +1178,286 @@ export default function App() {
             )}
             {cartLines.map((line) => (
               <div className="cart-line" key={line.product.id}>
-                <div><b>{line.product.name}</b><span>{money(line.product.priceCents)}</span></div>
+                <div><b>{line.product.name}</b><span>{line.qty} x {money(line.product.priceCents)}</span></div>
                 <div className="qty"><button onClick={() => changeQty(line.product.id, -1)}>-</button><b>{line.qty}</b><button onClick={() => changeQty(line.product.id, 1)}>+</button></div>
+                <strong>{money(line.qty * line.product.priceCents)}</strong>
               </div>
             ))}
           </div>
-          <label>Customer name / identifier <em>*</em></label>
+          <label>Customer name / ID <em>*</em></label>
           <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
+          {creditLocked && (
+            <div className="credit-lock-warning" role="alert">
+              <b>Owes {money(customerOutstandingDebt)} &middot; {customerDebtInvoices.length} open invoice{customerDebtInvoices.length === 1 ? "" : "s"}</b>
+              <span>No new credit until cleared by a supervisor. Cash or M-Pesa only.</span>
+            </div>
+          )}
+          <div className="payment-method-row" aria-label="Payment method">
+            <button className={paymentMethod === "cash" ? "active" : ""} onClick={() => setPaymentMethod("cash")}>Cash</button>
+            <button className={paymentMethod === "mpesa" ? "active" : ""} onClick={() => setPaymentMethod("mpesa")}>M-Pesa</button>
+            <button
+              className={(paymentMethod === "credit" ? "active " : "") + (creditLocked ? "locked" : "")}
+              disabled={creditLocked}
+              onClick={() => setPaymentMethod("credit")}
+            >
+              {creditLocked && <Lock size={14} />}
+              Credit
+            </button>
+          </div>
           <div className="subtotal"><span>Subtotal</span><b>{money(totalCents)}</b></div>
           <div className="total-row"><span>Total</span><strong>{money(totalCents)}</strong></div>
-          <button className="checkout" disabled={!cartLines.length || !customerName.trim()} onClick={completeSale}><Check size={21} />Complete Sale <span>F4</span></button>
+          <button className="checkout" disabled={!canCompleteSale} onClick={completeSale}><Check size={21} />{creditLocked ? "Complete cash sale" : "Complete sale"} <span>F4</span></button>
           <div className="cart-actions">
-            <button disabled={!cartLines.length} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
-            <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setQuery(""); focusSearch(); }}>Clear</button>
+            <button disabled={!cartLines.length || creditLocked} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
+            <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setQuery(""); focusSearch(); }}>Clear</button>
           </div>
           {cartLines.length > 0 && !customerName.trim() && <p className="hint">Enter a customer name / identifier to issue the invoice.</p>}
         </aside>
       </section>
+      {!session.online && (
+        <div className="offline-body-blocker" role="alert" aria-live="assertive">
+          <section>
+            <WifiOff size={34} />
+            <h2>No internet connection</h2>
+            <p>VisionPOS needs to be online to sell. Reconnect to continue - nothing is lost.</p>
+            <span><i /> Auto-retrying connection...</span>
+          </section>
+        </div>
+      )}
+      {dayCloseNoticeAt && (
+        <div className="day-close-notice" role="status">
+          <Server size={19} />
+          <span>Day closed by supervisor at {timeShort(dayCloseNoticeAt)}. New day started.</span>
+          <button onClick={() => setDayCloseNoticeAt(null)} aria-label="Dismiss day close notice"><X size={16} /></button>
+        </div>
+      )}
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
       {updateModal}
+      {updatePrompt && updateState === "ready" && !updateToastDismissed && (
+        <UpdateReadyToast
+          version={updatePrompt.version}
+          cartBlocked={cartLines.length > 0}
+          queued={restartWhenCartEmpty}
+          onLater={() => setUpdateToastDismissed(true)}
+          onRestart={restartForUpdate}
+        />
+      )}
       {expenseOpen && terminal && account && (
         <ExpenseModal
+          cashierName={account.name}
           onClose={() => { setExpenseOpen(false); focusSearch(); }}
           onSave={async (expense) => {
             setError("");
             await pushExpense(terminal, account, expense);
-            setStatus(expense.amountCents > 50000 ? "Expense sent for admin approval." : "Expense recorded.");
+            setStatus(expense.amountCents > 50000 ? "Expense sent for supervisor approval." : "Expense recorded.");
             setExpenseOpen(false);
             await refreshCatalog(terminal);
             focusSearch();
           }}
         />
       )}
-      {debtsOpen && (
-        <DebtsAndInvoicesModal
+      {invoiceDetail && (
+        <InvoiceDetailSlideOver
+          invoice={invoiceDetail}
           cashierName={account.name}
-          openInvoices={openInvoices}
-          carriedDebts={carriedDebts}
-          openTotalCents={openInvoiceTotal}
-          carriedTotalCents={carriedDebtTotal}
+          branchName={branch?.name || terminal.branchId}
+          onReprint={(invoice) => {
+            const nextReceipt: Receipt = {
+              number: invoice.number,
+              branchName: branch?.name || terminal.branchId,
+              cashierName: invoice.cashierName || account.name,
+              customerName: invoiceCustomerLabel(invoice),
+              note: invoice.note,
+              totalCents: invoice.totalCents,
+              items: (invoice.items || []).map((item) => ({
+                productId: item.productId || item.name,
+                name: item.name,
+                qty: item.qty,
+                priceCents: item.priceCents
+              })),
+              ts: invoice.ts || Date.now()
+            };
+            setInvoiceDetail(null);
+            setReceipt(nextReceipt);
+            setStatus(`Ready to reprint ${invoice.number}.`);
+          }}
+          onFlag={(invoice) => setStatus(`Supervisor flag noted for ${invoice.number}.`)}
           onClose={() => {
-            setDebtsOpen(false);
+            setInvoiceDetail(null);
             focusSearch();
           }}
         />
       )}
+      <VirtualKeyboard enabled={virtualKeyboardEnabled} />
     </main>
+  );
+}
+
+function InvoiceDetailSlideOver({
+  invoice,
+  cashierName,
+  branchName,
+  onReprint,
+  onFlag,
+  onClose
+}: {
+  invoice: Invoice;
+  cashierName: string;
+  branchName: string;
+  onReprint: (invoice: Invoice) => void;
+  onFlag: (invoice: Invoice) => void;
+  onClose: () => void;
+}) {
+  const items = invoice.items || [];
+  const customer = invoiceCustomerLabel(invoice);
+  const overdue = isOverdueDebtInvoice(invoice);
+  const paidCents = Number(invoice.paidCents || 0);
+  const balanceCents = outstanding(invoice);
+  return (
+    <div className="invoice-slide-backdrop" onClick={onClose}>
+      <aside className="invoice-slide" role="dialog" aria-modal="true" aria-labelledby="invoice-slide-title" onClick={(event) => event.stopPropagation()}>
+        <button className="invoice-slide-close" onClick={onClose} aria-label="Close invoice detail"><X size={20} /></button>
+        <header className="invoice-slide-header">
+          <span className="invoice-slide-avatar">{avatarInitial(customer)}</span>
+          <div>
+            <span className="invoice-slide-kicker">Read-only invoice</span>
+            <h2 id="invoice-slide-title">{customer}</h2>
+            <p>{invoice.number} &middot; {branchName}</p>
+          </div>
+          <b className={"invoice-status-pill " + (overdue ? "overdue" : "recent")}>{invoiceAgeText(invoice)}</b>
+        </header>
+
+        <div className="invoice-slide-meta">
+          <div><span>Issued</span><b>{invoiceDate(invoice)}</b></div>
+          <div><span>Due</span><b>{invoiceDueDate(invoice)}</b></div>
+          <div><span>Sold by</span><b>{invoice.cashierName || cashierName}</b></div>
+        </div>
+
+        <h3>Items</h3>
+        <div className="invoice-slide-items">
+          {items.length === 0 ? (
+            <div className="invoice-slide-empty">No item lines have synced for this invoice yet.</div>
+          ) : items.map((item, index) => (
+            <div className="invoice-slide-item" key={(item.productId || item.name) + index}>
+              <div><b>{item.name}</b><span>{item.qty} x {money(item.priceCents)}</span></div>
+              <strong>{money(item.qty * item.priceCents)}</strong>
+            </div>
+          ))}
+        </div>
+
+        <div className="invoice-balance-block">
+          <div><span>Invoice total</span><b>{money(invoice.totalCents)}</b></div>
+          <div><span>Paid so far</span><b>{money(paidCents)}</b></div>
+          <div className="balance-due"><span>Balance due</span><b>{money(balanceCents)}</b></div>
+        </div>
+
+        <div className="invoice-lock-notice">
+          <ShieldCheck size={20} />
+          <span>Payments and clearing are done by a supervisor in the admin dashboard. You can view and reprint only.</span>
+        </div>
+
+        <footer className="invoice-slide-actions">
+          <button type="button" onClick={() => onReprint(invoice)}><FileText size={18} />Reprint</button>
+          <button type="button" onClick={() => onFlag(invoice)}><Flag size={18} />Flag supervisor</button>
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
+function DebtsCenterView({
+  openInvoices,
+  carriedDebts,
+  openTotalCents,
+  carriedTotalCents,
+  onBack,
+  onSelect
+}: {
+  openInvoices: Invoice[];
+  carriedDebts: Invoice[];
+  openTotalCents: number;
+  carriedTotalCents: number;
+  onBack: () => void;
+  onSelect: (invoice: Invoice) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "overdue" | "week">("all");
+  const [oldestFirst, setOldestFirst] = useState(true);
+  const allInvoices = useMemo(() => [...openInvoices, ...carriedDebts], [openInvoices, carriedDebts]);
+  const overdueInvoices = useMemo(() => allInvoices.filter(isOverdueDebtInvoice), [allInvoices]);
+  const weekInvoices = useMemo(() => allInvoices.filter(isThisWeekDebtInvoice), [allInvoices]);
+  const totalOwed = openTotalCents + carriedTotalCents;
+  const searchTerm = query.trim().toLowerCase();
+  const visibleInvoices = useMemo(() => {
+    const source = filter === "overdue" ? overdueInvoices : filter === "week" ? weekInvoices : allInvoices;
+    return source
+      .filter((invoice) => !searchTerm || invoiceSearchText(invoice).includes(searchTerm))
+      .sort((a, b) => oldestFirst ? Number(a.ts || 0) - Number(b.ts || 0) : Number(b.ts || 0) - Number(a.ts || 0));
+  }, [allInvoices, filter, oldestFirst, overdueInvoices, searchTerm, weekInvoices]);
+
+  return (
+    <section className="debts-center-panel">
+      <header className="debts-center-header">
+        <button className="debts-back" type="button" onClick={onBack} aria-label="Back to products"><ArrowLeft size={18} /></button>
+        <div>
+          <h2>Open invoices</h2>
+          <p>{openInvoices.length} pending &middot; {carriedDebts.length} carried over</p>
+        </div>
+        <div className="debts-total">
+          <span>Total owed</span>
+          <b>{money(totalOwed)}</b>
+        </div>
+      </header>
+
+      <label className="debts-search">
+        <Search size={20} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search customer, phone, or receipt..."
+        />
+      </label>
+
+      <div className="debts-controls">
+        <div className="debts-filter-chips" role="tablist" aria-label="Debt filters">
+          <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({allInvoices.length})</button>
+          <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
+          <button className={filter === "week" ? "active amber" : "amber"} type="button" onClick={() => setFilter("week")}>This week ({weekInvoices.length})</button>
+        </div>
+        <button className="debts-sort" type="button" onClick={() => setOldestFirst((value) => !value)}>
+          {oldestFirst ? "Oldest first" : "Newest first"}
+        </button>
+      </div>
+
+      <div className="debts-list">
+        {visibleInvoices.length === 0 ? (
+          <div className="debts-empty">
+            <FileText size={28} />
+            <b>No invoices match</b>
+            <span>Try another customer, phone, receipt, or filter.</span>
+          </div>
+        ) : visibleInvoices.map((invoice) => {
+          const label = invoiceCustomerLabel(invoice);
+          const ageDays = invoiceAgeDays(invoice);
+          const overdue = isOverdueDebtInvoice(invoice);
+          return (
+            <button className="debts-row" type="button" key={invoice.id} onClick={() => onSelect(invoice)}>
+              <span className="debts-avatar">{avatarInitial(label)}</span>
+              <span className="debts-main">
+                <b>{label}</b>
+                <small>{invoice.number} &middot; issued {debtIssuedDate(invoice)}</small>
+              </span>
+              <span className={"debts-age " + (overdue ? "overdue" : "recent")}>{ageDays <= 0 ? "Today" : `${ageDays}d`}</span>
+              <strong>{money(outstanding(invoice))}</strong>
+              <ChevronRight size={18} />
+            </button>
+          );
+        })}
+      </div>
+
+      <footer className="debts-footer-note">View only &middot; settlement is done by a supervisor.</footer>
+    </section>
   );
 }
 
@@ -978,19 +1552,361 @@ function LatestUpdateModal({ version, onClose }: { version: string; onClose: () 
   );
 }
 
+function UpdateReadyToast({
+  version,
+  cartBlocked,
+  queued,
+  onLater,
+  onRestart
+}: {
+  version: string;
+  cartBlocked: boolean;
+  queued: boolean;
+  onLater: () => void;
+  onRestart: () => void;
+}) {
+  return (
+    <aside className="update-ready-toast" role="status">
+      <button className="toast-close" onClick={onLater} aria-label="Dismiss update notice"><X size={16} /></button>
+      <div className="toast-icon"><Download size={18} /></div>
+      <div className="toast-copy">
+        <b>Update v{version} ready</b>
+        <span>Downloaded. Restart to install (~10s).</span>
+        {cartBlocked && <small>Finish or clear the current cart before restarting.</small>}
+        {queued && <small>Restart will run automatically once the cart is empty.</small>}
+      </div>
+      <div className="toast-actions">
+        <button onClick={onLater}>Later</button>
+        <button className="primary" onClick={onRestart}>Restart now</button>
+      </div>
+    </aside>
+  );
+}
+
+type VirtualKeyboardTarget = HTMLInputElement | HTMLTextAreaElement;
+
+type VirtualKeyboardSession = {
+  label: string;
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+};
+
+const TEXT_INPUT_TYPES = new Set(["", "text", "search", "email", "tel", "url"]);
+const VIRTUAL_KEYBOARD_WIDTH = 760;
+const VIRTUAL_KEYBOARD_HEIGHT = 330;
+
+function isTextInputTarget(target: EventTarget | null): target is VirtualKeyboardTarget {
+  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) return false;
+  if (target.disabled || target.readOnly) return false;
+  if (target.dataset.virtualKeyboard === "off") return false;
+  if (target instanceof HTMLTextAreaElement) return true;
+  const type = target.type.toLowerCase();
+  if (!TEXT_INPUT_TYPES.has(type)) return false;
+  if (target.inputMode === "numeric" || target.inputMode === "decimal") return false;
+  return true;
+}
+
+function hasHardwareKeyboard() {
+  if (typeof navigator === "undefined" || typeof window === "undefined") return true;
+  const hasTouch = Number(navigator.maxTouchPoints || 0) > 0 || window.matchMedia("(pointer: coarse)").matches;
+  return !hasTouch;
+}
+
+function keyboardFieldLabel(target: VirtualKeyboardTarget) {
+  const explicit = target.dataset.keyboardLabel || target.getAttribute("aria-label");
+  if (explicit) return explicit.trim();
+  if (target.id) {
+    const linked = document.querySelector(`label[for="${CSS.escape(target.id)}"]`);
+    if (linked?.textContent?.trim()) return linked.textContent.trim();
+  }
+  const parentLabel = target.closest("label");
+  const parentText = parentLabel?.textContent?.replace(target.value || "", "").trim();
+  if (parentText) return parentText;
+  const previousLabel = target.previousElementSibling;
+  if (previousLabel?.tagName === "LABEL" && previousLabel.textContent?.trim()) return previousLabel.textContent.trim();
+  return target.placeholder || "Text field";
+}
+
+function clampKeyboardPosition(position: { x: number; y: number }) {
+  const maxX = Math.max(16, window.innerWidth - VIRTUAL_KEYBOARD_WIDTH - 16);
+  const maxY = Math.max(16, window.innerHeight - VIRTUAL_KEYBOARD_HEIGHT - 16);
+  return {
+    x: Math.min(Math.max(16, position.x), maxX),
+    y: Math.min(Math.max(16, position.y), maxY)
+  };
+}
+
+function initialKeyboardPosition() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIRTUAL_KEYBOARD_POSITION_KEY) || "null");
+    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return clampKeyboardPosition(saved);
+  } catch {
+    // Position persistence is best-effort.
+  }
+  return clampKeyboardPosition({
+    x: Math.max(16, Math.round((window.innerWidth - VIRTUAL_KEYBOARD_WIDTH) / 2)),
+    y: Math.max(16, window.innerHeight - VIRTUAL_KEYBOARD_HEIGHT - 24)
+  });
+}
+
+function targetSession(target: VirtualKeyboardTarget): VirtualKeyboardSession {
+  return {
+    label: keyboardFieldLabel(target),
+    value: target.value,
+    selectionStart: target.selectionStart ?? target.value.length,
+    selectionEnd: target.selectionEnd ?? target.value.length
+  };
+}
+
+function setTargetValue(target: VirtualKeyboardTarget, value: string, selection: number, inputType: string, data: string | null = null) {
+  const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  descriptor?.set?.call(target, value);
+  target.setSelectionRange(selection, selection);
+  try {
+    target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data }));
+  } catch {
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+function renderKeyboardMirror(session: VirtualKeyboardSession) {
+  const start = session.selectionStart;
+  const end = session.selectionEnd;
+  const value = session.value || "";
+  return (
+    <>
+      {value.slice(0, start)}
+      <i />
+      {value.slice(end)}
+    </>
+  );
+}
+
+function VirtualKeyboard({ enabled }: { enabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [caps, setCaps] = useState(false);
+  const [symbols, setSymbols] = useState(false);
+  const [session, setSession] = useState<VirtualKeyboardSession | null>(null);
+  const [position, setPosition] = useState(initialKeyboardPosition);
+  const targetRef = useRef<VirtualKeyboardTarget | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIRTUAL_KEYBOARD_POSITION_KEY, JSON.stringify(position));
+    } catch {
+      // Position persistence is best-effort.
+    }
+  }, [position]);
+
+  useEffect(() => {
+    const sync = () => {
+      const target = targetRef.current;
+      if (target) setSession(targetSession(target));
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!enabled || hasHardwareKeyboard()) return;
+      if (isTextInputTarget(event.target)) {
+        targetRef.current = event.target;
+        setSession(targetSession(event.target));
+        setMinimized(false);
+        setOpen(true);
+        return;
+      }
+      const element = event.target as Element | null;
+      if (!element?.closest?.(".virtual-keyboard")) {
+        targetRef.current = null;
+        setOpen(false);
+      }
+    };
+
+    const handleFocusOut = () => {
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!isTextInputTarget(active)) {
+          targetRef.current = null;
+          setOpen(false);
+        }
+      }, 0);
+    };
+
+    window.addEventListener("focusin", handleFocusIn);
+    window.addEventListener("focusout", handleFocusOut);
+    window.addEventListener("input", sync);
+    window.addEventListener("keyup", sync);
+    window.addEventListener("click", sync);
+    document.addEventListener("selectionchange", sync);
+    return () => {
+      window.removeEventListener("focusin", handleFocusIn);
+      window.removeEventListener("focusout", handleFocusOut);
+      window.removeEventListener("input", sync);
+      window.removeEventListener("keyup", sync);
+      window.removeEventListener("click", sync);
+      document.removeEventListener("selectionchange", sync);
+    };
+  }, [enabled]);
+
+  useEffect(() => {
+    const handleResize = () => setPosition((current) => clampKeyboardPosition(current));
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  function beginDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const origin = position;
+    const move = (moveEvent: PointerEvent) => {
+      setPosition(clampKeyboardPosition({
+        x: origin.x + moveEvent.clientX - startX,
+        y: origin.y + moveEvent.clientY - startY
+      }));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+
+  function pressKey(key: string) {
+    const target = targetRef.current;
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    const value = target.value;
+    const start = target.selectionStart ?? value.length;
+    const end = target.selectionEnd ?? value.length;
+
+    if (key === "backspace") {
+      if (start === 0 && end === 0) return;
+      const deleteStart = start === end ? Math.max(0, start - 1) : start;
+      const next = value.slice(0, deleteStart) + value.slice(end);
+      setTargetValue(target, next, deleteStart, "deleteContentBackward");
+      setSession(targetSession(target));
+      return;
+    }
+
+    const text = key === "space" ? " " : caps && key.length === 1 ? key.toUpperCase() : key;
+    const next = value.slice(0, start) + text + value.slice(end);
+    const cursor = start + text.length;
+    setTargetValue(target, next, cursor, "insertText", text);
+    setSession(targetSession(target));
+  }
+
+  function closeKeyboard() {
+    targetRef.current = null;
+    setOpen(false);
+    setMinimized(false);
+  }
+
+  if (!enabled || !open || !session) return null;
+
+  const letterRows = [
+    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+    ["z", "x", "c", "v", "b", "n", "m"]
+  ];
+  const symbolRows = [
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+    ["@", "#", "KES", "-", "_", "&", ".", ",", "/"],
+    ["(", ")", "'", "\"", ":", ";", "?", "!"]
+  ];
+  const rows = symbols ? symbolRows : letterRows;
+
+  if (minimized) {
+    return (
+      <div className="virtual-keyboard-minimized" style={{ left: position.x, top: position.y }} role="dialog" aria-label="Virtual keyboard minimized">
+        <button onMouseDown={(event) => event.preventDefault()} onClick={() => setMinimized(false)} aria-label="Restore virtual keyboard">
+          <Keyboard size={18} />
+          Keyboard
+        </button>
+        <button onMouseDown={(event) => event.preventDefault()} onClick={closeKeyboard} aria-label="Close virtual keyboard"><X size={15} /></button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="virtual-keyboard" style={{ left: position.x, top: position.y }} role="dialog" aria-label="On-screen keyboard">
+      <div className="virtual-keyboard-title" onPointerDown={beginDrag}>
+        <GripHorizontal size={18} />
+        <div>
+          <span>Typing into: {session.label}</span>
+          <strong>{renderKeyboardMirror(session)}</strong>
+        </div>
+        <button onMouseDown={(event) => event.preventDefault()} onClick={() => setMinimized(true)} aria-label="Minimize virtual keyboard"><Minus size={16} /></button>
+        <button onMouseDown={(event) => event.preventDefault()} onClick={closeKeyboard} aria-label="Close virtual keyboard"><X size={16} /></button>
+      </div>
+
+      <div className="virtual-keyboard-keys" onMouseDown={(event) => event.preventDefault()}>
+        <div className="vk-row vk-number-row">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map((key) => (
+            <button key={key} type="button" aria-label={`Type ${key}`} onClick={() => pressKey(key)}>{key}</button>
+          ))}
+        </div>
+        {rows.map((row, index) => (
+          <div className={"vk-row row-" + index} key={row.join("")}>
+            {index === 2 && !symbols && (
+              <button type="button" className={caps ? "vk-wide active" : "vk-wide"} aria-label="Shift" onClick={() => setCaps((value) => !value)}>Shift</button>
+            )}
+            {row.map((key) => (
+              <button key={key} type="button" aria-label={`Type ${key}`} onClick={() => pressKey(key)}>
+                {symbols ? key : caps ? key.toUpperCase() : key}
+              </button>
+            ))}
+            {index === 2 && (
+              <button type="button" className="vk-wide danger" aria-label="Backspace" onClick={() => pressKey("backspace")}>Backspace</button>
+            )}
+          </div>
+        ))}
+        <div className="vk-row vk-action-row">
+          <button type="button" className={symbols ? "vk-wide active" : "vk-wide"} aria-label="Toggle symbols keyboard" onClick={() => setSymbols((value) => !value)}>?123</button>
+          <button type="button" className="vk-space" aria-label="Space" onClick={() => pressKey("space")}>Space</button>
+          <button type="button" className="vk-done" aria-label="Done typing" onClick={closeKeyboard}>Done</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ExpenseModal({
+  cashierName,
   onClose,
   onSave
 }: {
+  cashierName: string;
   onClose: () => void;
-  onSave: (expense: { category: string; amountCents: number; note?: string }) => Promise<void>;
+  onSave: (expense: { category: string; amountCents: number; note?: string; source: "cash_till" | "mpesa"; status: "approved" | "pending" }) => Promise<void>;
 }) {
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
-  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState(SUPERVISOR_EXPENSE_CATEGORIES[0]);
+  const [digits, setDigits] = useState("");
+  const [source, setSource] = useState<"cash_till" | "mpesa">("cash_till");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const amountCents = Math.round((Number(amount) || 0) * 100);
+  const [openedAt] = useState(Date.now());
+  const amountKes = Number(digits || "0");
+  const amountCents = amountKes * 100;
+  const needsApproval = amountCents > 50000;
+  const footerText = needsApproval
+    ? "Sent to the supervisor - shows as Pending until they decide."
+    : "Added to today's expenses - supervisor reviews at day close.";
+
+  function pressKey(key: string) {
+    setMessage("");
+    if (key === "backspace") {
+      setDigits((current) => current.slice(0, -1));
+      return;
+    }
+    setDigits((current) => {
+      const next = (current + key).replace(/^0+(?=\d)/, "");
+      return next.slice(0, 7);
+    });
+  }
 
   async function submit() {
     if (amountCents <= 0) {
@@ -1000,7 +1916,13 @@ function ExpenseModal({
     setBusy(true);
     setMessage("");
     try {
-      await onSave({ category, amountCents, note: note.trim() });
+      await onSave({
+        category,
+        amountCents,
+        note: note.trim(),
+        source,
+        status: needsApproval ? "pending" : "approved"
+      });
     } catch (err) {
       setMessage(String(err));
     } finally {
@@ -1009,26 +1931,83 @@ function ExpenseModal({
   }
 
   return (
-    <div className="modal-backdrop">
-      <div className="cashier-modal">
-        <div className="modal-head">
+    <div className="expense-sheet-backdrop">
+      <div className="expense-sheet">
+        <div className="expense-sheet-head">
+          <div className="expense-head-icon"><WalletCards size={22} /></div>
           <div>
-            <span>Quick</span>
-            <h2>Record Expense</h2>
+            <h2>Record expense</h2>
+            <p>{cashierName} · {new Date(openedAt).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</p>
           </div>
-          <button className="close-button" onClick={onClose}><X size={20} /></button>
+          <button className="expense-close" onClick={onClose} aria-label="Close expense sheet"><X size={20} /></button>
         </div>
-        <label>Category</label>
-        <select value={category} onChange={(event) => setCategory(event.target.value)}>
-          {EXPENSE_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
-        </select>
-        <label>Amount (KES)</label>
-        <input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ""))} inputMode="decimal" placeholder="0.00" autoFocus />
-        <label>Note</label>
-        <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional expense note" />
-        {amountCents > 50000 && <div className="notice">Expenses above KES 500 are sent for admin approval.</div>}
-        {message && <div className="error">{message}</div>}
-        <button className="modal-primary" disabled={busy || amountCents <= 0} onClick={submit}><Check size={18} />{busy ? "Saving..." : "Save Expense"}</button>
+
+        <section className="expense-amount-panel">
+          <span>Amount</span>
+          <strong className={needsApproval ? "approval" : ""}>{money(amountCents)}</strong>
+          <div className="expense-source-toggle" role="group" aria-label="Expense source">
+            <button className={source === "cash_till" ? "active" : ""} onClick={() => setSource("cash_till")}>Cash till</button>
+            <button className={source === "mpesa" ? "active" : ""} onClick={() => setSource("mpesa")}>M-Pesa</button>
+          </div>
+        </section>
+
+        <section className="expense-section">
+          <div className="expense-section-title">
+            <span>Category</span>
+            <small>set by supervisor</small>
+          </div>
+          <div className="expense-category-chips">
+            {SUPERVISOR_EXPENSE_CATEGORIES.map((item) => (
+              <button
+                key={item}
+                className={category === item ? "active" : ""}
+                onClick={() => setCategory(item)}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="expense-note-block">
+          <label htmlFor="expense-note">Optional note</label>
+          <textarea
+            id="expense-note"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="What was this expense for?"
+            rows={2}
+          />
+        </section>
+
+        <div className="expense-keypad" aria-label="Expense amount keypad">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "00", "backspace"].map((key) => (
+            <button key={key} onClick={() => pressKey(key)} aria-label={key === "backspace" ? "Backspace" : key}>
+              {key === "backspace" ? <Delete size={22} /> : key}
+            </button>
+          ))}
+        </div>
+
+        {needsApproval && (
+          <div className="expense-warning">
+            Over KES 500 - this needs supervisor approval. It won't count against the till until approved.
+          </div>
+        )}
+        {message && <div className="expense-error">{message}</div>}
+
+        <button
+          className={"expense-primary" + (needsApproval ? " approval" : "")}
+          disabled={busy || amountCents <= 0}
+          onClick={submit}
+        >
+          {needsApproval ? <Send size={18} /> : <Check size={18} />}
+          {busy
+            ? "Saving..."
+            : needsApproval
+              ? `Submit ${money(amountCents)} for approval`
+              : `Record ${money(amountCents)} expense`}
+        </button>
+        <p className="expense-footer-copy">{footerText}</p>
       </div>
     </div>
   );

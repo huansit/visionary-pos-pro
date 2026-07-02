@@ -5,7 +5,17 @@ import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } 
 export const API_BASE_URL = "https://visionarypos.cloud";
 export const APP_VERSION = "2.0.19";
 
-export function connectSyncStream(terminal: TerminalCredentials, onSync: () => void, onState?: (state: "connected" | "reconnecting") => void) {
+export type SyncVersionChange = {
+  version?: number;
+  type?: string;
+  event?: string;
+  changedType?: string;
+  ts?: number;
+  payload?: Record<string, unknown>;
+  change?: Record<string, unknown>;
+};
+
+export function connectSyncStream(terminal: TerminalCredentials, onSync: (change?: SyncVersionChange) => void, onState?: (state: "connected" | "reconnecting") => void) {
   let stopped = false;
   let retryMs = 1200;
   let lastVersion = 0;
@@ -17,7 +27,7 @@ export function connectSyncStream(terminal: TerminalCredentials, onSync: () => v
   async function run() {
     while (!stopped) {
       try {
-        const data = await jsonFetch<{ version?: number }>(`/api/sync/version?t=${Date.now()}`, {
+        const data = await jsonFetch<SyncVersionChange>(`/api/sync/version?t=${Date.now()}`, {
           method: "GET",
           headers: terminalHeaders(terminal)
         });
@@ -28,7 +38,7 @@ export function connectSyncStream(terminal: TerminalCredentials, onSync: () => v
           lastVersion = nextVersion;
         } else if (nextVersion && nextVersion !== lastVersion) {
           lastVersion = nextVersion;
-          onSync();
+          onSync(data);
         }
         await wait(3000);
       } catch (_) {
@@ -398,10 +408,10 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
 export async function pushExpense(
   terminal: TerminalCredentials,
   account: Account,
-  expense: { category: string; amountCents: number; note?: string }
+  expense: { category: string; amountCents: number; note?: string; source?: "cash_till" | "mpesa"; status?: "approved" | "pending" }
 ): Promise<void> {
   const ts = Date.now();
-  const status = expense.amountCents > 50000 ? "pending" : "approved";
+  const status = expense.status || (expense.amountCents > 50000 ? "pending" : "approved");
   await jsonFetch("/api/sync/push", {
     method: "POST",
     headers: terminalHeaders(terminal),
@@ -415,6 +425,7 @@ export async function pushExpense(
           category: expense.category,
           amountCents: expense.amountCents,
           note: `Quick expense - ${account.name}${expense.note ? " - " + expense.note : ""}`,
+          source: expense.source || "cash_till",
           status,
           enteredBy: account.name,
           cashierId: account.id,

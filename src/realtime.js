@@ -1,5 +1,6 @@
 const clients = new Set();
 let latestVersion = Date.now();
+let latestChange = null;
 let heartbeatTimer = null;
 
 function safeJson(value) {
@@ -56,6 +57,10 @@ export function getRealtimeVersion() {
   return latestVersion;
 }
 
+export function getLatestRealtimeChange() {
+  return latestChange;
+}
+
 export function publishSyncChange(change) {
   latestVersion = Math.max(Date.now(), latestVersion + 1);
   const payload = {
@@ -63,6 +68,7 @@ export function publishSyncChange(change) {
     ts: Date.now(),
     ...change,
   };
+  latestChange = payload;
   for (const client of clients) {
     try {
       writeEvent(client.res, "sync", payload);

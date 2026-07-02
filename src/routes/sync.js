@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { isMySql, pool, q, serverNow } from "../db.js";
 import { requireDevice } from "../auth.js";
-import { addRealtimeClient, getRealtimeVersion, publishSyncChange } from "../realtime.js";
+import { addRealtimeClient, getLatestRealtimeChange, getRealtimeVersion, publishSyncChange } from "../realtime.js";
 
 const router = Router();
 router.use(requireDevice);
@@ -22,7 +22,8 @@ router.get("/stream", (req, res) => {
 });
 
 router.get("/version", (_req, res) => {
-  res.json({ version: getRealtimeVersion(), ts: Date.now() });
+  const change = getLatestRealtimeChange();
+  res.json({ version: getRealtimeVersion(), ts: Date.now(), change });
 });
 
 const EVENT_TYPES = new Set([
@@ -42,6 +43,10 @@ const RECORD_TYPE_ALIASES = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
   ["barcode_catalog", "barcodeCatalog"],
   ["barcodes", "barcodeCatalog"],
+  ["expenseCategory", "expenseCategory"],
+  ["expenseCategories", "expenseCategory"],
+  ["expense_category", "expenseCategory"],
+  ["expense_categories", "expenseCategory"],
   ["product", "product"],
   ["products", "product"],
   ["customer", "customer"],

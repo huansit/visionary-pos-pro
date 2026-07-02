@@ -10,6 +10,7 @@ import {
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
+  Wrench, Phone, Zap, Home, Circle,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -38,6 +39,70 @@ const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => new Date().toISOString().slice(0, 10);
+const DEFAULT_EXPENSE_CATEGORIES = [
+  { id: "excat_transport", name: "Transport", icon: "truck", active: true, order: 10, synced: true },
+  { id: "excat_repairs", name: "Repairs", icon: "wrench", active: true, order: 20, synced: true },
+  { id: "excat_supplies", name: "Supplies", icon: "package", active: true, order: 30, synced: true },
+  { id: "excat_airtime", name: "Airtime", icon: "phone", active: true, order: 40, synced: true },
+  { id: "excat_police", name: "Police", icon: "shield", active: true, order: 50, synced: true },
+  { id: "excat_utilities", name: "Utilities", icon: "zap", active: true, order: 60, synced: true },
+  { id: "excat_rent", name: "Rent", icon: "home", active: true, order: 70, synced: true },
+  { id: "excat_salaries", name: "Salaries", icon: "users", active: true, order: 80, synced: true },
+  { id: "excat_stock", name: "Stock", icon: "boxes", active: true, order: 90, synced: true },
+  { id: "excat_other", name: "Other", icon: "circle", active: true, order: 999, synced: true },
+];
+const EXPENSE_CATEGORY_ICON_OPTIONS = [
+  ["wallet", "Wallet"],
+  ["truck", "Transport"],
+  ["wrench", "Repairs"],
+  ["package", "Supplies"],
+  ["phone", "Airtime"],
+  ["zap", "Utilities"],
+  ["shield", "Security"],
+  ["home", "Rent"],
+  ["users", "Staff"],
+  ["boxes", "Stock"],
+  ["circle", "Other"],
+];
+const EXPENSE_CATEGORY_ICONS = {
+  wallet: Wallet,
+  truck: Truck,
+  wrench: Wrench,
+  package: Package,
+  phone: Phone,
+  zap: Zap,
+  shield: ShieldCheck,
+  home: Home,
+  users: Users,
+  boxes: Boxes,
+  circle: Circle,
+};
+function normalizeExpenseCategory(cat, idx = 0) {
+  if (typeof cat === "string") return { id: "excat_" + cat.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""), name: cat, icon: "circle", active: true, order: idx * 10, synced: true };
+  return {
+    id: cat?.id || uid("excat"),
+    name: String(cat?.name || "Other").trim() || "Other",
+    icon: cat?.icon || "circle",
+    active: cat?.active !== false,
+    order: Number.isFinite(Number(cat?.order)) ? Number(cat.order) : idx * 10,
+    synced: cat?.synced !== false,
+    updatedAt: cat?.updatedAt,
+  };
+}
+function expenseCategories(data, { activeOnly = false } = {}) {
+  const source = Array.isArray(data?.expenseCategories) && data.expenseCategories.length ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES;
+  return source
+    .map(normalizeExpenseCategory)
+    .filter((cat) => !activeOnly || cat.active !== false)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
+}
+function firstExpenseCategoryName(data) {
+  return expenseCategories(data, { activeOnly: true })[0]?.name || "Other";
+}
+function ExpenseCategoryIcon({ icon, style }) {
+  const Icon = EXPENSE_CATEGORY_ICONS[icon] || Wallet;
+  return <Icon style={{ width: 17, height: 17, ...(style || {}) }} />;
+}
 
 const SEED = () => {
   const t = now();
@@ -453,6 +518,7 @@ const SEED = () => {
     ],
     purchases: [],
     expenses: [],
+    expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
     cashMovements: [{ id: uid("cm"), type: "in", amountCents: 500000, reason: "Opening float", date: todayStr(), ts: t, synced: true }],
     borrowings: [],
     endOfDays: [],
@@ -481,6 +547,7 @@ const CLEAN_SETUP = () => {
     invoices: [],
     purchases: [],
     expenses: [],
+    expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
     cashMovements: [],
     borrowings: [],
     endOfDays: [],
@@ -828,6 +895,7 @@ const SYNC_APPEND = new Map([
 ]);
 const SYNC_MUTABLE = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
+  ["expenseCategories", "expenseCategory"],
   ["products", "product"],
   ["customers", "customer"],
   ["employees", "user"],
@@ -1422,6 +1490,16 @@ function fmt(cents, cur = "KES") {
   if (cur === "KES") return "KES " + Math.round(v).toLocaleString();
   return (cur || "$") + v.toFixed(2);
 }
+function moneyInputValue(cents) {
+  const v = (Number(cents) || 0) / 100;
+  return Number.isInteger(v) ? String(v) : v.toFixed(2);
+}
+function centsFromInput(value) {
+  return Math.max(0, Math.round((parseFloat(value) || 0) * 100));
+}
+function clampPaymentCents(value, balanceCents) {
+  return Math.min(Math.max(0, Number(balanceCents) || 0), centsFromInput(value));
+}
 function onHand(data, productId, branchId) {
   return data.stockMovements.filter((m) => m.productId === productId && (!branchId || m.branchId === branchId)).reduce((s, m) => s + m.qty, 0);
 }
@@ -1541,7 +1619,7 @@ function countPending(data) {
   const u = (a) => (a || []).filter((x) => x && x.synced === false).length;
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
-    + u(data.cashMovements) + u(data.borrowings) + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog);
+    + u(data.cashMovements) + u(data.borrowings) + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
@@ -1549,7 +1627,7 @@ function markSynced(data) {
     products: m(data.products), employees: m(data.employees), invoices: m(data.invoices), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
-    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0 } };
+    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0 } };
 }
 
 /* ================================================================== */
@@ -2234,11 +2312,13 @@ const css = `
 .navcollapse{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:10px;border:none;background:none;color:var(--muted-2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:4px;transition:.13s}
 .navcollapse:hover{background:var(--surface-2);color:var(--text)}
 .navcollapse svg{width:16px;height:16px;flex:none}
-.navitem{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;border:none;background:none;text-align:left;width:100%;transition:.13s;font-family:inherit;white-space:nowrap}
+.navitem{position:relative;display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;border:none;background:none;text-align:left;width:100%;transition:.13s;font-family:inherit;white-space:nowrap}
 .navitem svg{width:16px;height:16px;flex:none}
 .navitem:hover{background:var(--surface-2);color:var(--text)}
 .navitem.main{font-weight:800;font-size:14px;color:var(--text)}
 .navitem.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 6px 16px -8px var(--accent)}
+.navbadge{margin-left:auto;min-width:19px;height:19px;border-radius:999px;background:#EF4444;color:#fff;font-size:11px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;line-height:1}
+.navside.collapsed .navbadge{position:absolute;right:6px;top:4px;min-width:17px;height:17px;font-size:10px;padding:0 5px}
 .navgrp{display:flex;flex-direction:column;gap:3px}
 .navsec{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:800;padding:13px 11px 5px;display:flex;align-items:center;gap:7px;white-space:nowrap;width:100%;border:none;background:none;cursor:pointer;font-family:inherit;border-radius:8px;transition:.13s}
 .navsec:hover{color:var(--text);background:var(--surface-2)}
@@ -2326,6 +2406,23 @@ const css = `
 .paycell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .paycell select{height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 6px}
 .paycell input{width:90px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 8px;font-family:var(--font-mono)}
+.settlebar{display:grid;grid-template-columns:auto minmax(260px,1fr) 180px;gap:10px;align-items:center;margin:14px 0}
+.settlebar .seg{display:flex;gap:7px;flex-wrap:wrap}
+.settlesearch{position:relative}
+.settlesearch svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:17px;height:17px;color:var(--muted-2);z-index:1}
+.settlesearch .input{padding-left:40px}
+.tbl tr.clickable{cursor:pointer;transition:.15s}
+.tbl tr.clickable:hover td{background:var(--surface-2)}
+.settlement-modal{max-width:680px}
+.settlement-totals{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
+.settlement-totals>div{border:1px solid var(--border-soft);border-radius:13px;background:var(--surface-2);padding:12px}
+.settlement-totals span{display:block;font-size:10.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.settlement-totals b{display:block;margin-top:4px;font-size:16px;font-family:var(--font-mono)}
+.settlement-totals .due b{color:#C23A56}
+.settlement-box{border:1px solid var(--border-soft);border-radius:15px;background:var(--surface);padding:14px;margin:14px 0}
+.settlement-box .wtab{justify-content:center}
+.payamount{display:grid;grid-template-columns:1fr auto;gap:10px;margin:12px 0}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -3519,6 +3616,8 @@ function Register({ data, update, online, employee, branch }) {
   }, 0);
 
   const branchProducts = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === branch.id));
+  const activeExpenseCategories = expenseCategories(data, { activeOnly: true });
+  const defaultExpenseCategory = activeExpenseCategories[0]?.name || "Other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
   const qNorm = q.trim().toLowerCase();
   const visible = branchProducts.filter((p) =>
@@ -3864,7 +3963,7 @@ function Register({ data, update, online, employee, branch }) {
           <div className="poscard">
             <div className="sectit">Quick Actions</div>
             <div className="qa">
-              <button className="qabtn" onClick={() => setExp({ category: QEXP[0], amount: "", note: "" })}><Wallet /> Expense</button>
+              <button className="qabtn" onClick={() => setExp({ category: defaultExpenseCategory, amount: "", note: "" })}><Wallet /> Expense</button>
               <button className="qabtn" onClick={holdSale}><Receipt /> Hold Sale</button>
               <button className="qabtn" onClick={() => setDebtsOpen(true)}><AlertCircle /> My Debts{debtTotal > 0 ? " · " + fmt(debtTotal, cur) : ""}</button>
             </div>
@@ -4023,7 +4122,7 @@ function Register({ data, update, online, employee, branch }) {
         <div className="scrim" onClick={() => setExp(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Quick</div><div className="title" style={{ fontSize: 21 }}>Record Expense</div></div><button className="iconbtn" onClick={() => setExp(null)}><X /></button></div>
-            <div className="field" style={{ marginTop: 12 }}><label className="label">Category</label><select className="select" value={exp.category} onChange={(e) => setExp({ ...exp, category: e.target.value })}>{QEXP.map((c) => <option key={c}>{c}</option>)}</select></div>
+            <div className="field" style={{ marginTop: 12 }}><label className="label">Category</label><select className="select" value={exp.category} onChange={(e) => setExp({ ...exp, category: e.target.value })}>{activeExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
             <div className="field"><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" autoFocus value={exp.amount} onChange={(e) => setExp({ ...exp, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Enter amount" onKeyDown={(e) => { if (e.key === "Enter") saveExp(); }} /></div>
             <div className="field"><label className="label">Description</label><input className="input" value={exp.note} onChange={(e) => setExp({ ...exp, note: e.target.value })} placeholder="Short note" /></div>
             {parseFloat(exp.amount) * 100 > APPROVAL_LIMIT && <div className="notice" style={{ fontSize: 12 }}>Over {fmt(APPROVAL_LIMIT, cur)} — needs admin approval.</div>}
@@ -4379,8 +4478,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
   const todayRevenue = data.payments.filter((p) => isToday(p.ts) && p.status === "captured").reduce((s, p) => s + p.amountCents, 0);
   const txns = data.invoices.filter((i) => isToday(i.ts)).length;
   const reorders = reorderList(data, branch.id).length;
+  const pendingExpenseCount = (data.expenses || []).filter((e) => e.status === "pending").length;
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
-    <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => setTab(item.id)}><I /> <span className="navlabel">{item.label}</span></button>); };
+    <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => setTab(item.id)}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
   const render = () => {
     if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} />;
     switch (tab) {
@@ -4395,7 +4495,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
       case "borrowing": return <BorrowingTab data={data} update={update} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} />;
-      case "expenses": return <ExpensesTab data={data} update={update} branch={branch} />;
+      case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "financials": return <ReportsTab key="financials" data={data} initialTab="pnl" />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
@@ -4450,21 +4550,26 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
 function InvoicesTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
-  const [fCashier, setFCashier] = useState("All"), [fCust, setFCust] = useState(""), [fDate, setFDate] = useState("");
+  const [filter, setFilter] = useState("open"), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
-  const cashierOptions = activeCashiers(data);
+  const [receipt, setReceipt] = useState(null);
   const invoices = data.invoices;
   const open = invoices.filter((i) => invOutstanding(i) > 0);
   const overdue = invoices.filter((i) => invIsDebt(i));
   const balanceDue = invoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = invoices.reduce((s, i) => s + i.totalCents, 0);
   const sinceEndDay = invoices.filter((i) => i.ts > data.settings.lastEndDay);
-  const pendingTotal = open.reduce((s, i) => s + invOutstanding(i), 0);
-  const filtered = open.filter((i) =>
-    (fCashier === "All" || i.cashier === fCashier) &&
-    (fCust.trim() === "" || i.customerName.toLowerCase().includes(fCust.toLowerCase())) &&
-    (fDate === "" || i.date === fDate));
+  const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
+  const needle = query.trim().toLowerCase();
+  const filtered = invoices
+    .filter((i) => filter === "all" || (filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0))
+    .filter((i) => {
+      if (!needle) return true;
+      return [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, i.cashier]
+        .some((value) => String(value || "").toLowerCase().includes(needle));
+    })
+    .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
 
   // cashier debts = overdue carried-over invoices, grouped by cashier.
   const debts = open.filter((i) => invIsDebt(i));
@@ -4476,7 +4581,7 @@ function InvoicesTab({ data, update, branch, user }) {
   return (
     <div>
       <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
-        right={<button className="btn sm btn-primary" onClick={() => setEod({ mode: "live" })}><Check /> End of Day</button>} />
+        right={<button className="btn sm btn-primary" onClick={() => setEod({ mode: "live" })}><Check /> Close day</button>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
         <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
@@ -4486,17 +4591,23 @@ function InvoicesTab({ data, update, branch, user }) {
       {sinceEndDay.length === 0 ? <div className="notice">No new invoice sales since the last End of Day close.</div>
         : <div className="notice">{sinceEndDay.length} invoice(s) issued since the last End of Day close.</div>}
 
-      <div className="section-title lead">Credit Control · Pending Invoice Management <span style={{ float: "right", fontWeight: 750 }}>{fmt(pendingTotal, cur)}</span></div>
-      <div className="filters">
-        <div><label className="label">Cashier</label><select className="select" value={fCashier} onChange={(e) => setFCashier(e.target.value)}>
-          <option value="All">All active cashiers</option>{cashierOptions.map((e) => <option key={e.id} value={e.name}>{e.name}</option>)}</select></div>
-        <div><label className="label">Customer</label><input className="input" placeholder="Search customer" value={fCust} onChange={(e) => setFCust(e.target.value)} /></div>
-        <div><label className="label">Date</label><input className="input" type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} /></div>
+      <div className="section-title lead">Supervisor invoice settlement <span style={{ float: "right", fontWeight: 750 }}>{fmt(balanceDue, cur)}</span></div>
+      <div className="settlebar">
+        <div className="seg">
+          {[["open", "Open"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
+            <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
+          ))}
+        </div>
+        <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+        <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} title="Sort invoices">
+          <option value="oldest">Oldest first</option>
+          <option value="newest">Newest first</option>
+        </select>
       </div>
-      {filtered.length === 0 ? <div className="notice">No pending invoices match these filters.</div> : (
+      {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th>Invoice</th><th>Cashier</th><th>Customer</th><th>Date</th><th>Outstanding</th><th>Status</th><th>Payment</th></tr></thead>
-          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} update={update} onOpen={() => setDetail(inv)} />)}</tbody>
+          <thead><tr><th>Customer</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
 
@@ -4523,7 +4634,8 @@ function InvoicesTab({ data, update, branch, user }) {
       </div>
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
-      {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} onClose={() => setDetail(null)} />}
+      {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
+      {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} onClose={() => setReceipt(null)} />}
     </div>
   );
 }
@@ -4535,17 +4647,38 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const [bId, setBId] = useState(branch.id);
   const effBranch = data.branches.find((b) => b.id === bId) || branch;
   const live = !doc;
+  const isApprovedExpense = (e) => !e.status || e.status === "approved";
+  const activeCartSources = [
+    ...(Array.isArray(data.activeCarts) ? data.activeCarts : []),
+    ...(Array.isArray(data.terminalCarts) ? data.terminalCarts : []),
+    ...(Array.isArray(data.cashierCarts) ? data.cashierCarts : []),
+  ];
+  const cartItemCount = (cart) => {
+    if (Array.isArray(cart.items)) return cart.items.length;
+    if (Array.isArray(cart.cart?.items)) return cart.cart.items.length;
+    if (Array.isArray(cart.lines)) return cart.lines.length;
+    if (Array.isArray(cart.cartLines)) return cart.cartLines.length;
+    return Number(cart.itemCount || cart.itemsCount || 0);
+  };
+  const activeCarts = live ? activeCartSources.filter((cart) => {
+    const cartBranchId = cart.branchId || cart.branch_id || cart.branch?.id;
+    return (!cartBranchId || cartBranchId === bId) && cartItemCount(cart) > 0;
+  }) : [];
+  const terminalName = (cart) => cart.terminalName || cart.terminal_name || cart.deviceName || cart.cashierName || cart.cashier || "Unknown terminal";
 
   let d;
   if (doc) { d = doc; } else {
-    const since = (data.settings.lastEndDayByBranch && data.settings.lastEndDayByBranch[bId]) || data.settings.lastEndDay;
+    const since = (data.settings.lastEndDayByBranch && data.settings.lastEndDayByBranch[bId]) || data.settings.lastEndDay || 0;
     const inv = data.invoices.filter((i) => i.branchId === bId && i.ts > since);
+    const paidInv = inv.filter((i) => invOutstanding(i) <= 0);
+    const openInv = inv.filter((i) => invOutstanding(i) > 0);
     const moves = data.stockMovements.filter((m) => m.branchId === bId && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts > since);
     const invIds = new Set(inv.map((i) => i.id));
     const pays = data.payments.filter((p) => p.status === "captured" && p.ts > since && invIds.has(p.orderId));
     const payBy = (mm) => pays.filter((p) => (p.method || "").toLowerCase().includes(mm)).reduce((s, p) => s + p.amountCents, 0);
     const cashC = payBy("cash"), mpesaC = payBy("pesa"), cardC = payBy("card");
     const invoiceC = inv.reduce((s, i) => s + invOutstanding(i), 0);
+    const expenseC = (data.expenses || []).filter((e) => e.branchId === bId && e.ts > since && isApprovedExpense(e)).reduce((s, e) => s + e.amountCents, 0);
     const byProd = {}; moves.forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
     const lines = Object.entries(byProd).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { name: p ? p.name : "Product", qty, priceCents: p ? p.priceCents : 0, totalCents: qty * (p ? p.priceCents : 0) }; }).sort((a, b) => b.totalCents - a.totalCents);
     const cBy = {}; inv.forEach((i) => { const c = cBy[i.cashier] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[i.cashier] = c; });
@@ -4553,18 +4686,20 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     d = {
       cashier: user, branchId: bId, branchName: effBranch.name, date: todayStr(), time: now0.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       transactions: inv.length, itemsSold: lines.reduce((s, l) => s + l.qty, 0), totalSalesCents: inv.reduce((s, i) => s + i.totalCents, 0),
-      cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC,
+      cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC, expenseCents: expenseC,
+      paidCount: paidInv.length, openCount: openInv.length, openDebtCents: openInv.reduce((s, i) => s + invOutstanding(i), 0),
       cashierRows: Object.entries(cBy).map(([n, v]) => ({ cashier: n, invoices: v.invoices, totalCents: v.totalCents })),
       lines,
     };
   }
-  const dayQty = d.lines.reduce((s, l) => s + l.qty, 0);
-  const dayValue = d.lines.reduce((s, l) => s + l.totalCents, 0);
+  const dayLines = d.lines || [];
+  const dayQty = dayLines.reduce((s, l) => s + l.qty, 0);
+  const dayValue = dayLines.reduce((s, l) => s + l.totalCents, 0);
   const printEndDay = () => {
     const report = buildReportDocument({
-      title: "End of Day Report",
+      title: "Z-Report",
       companyName: data.settings.store || "VISIONPOS",
-      companyDetails: "Shift close summary",
+      companyDetails: "Supervisor day close summary",
       branchName: d.branchName,
       generatedBy: user || d.cashier || "VISIONPOS",
       dateRange: d.date,
@@ -4574,7 +4709,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         { label: "Closed at", value: d.time },
       ],
       headers: ["Item", "Qty", "Price Sold", "Total"],
-      rows: (d.lines || []).map((l) => [l.name, l.qty, fmt(l.priceCents, cur), fmt(l.totalCents, cur)]),
+      rows: dayLines.map((l) => [l.name, l.qty, fmt(l.priceCents, cur), fmt(l.totalCents, cur)]),
       totals: [
         { label: "Transactions", value: d.transactions },
         { label: "Items Sold", value: d.itemsSold },
@@ -4583,59 +4718,86 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         { label: "M-Pesa", value: fmt(d.mpesaCents, cur) },
         { label: "Card", value: fmt(d.cardCents, cur) },
         { label: "Invoice", value: fmt(d.invoiceCents, cur) },
+        { label: "Expenses", value: fmt(d.expenseCents || 0, cur) },
+        { label: "Paid archived", value: d.paidCount || 0 },
+        { label: "Open carried over", value: (d.openCount || 0) + " · " + fmt(d.openDebtCents || 0, cur) },
       ],
     });
     printReport(report);
   };
 
   const closeDay = () => {
+    if (activeCarts.length > 0) return;
     const ts = now();
-    const record = { id: uid("eod"), ...d, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
+    const closeId = uid("eod");
+    const record = { id: closeId, type: "day_closed", eventType: "day_closed", ...d, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
     update((dd) => {
       const current = reconcileInvoicePayments(dd);
       const since = (current.settings.lastEndDayByBranch && current.settings.lastEndDayByBranch[d.branchId]) || current.settings.lastEndDay || 0;
       return { ...current,
         endOfDays: [record, ...(current.endOfDays || [])],
-        invoices: current.invoices.map((i) => (i.branchId === d.branchId && i.ts > since && i.ts <= ts && invOutstanding(i) > 0 ? { ...i, carriedOver: true, synced: false } : i)),
+        invoices: current.invoices.map((i) => {
+          if (i.branchId !== d.branchId || i.ts <= since || i.ts > ts) return i;
+          if (invOutstanding(i) > 0) return { ...i, carriedOver: true, carriedOverAt: ts, closedDayId: closeId, synced: false };
+          return { ...i, archived: true, archivedAt: ts, closedDayId: closeId, activeForCashier: false, synced: false };
+        }),
         settings: { ...current.settings, lastEndDay: ts, lastEndDayByBranch: { ...(current.settings.lastEndDayByBranch || {}), [d.branchId]: ts } } };
     });
+    printEndDay();
     onClose();
   };
 
   return (
     <div className="scrim" onClick={onClose}>
       <div className="modal eodmodal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head"><div><div className="wshead">Shift Close</div><div className="title" style={{ fontSize: 22 }}>End of Day</div></div>
+        <div className="modal-head"><div><div className="wshead">Supervisor close</div><div className="title" style={{ fontSize: 22 }}>Close day</div></div>
           <button className="iconbtn" onClick={onClose}><X /></button></div>
 
-        {live && (
-          <div style={{ marginBottom: 14 }}><label className="label">Branch for this End of Day</label>
-            <select className="select" value={bId} onChange={(e) => setBId(e.target.value)}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-        )}
-
         <div className="eodgrid">
-          <div className="eodcell"><div className="sl">Cashier</div><div className="ev">{d.cashier}</div></div>
+          <div className="eodcell"><div className="sl">Closed by</div><div className="ev">{live ? user : d.closedBy || d.cashier}</div></div>
           <div className="eodcell"><div className="sl">Branch</div><div className="ev">{d.branchName}</div></div>
           <div className="eodcell"><div className="sl">Date</div><div className="ev">{d.date}</div></div>
           <div className="eodcell"><div className="sl">Time</div><div className="ev">{d.time}</div></div>
-          <div className="eodcell"><div className="sl">Transactions</div><div className="ev">{d.transactions}</div></div>
-          <div className="eodcell"><div className="sl">Items Sold</div><div className="ev">{d.itemsSold}</div></div>
           <div className="eodcell"><div className="sl">Total Sales</div><div className="ev">{fmt(d.totalSalesCents, cur)}</div></div>
           <div className="eodcell"><div className="sl">Cash</div><div className="ev">{fmt(d.cashCents, cur)}</div></div>
           <div className="eodcell"><div className="sl">M-Pesa</div><div className="ev">{fmt(d.mpesaCents, cur)}</div></div>
-          <div className="eodcell"><div className="sl">Card</div><div className="ev">{fmt(d.cardCents, cur)}</div></div>
-          <div className="eodcell"><div className="sl">Invoice</div><div className="ev">{fmt(d.invoiceCents, cur)}</div></div>
+          <div className="eodcell"><div className="sl">Expenses</div><div className="ev">{fmt(d.expenseCents || 0, cur)}</div></div>
         </div>
 
+        <div className="grid2" style={{ marginTop: 14 }}>
+          <div className="eodcell" style={{ borderColor: "rgba(22,163,74,.28)", background: "rgba(22,163,74,.08)" }}>
+            <div className="sl">Paid — clears out</div>
+            <div className="ev">{d.paidCount || 0} invoice(s)</div>
+            <div className="mt2">Archived from active cashier views.</div>
+          </div>
+          <div className="eodcell" style={{ borderColor: "rgba(245,158,11,.32)", background: "rgba(245,158,11,.08)" }}>
+            <div className="sl">Open — carries over</div>
+            <div className="ev">{d.openCount || 0} invoice(s) · {fmt(d.openDebtCents || 0, cur)}</div>
+            <div className="mt2">Moves to carried-over debt.</div>
+          </div>
+        </div>
+
+        {live && (
+          <div className="alert" style={{ marginTop: 14 }}>
+            After closing, paid invoices leave the cashier screen and sales reset to zero. The {d.openCount || 0} open invoices move to carried over. This can't be undone.
+          </div>
+        )}
+
+        {activeCarts.length > 0 && (
+          <div className="alert danger" style={{ marginTop: 14 }}>
+            Close day is blocked because {activeCarts.length} terminal(s) still have active carts: {activeCarts.map(terminalName).join(", ")}.
+          </div>
+        )}
+
         <div className="eodth"><span>Cashier</span><span>Invoices</span><span>Total</span></div>
-        {d.cashierRows.length === 0 ? <div className="notice">No cashier invoices in this closing period.</div> : (
-          <div className="eodrows">{d.cashierRows.map((r) => (<div className="eodrow" key={r.cashier}><span>{r.cashier}</span><span>{r.invoices}</span><span className="amt">{fmt(r.totalCents, cur)}</span></div>))}</div>
+        {!(d.cashierRows || []).length ? <div className="notice">No cashier invoices in this closing period.</div> : (
+          <div className="eodrows">{(d.cashierRows || []).map((r) => (<div className="eodrow" key={r.cashier}><span>{r.cashier}</span><span>{r.invoices}</span><span className="amt">{fmt(r.totalCents, cur)}</span></div>))}</div>
         )}
         <div className="eodtot"><span>Total Sum Of Day</span><span className="sub">{d.transactions} sales</span><span className="amt">{fmt(d.totalSalesCents, cur)}</span></div>
 
         <div className="eodth"><span>Item</span><span>Qty</span><span>Price Sold</span><span>Total</span></div>
-        {d.lines.length === 0 ? <div className="notice">No new sales since the last End of Day close.</div> : (
-          <div className="eodrows">{d.lines.map((l, i) => (<div className="eodrow four" key={i}><span>{l.name}</span><span>{l.qty}</span><span>{fmt(l.priceCents, cur)}</span><span className="amt">{fmt(l.totalCents, cur)}</span></div>))}</div>
+        {dayLines.length === 0 ? <div className="notice">No new sales since the last End of Day close.</div> : (
+          <div className="eodrows">{dayLines.map((l, i) => (<div className="eodrow four" key={i}><span>{l.name}</span><span>{l.qty}</span><span>{fmt(l.priceCents, cur)}</span><span className="amt">{fmt(l.totalCents, cur)}</span></div>))}</div>
         )}
         <div className="eodtot"><span>Day Total</span><span>{dayQty}</span><span className="amt">{fmt(dayValue, cur)}</span></div>
 
@@ -4654,87 +4816,143 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         )}
 
         <div className="grid2" style={{ marginTop: 16 }}>
-          <button className="btn btn-ghost" onClick={printEndDay}><Printer /> Print End Day</button>
+          <button className="btn btn-ghost" onClick={printEndDay}><Printer /> Print Z-report</button>
           {live
-            ? <button className="btn btn-primary" onClick={closeDay}><Check /> Close Day</button>
+            ? <button className="btn btn-primary" disabled={activeCarts.length > 0} onClick={closeDay}><Check /> Close day & print Z-report</button>
             : <button className="btn btn-ghost" onClick={onClose}>Close</button>}
         </div>
       </div>
     </div>
   );
 }
-function InvoiceRow({ inv, cur, update, onOpen }) {
-  const [method, setMethod] = useState(inv.method || "M-Pesa");
-  const [amount, setAmount] = useState("");
-  const status = invStatus(inv); const out = invOutstanding(inv);
-  const apply = (full) => {
-    const pay = full ? out : Math.min(out, Math.round(parseFloat(amount) * 100) || 0); if (pay <= 0) return;
-    update((d) => ({ ...d,
-      invoices: d.invoices.map((x) => {
-        if (x.id !== inv.id) return x;
-        const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + pay);
-        return { ...x, paidCents, carriedOver: paidCents >= x.totalCents ? false : x.carriedOver, method, synced: false };
-      }),
-      payments: [...d.payments, { id: uid("pay"), orderId: inv.id, method: method.toLowerCase(), amountCents: pay, status: "captured", ts: now(), synced: false }] }));
-    setAmount("");
-  };
+function InvoiceRow({ inv, cur, onOpen }) {
+  const status = invStatus(inv);
+  const out = invOutstanding(inv);
+  const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
+  const ageClass = invIsDebt(inv) ? "debt" : age > 0 ? "overdue" : "open";
   return (
-    <tr>
-      <td className="innum"><button className="linknum" onClick={onOpen} title="View details">{inv.number.slice(-12)}</button>{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>•</span> : null}</td><td>{inv.cashier}</td><td>{inv.customerName}</td><td>{dt(inv.ts)}</td>
-      <td className="amt">{fmt(out, cur)}</td><td><span className={"ist " + status}>{status}</span></td>
-      <td><div className="paycell">
-        <select value={method} onChange={(e) => setMethod(e.target.value)}><option>M-Pesa</option><option>Cash</option><option>Card</option><option>Bank</option></select>
-        <input placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
-        <button className="btn xs btn-ghost" onClick={() => apply(false)}>Partial</button>
-        <button className="btn xs btn-primary" onClick={() => apply(true)}><Check /> Mark Paid</button>
-      </div></td>
+    <tr className="clickable" onClick={onOpen}>
+      <td><div className="nm">{inv.customerName || "Walk-in"}</div><div className="mt2">{inv.cashier || "Unknown cashier"}</div></td>
+      <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
+      <td>{dt(inv.ts)}</td>
+      <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
+      <td className="amt">{fmt(out, cur)}</td>
+      <td><span className={"ist " + status}>{status}</span></td>
     </tr>
   );
 }
 
-function InvoiceDetailModal({ inv, data, update, cur, onClose }) {
+function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }) {
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
   const [tnote, setTnote] = useState(live.trackingNote || "");
   const [saved, setSaved] = useState(false);
-  const out = invOutstanding(live); const status = invStatus(live);
+  const [method, setMethod] = useState(live.method || "M-Pesa");
+  const out = invOutstanding(live);
+  const status = invStatus(live);
+  const [amount, setAmount] = useState(moneyInputValue(out));
+  useEffect(() => { setAmount(moneyInputValue(out)); }, [live.id, out]);
+  const paymentCents = clampPaymentCents(amount, out);
+  const isFullPayment = out > 0 && paymentCents === out;
   const items = data.stockMovements.filter((m) => m.reason === "Sale " + live.number).map((m, i) => {
     const p = data.products.find((x) => x.id === m.productId);
     return { key: i, name: p ? p.name : "Item", qty: -m.qty, price: p ? priceFor(data, p) : 0 };
   });
-  const pays = data.payments.filter((p) => p.orderId === live.id);
+  const pays = data.payments.filter((p) => p.orderId === live.id || p.invoiceId === live.id);
+  const recordPayment = () => {
+    if (paymentCents <= 0 || out <= 0) return;
+    const ts = now();
+    update((d) => ({ ...d,
+      invoices: d.invoices.map((x) => {
+        if (x.id !== live.id) return x;
+        const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + paymentCents);
+        const cleared = paidCents >= x.totalCents;
+        return {
+          ...x,
+          paidCents,
+          carriedOver: cleared ? false : x.carriedOver,
+          method,
+          lastSettledBy: user,
+          lastSettledAt: ts,
+          settledBy: cleared ? user : x.settledBy,
+          settledAt: cleared ? ts : x.settledAt,
+          status: cleared ? "paid" : "open",
+          synced: false,
+        };
+      }),
+      payments: [...(d.payments || []), {
+        id: uid("pay"),
+        orderId: live.id,
+        invoiceId: live.id,
+        method: method.toLowerCase(),
+        amountCents: paymentCents,
+        status: "captured",
+        recordedBy: user,
+        settledBy: user,
+        ts,
+        synced: false,
+      }],
+    }));
+    setAmount("");
+  };
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
+      <div className="modal settlement-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <div><div className="sub" style={{ margin: 0 }}>Invoice</div><div className="title" style={{ fontSize: 20 }}>{live.number}</div></div>
+          <div><div className="sub" style={{ margin: 0 }}>Invoice settlement</div><div className="title" style={{ fontSize: 20 }}>{live.number}</div></div>
           <button className="iconbtn" onClick={onClose}><X /></button>
         </div>
         <div className="idgrid">
           <div><span>Customer</span><b>{live.customerName}</b></div>
           <div><span>Cashier</span><b>{live.cashier}</b></div>
           <div><span>Date</span><b>{dt(live.ts)}</b></div>
-          <div><span>Status</span><b><span className={"ist " + status}>{status}</span>{live.carriedOver ? " · carried over" : ""}</b></div>
+          <div><span>Status</span><b><span className={"ist " + status}>{status}</span>{live.carriedOver ? " - carried over" : ""}</b></div>
           <div><span>Total</span><b>{fmt(live.totalCents, cur)}</b></div>
-          <div><span>Outstanding</span><b>{fmt(out, cur)}</b></div>
+          <div><span>Balance due</span><b>{fmt(out, cur)}</b></div>
         </div>
         <div className="sideh" style={{ margin: "16px 0 8px" }}>Items</div>
         {items.length ? (
           <div className="list">{items.map((it) => (
-            <div className="row" key={it.key}><div className="meta"><div className="nm">{it.name}</div><div className="mt2">{it.qty} × {fmt(it.price, cur)}</div></div>
+            <div className="row" key={it.key}><div className="meta"><div className="nm">{it.name}</div><div className="mt2">{it.qty} x {fmt(it.price, cur)}</div></div>
               <span className="pill plain">{fmt(it.price * it.qty, cur)}</span></div>))}</div>
         ) : <div className="notice">No itemised lines recorded for this invoice.</div>}
+        <div className="settlement-totals">
+          <div><span>Invoice total</span><b>{fmt(live.totalCents, cur)}</b></div>
+          <div><span>Paid so far</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
+          <div className="due"><span>Balance due</span><b>{fmt(out, cur)}</b></div>
+        </div>
+        {out > 0 ? (
+          <div className="settlement-box">
+            <div className="section-title" style={{ marginTop: 0 }}>Record payment</div>
+            <div className="grid3">
+              <button className={"wtab" + (method === "Cash" ? " on" : "")} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
+              <button className={"wtab" + (method === "M-Pesa" ? " on" : "")} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
+              <button className={"wtab" + (method === "Card" ? " on" : "")} onClick={() => setMethod("Card")}><CreditCard />Card</button>
+            </div>
+            <div className="payamount">
+              <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(moneyInputValue(clampPaymentCents(e.target.value, out)))} placeholder="Payment amount" />
+              <button className="btn btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Full</button>
+            </div>
+            <button className="btn btn-primary" style={{ width: "100%" }} disabled={paymentCents <= 0} onClick={recordPayment}>
+              <Check /> {isFullPayment ? "Settle full balance" : "Record " + fmt(paymentCents, cur) + " payment"}
+            </button>
+          </div>
+        ) : (
+          <div className="notice">This invoice is fully paid and cleared from the open list.</div>
+        )}
         {live.note && <div className="notice" style={{ marginTop: 10 }}>Sale note: {live.note}</div>}
         {pays.length > 0 && (<><div className="sideh" style={{ margin: "16px 0 8px" }}>Payments</div>
-          <div className="list">{pays.map((p) => (<div className="row" key={p.id}><div className="meta"><div className="nm" style={{ textTransform: "capitalize" }}>{p.method}</div><div className="mt2">{new Date(p.ts).toLocaleString()}</div></div><span className="pill plain">{fmt(p.amountCents, cur)}</span></div>))}</div></>)}
+          <div className="list">{pays.map((p) => (<div className="row" key={p.id}><div className="meta"><div className="nm" style={{ textTransform: "capitalize" }}>{p.method}</div><div className="mt2">{new Date(p.ts).toLocaleString()} by {p.recordedBy || p.settledBy || user}</div></div><span className="pill plain">{fmt(p.amountCents, cur)}</span></div>))}</div></>)}
         <div className="field" style={{ marginTop: 16 }}><label className="label">Employee tracking note</label>
-          <textarea className="input" style={{ minHeight: 72, paddingTop: 10, resize: "vertical" }} placeholder="Track this invoice — who collected, follow-up, reason for credit, etc." value={tnote} onChange={(e) => { setTnote(e.target.value); setSaved(false); }} /></div>
-        <button className="btn btn-primary" style={{ width: "100%" }} onClick={saveNote}><Check /> {saved ? "Saved" : "Save note"}</button>
+          <textarea className="input" style={{ minHeight: 72, paddingTop: 10, resize: "vertical" }} placeholder="Track this invoice - who collected, follow-up, reason for credit, etc." value={tnote} onChange={(e) => { setTnote(e.target.value); setSaved(false); }} /></div>
+        <div className="grid2">
+          <button className="btn btn-ghost" onClick={() => onReprint({ ...live, items: items.map((it) => ({ name: it.name, qty: it.qty, priceCents: it.price })) })}><Printer /> Reprint receipt</button>
+          <button className="btn btn-primary" onClick={saveNote}><Check /> {saved ? "Saved" : "Save note"}</button>
+        </div>
       </div>
     </div>
   );
 }
-
 /* ---- Dashboard ---- */
 function DashboardTab({ data, update, branch, online }) {
   const cur = data.settings.currency;
@@ -5887,7 +6105,7 @@ function BranchesTab({ data, update }) {
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
     const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
     const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
-    const expenses = data.expenses.filter((e) => e.status !== "pending" && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
+    const expenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
     const grossProfit = grossSales - cogs;
     const netProfit = grossProfit - expenses;
     const margin = grossSales > 0 ? Math.round((grossProfit / grossSales) * 100) : 0;
@@ -6168,7 +6386,7 @@ function CashTab({ data, update }) {
   const todayInv = data.invoices.filter((i) => isToday(i.ts));
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const outstanding = todayInv.reduce((s, i) => s + invOutstanding(i), 0);
-  const expToday = data.expenses.filter((e) => e.status !== "pending" && isToday(e.ts)).reduce((s, e) => s + e.amountCents, 0);
+  const expToday = data.expenses.filter((e) => (!e.status || e.status === "approved") && isToday(e.ts)).reduce((s, e) => s + e.amountCents, 0);
   const net = todaySales - expToday;
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const tile = (cls, icon, label, value, sub) => (
@@ -6200,11 +6418,18 @@ function CashTab({ data, update }) {
     </div>
   );
 }
-const EXCATS = ["Police", "Utilities", "Rent", "Salaries", "Stock", "Other"];
-function ExpensesTab({ data, update, branch }) {
-  const cur = data.settings.currency; const [f, setF] = useState({ category: EXCATS[0], amount: "", note: "", branchId: branch.id });
+function ExpensesTab({ data, update, branch, user }) {
+  const cur = data.settings.currency;
+  const allExpenseCategories = expenseCategories(data);
+  const activeExpenseCategories = expenseCategories(data, { activeOnly: true });
+  const defaultCategory = activeExpenseCategories[0]?.name || "Other";
+  const [f, setF] = useState({ category: defaultCategory, amount: "", note: "", branchId: branch.id });
   const [period, setPeriod] = useState("30d");
   const [rb, setRb] = useState("all");
+  const [rejecting, setRejecting] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [catForm, setCatForm] = useState({ name: "", icon: "wallet" });
+  const [editingCat, setEditingCat] = useState(null);
   const [fromD, setFromD] = useState(todayStr()); const [toD, setToD] = useState(todayStr());
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const dayStart = (s) => new Date(s + "T00:00:00").getTime(); const dayEnd = (s) => new Date(s + "T23:59:59.999").getTime();
@@ -6213,15 +6438,67 @@ function ExpensesTab({ data, update, branch }) {
   const inRange = (ts) => ts >= sinceFor && ts <= untilFor;
   const inBranch = (bid) => rb === "all" || bid === rb;
   const isPending = (e) => e.status === "pending";
-  const approved = data.expenses.filter((e) => !isPending(e));
+  const isApproved = (e) => !e.status || e.status === "approved";
+  const isRejected = (e) => e.status === "rejected";
+  const actor = () => user?.name || data.admin?.name || "Admin";
+  const cashierOf = (e) => e.cashierName || e.enteredBy || e.cashier || "Cashier";
+  const sourceOf = (e) => e.source || e.paymentSource || e.method || "Cash till";
+  const categoryAudit = (action, category, extra = {}) => ({ id: uid("audit"), action, categoryId: category.id, categoryName: category.name, actor: actor(), ts: now(), ...extra });
+  const saveCategoryList = (categories, auditEntry) => update((d) => ({
+    ...d,
+    expenseCategories: categories.map((cat, idx) => ({ ...normalizeExpenseCategory(cat, idx), order: idx * 10, updatedAt: now(), synced: false })),
+    auditLogs: auditEntry ? [...(d.auditLogs || []), auditEntry] : (d.auditLogs || []),
+  }));
+  const addCategory = () => {
+    const name = catForm.name.trim();
+    if (!name) return;
+    if (allExpenseCategories.some((cat) => cat.name.toLowerCase() === name.toLowerCase())) return;
+    const nextCat = { id: uid("excat"), name, icon: catForm.icon || "wallet", active: true, order: allExpenseCategories.length * 10, updatedAt: now(), synced: false };
+    saveCategoryList([...allExpenseCategories, nextCat], categoryAudit("expense_category_added", nextCat));
+    setCatForm({ name: "", icon: "wallet" });
+  };
+  const startEditCategory = (cat) => {
+    setEditingCat({ id: cat.id, name: cat.name, icon: cat.icon || "wallet" });
+    setCatForm({ name: "", icon: "wallet" });
+  };
+  const saveCategoryEdit = () => {
+    const name = editingCat?.name?.trim();
+    if (!editingCat || !name) return;
+    if (allExpenseCategories.some((cat) => cat.id !== editingCat.id && cat.name.toLowerCase() === name.toLowerCase())) return;
+    const categories = allExpenseCategories.map((cat) => cat.id === editingCat.id ? { ...cat, name, icon: editingCat.icon || "wallet", updatedAt: now(), synced: false } : cat);
+    const changed = categories.find((cat) => cat.id === editingCat.id);
+    saveCategoryList(categories, categoryAudit("expense_category_renamed", changed));
+    setEditingCat(null);
+  };
+  const toggleCategory = (cat) => {
+    const categories = allExpenseCategories.map((item) => item.id === cat.id ? { ...item, active: item.active === false, updatedAt: now(), synced: false } : item);
+    saveCategoryList(categories, categoryAudit(cat.active === false ? "expense_category_activated" : "expense_category_deactivated", { ...cat, active: cat.active === false }));
+  };
+  const moveCategory = (cat, direction) => {
+    const idx = allExpenseCategories.findIndex((item) => item.id === cat.id);
+    const target = idx + direction;
+    if (idx < 0 || target < 0 || target >= allExpenseCategories.length) return;
+    const categories = [...allExpenseCategories];
+    [categories[idx], categories[target]] = [categories[target], categories[idx]];
+    saveCategoryList(categories, categoryAudit("expense_category_reordered", cat, { direction }));
+  };
+  const approved = data.expenses.filter(isApproved);
   const pending = data.expenses.filter(isPending);
   const periodApproved = approved.filter((e) => inRange(e.ts) && inBranch(e.branchId));
+  const history = data.expenses.filter((e) => !isPending(e) && inRange(e.decidedAt || e.approvedAt || e.rejectedAt || e.ts) && inBranch(e.branchId))
+    .sort((a, b) => (b.decidedAt || b.approvedAt || b.rejectedAt || b.ts || 0) - (a.decidedAt || a.approvedAt || a.rejectedAt || a.ts || 0));
   const total = periodApproved.reduce((s, e) => s + e.amountCents, 0);
   const pendingTotal = pending.reduce((s, e) => s + e.amountCents, 0);
   const add = () => { const amt = Math.round(parseFloat(f.amount) * 100); if (!amt || amt <= 0) return;
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: f.category, amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts: now(), synced: false }] })); setF({ category: EXCATS[0], amount: "", note: "", branchId: f.branchId }); };
+    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: f.category || defaultCategory, amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts: now(), synced: false }] })); setF({ category: defaultCategory, amount: "", note: "", branchId: f.branchId }); };
   const remove = (id) => update((d) => ({ ...d, expenses: d.expenses.filter((e) => e.id !== id) }));
-  const approve = (id) => update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", synced: false } : e) }));
+  const approve = (id) => { const ts = now(); const by = actor(); update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", decidedBy: by, decidedAt: ts, approvedBy: by, approvedAt: ts, rejectReason: "", synced: false } : e) })); };
+  const reject = (id) => {
+    const reason = rejectReason.trim(); if (reason.length < 3) return;
+    const ts = now(); const by = actor();
+    update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "rejected", rejectReason: reason, decidedBy: by, decidedAt: ts, rejectedBy: by, rejectedAt: ts, synced: false } : e) }));
+    setRejecting(null); setRejectReason("");
+  };
   const groupBars = (keyFn) => { const g = {}; periodApproved.forEach((e) => { const k = keyFn(e); g[k] = (g[k] || 0) + e.amountCents; }); const rows = Object.entries(g).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...rows.map(([, v]) => v)); return { rows, max }; };
   const byCat = groupBars((e) => e.category || "Other");
   const byCashier = groupBars((e) => e.enteredBy || "Admin");
@@ -6252,6 +6529,39 @@ function ExpensesTab({ data, update, branch }) {
         <div className={"ctile" + (pending.length ? " warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Awaiting approval</div><div className="cv">{fmt(pendingTotal, cur)}</div><div className="cs">{pending.length} pending</div></div></div>
       </div>
 
+      <div className="addpanel" style={{ marginBottom: 18 }}>
+        <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
+        <div className="muted" style={{ marginBottom: 12 }}>Cashier terminals can only pick active categories from this supervisor-managed list. Historical expenses keep their original category names.</div>
+        <div className="grid3">
+          <div><label className="label">{editingCat ? "Rename category" : "New category"}</label>
+            <input className="input" value={editingCat ? editingCat.name : catForm.name} onChange={(e) => editingCat ? setEditingCat({ ...editingCat, name: e.target.value }) : setCatForm({ ...catForm, name: e.target.value })} placeholder="e.g. Repairs" /></div>
+          <div><label className="label">Icon</label>
+            <select className="select" value={editingCat ? editingCat.icon : catForm.icon} onChange={(e) => editingCat ? setEditingCat({ ...editingCat, icon: e.target.value }) : setCatForm({ ...catForm, icon: e.target.value })}>
+              {EXPENSE_CATEGORY_ICON_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select></div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            {editingCat ? <>
+              <button className="btn btn-primary" onClick={saveCategoryEdit}><Check /> Save</button>
+              <button className="btn btn-ghost" onClick={() => setEditingCat(null)}>Cancel</button>
+            </> : <button className="btn btn-primary" onClick={addCategory}><Plus /> Add category</button>}
+          </div>
+        </div>
+        <div className="list" style={{ marginTop: 14 }}>{allExpenseCategories.map((cat, idx) => (
+          <div className="row" key={cat.id}>
+            <div className="avatar"><ExpenseCategoryIcon icon={cat.icon} /></div>
+            <div className="meta">
+              <div className="nm">{cat.name}</div>
+              <div className="mt2">{cat.active === false ? "Hidden from cashier expense sheet" : "Available to cashier terminals"}</div>
+            </div>
+            <span className="pill plain" style={{ color: cat.active === false ? "var(--muted)" : "var(--ok)" }}>{cat.active === false ? "Inactive" : "Active"}</span>
+            <button className="btn sm btn-ghost" disabled={idx === 0} onClick={() => moveCategory(cat, -1)}><ArrowUp /> Up</button>
+            <button className="btn sm btn-ghost" disabled={idx === allExpenseCategories.length - 1} onClick={() => moveCategory(cat, 1)}><ChevronDown /> Down</button>
+            <button className="btn sm btn-ghost" onClick={() => startEditCategory(cat)}><Edit /> Rename</button>
+            <button className={"btn sm " + (cat.active === false ? "btn-primary" : "btn-ghost")} onClick={() => toggleCategory(cat)}>{cat.active === false ? <Check /> : <X />}{cat.active === false ? "Activate" : "Deactivate"}</button>
+          </div>
+        ))}</div>
+      </div>
+
       <div className="dash2">
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Expenses by category</div><Bars data={byCat} empty="No expenses in this timeframe." /></div>
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Expenses by cashier</div><Bars data={byCashier} empty="No expenses in this timeframe." /></div>
@@ -6263,29 +6573,57 @@ function ExpensesTab({ data, update, branch }) {
 
       {pending.length > 0 && (
         <div className="addpanel" style={{ borderColor: "rgba(214,158,46,.45)", background: "rgba(214,158,46,.07)", marginTop: 18 }}>
-          <div className="sideh" style={{ marginBottom: 10, color: "#9A6B00" }}>Awaiting admin approval · over {fmt(APPROVAL_LIMIT, cur)}</div>
+          <div className="sideh" style={{ marginBottom: 10, color: "#9A6B00" }}>Pending approval queue · over {fmt(APPROVAL_LIMIT, cur)}</div>
           <div className="list">{[...pending].reverse().map((e) => (
-            <div className="row" key={e.id}>
+            <div className="row" key={e.id} style={{ alignItems: "flex-start" }}>
               <div className="avatar"><AlertCircle style={{ width: 17, height: 17 }} /></div>
-              <div className="meta"><div className="nm">{e.category} · {fmt(e.amountCents, cur)}</div><div className="mt2">{e.note || "—"} · {bname(e.branchId)} · {e.enteredBy || "—"} · {dt(e.ts)}</div></div>
-              <button className="btn sm btn-primary" onClick={() => approve(e.id)}><Check /> Approve</button>
-              <button className="smdel" onClick={() => remove(e.id)}><Trash2 /></button>
+              <div className="meta">
+                <div className="nm">{fmt(e.amountCents, cur)} · {e.category || "Other"}</div>
+                <div className="mt2">{sourceOf(e)} · {cashierOf(e)} · {bname(e.branchId)} · {dt(e.ts)}</div>
+                <div className="mt2">{e.note || "No note supplied."}</div>
+                {rejecting === e.id && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <input className="input" style={{ height: 38 }} value={rejectReason} onChange={(ev) => setRejectReason(ev.target.value)} placeholder="Reason for rejection" autoFocus />
+                    <button className="btn sm btn-primary" disabled={rejectReason.trim().length < 3} onClick={() => reject(e.id)}><X /> Confirm reject</button>
+                    <button className="btn sm btn-ghost" onClick={() => { setRejecting(null); setRejectReason(""); }}>Cancel</button>
+                  </div>
+                )}
+              </div>
+              {rejecting === e.id ? null : (
+                <>
+                  <button className="btn sm btn-primary" onClick={() => approve(e.id)}><Check /> Approve</button>
+                  <button className="btn sm btn-ghost" onClick={() => { setRejecting(e.id); setRejectReason(""); }}><X /> Reject</button>
+                </>
+              )}
             </div>))}
           </div>
         </div>
       )}
+      <div className="section-title" style={{ margin: "18px 0 8px" }}>Expense approval history</div>
+      <div className="list">{history.map((e) => {
+        const rejected = isRejected(e);
+        const decidedAt = e.decidedAt || e.approvedAt || e.rejectedAt;
+        const decidedBy = e.decidedBy || e.approvedBy || e.rejectedBy;
+        return (
+          <div className="row" key={e.id}><div className="avatar"><TrendingDown style={{ width: 17, height: 17 }} /></div>
+            <div className="meta">
+              <div className="nm">{e.category || "Other"} · {sourceOf(e)} <span className="pill plain" style={{ marginLeft: 8, color: rejected ? "#C23A56" : "var(--ok)" }}>{rejected ? "Rejected" : "Approved"}</span></div>
+              <div className="mt2">{e.note || "No note supplied."} · {bname(e.branchId)} · {cashierOf(e)} · {dt(e.ts)}</div>
+              <div className="mt2">{decidedAt ? (rejected ? "Rejected" : "Approved") + " by " + (decidedBy || "Supervisor") + " · " + dt(decidedAt) : "Auto-approved at entry"}</div>
+              {rejected && e.rejectReason ? <div className="mt2">Reason: {e.rejectReason}</div> : null}
+            </div>
+            <span className="pill plain">{fmt(e.amountCents, cur)}</span>
+          </div>
+        );
+      })}
+        {history.length === 0 && <div className="notice">No expense approval history in this timeframe.</div>}</div>
       <div className="addpanel" style={{ marginTop: 18 }}><div className="grid2">
-        <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{EXCATS.map((c) => <option key={c}>{c}</option>)}</select></div>
+        <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{activeExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
         <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
         <div className="grid2" style={{ marginTop: 12 }}>
         <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="2000" /></div>
         <div><label className="label">Note</label><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Optional" /></div></div>
         <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={add}><TrendingDown /> Record expense</button></div>
-      <div className="section-title" style={{ margin: "18px 0 8px" }}>Expense records</div>
-      <div className="list">{[...periodApproved].reverse().map((e) => (<div className="row" key={e.id}><div className="avatar"><TrendingDown style={{ width: 17, height: 17 }} /></div>
-        <div className="meta"><div className="nm">{e.category}</div><div className="mt2">{e.note || "—"} · {bname(e.branchId)} · {e.enteredBy || "Admin"} · {dt(e.ts)}</div></div><span className="pill plain">{fmt(e.amountCents, cur)}</span>
-        <button className="smdel" onClick={() => remove(e.id)}><Trash2 /></button></div>))}
-        {periodApproved.length === 0 && <div className="notice">No approved expenses in this timeframe.</div>}</div>
     </div>
   );
 }
@@ -6321,7 +6659,7 @@ function aiDigest(data) {
   const cBy = {}; data.invoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
   const cashiers = Object.entries(cBy).map(([name, v]) => ({ cashier: name, transactions: v.transactions, salesKES: k(v.sales), avgBasketKES: v.transactions ? k(v.sales / v.transactions) : 0 }));
   const debt = {}; data.invoices.filter((i) => invIsDebt(i)).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
-  const expT = data.expenses.filter((e) => e.status !== "pending" && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
+  const expT = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
   const shrink = data.stockMovements.filter((m) => m.ts >= startToday && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); return { branch: bname(m.branchId), product: p ? p.name : "?", unitsLost: Math.abs(m.qty) }; });
   const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
   const totalToday = branches.reduce((s, b) => s + b.salesTodayKES, 0); const totalProfit = branches.reduce((s, b) => s + b.grossProfitKES, 0); const totalExp = k(expT.reduce((s, e) => s + e.amountCents, 0));
@@ -6612,7 +6950,7 @@ function ReportsTab({ data, initialTab }) {
   const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
   const pays = data.payments.filter((p) => p.status === "captured" && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
-  const periodExp = data.expenses.filter((e) => e.status !== "pending" && inRange(e.ts));
+  const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
   const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * ((p && p.costCents) || 0); }, 0);
@@ -7083,7 +7421,7 @@ function DocumentsTab({ data }) {
         detail: [["Transfer", t.number], ["From", bname(t.fromBranchId)], ["To", bname(t.toBranchId)], ["Products", items.length], ["Total units", units], ...items.map((i, idx) => ["Item " + (idx + 1), i.productName + " × " + i.qty]), ["Status", t.status || "completed"], ["Note", t.note || "—"], ["When", dt(t.ts)]] }; });
   } else if (type === "expenses") {
     eyebrow = "Expenses"; title = "Expense Reports";
-    docs = data.expenses.filter((e) => e.status !== "pending" && inRange(e.ts)).map((e) => ({ id: e.id, label: e.category, meta: e.note || "—", date: e.date, ts: e.ts, amountCents: e.amountCents,
+    docs = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts)).map((e) => ({ id: e.id, label: e.category, meta: e.note || "—", date: e.date, ts: e.ts, amountCents: e.amountCents,
       detail: [["Category", e.category], ["Amount", fmt(e.amountCents, cur)], ["Note", e.note || "—"], ["Date", e.date]] }));
   } else if (type === "endofday") {
     eyebrow = "Shift Close"; title = "End of Day Closes";
