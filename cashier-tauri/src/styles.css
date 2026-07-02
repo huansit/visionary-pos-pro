@@ -56,6 +56,45 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   transform: translateY(2px);
   border-bottom-width: 2px;
 }
+.auth-clock-chip {
+  position: fixed;
+  top: 22px;
+  right: 24px;
+  z-index: 20;
+  min-width: 176px;
+  min-height: 58px;
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, .22);
+  background: rgba(255, 255, 255, .07);
+  color: #dbeafe;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 18px 44px rgba(2,6,23,.18);
+  backdrop-filter: blur(18px);
+}
+.auth-clock-chip svg {
+  color: #60a5fa;
+  flex: 0 0 auto;
+}
+.auth-clock-chip span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.auth-clock-chip b {
+  font-size: 18px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+.auth-clock-chip small {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 .auth-left {
   min-width: 0;
   padding: 54px 62px 34px;
@@ -1232,7 +1271,7 @@ button.ghost, .ghost {
 .product-foot b { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 22px; letter-spacing: -.02em; color: #0f766e; }
 .product-foot small { font-size: 10.5px; font-weight: 850; border-radius: 999px; padding: 4px 7px; background: rgba(229,72,77,.12); color: #e5484d; white-space: nowrap; }
 .cart-panel {
-  grid-template-rows: auto 1fr auto auto auto auto auto auto;
+  grid-template-rows: auto 1fr auto auto auto auto auto auto auto;
   padding: 18px;
   border-color: #59616b;
   border-radius: 28px;
@@ -1256,12 +1295,27 @@ button.ghost, .ghost {
 }
 .cart-panel label { color: #9aa8b7; font-size: 14px; margin: 10px 0 7px; }
 .cart-panel label em { color: #e5484d; font-style: normal; }
-.cart-panel input {
+.cart-panel input,
+.cart-panel textarea {
   min-height: 62px;
   border-radius: 16px;
   font-size: 17px;
   background: #081018;
   color: #f8fafc;
+}
+.cart-panel textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 14px 16px;
+  resize: vertical;
+  border: 1px solid #d6dde6;
+  font: inherit;
+  font-weight: 800;
+  outline: none;
+}
+.cart-panel textarea:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, .18);
 }
 .subtotal {
   margin-top: 8px;
@@ -2101,12 +2155,21 @@ body {
   overflow: auto;
 }
 
-.auth-close-button {
+.auth-close-button,
+.auth-clock-chip {
   top: clamp(12px, 2.2vh, 22px);
   right: clamp(12px, 1.8vw, 24px);
+}
+
+.auth-close-button {
   width: clamp(42px, 4.8vh, 54px);
   height: clamp(42px, 4.8vh, 54px);
   border-radius: 14px;
+}
+
+.auth-clock-chip {
+  min-width: clamp(158px, 14vw, 190px);
+  min-height: clamp(50px, 5.6vh, 62px);
 }
 
 .auth-left,
@@ -3291,7 +3354,7 @@ body {
 }
 
 .expense-sheet {
-  width: min(560px, calc(100vw - 28px));
+  width: min(520px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, .24);
@@ -3306,14 +3369,14 @@ body {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  padding: 22px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid rgba(148, 163, 184, .16);
 }
 
 .expense-head-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
   background: #0b3766;
@@ -3322,7 +3385,7 @@ body {
 
 .expense-sheet-head h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 950;
   letter-spacing: -.03em;
 }
@@ -3334,8 +3397,8 @@ body {
 }
 
 .expense-close {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, .22);
   background: rgba(255, 255, 255, .05);
@@ -3345,10 +3408,15 @@ body {
 }
 
 .expense-amount-panel {
-  padding: 30px 24px 26px;
+  padding: 14px 20px;
   display: grid;
-  justify-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label source"
+    "amount source";
+  align-items: center;
+  justify-items: start;
+  gap: 4px 14px;
   border-bottom: 1px solid rgba(148, 163, 184, .16);
 }
 
@@ -3362,12 +3430,17 @@ body {
   font-weight: 900;
 }
 
+.expense-amount-panel > span {
+  grid-area: label;
+}
+
 .expense-amount-panel strong {
-  font-size: clamp(44px, 7vw, 64px);
+  grid-area: amount;
+  font-size: 28px;
   line-height: 1;
   color: #67e8f9;
   font-weight: 950;
-  letter-spacing: -.06em;
+  letter-spacing: -.03em;
 }
 
 .expense-amount-panel strong.approval {
@@ -3375,18 +3448,19 @@ body {
 }
 
 .expense-source-toggle {
+  grid-area: source;
   display: inline-grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  padding: 5px;
+  gap: 4px;
+  padding: 4px;
   border-radius: 999px;
   background: rgba(0, 0, 0, .28);
   border: 1px solid rgba(148, 163, 184, .12);
 }
 
 .expense-source-toggle button {
-  min-width: 112px;
-  min-height: 38px;
+  min-width: 82px;
+  min-height: 34px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -3401,7 +3475,7 @@ body {
 
 .expense-section,
 .expense-note-block {
-  padding: 22px 24px 0;
+  padding: 14px 20px 0;
 }
 
 .expense-section-title {
@@ -3409,7 +3483,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .expense-section-title small {
@@ -3418,15 +3492,15 @@ body {
 }
 
 .expense-category-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .expense-category-chips button {
-  min-height: 44px;
-  padding: 0 18px;
-  border-radius: 999px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, .18);
   background: rgba(255, 255, 255, .05);
   color: #cbd5e1;
@@ -3447,12 +3521,12 @@ body {
 .expense-note-block textarea {
   width: 100%;
   resize: vertical;
-  min-height: 74px;
-  border-radius: 16px;
+  min-height: 56px;
+  border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, .18);
   background: rgba(2, 6, 23, .5);
   color: #f8fafc;
-  padding: 16px;
+  padding: 12px 14px;
   font: inherit;
   font-weight: 750;
   outline: none;
@@ -3464,19 +3538,19 @@ body {
 }
 
 .expense-keypad {
-  padding: 22px 24px 0;
+  padding: 14px 20px 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .expense-keypad button {
-  min-height: 58px;
-  border-radius: 16px;
+  min-height: 44px;
+  border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, .18);
   background: rgba(255, 255, 255, .06);
   color: #f8fafc;
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 950;
   display: inline-flex;
   align-items: center;
@@ -3491,9 +3565,9 @@ body {
 
 .expense-warning,
 .expense-error {
-  margin: 18px 24px 0;
-  padding: 14px 16px;
-  border-radius: 16px;
+  margin: 12px 20px 0;
+  padding: 11px 13px;
+  border-radius: 14px;
   font-weight: 850;
   line-height: 1.4;
 }
@@ -3511,11 +3585,11 @@ body {
 }
 
 .expense-primary {
-  width: calc(100% - 48px);
-  min-height: 64px;
-  margin: 22px 24px 0;
+  width: calc(100% - 40px);
+  min-height: 52px;
+  margin: 14px 20px 0;
   border: 0;
-  border-radius: 18px;
+  border-radius: 15px;
   background: linear-gradient(135deg, #43bdc8, #72dfd1);
   color: #062027;
   font-size: 18px;
@@ -3537,7 +3611,7 @@ body {
 }
 
 .expense-footer-copy {
-  margin: 14px 24px 24px;
+  margin: 10px 20px 16px;
   color: #94a3b8;
   text-align: center;
   font-weight: 750;
@@ -3546,7 +3620,7 @@ body {
 
 @media (max-height: 760px) {
   .expense-sheet-head { padding: 16px 18px; }
-  .expense-amount-panel { padding: 20px 18px 18px; }
+  .expense-amount-panel { padding: 12px 18px; }
   .expense-section,
   .expense-note-block,
   .expense-keypad { padding-left: 18px; padding-right: 18px; }

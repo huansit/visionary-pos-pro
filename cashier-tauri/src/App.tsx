@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  Clock,
   Delete,
   Download,
   FileText,
@@ -54,7 +55,7 @@ const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v1";
 const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
 const VIRTUAL_KEYBOARD_POSITION_KEY = "visionpos:cashier:virtual-keyboard-position:v1";
-const SUPERVISOR_EXPENSE_CATEGORIES = ["Transport", "Repairs", "Supplies", "Airtime", "Police", "Utilities", "Other"];
+const SUPERVISOR_EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
 
 type UpdatePrompt = {
   version: string;
@@ -1151,15 +1152,15 @@ export default function App() {
         <aside className="cart-panel">
           <div className="cart-head">
             <div>
-              <h2>Cart</h2>
-              <span>{itemCount} item{itemCount === 1 ? "" : "s"}</span>
+              <h2>Invoice</h2>
+              <span>{itemCount} item{itemCount === 1 ? "" : "s"} - cleared by admin</span>
             </div>
           </div>
           <div className="cart-lines">
             {cartLines.length === 0 && (
               <div className="cart-empty-state">
                 <ShoppingCart size={26} />
-                <b>Cart is empty</b>
+                <b>Invoice is empty</b>
                 <span>Scan a barcode or tap a product.</span>
               </div>
             )}
@@ -1173,6 +1174,14 @@ export default function App() {
           </div>
           <label>Customer name / ID <em>*</em></label>
           <input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Required - name, phone or ID" />
+          <label>Cashier tracking note</label>
+          <textarea
+            className="invoice-tracking-note"
+            value={saleNote}
+            onChange={(event) => setSaleNote(event.target.value)}
+            placeholder="Follow-up, collection note, reason for credit..."
+            rows={2}
+          />
           {creditLocked && (
             <div className="credit-lock-warning" role="alert">
               <b>Owes {money(customerOutstandingDebt)} &middot; {customerDebtInvoices.length} open invoice{customerDebtInvoices.length === 1 ? "" : "s"}</b>
@@ -1193,7 +1202,7 @@ export default function App() {
           </div>
           <div className="subtotal"><span>Subtotal</span><b>{money(totalCents)}</b></div>
           <div className="total-row"><span>Total</span><strong>{money(totalCents)}</strong></div>
-          <button className="checkout" disabled={!canCompleteSale} onClick={completeSale}><Check size={21} />{creditLocked ? "Complete cash sale" : "Complete sale"} <span>F4</span></button>
+          <button className="checkout" disabled={!canCompleteSale} onClick={completeSale}><Check size={21} />{creditLocked ? "Issue cash invoice" : "Issue invoice"} <span>F4</span></button>
           <div className="cart-actions">
             <button disabled={!cartLines.length || creditLocked} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setStatus("Sale held. Start a new invoice when ready."); }}>Hold</button>
             <button disabled={!cartLines.length && !customerName && !saleNote} onClick={() => { setCart({}); setCustomerName(""); setSaleNote(""); setPaymentMethod("cash"); setQuery(""); focusSearch(); }}>Clear</button>
@@ -2380,7 +2389,7 @@ function AuthShell({
 }) {
   return (
     <main className="auth premium-auth">
-      {onClose && <button className="auth-close-button" onClick={onClose} title="Close app" aria-label="Close app"><X size={22} /></button>}
+      <AuthClock />
       <div className="auth-left">
         <BrandSection />
         <StatusPanel
@@ -2394,6 +2403,38 @@ function AuthShell({
       </div>
       <div className="auth-right">{children}</div>
     </main>
+  );
+}
+
+function AuthClock() {
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  const time = currentTime.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+  const date = currentTime.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  });
+
+  return (
+    <div className="auth-clock-chip" aria-label={`Local time ${time}, ${date}`}>
+      <Clock size={18} />
+      <span>
+        <b>{time}</b>
+        <small>{date}</small>
+      </span>
+    </div>
   );
 }
 
