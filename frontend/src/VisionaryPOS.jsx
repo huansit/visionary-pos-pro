@@ -6432,7 +6432,10 @@ function ExpensesTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
   const allExpenseCategories = expenseCategories(data);
   const activeExpenseCategories = expenseCategories(data, { activeOnly: true });
-  const defaultCategory = activeExpenseCategories[0]?.name || "Other";
+  const recordExpenseCategories = activeExpenseCategories.length
+    ? activeExpenseCategories
+    : ["Police", "Utilities", "Other"].map((name, idx) => normalizeExpenseCategory({ name, icon: name === "Police" ? "shield" : name === "Utilities" ? "zap" : "circle", active: true, order: idx * 10 }, idx));
+  const defaultCategory = recordExpenseCategories[0]?.name || "Other";
   const [f, setF] = useState({ category: defaultCategory, amount: "", note: "", branchId: branch.id });
   const [period, setPeriod] = useState("30d");
   const [rb, setRb] = useState("all");
@@ -6440,6 +6443,7 @@ function ExpensesTab({ data, update, branch, user }) {
   const [rejectReason, setRejectReason] = useState("");
   const [catForm, setCatForm] = useState({ name: "", icon: "wallet" });
   const [editingCat, setEditingCat] = useState(null);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [fromD, setFromD] = useState(todayStr()); const [toD, setToD] = useState(todayStr());
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const dayStart = (s) => new Date(s + "T00:00:00").getTime(); const dayEnd = (s) => new Date(s + "T23:59:59.999").getTime();
@@ -6540,6 +6544,27 @@ function ExpensesTab({ data, update, branch, user }) {
       </div>
 
       <div className="addpanel" style={{ marginBottom: 18 }}>
+        <div className="sideh" style={{ marginBottom: 10 }}>Record expense</div>
+        <div className="grid2">
+          <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{recordExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
+          <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+        </div>
+        <div className="grid2" style={{ marginTop: 12 }}>
+          <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="2000" /></div>
+          <div><label className="label">Note</label><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Optional" /></div>
+        </div>
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={add}><TrendingDown /> Record expense</button>
+      </div>
+
+      <div className="addpanel" style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
+            <div className="muted">Managed by supervisors. Cashiers pick from the Record expense category dropdown.</div>
+          </div>
+          <button className="btn btn-ghost" onClick={() => setShowCategoryManager((v) => !v)}><Tags /> {showCategoryManager ? "Hide manager" : "Manage categories"}</button>
+        </div>
+        {showCategoryManager && <>
         <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
         <div className="muted" style={{ marginBottom: 12 }}>Cashier terminals can only pick active categories from this supervisor-managed list. Historical expenses keep their original category names.</div>
         <div className="grid3">
@@ -6570,6 +6595,7 @@ function ExpensesTab({ data, update, branch, user }) {
             <button className={"btn sm " + (cat.active === false ? "btn-primary" : "btn-ghost")} onClick={() => toggleCategory(cat)}>{cat.active === false ? <Check /> : <X />}{cat.active === false ? "Activate" : "Deactivate"}</button>
           </div>
         ))}</div>
+        </>}
       </div>
 
       <div className="dash2">
@@ -6627,13 +6653,6 @@ function ExpensesTab({ data, update, branch, user }) {
         );
       })}
         {history.length === 0 && <div className="notice">No expense approval history in this timeframe.</div>}</div>
-      <div className="addpanel" style={{ marginTop: 18 }}><div className="grid2">
-        <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{activeExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
-        <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
-        <div className="grid2" style={{ marginTop: 12 }}>
-        <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="2000" /></div>
-        <div><label className="label">Note</label><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Optional" /></div></div>
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={add}><TrendingDown /> Record expense</button></div>
     </div>
   );
 }
