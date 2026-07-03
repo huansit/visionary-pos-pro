@@ -2,7 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
-import { requireDevice } from "../auth.js";
+import { requireAdminOrSupervisor, requireDevice } from "../auth.js";
 import { signDeviceToken, verifyDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendPasswordResetEmail, sendVerificationCode, validTarget } from "../verification.js";
 
@@ -553,6 +553,10 @@ async function accountForSessionToken(token) {
 router.post("/device", async (req, res) => {
   const { deviceId, name, branchId = null, setupKey } = req.body || {};
   if (!deviceId || !name) return res.status(400).json({ error: "deviceId_and_name_required" });
+  if (process.env.NODE_ENV === "production" && !process.env.DEVICE_SETUP_KEY) {
+    console.error("DEVICE_SETUP_KEY is required in production before registering devices.");
+    return res.status(503).json({ error: "device_registration_not_configured" });
+  }
   if (process.env.DEVICE_SETUP_KEY && setupKey !== process.env.DEVICE_SETUP_KEY) {
     return res.status(401).json({ error: "invalid_setup_key" });
   }
@@ -589,13 +593,18 @@ router.post("/device", async (req, res) => {
   res.json({ deviceId, token });
 });
 
-router.post("/terminal-activations", requireDevice, async (req, res) => {
+router.post("/terminal-activations", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
-  const branchId = String(req.deviceBranchId || "").trim();
+  const sessionBranchId = String(req.account?.branchId || "").trim();
+  const requestedBranchId = String(req.body?.branchId || "").trim();
+  const branchId = sessionBranchId || requestedBranchId;
   const terminalName = String(req.body?.terminalName || req.body?.name || "").trim().slice(0, 255);
   const ttlHours = Math.max(1, Math.min(168, parseInt(req.body?.ttlHours || TERMINAL_CODE_TTL_HOURS, 10)));
   if (!branchId) return res.status(400).json({ error: "current_branch_required" });
   if (!terminalName) return res.status(400).json({ error: "terminal_name_required" });
+  if (sessionBranchId && requestedBranchId && requestedBranchId !== sessionBranchId) {
+    return res.status(403).json({ error: "branch_not_authorized" });
+  }
 
   const code = generateActivationCode();
   const id = "tac_" + (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
@@ -605,9 +614,9 @@ router.post("/terminal-activations", requireDevice, async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,NOW(),DATE_ADD(NOW(), INTERVAL $6 HOUR))`
       : `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at)
          VALUES ($1,$2,$3,$4,$5,now(),now() + ($6 || ' hours')::interval)`,
-    [id, activationCodeHash(code), branchId, terminalName, req.deviceId || null, ttlHours]
+    [id, activationCodeHash(code), branchId, terminalName, req.account?.id || null, ttlHours]
   );
-  await audit("terminal_activation_created", req, null, { activationId: id, branchId, terminalName, expiresInHours: ttlHours });
+  await audit("terminal_activation_created", req, req.account?.id || null, { activationId: id, branchId, terminalName, expiresInHours: ttlHours });
   res.json({ ok: true, id, code, branchId, terminalName, expiresInHours: ttlHours });
 });
 
@@ -673,7 +682,7 @@ router.post("/terminals/activate", async (req, res) => {
   }
 });
 
-router.get("/terminals", requireDevice, async (_req, res) => {
+router.get("/terminals", requireAdminOrSupervisor, async (_req, res) => {
   await ensureAuthSchema();
   const result = await q(
     isMySql
@@ -692,7 +701,7 @@ router.get("/terminals", requireDevice, async (_req, res) => {
   res.json({ terminals: result.rows.map((row) => ({ ...row, status: terminalStatus(row.status) })) });
 });
 
-router.post("/terminals/:uuid", requireDevice, async (req, res) => {
+router.post("/terminals/:uuid", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const uuid = String(req.params.uuid || "").trim();
   const action = String(req.body?.action || "update").toLowerCase();
@@ -726,7 +735,7 @@ router.post("/terminals/:uuid", requireDevice, async (req, res) => {
       [uuid, terminal.device_id ?? terminal.deviceId]
     );
   }
-  await audit("terminal_updated", req, null, { terminalUuid: uuid, action, status, terminalName, branchId: terminal.branch_id ?? terminal.branchId ?? null });
+  await audit("terminal_updated", req, req.account?.id || null, { terminalUuid: uuid, action, status, terminalName, branchId: terminal.branch_id ?? terminal.branchId ?? null });
   res.json({ ok: true });
 });
 
@@ -1008,7 +1017,7 @@ router.post("/register-owner", async (req, res) => {
   }
 });
 
-router.post("/users", requireDevice, async (req, res) => {
+router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const { id, name, role, email, phone, password, pin, branchId, rights = [] } = req.body || {};
   if (!id || !name || !role) return res.status(400).json({ error: "id_name_role_required" });
@@ -1031,7 +1040,7 @@ router.post("/users", requireDevice, async (req, res) => {
     const passwordHash = !isCashier ? await bcrypt.hash(String(password), ROUNDS) : null;
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
-    const rightsPayload = isAdmin ? { admin: true } : Array.isArray(rights) ? { rights } : rights;
+    const rightsPayload = isAdmin ? { admin: true, role: "Admin" } : Array.isArray(rights) ? { role, rights } : { ...(rights || {}), role };
     const credentialBranchId = isAdmin ? null : branchId || null;
 
     if (isMySql) {
@@ -1079,7 +1088,7 @@ router.post("/users", requireDevice, async (req, res) => {
   }
 });
 
-router.post("/users/:id/delete", requireDevice, async (req, res) => {
+router.post("/users/:id/delete", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const id = String(req.params.id || "").trim();
   if (!id || id === "admin") return res.status(400).json({ error: "invalid_user_id" });
@@ -1092,7 +1101,7 @@ router.post("/users/:id/delete", requireDevice, async (req, res) => {
       [id]
     );
     await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [id]);
-    await audit("user_deleted", req, id, { byDevice: req.deviceId });
+    await audit("user_deleted", req, id, { byUser: req.account?.id || null });
     res.json({ ok: true });
   } catch (error) {
     console.error("delete user failed:", error);
@@ -1100,7 +1109,7 @@ router.post("/users/:id/delete", requireDevice, async (req, res) => {
   }
 });
 
-router.post("/fingerprints/enroll", requireDevice, async (req, res) => {
+router.post("/fingerprints/enroll", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const userId = String(req.body?.userId || "").trim();
   const template = String(req.body?.template || "").trim();
@@ -1151,13 +1160,13 @@ router.post("/fingerprints/enroll", requireDevice, async (req, res) => {
   }
 });
 
-router.post("/fingerprints/remove", requireDevice, async (req, res) => {
+router.post("/fingerprints/remove", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const userId = String(req.body?.userId || "").trim();
   if (!userId) return res.status(400).json({ error: "user_required" });
   try {
     await q("DELETE FROM user_fingerprints WHERE user_id = $1", [userId]);
-    await audit("fingerprint_removed", req, userId, { byDevice: req.deviceId });
+    await audit("fingerprint_removed", req, userId, { byUser: req.account?.id || null });
     res.json({ ok: true });
   } catch (error) {
     console.error("fingerprint remove failed:", error);
@@ -1165,7 +1174,7 @@ router.post("/fingerprints/remove", requireDevice, async (req, res) => {
   }
 });
 
-router.post("/fingerprints/templates", requireDevice, async (_req, res) => {
+router.post("/fingerprints/templates", requireDevice, async (req, res) => {
   await ensureAuthSchema();
   try {
     const result = await q(
@@ -1182,7 +1191,11 @@ router.post("/fingerprints/templates", requireDevice, async (_req, res) => {
             WHERE c.status = 'active'`,
       []
     );
-    const templates = result.rows.map((row) => ({
+    const branchId = req.deviceBranchId || null;
+    const visibleRows = branchId
+      ? result.rows.filter((row) => row.kind === "admin" || (row.branchId || row.branch_id || null) === branchId)
+      : result.rows;
+    const templates = visibleRows.map((row) => ({
       userId: row.userId,
       template: decryptFingerprintTemplate(row.fingerTemplate),
       deviceSerial: row.deviceSerial || "",
@@ -1412,7 +1425,7 @@ router.post("/logout", async (req, res) => {
   }
 });
 
-router.get("/sessions", requireDevice, async (_req, res) => {
+router.get("/sessions", requireAdminOrSupervisor, async (_req, res) => {
   await ensureAuthSchema();
   const result = await q(
     isMySql
@@ -1431,21 +1444,23 @@ router.get("/sessions", requireDevice, async (_req, res) => {
   res.json({ sessions: result.rows });
 });
 
-router.post("/sessions/:id/revoke", requireDevice, async (req, res) => {
+router.post("/sessions/:id/revoke", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const id = req.params.id;
   await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [id]);
-  await audit("session_revoked", req, null, { sessionId: id, byDevice: req.deviceId });
+  await audit("session_revoked", req, req.account?.id || null, { sessionId: id });
   res.json({ ok: true });
 });
 
 function publicAccount(row) {
-  const rights = row.rights?.rights || row.rights || {};
+  const rightsPayload = row.rights && typeof row.rights === "object" ? row.rights : {};
+  const rights = rightsPayload.rights || rightsPayload || {};
+  const storedRole = rightsPayload.role || rightsPayload.name || rightsPayload.accountRole;
   return {
     id: row.id,
     kind: row.kind,
     name: row.name,
-    role: row.kind === "admin" ? "Admin" : row.kind === "cashier" ? "Cashier" : "Supervisor",
+    role: storedRole || (row.kind === "admin" ? "Admin" : row.kind === "cashier" ? "Cashier" : "Supervisor"),
     branchId: row.branch_id ?? row.branchId ?? null,
     rights,
     status: row.status || "active",

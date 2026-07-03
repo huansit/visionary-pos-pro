@@ -64,6 +64,9 @@ const RECORD_TYPE_ALIASES = new Map([
   ["supplierPrices", "supplierPrice"],
 ]);
 
+const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory"]);
+const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set(["borrowing", "cashMovement", "endOfDay", "payment", "purchase"]);
+
 function normalizeType(type) {
   return RECORD_TYPE_ALIASES.get(type) || type;
 }
@@ -79,13 +82,15 @@ function eventBranchId(ev) {
 }
 
 function enforceTerminalBranch(req, ev, type) {
-  if (!req.terminalUuid || !req.deviceBranchId) return { ok: true, event: ev };
+  if (!req.deviceBranchId) return { ok: true, event: ev };
+  if (type === "product") return { ok: true, event: { ...ev, branchId: null } };
   const submittedBranchId = eventBranchId(ev);
   if (submittedBranchId && submittedBranchId !== req.deviceBranchId) {
     return { ok: false, reason: "terminal_branch_mismatch" };
   }
   const payload = { ...(ev.payload || {}) };
-  if (EVENT_TYPES.has(type) || payload.branchId) payload.branchId = req.deviceBranchId;
+  if (req.terminalUuid && (EVENT_TYPES.has(type) || payload.branchId)) payload.branchId = req.deviceBranchId;
+  if (!req.terminalUuid && payload.branchId) payload.branchId = req.deviceBranchId;
   return {
     ok: true,
     event: {
@@ -94,6 +99,14 @@ function enforceTerminalBranch(req, ev, type) {
       payload,
     },
   };
+}
+
+function enforceTerminalWritePolicy(req, type) {
+  if (!req.terminalUuid) return { ok: true };
+  if (TERMINAL_FORBIDDEN_RECORD_TYPES.has(type) || TERMINAL_FORBIDDEN_EVENT_TYPES.has(type)) {
+    return { ok: false, reason: "terminal_write_not_allowed" };
+  }
+  return { ok: true };
 }
 
 router.post("/push", async (req, res) => {
@@ -115,6 +128,11 @@ router.post("/push", async (req, res) => {
       }
 
       const type = normalizeType(ev.type);
+      const writePolicy = enforceTerminalWritePolicy(req, type);
+      if (!writePolicy.ok) {
+        rejected.push({ id: ev.id, type, reason: writePolicy.reason });
+        continue;
+      }
       const branchGuard = enforceTerminalBranch(req, ev, type);
       if (!branchGuard.ok) {
         rejected.push({ id: ev.id, type, reason: branchGuard.reason });

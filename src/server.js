@@ -12,7 +12,7 @@ import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
 import syncRoutes from "./routes/sync.js";
 import whatsappRoutes from "./routes/whatsapp.js";
-import { requireDevice } from "./auth.js";
+import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
 import { isMySql, q, ready } from "./db.js";
 import { startWhatsAppScheduler, stopWhatsAppScheduler } from "./services/whatsappScheduler.js";
 
@@ -44,8 +44,22 @@ app.use((req, res, next) => {
   next();
 });
 
-const origins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
-app.use(cors({ origin: origins.length ? origins : true }));
+const configuredOrigins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const productionOrigins = [
+  "https://visionarypos.cloud",
+  "https://www.visionarypos.cloud",
+  "tauri://localhost",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+];
+const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : (process.env.NODE_ENV === "production" ? productionOrigins : []));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.size === 0) return callback(null, true);
+    return callback(null, allowedOrigins.has(origin));
+  },
+}));
 
 if (existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
@@ -76,12 +90,12 @@ app.use("/api/sync", syncRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 
 /**
- * GET /api/reconcile/oversell  (device-authed)
+ * GET /api/reconcile/oversell  (admin/supervisor-authed)
  * STUB for Codex: aggregate stockMovement events per (branchId, productId),
  * sum payload.qty, and return rows where on-hand < 0 so a supervisor can
  * reconcile physically. (See Sync Backend Design §4.3 — detect, don't prevent.)
  */
-app.get("/api/reconcile/oversell", requireDevice, async (_req, res, next) => {
+app.get("/api/reconcile/oversell", requireAdminOrSupervisor, async (_req, res, next) => {
   try {
     const result = await q(
       isMySql

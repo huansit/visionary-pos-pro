@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAdminOrSupervisor } from "../auth.js";
 import { processWhatsAppCommand } from "../services/whatsappCommands.js";
 import { sendWhatsAppText } from "../services/whatsappClient.js";
 import { auditWhatsApp } from "../services/whatsappAudit.js";
@@ -58,7 +59,7 @@ router.post("/webhook", async (req, res) => {
   }
 });
 
-router.post("/commands/test", async (req, res, next) => {
+router.post("/commands/test", requireAdminOrSupervisor, async (req, res, next) => {
   try {
     if (process.env.NODE_ENV === "production" && process.env.WHATSAPP_TEST_ENDPOINT !== "1") {
       return res.status(404).json({ error: "not_found" });

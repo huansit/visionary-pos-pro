@@ -1043,11 +1043,17 @@ async function deviceAuthHeaders(branchId = null, base = {}) {
   headers.Authorization = "Bearer " + (cfg.deviceToken || await ensureDeviceToken(branchId));
   return headers;
 }
+function sessionAuthHeaders(base = {}) {
+  const token = storedSessionTokenSync();
+  return token ? { ...base, "X-Session-Token": token } : { ...base };
+}
 async function authApi(path, body, options = {}) {
   const cfg = syncConfig();
-  const headers = options.device
-    ? await deviceAuthHeaders(body?.branchId || null, { "Content-Type": "application/json" })
-    : { "Content-Type": "application/json" };
+  const headers = options.session
+    ? sessionAuthHeaders({ "Content-Type": "application/json" })
+    : options.device
+      ? await deviceAuthHeaders(body?.branchId || null, { "Content-Type": "application/json" })
+      : { "Content-Type": "application/json" };
   const response = await fetch(cfg.apiBaseUrl + path, {
     method: "POST",
     headers,
@@ -1060,7 +1066,7 @@ async function authApi(path, body, options = {}) {
 }
 async function authGet(path, options = {}) {
   const cfg = syncConfig();
-  const headers = options.device ? await deviceAuthHeaders(options.branchId || null) : {};
+  const headers = options.session ? sessionAuthHeaders() : options.device ? await deviceAuthHeaders(options.branchId || null) : {};
   const response = await fetch(cfg.apiBaseUrl + path, { headers, cache: "no-store" });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "request_failed");
@@ -1097,7 +1103,7 @@ async function logoutSessionToken(sessionToken, options = {}) {
   try {
     await fetch(cfg.apiBaseUrl + "/api/auth/logout", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: sessionAuthHeaders({ "Content-Type": "application/json" }),
       cache: "no-store",
       body,
       keepalive: Boolean(options.keepalive)
@@ -1266,7 +1272,7 @@ async function provisionCloudEmployeeCredentials(data) {
   for (const emp of allCandidates) {
     try {
       const secret = emp.role === "Cashier" ? { pin: String(emp.pin) } : { password: emp.password };
-      await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
+      await authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
       ok += 1;
     } catch (_) {
       failed += 1;
@@ -1278,7 +1284,7 @@ async function aiComplete({ system, messages, maxTokens = 400 }) {
   const cfg = syncConfig();
   const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: sessionAuthHeaders({ "Content-Type": "application/json" }),
     cache: "no-store",
     body: JSON.stringify({ system, messages, maxTokens }),
   });
@@ -7647,7 +7653,7 @@ function TerminalsTab({ data, isAdmin }) {
     if (!isAdmin) return;
     setBusy(true);
     try {
-      const result = await authGet("/api/auth/terminals", { device: true });
+      const result = await authGet("/api/auth/terminals", { session: true });
       setTerminals(result.terminals || []);
       setMsg("");
     } catch (error) {
@@ -7661,7 +7667,7 @@ function TerminalsTab({ data, isAdmin }) {
     if (!activation.terminalName.trim()) return setMsg("Enter terminal name.");
     setBusy(true);
     try {
-      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim() }, { device: true });
+      const result = await authApi("/api/auth/terminal-activations", { branchId: currentBranch.id, terminalName: activation.terminalName.trim() }, { session: true });
       setActivation((p) => ({ ...p, code: result.code || "" }));
       setMsg("Activation code generated. Open VISIONPOS Cashier and enter this code once.");
     } catch (error) {
@@ -7675,7 +7681,7 @@ function TerminalsTab({ data, isAdmin }) {
     try {
       const safePatch = { ...patch };
       delete safePatch.branchId;
-      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { device: true });
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { session: true });
       await loadTerminals();
     } catch (error) {
       setMsg("Terminal update failed: " + error.message);
@@ -7745,7 +7751,7 @@ function UsersTab({ data, update, isAdmin }) {
   const visibleEmployees = activeEmployees(data);
   const saveCloudCredential = async (emp, secret = {}) => {
     try {
-      await authApi("/api/auth/users", { ...emp, ...secret }, { device: true });
+      await authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
     } catch (error) {
       const msg = String(error.message || "");
       setErr(msg.includes("duplicate_pin")
@@ -7802,7 +7808,7 @@ function UsersTab({ data, update, isAdmin }) {
     if (pendInv.length) { setDelMsg(emp.name + " can't be deleted — " + pendInv.length + " pending invoice(s) are still outstanding under this user. Clear them first."); return; }
     setDelMsg("");
     update((d) => ({ ...d, employees: d.employees.map((e) => e.id === id ? { ...e, status: "deleted", synced: false, updatedAt: now() } : e) }));
-    authApi("/api/auth/users/" + encodeURIComponent(id) + "/delete", {}, { device: true }).catch((error) => {
+    authApi("/api/auth/users/" + encodeURIComponent(id) + "/delete", {}, { session: true }).catch((error) => {
       setDelMsg("User hidden locally, but cloud deletion was not completed: " + error.message);
     });
   };
@@ -7836,7 +7842,7 @@ function UsersTab({ data, update, isAdmin }) {
         setFpErr("Fingerprint verification failed.");
         return;
       }
-      await authApi("/api/auth/fingerprints/enroll", { userId: fpEnroll.id, template: capture.template, deviceSerial: capture.deviceSerial }, { device: true });
+      await authApi("/api/auth/fingerprints/enroll", { userId: fpEnroll.id, template: capture.template, deviceSerial: capture.deviceSerial }, { session: true });
       setFpMsg("Fingerprint enrolled for " + fpEnroll.name + ".");
       setFpFirst(null);
       setTimeout(closeFingerprintEnroll, 900);
@@ -7851,7 +7857,7 @@ function UsersTab({ data, update, isAdmin }) {
     setFpBusy(true);
     setFpErr("");
     try {
-      await authApi("/api/auth/fingerprints/remove", { userId: fpEnroll.id }, { device: true });
+      await authApi("/api/auth/fingerprints/remove", { userId: fpEnroll.id }, { session: true });
       setFpMsg("Fingerprint removed for " + fpEnroll.name + ".");
       setTimeout(closeFingerprintEnroll, 700);
     } catch (error) {
@@ -7865,7 +7871,7 @@ function UsersTab({ data, update, isAdmin }) {
   const loadTerminals = async () => {
     setTerminalBusy(true);
     try {
-      const result = await authGet("/api/auth/terminals", { device: true });
+      const result = await authGet("/api/auth/terminals", { session: true });
       setTerminals(result.terminals || []);
       setTerminalMsg("");
     } catch (error) {
@@ -7879,7 +7885,7 @@ function UsersTab({ data, update, isAdmin }) {
     if (!activation.terminalName.trim()) return setTerminalMsg("Enter terminal name.");
     setTerminalBusy(true);
     try {
-      const result = await authApi("/api/auth/terminal-activations", { terminalName: activation.terminalName.trim() }, { device: true });
+      const result = await authApi("/api/auth/terminal-activations", { branchId: terminalBranch.id, terminalName: activation.terminalName.trim() }, { session: true });
       setActivation((p) => ({ ...p, code: result.code || "" }));
       setTerminalMsg("Activation code generated. Use it once on the desktop app.");
     } catch (error) {
@@ -7893,7 +7899,7 @@ function UsersTab({ data, update, isAdmin }) {
     try {
       const safePatch = { ...patch };
       delete safePatch.branchId;
-      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { device: true });
+      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { session: true });
       await loadTerminals();
     } catch (error) {
       setTerminalMsg("Terminal update failed: " + error.message);
@@ -8140,4 +8146,5 @@ function SettingsTab({ data, update, isAdmin, onCleanReset }) {
     </div>
   );
 }
+
 

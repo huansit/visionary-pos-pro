@@ -3,8 +3,14 @@ import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "./db.js";
 
+const MANAGEMENT_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
+
 function hashTerminalSecret(secret) {
   return crypto.createHash("sha256").update(String(secret || ""), "utf8").digest("hex");
+}
+
+function tokenHash(token) {
+  return crypto.createHash("sha256").update(String(token || ""), "utf8").digest("hex");
 }
 
 function sameHash(a, b) {
@@ -15,6 +21,50 @@ function sameHash(a, b) {
 
 function isActiveStatus(status) {
   return String(status || "ACTIVE").toUpperCase() === "ACTIVE";
+}
+
+function sessionTokenFromRequest(req) {
+  const explicit = String(req.get("x-session-token") || "").trim();
+  if (explicit) return explicit;
+  const hdr = req.get("authorization") || "";
+  if (/^Bearer\s+/i.test(hdr)) return hdr.replace(/^Bearer\s+/i, "").trim();
+  return String(req.body?.sessionToken || req.query?.sessionToken || "").trim();
+}
+
+function normalizeRights(rights) {
+  if (Array.isArray(rights)) return { rights };
+  if (rights && typeof rights === "object") return rights;
+  return {};
+}
+
+function roleFromAccount(row) {
+  const rights = normalizeRights(row?.rights);
+  const storedRole = rights.role || rights.name || rights.accountRole;
+  if (storedRole) return String(storedRole);
+  if (row?.kind === "admin") return "Admin";
+  if (row?.kind === "cashier") return "Cashier";
+  return "Supervisor";
+}
+
+function publicAccount(row) {
+  const rights = normalizeRights(row?.rights);
+  const role = roleFromAccount(row);
+  return {
+    id: row.id,
+    kind: row.kind,
+    name: row.name,
+    email: row.email || null,
+    phone: row.phone || null,
+    role,
+    branchId: row.branch_id ?? row.branchId ?? null,
+    rights: rights.rights || rights,
+    status: row.status || "active",
+    emailVerified: Boolean(row.email_verified ?? row.emailVerified),
+  };
+}
+
+function roleKey(account) {
+  return String(account?.role || account?.kind || "").trim().toLowerCase();
 }
 
 async function requireTerminalHeaders(req) {
@@ -35,6 +85,70 @@ async function requireTerminalHeaders(req) {
   await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [terminal.device_id ?? terminal.deviceId]);
   return terminal;
 }
+
+async function loadUserSession(token) {
+  if (!token) return null;
+  const result = await q(
+    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid,
+            c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status, c.email_verified
+       FROM user_sessions s
+       JOIN credentials c ON c.id = s.user_id
+      WHERE s.token_hash = $1
+        AND s.is_active = true
+        AND s.expires_at > ${isMySql ? "NOW()" : "now()"}
+        AND c.status = 'active'
+      LIMIT 1`,
+    [tokenHash(token)]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const sessionTerminalUuid = row.terminal_uuid ?? row.terminalUuid ?? null;
+  const sessionDeviceId = row.device_id ?? row.deviceId ?? null;
+  if (sessionTerminalUuid || sessionDeviceId) {
+    const terminalResult = await q(
+      `SELECT device_id, terminal_uuid, status, revoked_at
+         FROM devices
+        WHERE ${sessionTerminalUuid ? "terminal_uuid = $1" : "device_id = $1"}
+        LIMIT 1`,
+      [sessionTerminalUuid || sessionDeviceId]
+    );
+    const terminal = terminalResult.rows[0];
+    if (!terminal || terminal.revoked_at || !isActiveStatus(terminal.status)) {
+      await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
+      return null;
+    }
+  }
+  await q(`UPDATE user_sessions SET last_seen = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.session_id ?? row.sessionId]);
+  return { sessionId: row.session_id ?? row.sessionId, account: publicAccount(row) };
+}
+
+export async function requireUserSession(req, res, next) {
+  try {
+    const token = sessionTokenFromRequest(req);
+    const session = await loadUserSession(token);
+    if (!session) return res.status(401).json({ error: "invalid_or_missing_user_session" });
+    req.sessionId = session.sessionId;
+    req.account = session.account;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export function requireRoles(roles = MANAGEMENT_ROLES) {
+  const allowed = new Set([...roles].map((role) => String(role).toLowerCase()));
+  return [
+    requireUserSession,
+    (req, res, next) => {
+      if (!allowed.has(roleKey(req.account))) {
+        return res.status(403).json({ error: "insufficient_role" });
+      }
+      return next();
+    },
+  ];
+}
+
+export const requireAdminOrSupervisor = requireRoles(MANAGEMENT_ROLES);
 
 // Require a valid device bearer token on protected routes.
 // Sets req.deviceId for downstream handlers.

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, test } from "node:test";
+import bcrypt from "bcryptjs";
 import request from "supertest";
 
 process.env.NODE_ENV = "test";
@@ -26,11 +27,16 @@ after(async () => {
 });
 
 const state = {
+  adminSessionToken: null,
   tokenA: null,
   tokenB: null,
   tokenC: null,
   terminal: null,
   loginTerminal: null,
+  cashierId: null,
+  cashierPin: null,
+  managerId: null,
+  managerEmail: null,
   invoice: {
     id: "inv-001",
     type: "invoice",
@@ -41,10 +47,9 @@ const state = {
 };
 
 async function activateTestTerminal(name = "SIPCITY Cashier Till", branchId = "b_sip") {
-  const activation = await request(app)
+  const activation = await withAdminSession(request(app)
     .post("/api/auth/terminal-activations")
-    .set("Authorization", `Bearer ${branchId === "b_cpt" ? state.tokenC : state.tokenA}`)
-    .send({ branchId, terminalName: name })
+    .send({ branchId, terminalName: name }))
     .expect(200);
 
   const activated = await request(app)
@@ -53,6 +58,10 @@ async function activateTestTerminal(name = "SIPCITY Cashier Till", branchId = "b
     .expect(200);
 
   return { ...activated.body.terminal, secret: activated.body.terminalSecret };
+}
+
+function withAdminSession(req) {
+  return req.set("X-Session-Token", state.adminSessionToken);
 }
 
 function withTerminalAuth(req, terminal) {
@@ -102,11 +111,34 @@ test("1. registers two devices via /api/auth/device", async () => {
   state.tokenC = deviceC.body.token;
 });
 
+test("1a. provisions an admin session for management routes", async () => {
+  const passwordHash = await bcrypt.hash("Admin@123", 10);
+  await pool.query(
+    `INSERT INTO credentials (id, kind, name, email, password_hash, branch_id, rights, status, email_verified)
+     VALUES ($1, 'admin', $2, $3, $4, NULL, $5::jsonb, 'active', true)
+     ON CONFLICT (id) DO UPDATE SET
+       name = EXCLUDED.name,
+       email = EXCLUDED.email,
+       password_hash = EXCLUDED.password_hash,
+       rights = EXCLUDED.rights,
+       status = 'active',
+       email_verified = true`,
+    ["admin-owner", "Owner Admin", "admin.auth@example.com", passwordHash, JSON.stringify({ admin: true, role: "Admin" })]
+  );
+
+  const login = await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "admin.auth@example.com", password: "Admin@123" })
+    .expect(200);
+  assert.equal(login.body.account.role, "Admin");
+  assert.ok(login.body.sessionToken);
+  state.adminSessionToken = login.body.sessionToken;
+});
+
 test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
-  const activation = await request(app)
+  const activation = await withAdminSession(request(app)
     .post("/api/auth/terminal-activations")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ branchId: "b_sip", terminalName: "SIPCITY Till 1" })
+    .send({ branchId: "b_sip", terminalName: "SIPCITY Till 1" }))
     .expect(200);
   assert.ok(activation.body.code);
 
@@ -124,9 +156,9 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
     .set("X-Terminal-Secret", state.terminal.secret)
     .expect(200);
 
-  await request(app)
+  await withAdminSession(request(app)
     .get("/api/auth/terminals")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+    )
     .expect(200)
     .expect((res) => {
       assert.ok(res.body.terminals.some((terminal) => terminal.uuid === state.terminal.uuid));
@@ -134,34 +166,62 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
 });
 
 test("1c. terminal branch is server-owned and cannot be changed by clients", async () => {
-  const activation = await request(app)
+  const activation = await withAdminSession(request(app)
     .post("/api/auth/terminal-activations")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ branchId: "b_cpt", terminalName: "Spoofed Branch Till" })
+    .send({ branchId: "b_cpt", terminalName: "Cape Town Till" }))
     .expect(200);
-  assert.equal(activation.body.branchId, "b_sip");
+  assert.equal(activation.body.branchId, "b_cpt");
 
   const spoofed = await request(app)
     .post("/api/auth/terminals/activate")
     .send({ activationCode: activation.body.code, appVersion: "2.0.2" })
     .expect(200);
-  assert.equal(spoofed.body.terminal.branchId, "b_sip");
+  assert.equal(spoofed.body.terminal.branchId, "b_cpt");
 
-  await request(app)
+  await withAdminSession(request(app)
     .post(`/api/auth/terminals/${spoofed.body.terminal.uuid}`)
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ branchId: "b_cpt", terminalName: "Still SIP Till" })
+    .send({ branchId: "b_sip", terminalName: "Still Cape Town Till" }))
     .expect(200);
 
-  await request(app)
+  await withAdminSession(request(app)
     .get("/api/auth/terminals")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+    )
     .expect(200)
     .expect((res) => {
       const terminal = res.body.terminals.find((item) => item.uuid === spoofed.body.terminal.uuid);
-      assert.equal(terminal.branchId, "b_sip");
-      assert.equal(terminal.terminalName, "Still SIP Till");
+      assert.equal(terminal.branchId, "b_cpt");
+      assert.equal(terminal.terminalName, "Still Cape Town Till");
     });
+});
+
+test("1g. device tokens cannot access admin management routes", async () => {
+  await request(app)
+    .get("/api/auth/terminals")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .expect(401);
+
+  await request(app)
+    .post("/api/auth/users")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ id: "blocked-user", name: "Blocked User", role: "Cashier", branchId: "b_sip", pin: "9991" })
+    .expect(401);
+
+  await request(app)
+    .post("/api/ai/ask")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ messages: [{ role: "user", content: "sales today" }] })
+    .expect(401);
+
+  await request(app)
+    .get("/api/reconcile/oversell")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .expect(401);
+
+  await request(app)
+    .post("/api/whatsapp/commands/test")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ from: "+15550101", text: "today's sales" })
+    .expect(401);
 });
 
 test("1d. terminal sync cannot submit transactions for a different branch", async () => {
@@ -182,6 +242,46 @@ test("1d. terminal sync cannot submit transactions for a different branch", asyn
     });
 });
 
+test("1e. branch-bound bearer devices cannot spoof transaction branches", async () => {
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      events: [{
+        id: "inv-bearer-cross-branch-rejected",
+        type: "invoice",
+        branchId: "b_cpt",
+        clientTs: 1150,
+        payload: { branchId: "b_cpt", totalCents: 1000 },
+      }],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.reason, "terminal_branch_mismatch");
+    });
+});
+
+test("1f. registered cashier terminals cannot mutate privileged records through sync", async () => {
+  await withTerminalAuth(request(app).post("/api/sync/push"), state.terminal)
+    .send({
+      events: [
+        { id: "terminal-user-write-rejected", type: "user", updatedAt: 1200, payload: { name: "Injected User" } },
+        { id: "terminal-setting-write-rejected", type: "setting", updatedAt: 1201, payload: { key: "danger", value: true } },
+        { id: "terminal-day-close-rejected", type: "endOfDay", branchId: "b_sip", clientTs: 1202, payload: { branchId: "b_sip" } },
+      ],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.deepEqual(res.body.rejected.map((item) => item.reason), [
+        "terminal_write_not_allowed",
+        "terminal_write_not_allowed",
+        "terminal_write_not_allowed",
+      ]);
+    });
+});
+
 test("2. pushes an invoice event from device A to /api/sync/push", async () => {
   await request(app)
     .post("/api/sync/push")
@@ -196,10 +296,9 @@ test("2. pushes an invoice event from device A to /api/sync/push", async () => {
 });
 
 test("14. disabled and revoked terminals cannot authenticate", async () => {
-  await request(app)
+  await withAdminSession(request(app)
     .post(`/api/auth/terminals/${state.terminal.uuid}`)
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ action: "disable" })
+    .send({ action: "disable" }))
     .expect(200);
 
   await request(app)
@@ -208,16 +307,14 @@ test("14. disabled and revoked terminals cannot authenticate", async () => {
     .set("X-Terminal-Secret", state.terminal.secret)
     .expect(401);
 
-  await request(app)
+  await withAdminSession(request(app)
     .post(`/api/auth/terminals/${state.terminal.uuid}`)
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ action: "activate" })
+    .send({ action: "activate" }))
     .expect(200);
 
-  await request(app)
+  await withAdminSession(request(app)
     .post(`/api/auth/terminals/${state.terminal.uuid}`)
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ action: "revoke" })
+    .send({ action: "revoke" }))
     .expect(200);
 
   await request(app)
@@ -584,12 +681,12 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
 });
 
 test("8. AI endpoint reports missing server configuration without exposing provider calls", async () => {
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/ai/ask")
     .send({
       system: "Answer briefly.",
       messages: [{ role: "user", content: "hello" }],
-    })
+    }))
     .expect(503)
     .expect((res) => {
       assert.equal(res.body.error, "ai_not_configured");
@@ -612,73 +709,89 @@ test("9. sync push reports rejected invalid events so clients can clear non-retr
 
 test("10. user credentials created on one device work for login on another device", async () => {
   state.loginTerminal = await activateTestTerminal();
+  const unique = Date.now().toString(36);
+  const cashierId = `cashier-cloud-${unique}`;
+  const cashierPin = unique.replace(/\D/g, "").padEnd(4, "8").slice(0, 4);
+  const managerId = `manager-cloud-${unique}`;
+  const managerEmail = `cloud.manager.${unique}@example.com`;
+  state.cashierId = cashierId;
+  state.cashierPin = cashierPin;
+  state.managerId = managerId;
+  state.managerEmail = managerEmail;
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
-      id: "cashier-cloud-001",
+      id: cashierId,
       name: "Cloud Cashier",
       role: "Cashier",
-      pin: "7788",
+      pin: cashierPin,
       branchId: "b_sip",
       rights: ["sell", "customers"],
-    })
-    .expect(200);
+    }))
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.account.id, cashierId);
+    });
 
   await request(app)
     .post("/api/auth/login")
     .set("Authorization", `Bearer ${state.tokenB}`)
-    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
+    .send({ identifier: cashierId, pin: cashierPin, branchId: "b_sip" })
     .expect(401)
     .expect((res) => {
       assert.equal(res.body.error, "registered_terminal_required");
     });
 
   await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
-    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
+    .send({ identifier: cashierId, pin: cashierPin, branchId: "b_sip" })
     .expect(200)
     .expect((res) => {
-      assert.equal(res.body.account.id, "cashier-cloud-001");
+      assert.ok(res.body.account, `Expected account in login response, got ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.account.id, cashierId);
       assert.equal(res.body.account.name, "Cloud Cashier");
       assert.equal(res.body.account.branchId, "b_sip");
       assert.ok(res.body.sessionToken);
     });
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
-      id: "manager-cloud-001",
+      id: managerId,
       name: "Cloud Manager",
       role: "Manager",
-      email: "cloud.manager@example.com",
+      email: managerEmail,
       password: "Manager@123",
       branchId: "b_sip",
       rights: ["sell", "users"],
-    })
-    .expect(200);
+    }))
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.account.id, managerId);
+    });
 
   await request(app)
     .post("/api/auth/login")
-    .send({ identifier: "cloud.manager@example.com", password: "Manager@123" })
+    .send({ identifier: managerEmail, password: "Manager@123" })
     .expect(200)
     .expect((res) => {
-      assert.equal(res.body.account.id, "manager-cloud-001");
+      assert.ok(res.body.account, `Expected account in manager login response, got ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.account.id, managerId);
       assert.equal(res.body.account.name, "Cloud Manager");
       assert.ok(res.body.sessionToken);
     });
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       id: "admin",
       name: "Owner Admin",
       role: "Admin",
       email: "admin.cloud@example.com",
       password: "Admin@123",
-    })
+    }))
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.account.id, "admin");
@@ -699,17 +812,16 @@ test("10. user credentials created on one device work for login on another devic
 });
 
 test("10b. cashier PINs must be unique", async () => {
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       id: "duplicate-pin-cashier",
       name: "Duplicate Pin Cashier",
       role: "Cashier",
-      pin: "7788",
+      pin: state.cashierPin,
       branchId: "b_sip",
       rights: ["sell"],
-    })
+    }))
     .expect(409)
     .expect((res) => {
       assert.equal(res.body.error, "duplicate_pin");
@@ -718,7 +830,7 @@ test("10b. cashier PINs must be unique", async () => {
 
 test("11. cloud login sessions can be validated and revoked", async () => {
   const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
-    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip", deviceName: "Test Till" })
+    .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip", deviceName: "Test Till" })
     .expect(200);
   const token = login.body.sessionToken;
   assert.ok(token);
@@ -728,7 +840,7 @@ test("11. cloud login sessions can be validated and revoked", async () => {
     .send({ sessionToken: token })
     .expect(200)
     .expect((res) => {
-      assert.equal(res.body.account.id, "cashier-cloud-001");
+      assert.equal(res.body.account.id, state.cashierId);
       assert.equal(res.body.account.status, "active");
     });
 
@@ -746,13 +858,12 @@ test("11. cloud login sessions can be validated and revoked", async () => {
 test("11b. revoking a terminal invalidates employee sessions from that terminal", async () => {
   const terminal = await activateTestTerminal("Session Revoke Till");
   const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal)
-    .send({ identifier: "cashier-cloud-001", pin: "7788", branchId: "b_sip" })
+    .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip" })
     .expect(200);
 
-  await request(app)
+  await withAdminSession(request(app)
     .post(`/api/auth/terminals/${terminal.uuid}`)
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ action: "revoke" })
+    .send({ action: "revoke" }))
     .expect(200);
 
   await request(app)
@@ -766,9 +877,8 @@ test("11b. revoking a terminal invalidates employee sessions from that terminal"
 });
 
 test("12. deleted users are inactive immediately and cannot log in again", async () => {
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       id: "delete-me-cashier",
       name: "Delete Me",
@@ -776,17 +886,16 @@ test("12. deleted users are inactive immediately and cannot log in again", async
       pin: "8899",
       branchId: "b_sip",
       rights: ["sell"],
-    })
+    }))
     .expect(200);
 
   await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })
     .expect(200);
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/users/delete-me-cashier/delete")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({})
+    .send({}))
     .expect(200);
 
   await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
@@ -796,13 +905,12 @@ test("12. deleted users are inactive immediately and cannot log in again", async
 
 test("13. fingerprint templates are encrypted at rest and can issue cloud sessions", async () => {
   const template = "SECUGEN_TEMPLATE_BASE64_SAMPLE";
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/auth/fingerprints/enroll")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ userId: "cashier-cloud-001", template, deviceSerial: "HAMSTER-001" })
+    .send({ userId: state.cashierId, template, deviceSerial: "HAMSTER-001" }))
     .expect(200);
 
-  const stored = await pool.query("SELECT finger_template, device_serial FROM user_fingerprints WHERE user_id = 'cashier-cloud-001'");
+  const stored = await pool.query("SELECT finger_template, device_serial FROM user_fingerprints WHERE user_id = $1", [state.cashierId]);
   assert.equal(stored.rows[0].device_serial, "HAMSTER-001");
   assert.notEqual(stored.rows[0].finger_template, template);
   assert.match(stored.rows[0].finger_template, /^v1:/);
@@ -813,23 +921,23 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     .send({})
     .expect(200)
     .expect((res) => {
-      const hit = res.body.templates.find((row) => row.userId === "cashier-cloud-001");
+      const hit = res.body.templates.find((row) => row.userId === state.cashierId);
       assert.equal(hit.template, template);
     });
 
   await request(app)
     .post("/api/auth/fingerprints/login")
-    .send({ userId: "cashier-cloud-001", deviceSerial: "HAMSTER-001" })
+    .send({ userId: state.cashierId, deviceSerial: "HAMSTER-001" })
     .expect(401);
 
   const login = await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
-    .send({ userId: "cashier-cloud-001", branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .send({ userId: state.cashierId, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
   assert.ok(login.body.sessionToken);
 
   await request(app)
     .post("/api/auth/fingerprints/checkout")
-    .send({ userId: "cashier-cloud-001", sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .send({ userId: state.cashierId, sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
 });
 

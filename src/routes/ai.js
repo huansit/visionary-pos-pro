@@ -1,8 +1,9 @@
 import { Router } from "express";
+import { requireAdminOrSupervisor } from "../auth.js";
 
 const router = Router();
 
-router.post("/ask", async (req, res, next) => {
+router.post("/ask", requireAdminOrSupervisor, async (req, res, next) => {
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return res.status(503).json({ error: "ai_not_configured" });
