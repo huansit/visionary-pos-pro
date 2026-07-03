@@ -11,6 +11,7 @@ process.env.DATABASE_URL = "postgres://test:test@localhost:5432/test";
 process.env.DEVICE_TOKEN_SECRET = "test-device-token-secret";
 process.env.DEVICE_SETUP_KEY = "test-setup-key";
 process.env.BCRYPT_ROUNDS = "10";
+process.env.ADMIN_EMAIL_CODE_REQUIRED = "0";
 
 const { pool } = await import("../src/db.js");
 const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8")
