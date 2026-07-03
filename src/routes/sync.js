@@ -26,6 +26,154 @@ router.get("/version", (_req, res) => {
   res.json({ version: getRealtimeVersion(), ts: Date.now(), change });
 });
 
+function numberFromPayload(payload = {}, fields = [], fallback = 0) {
+  for (const field of fields) {
+    const raw = payload?.[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return fallback;
+}
+
+function centsFromPayload(payload = {}, centFields = [], moneyFields = [], fallback = 0) {
+  for (const field of centFields) {
+    const raw = payload?.[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return Math.round(value);
+  }
+  for (const field of moneyFields) {
+    const raw = payload?.[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return Math.round(value * 100);
+  }
+  return fallback;
+}
+
+function normalizeCode(value) {
+  return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function productCatalogKey(row) {
+  const payload = row.payload || {};
+  const catalogId = normalizeCode(payload.barcodeCatalogId || payload.barcode_catalog_id);
+  if (catalogId) return `catalog:${catalogId}`;
+  const sku = normalizeCode(payload.sku);
+  if (sku) return `sku:${sku}`;
+  const barcode = normalizeCode(payload.barcode || (Array.isArray(payload.barcodes) ? payload.barcodes[0] : ""));
+  if (barcode) return `barcode:${barcode}`;
+  return `name:${normalizeCode(payload.name)}:${normalizeCode(payload.size || payload.unit)}`;
+}
+
+function productCompletenessScore(row) {
+  const payload = row.payload || {};
+  return (
+    (centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"]) > 0 ? 16 : 0) +
+    (centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"]) > 0 ? 8 : 0) +
+    (payload.image || payload.imageUrl || payload.image_url || payload.photo ? 4 : 0) +
+    (payload.barcode || (Array.isArray(payload.barcodes) && payload.barcodes.length) ? 2 : 0) +
+    (payload.name ? 1 : 0)
+  );
+}
+
+function preferCatalogRecord(current, candidate) {
+  if (!current) return candidate;
+  const currentScore = productCompletenessScore(current);
+  const candidateScore = productCompletenessScore(candidate);
+  if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
+  return Number(candidate.serverTs || candidate.updatedAt || 0) >= Number(current.serverTs || current.updatedAt || 0)
+    ? candidate
+    : current;
+}
+
+function normalizeProduct(row, branchId, stockQty) {
+  const payload = row.payload || {};
+  const sku = String(payload.sku || "").trim();
+  const barcode = String(payload.barcode || "").trim();
+  return {
+    id: String(row.id),
+    branchId,
+    name: payload.name || "Unnamed product",
+    sku,
+    size: payload.size || payload.unit || "",
+    barcode,
+    barcodes: Array.isArray(payload.barcodes) ? payload.barcodes : [],
+    barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
+    category: payload.category || payload.categoryId || "Uncategorised",
+    categoryId: payload.categoryId || payload.category || "",
+    image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
+    priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"]),
+    costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"]),
+    stockQty,
+    serverTs: Number(row.serverTs || row.updatedAt || 0),
+  };
+}
+
+router.get("/catalog", async (req, res) => {
+  const branchId = req.deviceBranchId;
+  if (!branchId) return res.status(403).json({ error: "terminal_branch_required" });
+
+  try {
+    const records = await q(
+      isMySql
+        ? `SELECT id, branch_id AS branchId, updated_at AS updatedAt, server_ts AS serverTs, payload
+             FROM records
+            WHERE type = 'product' AND deleted = false
+            ORDER BY server_ts DESC, id ASC`
+        : `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", payload
+             FROM records
+            WHERE type = 'product' AND deleted = false
+            ORDER BY server_ts DESC, id ASC`
+    );
+
+    const stockEvents = await q(
+      isMySql
+        ? `SELECT id, branch_id AS branchId, payload
+             FROM events
+            WHERE type = 'stockMovement'
+              AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branch_id')) = $1)`
+        : `SELECT id, branch_id AS "branchId", payload
+             FROM events
+            WHERE type = 'stockMovement'
+              AND (branch_id = $1 OR payload->>'branchId' = $1 OR payload->>'branch_id' = $1)`,
+      [branchId]
+    );
+
+    const byKey = new Map();
+    for (const row of records.rows) {
+      const recordBranchId = row.branchId || row.payload?.branchId || row.payload?.branch_id || "";
+      if (recordBranchId && recordBranchId !== branchId) continue;
+      const key = productCatalogKey(row);
+      byKey.set(key, preferCatalogRecord(byKey.get(key), row));
+    }
+
+    const canonicalIds = new Set([...byKey.values()].map((row) => String(row.id)));
+    const stockByProduct = new Map();
+    for (const row of stockEvents.rows) {
+      const payload = row.payload || {};
+      const productId = String(payload.productId || payload.product_id || "");
+      if (!productId || !canonicalIds.has(productId)) continue;
+      const qty = Number(payload.qty ?? payload.quantity ?? 0);
+      if (!Number.isFinite(qty)) continue;
+      stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + qty);
+    }
+
+    const products = [...byKey.values()]
+      .map((row) => {
+        const baseStock = numberFromPayload(row.payload || {}, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0);
+        return normalizeProduct(row, branchId, baseStock + (stockByProduct.get(String(row.id)) || 0));
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
+
+    res.json({ branchId, products, total: products.length });
+  } catch (error) {
+    console.error("catalog failed:", error);
+    res.status(500).json({ error: "catalog_failed" });
+  }
+});
+
 const EVENT_TYPES = new Set([
   "invoice",
   "payment",

@@ -187,6 +187,32 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   let cursor = 0;
   let hasMore = true;
   const events: Array<any> = [];
+  let serverCatalogProducts: Product[] | null = null;
+
+  try {
+    const catalog = await jsonFetch<{ products?: Product[] }>(`/api/sync/catalog?t=${Date.now()}`, {
+      method: "GET",
+      headers: terminalHeaders(terminal)
+    });
+    if (Array.isArray(catalog.products)) {
+      serverCatalogProducts = catalog.products
+        .map((product) => ({
+          ...product,
+          branchId: product.branchId || terminal.branchId,
+          image: productDisplayImage({
+            sku: product.sku || "",
+            barcode: product.barcode || "",
+            image: product.image || ""
+          }),
+          priceCents: Number(product.priceCents || 0),
+          costCents: Number(product.costCents || 0),
+          stockQty: Number(product.stockQty || 0)
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+  } catch (error) {
+    console.warn("[visionpos] normalized catalog unavailable; using sync stream fallback", error);
+  }
 
   while (hasMore) {
     const data = await jsonFetch<{ events: Array<any>; cursor?: number; hasMore?: boolean }>(`/api/sync/pull?since=${cursor}&limit=2000`, {
@@ -312,25 +338,29 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     }
   }
 
+  const invoices = Array.from(invoiceRecords.values())
+    .map((invoice) => {
+      const notePatch = invoiceNotes.get(invoice.id);
+      return {
+        ...invoice,
+        note: notePatch ? notePatch.note : invoice.note,
+        paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0)
+      };
+    })
+    .filter((invoice) => invoice.branchId === terminal.branchId)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+
+  const fallbackProducts = Array.from(productDeduped.entries())
+    .map(([key, product]) => ({
+      ...product,
+      stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   return {
     branches,
-    invoices: Array.from(invoiceRecords.values())
-      .map((invoice) => {
-        const notePatch = invoiceNotes.get(invoice.id);
-        return {
-          ...invoice,
-          note: notePatch ? notePatch.note : invoice.note,
-          paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0)
-        };
-      })
-      .filter((invoice) => invoice.branchId === terminal.branchId)
-      .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0)),
-    products: Array.from(productDeduped.entries())
-      .map(([key, product]) => ({
-        ...product,
-        stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+    invoices,
+    products: serverCatalogProducts?.length ? serverCatalogProducts : fallbackProducts
   };
 }
 
