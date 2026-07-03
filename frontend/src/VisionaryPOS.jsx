@@ -1401,6 +1401,10 @@ function mergeSyncEvents(data, events) {
       next = { ...next, settings: { ...next.settings, ...settings }, branchPricing: branchPricing || next.branchPricing || {} };
       continue;
     }
+    if (ev.deleted) {
+      next = { ...next, [collection]: (next[collection] || []).filter((x) => x.id !== ev.id) };
+      continue;
+    }
     const existing = (next[collection] || []).find((x) => x.id === ev.id);
     if (SYNC_MUTABLE.has(collection) && existing && Number(existing.updatedAt || existing.ts || 0) > Number(ev.updatedAt || ev.serverTs || 0)) continue;
     const record = { ...(ev.payload || {}), id: ev.id, branchId: ev.branchId ?? ev.payload?.branchId, synced: true };
@@ -5317,7 +5321,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const onImport = (e) => { const file = e.target.files && e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => importText(String(r.result)); r.readAsText(file); e.target.value = ""; };
   return (
     <div>
-      <PageHead title="Products" sub={data.products.length + " items · wines & spirits"}
+      <PageHead title="Products" sub={visibleBranchProducts.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> Scanner</button>
           <button className="btn sm btn-ghost" onClick={() => { setCopyOpen((v) => !v); setCopyMsg(""); }}><ArrowLeftRight /> Copy from branch</button>
