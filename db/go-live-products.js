@@ -268,9 +268,9 @@ async function executeGoLive(client, before) {
     if (changed) {
       await client.query(
         `UPDATE records
-         SET branch_id = NULL, payload = $3, updated_at = $4, server_ts = $4
+         SET branch_id = NULL, payload = $2, updated_at = $3, server_ts = $3
          WHERE type = 'product' AND id = $1`,
-        [group.keep.id, "product", payload, nextTs()]
+        [group.keep.id, payload, nextTs()]
       );
       stats.canonicalUpdated++;
     }
@@ -280,13 +280,12 @@ async function executeGoLive(client, before) {
         `UPDATE records
          SET branch_id = NULL,
              deleted = true,
-             payload = $3,
-             updated_at = $4,
-             server_ts = $4
+             payload = $2,
+             updated_at = $3,
+             server_ts = $3
          WHERE type = 'product' AND id = $1`,
         [
           duplicate.id,
-          "product",
           { ...stripBranchAndStock(duplicate.payload || {}), dedupedInto: group.keep.id },
           nextTs(),
         ]
