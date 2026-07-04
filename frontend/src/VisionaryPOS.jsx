@@ -1087,8 +1087,27 @@ async function authGet(path, options = {}) {
   const headers = options.session ? sessionAuthHeaders() : options.device ? await deviceAuthHeaders(options.branchId || null) : {};
   const response = await fetch(cfg.apiBaseUrl + path, { headers, cache: "no-store" });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "request_failed");
+  if (!response.ok) {
+    const error = new Error(data.error || "request_failed");
+    if (data.blockers) error.blockers = data.blockers;
+    throw error;
+  }
   return data;
+}
+async function environmentPublic() {
+  const cfg = syncConfig();
+  const response = await fetch(cfg.apiBaseUrl + "/api/environment/public", { cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "environment_failed");
+  return data.environment || data;
+}
+async function environmentGet() {
+  const data = await authGet("/api/environment", { session: true });
+  return data.environment || data;
+}
+async function environmentSwitch(mode, confirmation) {
+  const data = await authApi("/api/environment/switch", { mode, confirmation }, { session: true });
+  return data.environment || data;
 }
 async function cloudLogin(payload) {
   return await authApi("/api/auth/login", payload, { device: Boolean(payload?.pin) });
@@ -1970,6 +1989,14 @@ const css = `
 
 .shell{width:100%;max-width:1500px;margin:0 auto;height:100dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px;border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30}
+.envbadge{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:850;letter-spacing:.08em;white-space:nowrap}
+.envbadge.compact{height:32px;font-size:10.5px}
+.envbadge.test{background:rgba(217,138,28,.14);border-color:rgba(217,138,28,.35);color:#b56d00}
+.envbadge.live{background:rgba(21,168,107,.14);border-color:rgba(21,168,107,.35);color:var(--ok)}
+.envdot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px rgba(217,138,28,.12)}
+.envbadge.live .envdot{box-shadow:0 0 0 4px rgba(21,168,107,.12)}
+.env-banner{position:relative;z-index:3;width:100%;padding:9px 22px;text-align:center;font-size:12px;font-weight:850;letter-spacing:.07em;border-bottom:1px solid var(--border)}
+.env-banner.test{background:rgba(217,138,28,.16);color:#9f640b}
 .topbar .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .who{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}
 .who .nm{font-size:13.5px;font-weight:650}
@@ -2013,7 +2040,8 @@ const css = `
 .sync.syncing .led{animation:syncpulse 1s ease-in-out infinite}
 @keyframes syncpulse{50%{opacity:.3}}
 .sync svg{width:15px;height:15px}
-.content{flex:1;min-height:0;padding:18px;overflow:auto}
+.content{position:relative;flex:1;min-height:0;padding:18px;overflow:auto}
+.env-watermark{position:fixed;inset:auto 32px 32px auto;font-size:110px;font-weight:950;letter-spacing:.14em;color:rgba(217,138,28,.08);pointer-events:none;z-index:0}
 
 /* register 3-col */
 .regwrap{display:grid;grid-template-columns:224px 1fr 336px;gap:16px;align-items:stretch;height:calc(100dvh - 112px);overflow:hidden}
@@ -2401,6 +2429,7 @@ const css = `
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .rcpt{font-family:var(--font-mono);background:var(--bg);border:1px dashed var(--border);border-radius:14px;padding:18px;margin:16px 0;font-size:12.5px;color:var(--muted)}
+.test-receipt-mark{text-align:center;font-family:var(--font-mono);font-weight:900;color:var(--warn);line-height:1.35;margin-bottom:10px}
 .rcpt .rc-h{text-align:center;color:var(--text);font-weight:700;font-family:var(--font-ui);margin-bottom:2px}
 .rcpt .rc-s{text-align:center;color:var(--muted-2);margin-bottom:12px}
 .rcpt .rrow{display:flex;justify-content:space-between;padding:2px 0}
@@ -2408,6 +2437,20 @@ const css = `
 .badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;padding:4px 10px;border-radius:999px}
 .badge svg{width:13px;height:13px}
 .badge.pend{background:rgba(255,180,84,.14);color:var(--warn)}
+.env-current{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:16px}
+.env-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
+.env-card{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:12px}
+.env-card.test{border-color:rgba(217,138,28,.35);background:linear-gradient(180deg,rgba(217,138,28,.12),var(--surface))}
+.env-card.live{border-color:rgba(21,168,107,.35);background:linear-gradient(180deg,rgba(21,168,107,.10),var(--surface))}
+.env-card h3{font-size:18px;font-weight:850}
+.env-card p{color:var(--muted);font-size:13.5px;line-height:1.55}
+.env-info{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.env-info .tile{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px}
+.env-info .k{font-size:11px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.12em;font-weight:850}
+.env-info .v{font-size:14px;color:var(--text);font-weight:750;margin-top:6px;word-break:break-word}
+.env-blockers{margin-top:14px;border:1px solid rgba(229,72,77,.35);background:rgba(229,72,77,.10);border-radius:14px;padding:14px;color:var(--danger)}
+.env-blockers ul{margin:10px 0 0;padding-left:18px}
+@media (max-width:900px){.env-grid,.env-info{grid-template-columns:1fr}.env-current{align-items:flex-start;flex-direction:column}.env-watermark{font-size:72px;right:14px;bottom:14px}}
 
 /* admin */
 .kpis{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:18px}
@@ -2754,6 +2797,13 @@ function Logo({ size = 40 }) {
   );
 }
 function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><div className="mark"><Logo size={sm ? 40 : 52} /></div><div className="name">Vision<span> POS</span></div></div>); }
+function normalizeEnvironmentMode(mode) {
+  return String(mode || "test").trim().toLowerCase() === "live" ? "live" : "test";
+}
+function EnvironmentBadge({ mode, compact }) {
+  const env = normalizeEnvironmentMode(mode);
+  return <div className={"envbadge " + env + (compact ? " compact" : "")}><span className="envdot" />{env === "live" ? "LIVE MODE" : "TEST MODE"}</div>;
+}
 
 /* ================================================================== */
 /*  App                                                               */
@@ -2768,6 +2818,7 @@ export default function VisionPOS() {
   const [syncing, setSyncing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [maintenance, setMaintenance] = useState(null);
+  const [environmentInfo, setEnvironmentInfo] = useState(null);
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -2778,6 +2829,7 @@ export default function VisionPOS() {
     const l = await loadData();
     const loaded = await cloudBootstrapData(l);
     saveData(loaded);
+    try { setEnvironmentInfo(await environmentPublic()); } catch (_) {}
     if (resetToken) {
       await clearSessionState();
       setSession(null);
@@ -2887,6 +2939,22 @@ export default function VisionPOS() {
     setMaintenance(await maintenanceSnapshot(dataRef.current || { _sync: meta }));
     return meta;
   };
+  const refreshEnvironment = async (opts = {}) => {
+    try {
+      const env = opts.session ? await environmentGet() : await environmentPublic();
+      setEnvironmentInfo(env);
+      return env;
+    } catch (error) {
+      if (opts.throwOnError) throw error;
+      return null;
+    }
+  };
+  const switchActiveEnvironment = async (mode, confirmation) => {
+    const env = await environmentSwitch(mode, confirmation);
+    setEnvironmentInfo(env);
+    await runSync({ force: true, source: "environment-switch" });
+    return env;
+  };
   useEffect(() => {
     const goOn = () => { setOnline(true); setTimeout(runSync, 400); };
     const goOff = () => setOnline(false);
@@ -2983,6 +3051,7 @@ export default function VisionPOS() {
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
   const syncError = data?._sync?.error || "";
   const syncState = !online || syncError ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
+  const activeEnvironmentMode = normalizeEnvironmentMode(environmentInfo?.mode || data?.settings?.environmentMode || "test");
   const syncCls = syncState === "ok" ? "" : syncState === "err" ? " err" : " warn";
   const syncLabel = !online ? "Offline" : syncError ? "Sync error" : syncing ? "Syncing…" : pending > 0 ? pending + " to sync" : "Synced";
   const syncTitle = !online ? "Offline — changes are saved locally and will sync when you reconnect" : syncError ? "Sync failed: " + syncError : syncing ? "Syncing your data to the cloud…" : pending > 0 ? pending + " change(s) waiting to sync" : "All data synced to the cloud";
@@ -3003,6 +3072,7 @@ export default function VisionPOS() {
         <div className="topbar">
           <Brand sm />
           <div className="right">
+            <EnvironmentBadge mode={activeEnvironmentMode} compact />
             {view === "register" ? (
               <div className="branchsel locked" title="This cashier is locked to one branch">
                 <Building2 /><span>{cashierBranch?.name || session?.branchId || "Loading branch"}</span><Lock style={{ width: 13, height: 13, opacity: .7 }} />
@@ -3028,12 +3098,16 @@ export default function VisionPOS() {
             </div>
           </div>
         </div>
+        {activeEnvironmentMode === "test" && (
+          <div className="env-banner test">TEST MODE - sales, inventory changes, reports, terminals, and receipts are isolated from live operations.</div>
+        )}
         <div className="content">
+          {activeEnvironmentMode === "test" && <div className="env-watermark">TEST</div>}
           {view === "register" && (session && cashierBranch
-            ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} />
+            ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} onEnvironmentChange={switchActiveEnvironment} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -3691,7 +3765,7 @@ function CashierProductCard({ product, stock, price, cur, onAdd }) {
 }
 const QEXP = ["Police", "Utilities", "Other"];
 const APPROVAL_LIMIT = 50000; // KES 500 — above this a till expense needs admin approval
-function Register({ data, update, online, employee, branch }) {
+function Register({ data, update, online, employee, branch, environmentMode = "test" }) {
   const cur = data.settings.currency;
   const reorder = data.settings.reorderLevel || 4;
   const [cart, setCart] = useState({});
@@ -4228,7 +4302,7 @@ function Register({ data, update, online, employee, branch }) {
           </div>
         </div>
       )}
-      {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branch.name} location={branch.location} till={branch.mpesaTill || data.settings.mpesaTill} onClose={() => setReceipt(null)} />}
+      {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branch.name} location={branch.location} till={branch.mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} onClose={() => setDetail(null)} />}
       {exp && (
         <div className="scrim" onClick={() => setExp(null)}>
@@ -4351,12 +4425,13 @@ function qrSvg(str, px) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${dim} ${dim}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
   } catch (e) { return ""; }
 }
-function InvoiceReceipt({ inv, cur, store, location, till, onClose }) {
+function InvoiceReceipt({ inv, cur, store, location, till, environmentMode = "test", onClose }) {
   const items = inv.items || [];
   const d = new Date(inv.ts);
   const dateStr = d.toLocaleDateString();
   const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const qrMarkup = qrSvg(inv.number, 120);
+  const isTestReceipt = normalizeEnvironmentMode(environmentMode) === "test";
   const printReceipt = () => {
     const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
     const itemRows = items.map((it) => `<div class="r"><span>${esc(it.qty)}× ${esc(it.name)}</span><span>${esc(fmt(it.qty * it.priceCents, cur))}</span></div><div class="rp">@ ${esc(fmt(it.priceCents, cur))}</div>`).join("");
@@ -4371,8 +4446,9 @@ h1{font-size:17px;text-align:center;margin:0 0 1px;letter-spacing:.5px}.loc{text
 .t{display:flex;justify-content:space-between;font-weight:800;font-size:16px;padding:6px 0;border-bottom:1px dotted #999}
 .till{text-align:center;margin-top:14px;padding:10px;border:2px dotted #111;border-radius:8px}
 .till .lab{font-size:11px;letter-spacing:.5px}.till .no{font-size:30px;font-weight:900;letter-spacing:2px;margin-top:2px}
+.testmark{text-align:center;font-weight:900;color:#a16207;line-height:1.35;margin:0 0 10px;font-size:12px}
 .ty{text-align:center;font-weight:700;font-size:13px;margin-top:12px;border-top:1px dotted #999;padding-top:12px}.f{text-align:center;font-size:10px;color:#777;margin-top:6px}</style></head>
-<body><h1>${esc(store)}</h1>${location ? `<div class="loc">${esc(location)}</div>` : ""}
+<body>${isTestReceipt ? '<div class="testmark">*********************<br/>TEST RECEIPT<br/>NOT A REAL SALE<br/>*********************</div>' : ""}<h1>${esc(store)}</h1>${location ? `<div class="loc">${esc(location)}</div>` : ""}
 <div class="s">${esc(dateStr)} · ${esc(timeStr)}<br/>Served by ${esc(inv.cashier)}</div>
 <div class="dash"></div>
 <div class="qr">${qrMarkup}</div><div class="qn">${esc(inv.number)}</div>
@@ -4398,6 +4474,9 @@ ${till ? `<div class="till"><div class="lab">LIPA NA M-PESA · BUY GOODS TILL</d
           <button className="iconbtn" onClick={onClose}><X /></button></div>
         <div style={{ textAlign: "center", marginTop: 8 }}><span className="badge pend"><FileText /> Open invoice</span></div>
         <div className="rcpt">
+          {isTestReceipt && (
+            <div className="test-receipt-mark">*********************<br />TEST RECEIPT<br />NOT A REAL SALE<br />*********************</div>
+          )}
           <div className="rc-h">{store}</div>
           {location && <div className="rc-s" style={{ marginBottom: 2 }}>{location}</div>}
           <div className="rc-s">{dateStr} · {timeStr} · Served by {inv.cashier}</div>
@@ -4480,7 +4559,7 @@ const TAB_RIGHT = {
   cash: "cash", expenses: "expenses", financials: "financials",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
-  users: "users", settings: "settings", system: "__admin_only",
+  users: "users", settings: "settings", environment: "__admin_only", system: "__admin_only",
 };
 const NAV_GROUPS = [
   { id: "salesgrp", label: "Sales & Customers", icon: Receipt, items: [
@@ -4511,6 +4590,7 @@ const NAV_GROUPS = [
   { id: "admgrp", label: "Administration", icon: ShieldCheck, items: [
     { id: "users", label: "Users & Security", icon: ShieldCheck },
     { id: "terminals", label: "Terminals", icon: KeyRound },
+    { id: "environment", label: "Environment", icon: ShieldCheck },
     { id: "system", label: "System Health", icon: RefreshCw },
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ] },
@@ -4570,7 +4650,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, online, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onEnvironmentChange, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const isAdmin = role === "Admin";
@@ -4598,7 +4678,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
     switch (tab) {
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} />;
       case "ai": return <AIManagerTab data={data} />;
-      case "invoices": return <InvoicesTab data={data} update={update} branch={branch} user={user} />;
+      case "invoices": return <InvoicesTab data={data} update={update} branch={branch} user={user} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
       case "customers": return <CustomersTab data={data} update={update} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
@@ -4615,6 +4695,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, onCl
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
+      case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} onEnvironmentChange={onEnvironmentChange} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
       default: return <DashboardTab data={data} update={update} branch={branch} online={online} />;
@@ -4660,7 +4741,7 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 }
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
-function InvoicesTab({ data, update, branch, user }) {
+function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const cur = data.settings.currency;
   const [filter, setFilter] = useState("open"), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
@@ -4747,7 +4828,7 @@ function InvoicesTab({ data, update, branch, user }) {
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
-      {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} onClose={() => setReceipt(null)} />}
+      {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
     </div>
   );
 }
@@ -8466,6 +8547,144 @@ function UsersTab({ data, update, isAdmin }) {
 }
 
 /* ---- System Health ---- */
+function formatEnvDate(value) {
+  if (!value) return "Never";
+  try { return new Date(value).toLocaleString(); } catch (_) { return String(value); }
+}
+
+function EnvironmentTab({ data, environment, role, onRefresh, onEnvironmentChange }) {
+  const [state, setState] = useState(environment || null);
+  const [targetMode, setTargetMode] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const currentMode = normalizeEnvironmentMode(state?.mode || environment?.mode || data?.settings?.environmentMode || "test");
+  const activeTarget = targetMode ? normalizeEnvironmentMode(targetMode) : "";
+  const required = activeTarget.toUpperCase();
+  const blockers = Array.isArray(state?.blockers) ? state.blockers : [];
+  const isOwner = ["owner", "admin"].includes(String(role || "").toLowerCase());
+  const switchBlocked = blockers.length > 0 || busy || !isOwner;
+  const cfg = state?.config || {};
+  const switchedBy = state?.switchedBy || "System";
+
+  useEffect(() => { setState(environment || null); }, [environment]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const next = await onRefresh?.();
+      if (mounted && next) setState(next);
+    })();
+    return () => { mounted = false; };
+  }, []); // eslint-disable-line
+
+  const refresh = async () => {
+    setError("");
+    const next = await onRefresh?.();
+    if (next) setState(next);
+  };
+  const openSwitch = (mode) => {
+    setTargetMode(mode);
+    setConfirmText("");
+    setError("");
+  };
+  const submitSwitch = async () => {
+    if (!activeTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      const next = await onEnvironmentChange(activeTarget, confirmText);
+      setState(next);
+      setTargetMode("");
+      setConfirmText("");
+    } catch (err) {
+      setError(err?.message || "Environment switch failed.");
+      if (err?.blockers) setState((s) => ({ ...(s || {}), blockers: err.blockers }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const InfoTile = ({ label, value }) => (
+    <div className="tile"><div className="k">{label}</div><div className="v">{value}</div></div>
+  );
+
+  return (
+    <div>
+      <PageHead
+        title="Environment"
+        sub="Owner-only Test / Live control with isolated terminals, sessions, sales, and inventory."
+        right={<button className="btn sm btn-ghost" onClick={refresh}><RefreshCw /> Refresh</button>}
+      />
+      <div className="poscard env-current">
+        <div>
+          <div className="sub">Current Environment</div>
+          <EnvironmentBadge mode={currentMode} />
+        </div>
+        <div className="sub">Terminals must be activated in the same environment they connect to.</div>
+      </div>
+      {currentMode === "test" && (
+        <div className="notice warn"><AlertCircle /> TEST MODE is active. Receipts are marked as test and dashboards show a TEST watermark.</div>
+      )}
+      <div className="env-grid">
+        <div className={"env-card test" + (currentMode === "test" ? " active" : "")}>
+          <EnvironmentBadge mode="test" />
+          <h3>TEST MODE</h3>
+          <p>Safe environment for testing features, demo terminals, receipts, inventory, and integrations.</p>
+          <button className="btn btn-ghost" disabled={currentMode === "test" || switchBlocked} onClick={() => openSwitch("test")}>Switch to Test</button>
+        </div>
+        <div className={"env-card live" + (currentMode === "live" ? " active" : "")}>
+          <EnvironmentBadge mode="live" />
+          <h3>LIVE MODE</h3>
+          <p>Production environment for real business operations. Sales, inventory changes, reports, and receipts are permanent.</p>
+          <button className="btn btn-primary" disabled={currentMode === "live" || switchBlocked} onClick={() => openSwitch("live")}>Switch to Live</button>
+        </div>
+      </div>
+      <div className="env-info">
+        <InfoTile label="Environment" value={currentMode.toUpperCase()} />
+        <InfoTile label="Database" value={cfg.database || "Configured by server"} />
+        <InfoTile label="API" value={cfg.api || "https://visionarypos.cloud"} />
+        <InfoTile label="Version" value={cfg.version || "0.1.0"} />
+        <InfoTile label="Last Switch" value={formatEnvDate(state?.lastSwitch)} />
+        <InfoTile label="Switched By" value={switchedBy} />
+      </div>
+      {blockers.length ? (
+        <div className="env-blockers">
+          <b>Switching is blocked</b>
+          <div className="sub">Clear these first so no business activity is stranded between environments.</div>
+          <ul>{blockers.map((b, i) => <li key={i}>{b.message || b.type}</li>)}</ul>
+        </div>
+      ) : (
+        <div className="notice" style={{ marginTop: 14 }}><Check /> No open shifts, pending purchases, stock counts, or active sync blockers detected.</div>
+      )}
+      {!isOwner && <div className="alert" style={{ marginTop: 14 }}><Lock /> Only the Owner can switch environments.</div>}
+      <div className="notice" style={{ marginTop: 14 }}>
+        Application code, license, owner account, and system configuration are shared. Employees, terminals, sessions, inventory, sales, reports, sync events, WhatsApp data, and AI data are isolated by environment.
+      </div>
+      {activeTarget && (
+        <div className="scrim" onClick={() => !busy && setTargetMode("")}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-head">
+              <div><div className="sub" style={{ margin: 0 }}>Environment switch</div><div className="title" style={{ fontSize: 22 }}>Switch to {required} MODE?</div></div>
+              <button className="iconbtn" disabled={busy} onClick={() => setTargetMode("")}><X /></button>
+            </div>
+            <div className="notice warn" style={{ marginTop: 12 }}>
+              <AlertCircle /> You are about to connect VisionPOS to the {activeTarget === "live" ? "production" : "test"} environment. {activeTarget === "live" ? "All sales, inventory changes, reports, and receipts will become permanent." : "Terminals and sessions will need to use test credentials."}
+            </div>
+            <div className="field">
+              <label className="label">Type {required} to continue</label>
+              <input className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={required} autoFocus />
+            </div>
+            {error && <div className="alert"><AlertCircle />{error}</div>}
+            <div className="grid2" style={{ marginTop: 14 }}>
+              <button className="btn btn-ghost" disabled={busy} onClick={() => setTargetMode("")}>Cancel</button>
+              <button className="btn btn-primary" disabled={busy || confirmText.trim().toUpperCase() !== required} onClick={submitSwitch}>{busy ? "Switching..." : "Switch"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenance }) {
   const [busy, setBusy] = useState("");
   const m = maintenance || {};

@@ -2,6 +2,7 @@ import { verifyDeviceToken } from "./token.js";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "./db.js";
+import { ensureEnvironmentSchema, getActiveEnvironmentMode, sameEnvironment } from "./environment.js";
 
 const MANAGEMENT_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
 
@@ -71,13 +72,16 @@ async function requireTerminalHeaders(req) {
   const uuid = String(req.get("x-terminal-uuid") || "").trim();
   const secret = String(req.get("x-terminal-secret") || "").trim();
   if (!uuid || !secret) return null;
+  await ensureEnvironmentSchema();
+  const activeEnvironment = await getActiveEnvironmentMode();
 
   const result = await q(
-    "SELECT device_id, terminal_uuid, name, branch_id, terminal_secret_hash, revoked_at, status FROM devices WHERE terminal_uuid = $1",
+    "SELECT device_id, terminal_uuid, name, branch_id, terminal_secret_hash, revoked_at, status, environment FROM devices WHERE terminal_uuid = $1",
     [uuid]
   );
   const terminal = result.rows[0];
   if (!terminal || terminal.revoked_at || !isActiveStatus(terminal.status)) return { error: "terminal_not_authorized" };
+  if (!sameEnvironment(terminal.environment, activeEnvironment)) return { error: "terminal_environment_mismatch" };
   if (!sameHash(hashTerminalSecret(secret), terminal.terminal_secret_hash ?? terminal.terminalSecretHash)) {
     return { error: "terminal_not_authorized" };
   }
@@ -88,8 +92,10 @@ async function requireTerminalHeaders(req) {
 
 async function loadUserSession(token) {
   if (!token) return null;
+  await ensureEnvironmentSchema();
+  const activeEnvironment = await getActiveEnvironmentMode();
   const result = await q(
-    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid,
+    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid, s.environment,
             c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status, c.email_verified
        FROM user_sessions s
        JOIN credentials c ON c.id = s.user_id
@@ -102,18 +108,22 @@ async function loadUserSession(token) {
   );
   const row = result.rows[0];
   if (!row) return null;
+  if (!sameEnvironment(row.environment, activeEnvironment)) {
+    await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
+    return null;
+  }
   const sessionTerminalUuid = row.terminal_uuid ?? row.terminalUuid ?? null;
   const sessionDeviceId = row.device_id ?? row.deviceId ?? null;
   if (sessionTerminalUuid || sessionDeviceId) {
     const terminalResult = await q(
-      `SELECT device_id, terminal_uuid, status, revoked_at
+      `SELECT device_id, terminal_uuid, status, revoked_at, environment
          FROM devices
         WHERE ${sessionTerminalUuid ? "terminal_uuid = $1" : "device_id = $1"}
         LIMIT 1`,
       [sessionTerminalUuid || sessionDeviceId]
     );
     const terminal = terminalResult.rows[0];
-    if (!terminal || terminal.revoked_at || !isActiveStatus(terminal.status)) {
+    if (!terminal || terminal.revoked_at || !isActiveStatus(terminal.status) || !sameEnvironment(terminal.environment, activeEnvironment)) {
       await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
       return null;
     }
@@ -158,6 +168,8 @@ export async function requireDevice(req, res, next) {
   const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : queryToken || null;
 
   try {
+    await ensureEnvironmentSchema();
+    const activeEnvironment = await getActiveEnvironmentMode();
     const terminal = await requireTerminalHeaders(req);
     if (terminal?.error) return res.status(401).json({ error: terminal.error });
     if (terminal) {
@@ -172,11 +184,11 @@ export async function requireDevice(req, res, next) {
     if (!deviceId) return res.status(401).json({ error: "invalid_or_missing_device_token" });
 
     const result = await q(
-      "SELECT device_id, name, branch_id, token_hash, revoked_at, status FROM devices WHERE device_id = $1",
+      "SELECT device_id, name, branch_id, token_hash, revoked_at, status, environment FROM devices WHERE device_id = $1",
       [deviceId]
     );
     const device = result.rows[0];
-    if (!device || device.revoked_at || !isActiveStatus(device.status)) {
+    if (!device || device.revoked_at || !isActiveStatus(device.status) || !sameEnvironment(device.environment, activeEnvironment)) {
       return res.status(401).json({ error: "device_not_authorized" });
     }
     const tokenOk = await bcrypt.compare(token, device.token_hash);

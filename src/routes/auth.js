@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
 import { requireAdminOrSupervisor, requireDevice } from "../auth.js";
+import { ensureEnvironmentSchema, getActiveEnvironmentMode, sameEnvironment } from "../environment.js";
 import { signDeviceToken, verifyDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendPasswordResetEmail, sendVerificationCode, validTarget } from "../verification.js";
 
@@ -147,15 +148,18 @@ function fingerprintTemplateHash(template) {
 }
 
 async function verifiedTerminalFromRequest(req, options = {}) {
+  await ensureEnvironmentSchema();
+  const activeEnvironment = await getActiveEnvironmentMode();
   const terminalUuid = String(req.get("x-terminal-uuid") || "").trim();
   const terminalSecret = String(req.get("x-terminal-secret") || "").trim();
   if (terminalUuid && terminalSecret) {
     const result = await q(
-      "SELECT device_id, terminal_uuid, name, branch_id, terminal_secret_hash, revoked_at, status FROM devices WHERE terminal_uuid = $1",
+      "SELECT device_id, terminal_uuid, name, branch_id, terminal_secret_hash, revoked_at, status, environment FROM devices WHERE terminal_uuid = $1",
       [terminalUuid]
     );
     const terminal = result.rows[0];
     if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE") return { error: "terminal_not_authorized" };
+    if (!sameEnvironment(terminal.environment, activeEnvironment)) return { error: "terminal_environment_mismatch" };
     if (!safeHashEqual(terminalSecretHash(terminalSecret), terminal.terminal_secret_hash ?? terminal.terminalSecretHash)) return { error: "terminal_not_authorized" };
     await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [terminal.device_id ?? terminal.deviceId]);
     return {
@@ -173,11 +177,11 @@ async function verifiedTerminalFromRequest(req, options = {}) {
   if (!deviceId) return { error: "registered_terminal_required" };
 
   const result = await q(
-    "SELECT device_id, name, branch_id, token_hash, revoked_at, status FROM devices WHERE device_id = $1",
+    "SELECT device_id, name, branch_id, token_hash, revoked_at, status, environment FROM devices WHERE device_id = $1",
     [deviceId]
   );
   const device = result.rows[0];
-  if (!device || device.revoked_at || terminalStatus(device.status) !== "ACTIVE") {
+  if (!device || device.revoked_at || terminalStatus(device.status) !== "ACTIVE" || !sameEnvironment(device.environment, activeEnvironment)) {
     return { error: "terminal_not_authorized" };
   }
   const tokenOk = await bcrypt.compare(token, device.token_hash);
@@ -492,6 +496,8 @@ async function audit(event, req, userId = null, detail = {}) {
 
 async function issueSession(req, account, terminal = null) {
   await ensureAuthSchema();
+  await ensureEnvironmentSchema();
+  const environment = await getActiveEnvironmentMode();
   const { deviceName, ipAddress } = requestMeta(req);
   const id = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
   const token = "vps_" + crypto.randomBytes(32).toString("hex");
@@ -503,11 +509,11 @@ async function issueSession(req, account, terminal = null) {
   }
   await q(
     isMySql
-      ? `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, device_name, ip_address, login_time, last_seen, expires_at, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),DATE_ADD(NOW(), INTERVAL $8 DAY),true)`
-      : `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, device_name, ip_address, login_time, last_seen, expires_at, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now(),now() + ($8 || ' days')::interval,true)`,
-    [id, account.id, tokenHash(token), terminal?.deviceId || req.deviceId || null, terminal?.terminalUuid || req.terminalUuid || null, deviceName, ipAddress, SESSION_DAYS]
+      ? `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, environment, device_name, ip_address, login_time, last_seen, expires_at, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),DATE_ADD(NOW(), INTERVAL $9 DAY),true)`
+      : `INSERT INTO user_sessions (id, user_id, token_hash, device_id, terminal_uuid, environment, device_name, ip_address, login_time, last_seen, expires_at, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now(),now() + ($9 || ' days')::interval,true)`,
+    [id, account.id, tokenHash(token), terminal?.deviceId || req.deviceId || null, terminal?.terminalUuid || req.terminalUuid || null, environment, deviceName, ipAddress, SESSION_DAYS]
   );
   await q(`UPDATE credentials SET last_login = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [account.id]);
   await audit("login_success", req, account.id, { sessionId: id, deviceId: terminal?.deviceId || req.deviceId || null, terminalUuid: terminal?.terminalUuid || req.terminalUuid || null });
@@ -516,8 +522,10 @@ async function issueSession(req, account, terminal = null) {
 
 async function accountForSessionToken(token) {
   await ensureAuthSchema();
+  await ensureEnvironmentSchema();
+  const activeEnvironment = await getActiveEnvironmentMode();
   const result = await q(
-    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid,
+    `SELECT s.id AS session_id, s.expires_at, s.is_active, s.device_id, s.terminal_uuid, s.environment,
             c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status, c.email_verified
        FROM user_sessions s
        JOIN credentials c ON c.id = s.user_id
@@ -530,18 +538,22 @@ async function accountForSessionToken(token) {
   );
   const row = result.rows[0];
   if (!row) return null;
+  if (!sameEnvironment(row.environment, activeEnvironment)) {
+    await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
+    return null;
+  }
   const sessionTerminalUuid = row.terminal_uuid ?? row.terminalUuid ?? null;
   const sessionDeviceId = row.device_id ?? row.deviceId ?? null;
   if (sessionTerminalUuid || sessionDeviceId) {
     const terminalResult = await q(
-      `SELECT device_id, terminal_uuid, status, revoked_at
+      `SELECT device_id, terminal_uuid, status, revoked_at, environment
          FROM devices
         WHERE ${sessionTerminalUuid ? "terminal_uuid = $1" : "device_id = $1"}
         LIMIT 1`,
       [sessionTerminalUuid || sessionDeviceId]
     );
     const terminal = terminalResult.rows[0];
-    if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE") {
+    if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE" || !sameEnvironment(terminal.environment, activeEnvironment)) {
       await q("UPDATE user_sessions SET is_active = false WHERE id = $1", [row.session_id ?? row.sessionId]);
       return null;
     }
@@ -551,6 +563,8 @@ async function accountForSessionToken(token) {
 }
 
 router.post("/device", async (req, res) => {
+  await ensureEnvironmentSchema();
+  const environment = await getActiveEnvironmentMode();
   const { deviceId, name, branchId = null, setupKey } = req.body || {};
   if (!deviceId || !name) return res.status(400).json({ error: "deviceId_and_name_required" });
   if (process.env.NODE_ENV === "production" && !process.env.DEVICE_SETUP_KEY) {
@@ -565,36 +579,40 @@ router.post("/device", async (req, res) => {
   const tokenHash = await bcrypt.hash(token, ROUNDS);
   if (isMySql) {
     await q(
-      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,'active',NULL,NOW())
+      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at, environment)
+       VALUES ($1,$2,$3,$4,'active',NULL,NOW(),$5)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          branch_id = VALUES(branch_id),
          token_hash = VALUES(token_hash),
          status = 'active',
          revoked_at = NULL,
-         last_seen_at = NOW()`,
-      [deviceId, name, branchId, tokenHash]
+         last_seen_at = NOW(),
+         environment = VALUES(environment)`,
+      [deviceId, name, branchId, tokenHash, environment]
     );
   } else {
     await q(
-      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,'active',NULL, now())
+      `INSERT INTO devices (device_id, name, branch_id, token_hash, status, revoked_at, last_seen_at, environment)
+       VALUES ($1,$2,$3,$4,'active',NULL, now(),$5)
        ON CONFLICT (device_id) DO UPDATE SET
          name = EXCLUDED.name,
          branch_id = EXCLUDED.branch_id,
          token_hash = EXCLUDED.token_hash,
          status = 'active',
          revoked_at = NULL,
-         last_seen_at = now()`,
-      [deviceId, name, branchId, tokenHash]
+         last_seen_at = now(),
+         environment = EXCLUDED.environment`,
+      [deviceId, name, branchId, tokenHash, environment]
     );
   }
-  res.json({ deviceId, token });
+  res.json({ deviceId, token, environment });
 });
 
 router.post("/terminal-activations", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
+  await ensureEnvironmentSchema();
+  const environment = await getActiveEnvironmentMode();
   const sessionBranchId = String(req.account?.branchId || "").trim();
   const requestedBranchId = String(req.body?.branchId || "").trim();
   const branchId = sessionBranchId || requestedBranchId;
@@ -610,18 +628,20 @@ router.post("/terminal-activations", requireAdminOrSupervisor, async (req, res) 
   const id = "tac_" + (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
   await q(
     isMySql
-      ? `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at)
-         VALUES ($1,$2,$3,$4,$5,NOW(),DATE_ADD(NOW(), INTERVAL $6 HOUR))`
-      : `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at)
-         VALUES ($1,$2,$3,$4,$5,now(),now() + ($6 || ' hours')::interval)`,
-    [id, activationCodeHash(code), branchId, terminalName, req.account?.id || null, ttlHours]
+      ? `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at, environment)
+         VALUES ($1,$2,$3,$4,$5,NOW(),DATE_ADD(NOW(), INTERVAL $6 HOUR),$7)`
+      : `INSERT INTO terminal_activation_codes (id, code_hash, branch_id, terminal_name, created_by, created_at, expires_at, environment)
+         VALUES ($1,$2,$3,$4,$5,now(),now() + ($6 || ' hours')::interval,$7)`,
+    [id, activationCodeHash(code), branchId, terminalName, req.account?.id || null, ttlHours, environment]
   );
-  await audit("terminal_activation_created", req, req.account?.id || null, { activationId: id, branchId, terminalName, expiresInHours: ttlHours });
-  res.json({ ok: true, id, code, branchId, terminalName, expiresInHours: ttlHours });
+  await audit("terminal_activation_created", req, req.account?.id || null, { activationId: id, branchId, terminalName, expiresInHours: ttlHours, environment });
+  res.json({ ok: true, id, code, branchId, terminalName, expiresInHours: ttlHours, environment });
 });
 
 router.post("/terminals/activate", async (req, res) => {
   await ensureAuthSchema();
+  await ensureEnvironmentSchema();
+  const activeEnvironment = await getActiveEnvironmentMode();
   const activationCode = normalizeActivationCode(req.body?.activationCode || req.body?.code);
   const appVersion = String(req.body?.appVersion || "").trim().slice(0, 80);
   const requestedName = String(req.body?.terminalName || req.body?.name || "").trim().slice(0, 255);
@@ -630,7 +650,7 @@ router.post("/terminals/activate", async (req, res) => {
   try {
     const codeHash = activationCodeHash(activationCode);
     const result = await q(
-      `SELECT id, branch_id, terminal_name, expires_at, used_at, revoked_at
+      `SELECT id, branch_id, terminal_name, expires_at, used_at, revoked_at, environment
          FROM terminal_activation_codes
         WHERE code_hash = $1
         LIMIT 1`,
@@ -645,6 +665,10 @@ router.post("/terminals/activate", async (req, res) => {
       await audit("terminal_activation_failed", req, null, { activationId: activation.id, reason: "expired_code" });
       return res.status(401).json({ error: "activation_code_expired" });
     }
+    if (!sameEnvironment(activation.environment, activeEnvironment)) {
+      await audit("terminal_activation_failed", req, null, { activationId: activation.id, reason: "environment_mismatch", activationEnvironment: activation.environment, activeEnvironment });
+      return res.status(403).json({ error: "terminal_environment_mismatch" });
+    }
 
     const uuid = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
     const id = "term_" + uuid;
@@ -655,9 +679,9 @@ router.post("/terminals/activate", async (req, res) => {
     const branchId = activation.branch_id ?? activation.branchId;
     if (isMySql) {
       await q(
-        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,NOW())`,
-        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion]
+        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at, environment)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,NOW(),$8)`,
+        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion, activeEnvironment]
       );
       await q(
         `UPDATE terminal_activation_codes SET used_at = NOW(), used_by_terminal_uuid = $1 WHERE id = $2`,
@@ -665,17 +689,17 @@ router.post("/terminals/activate", async (req, res) => {
       );
     } else {
       await q(
-        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,now())`,
-        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion]
+        `INSERT INTO devices (device_id, terminal_uuid, name, branch_id, token_hash, terminal_secret_hash, app_version, status, revoked_at, last_seen_at, environment)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'ACTIVE',NULL,now(),$8)`,
+        [id, uuid, terminalName, branchId, tokenHash, terminalSecretHash(secret), appVersion, activeEnvironment]
       );
       await q(
         `UPDATE terminal_activation_codes SET used_at = now(), used_by_terminal_uuid = $1 WHERE id = $2`,
         [uuid, activation.id]
       );
     }
-    await audit("terminal_activated", req, null, { terminalId: id, terminalUuid: uuid, branchId, terminalName, appVersion });
-    res.json({ ok: true, terminal: { id, uuid, branchId, terminalName, status: "ACTIVE", appVersion }, terminalSecret: secret });
+    await audit("terminal_activated", req, null, { terminalId: id, terminalUuid: uuid, branchId, terminalName, appVersion, environment: activeEnvironment });
+    res.json({ ok: true, terminal: { id, uuid, branchId, terminalName, status: "ACTIVE", appVersion, environment: activeEnvironment }, terminalSecret: secret });
   } catch (error) {
     console.error("terminal activation failed:", error);
     res.status(500).json({ error: "terminal_activation_failed" });

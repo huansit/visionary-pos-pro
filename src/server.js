@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import authRoutes from "./routes/auth.js";
 import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
+import environmentRoutes from "./routes/environment.js";
 import syncRoutes from "./routes/sync.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
@@ -86,6 +87,7 @@ app.get("/health", async (_req, res, next) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/barcodes", barcodeRoutes);
+app.use("/api/environment", environmentRoutes);
 app.use("/api/sync", syncRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 
