@@ -51,6 +51,7 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   { id: "excat_stock", name: "Stock", icon: "boxes", active: true, order: 90, synced: true },
   { id: "excat_other", name: "Other", icon: "circle", active: true, order: 999, synced: true },
 ];
+const CASHIER_EXPENSE_CATEGORY_NAMES = new Set(["police", "utilities", "other"]);
 const EXPENSE_CATEGORY_ICON_OPTIONS = [
   ["wallet", "Wallet"],
   ["truck", "Transport"],
@@ -95,6 +96,14 @@ function expenseCategories(data, { activeOnly = false } = {}) {
     .map(normalizeExpenseCategory)
     .filter((cat) => !activeOnly || cat.active !== false)
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
+}
+function cashierExpenseCategories(data) {
+  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
+  return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
+}
+function adminExpenseCategories(data) {
+  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
+  return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
 }
 function firstExpenseCategoryName(data) {
   return expenseCategories(data, { activeOnly: true })[0]?.name || "Other";
@@ -3626,7 +3635,7 @@ function Register({ data, update, online, employee, branch }) {
   }, 0);
 
   const branchProducts = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === branch.id));
-  const activeExpenseCategories = expenseCategories(data, { activeOnly: true });
+  const activeExpenseCategories = cashierExpenseCategories(data);
   const defaultExpenseCategory = activeExpenseCategories[0]?.name || "Other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
   const qNorm = q.trim().toLowerCase();
@@ -6431,10 +6440,7 @@ function CashTab({ data, update }) {
 function ExpensesTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
   const allExpenseCategories = expenseCategories(data);
-  const activeExpenseCategories = expenseCategories(data, { activeOnly: true });
-  const recordExpenseCategories = activeExpenseCategories.length
-    ? activeExpenseCategories
-    : ["Police", "Utilities", "Other"].map((name, idx) => normalizeExpenseCategory({ name, icon: name === "Police" ? "shield" : name === "Utilities" ? "zap" : "circle", active: true, order: idx * 10 }, idx));
+  const recordExpenseCategories = adminExpenseCategories(data);
   const defaultCategory = recordExpenseCategories[0]?.name || "Other";
   const [f, setF] = useState({ category: defaultCategory, amount: "", note: "", branchId: branch.id });
   const [period, setPeriod] = useState("30d");
@@ -6560,7 +6566,7 @@ function ExpensesTab({ data, update, branch, user }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
             <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
-            <div className="muted">Managed by supervisors. Cashiers pick from the Record expense category dropdown.</div>
+            <div className="muted">Cashiers only see Police, Utilities and Other. Admin expense recording uses the operational categories in the dropdown above.</div>
           </div>
           <button className="btn btn-ghost" onClick={() => setShowCategoryManager((v) => !v)}><Tags /> {showCategoryManager ? "Hide manager" : "Manage categories"}</button>
         </div>
@@ -8132,9 +8138,8 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 }
 
 /* ---- Settings ---- */
-function SettingsTab({ data, update, isAdmin, onCleanReset }) {
+function SettingsTab({ data, update }) {
   const s = data.settings; const set = (patch) => update((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
-  const [resetArm, setResetArm] = useState(false); const [resetText, setResetText] = useState("");
   return (
     <div><PageHead title="Settings" sub="Store-wide configuration." />
       <div className="addpanel"><div className="grid2">
@@ -8148,23 +8153,6 @@ function SettingsTab({ data, update, isAdmin, onCleanReset }) {
         <div><label className="label">Default till (fallback for branches with none set)</label><input className="input" inputMode="numeric" value={s.mpesaTill || ""} onChange={(e) => set({ mpesaTill: e.target.value })} placeholder="e.g. 5204512" /></div>
         <div className="notice" style={{ marginTop: 12 }}>Each branch can have its own till — set it per branch under <b>Branches</b>. This default is only used for branches without one. The till prints on customer receipts; it is for display only and does not collect payment.</div>
       </div>
-      {isAdmin && (<>
-        <div className="section-title" style={{ margin: "18px 0 8px", display: "flex", alignItems: "center", gap: 8, color: "var(--danger)" }}><AlertCircle style={{ width: 16, height: 16 }} /> Danger zone</div>
-        <div className="dangerzone">
-          <div className="dz-head"><div><div className="dz-title">Reset to a clean setup</div><div className="dz-sub">Permanently erases all branches, products, staff, customers, suppliers, invoices, payments, stock and history on this device, and returns to first-time owner registration. This cannot be undone.</div></div>
-            {!resetArm && <button className="btn btn-danger" style={{ width: "auto", padding: "0 16px", flex: "none" }} onClick={() => { setResetArm(true); setResetText(""); }}><Trash2 /> Reset</button>}</div>
-          {resetArm && (
-            <div className="dz-confirm">
-              <div className="label" style={{ marginBottom: 8 }}>Type <b>RESET</b> to confirm you want to erase everything on this device.</div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <input className="input mono" style={{ flex: 1, minWidth: 160 }} value={resetText} onChange={(e) => setResetText(e.target.value.toUpperCase())} placeholder="RESET" />
-                <button className="btn btn-danger" style={{ width: "auto", padding: "0 16px" }} disabled={resetText !== "RESET"} onClick={() => onCleanReset && onCleanReset()}><Trash2 /> Erase & start setup</button>
-                <button className="btn btn-ghost" style={{ width: "auto", padding: "0 16px" }} onClick={() => { setResetArm(false); setResetText(""); }}>Cancel</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </>)}
       <div className="notice">Changes save automatically. Prices are stored in cents.</div>
     </div>
   );
