@@ -947,6 +947,31 @@ test("10b. cashier PINs must be unique", async () => {
     });
 });
 
+test("10c. checkout PIN verification requires the logged-in cashier on a registered terminal", async () => {
+  await request(app)
+    .post("/api/auth/verify-pin")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .send({ accountId: state.cashierId, pin: state.cashierPin })
+    .expect(401)
+    .expect((res) => {
+      assert.equal(res.body.error, "registered_terminal_required");
+    });
+
+  await withTerminalAuth(request(app).post("/api/auth/verify-pin"), state.loginTerminal)
+    .send({ accountId: state.cashierId, pin: "0000" })
+    .expect(401)
+    .expect((res) => {
+      assert.equal(res.body.error, "invalid_pin");
+    });
+
+  await withTerminalAuth(request(app).post("/api/auth/verify-pin"), state.loginTerminal)
+    .send({ accountId: state.cashierId, pin: state.cashierPin })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.ok, true);
+    });
+});
+
 test("11. cloud login sessions can be validated and revoked", async () => {
   const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip", deviceName: "Test Till" })

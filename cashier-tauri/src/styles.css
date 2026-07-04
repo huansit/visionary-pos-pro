@@ -3327,6 +3327,131 @@ body {
   color: #b91c1c;
 }
 
+.pin-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, .52);
+  backdrop-filter: blur(7px);
+}
+
+.pin-confirm-card {
+  width: min(430px, calc(100vw - 36px));
+  border: 1px solid #dbe4ee;
+  border-radius: 22px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, .28);
+  padding: 22px;
+  display: grid;
+  gap: 12px;
+}
+
+.pin-confirm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pin-confirm-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #2563eb;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.pin-confirm-head button {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.pin-confirm-card h2 {
+  margin: 0;
+  font-size: 25px;
+  letter-spacing: -.04em;
+}
+
+.pin-confirm-card p {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 750;
+}
+
+.pin-confirm-card label {
+  margin-top: 4px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.pin-confirm-input {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 0 14px;
+  border: 2px solid #bfdbfe;
+  border-radius: 16px;
+  background: #f8fafc;
+  color: #2563eb;
+}
+
+.pin-confirm-input input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #0f172a;
+  font-size: 21px;
+  font-weight: 950;
+  letter-spacing: .08em;
+}
+
+.pin-confirm-error {
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  background: #fff1f2;
+  color: #991b1b;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.pin-confirm-primary {
+  min-height: 58px;
+  border: 0;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2563eb, #5eead4);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 950;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.pin-confirm-primary:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 .expense-sheet-backdrop {
   position: fixed;
   inset: 0;

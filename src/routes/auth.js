@@ -1397,6 +1397,47 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.post("/verify-pin", async (req, res) => {
+  await ensureAuthSchema();
+  const accountId = String(req.body?.accountId || "").trim();
+  const pin = String(req.body?.pin || "").trim();
+  try {
+    const terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
+    if (terminal.error) {
+      await audit("checkout_pin_failed", req, accountId || null, { reason: terminal.error });
+      return res.status(401).json({ error: terminal.error });
+    }
+    if (!accountId || !pin) {
+      await audit("checkout_pin_failed", req, accountId || null, { reason: "missing_account_or_pin", terminalId: terminal.deviceId });
+      return res.status(400).json({ error: "account_and_pin_required" });
+    }
+    const result = await q(
+      `SELECT id, kind, name, branch_id, status, pin_hash
+         FROM credentials
+        WHERE id = $1
+          AND pin_hash IS NOT NULL
+        LIMIT 1`,
+      [accountId]
+    );
+    const row = result.rows[0];
+    const rowBranchId = row?.branch_id ?? row?.branchId ?? null;
+    if (!row || row.status !== "active" || row.kind === "admin" || rowBranchId !== terminal.branchId) {
+      await audit("checkout_pin_failed", req, accountId, { reason: "cashier_not_authorized", terminalId: terminal.deviceId, branchId: terminal.branchId });
+      return res.status(403).json({ error: "cashier_not_authorized" });
+    }
+    const ok = await bcrypt.compare(pin, row.pin_hash);
+    if (!ok) {
+      await audit("checkout_pin_failed", req, accountId, { reason: "invalid_pin", terminalId: terminal.deviceId, branchId: terminal.branchId });
+      return res.status(401).json({ error: "invalid_pin" });
+    }
+    await audit("checkout_pin_verified", req, accountId, { terminalId: terminal.deviceId, branchId: terminal.branchId });
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("checkout pin verification failed:", error);
+    return res.status(500).json({ error: "pin_verification_failed" });
+  }
+});
+
 router.post("/session", async (req, res) => {
   const token = req.body?.sessionToken || req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ error: "session_required" });

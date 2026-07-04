@@ -46,7 +46,8 @@ import {
   pullCatalog,
   pushCheckout,
   pushExpense,
-  resolveBarcode
+  resolveBarcode,
+  verifyCashierPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
@@ -57,6 +58,7 @@ const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v1";
 const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
 const VIRTUAL_KEYBOARD_POSITION_KEY = "visionpos:cashier:virtual-keyboard-position:v1";
 const SUPERVISOR_EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
+const CASHIER_INACTIVITY_LOGOUT_MS = 5 * 60 * 1000;
 
 type UpdatePrompt = {
   version: string;
@@ -376,6 +378,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null);
+  const [checkoutPinOpen, setCheckoutPinOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
@@ -679,6 +682,24 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [account, cartLines.length, customerName, totalCents]);
 
+  useEffect(() => {
+    if (!account) return;
+    let timer: number | undefined;
+    const resetTimer = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void handleLogout("inactivity");
+      }, CASHIER_INACTIVITY_LOGOUT_MS);
+    };
+    const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "pointerdown", "wheel", "scroll"];
+    resetTimer();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetTimer, { passive: true }));
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetTimer));
+    };
+  }, [account?.id, sessionToken]);
+
   async function refreshCatalog(nextTerminal = terminal, options: { silent?: boolean } = {}) {
     if (!nextTerminal) return;
     if (catalogSyncInFlight.current) return;
@@ -773,7 +794,12 @@ export default function App() {
     focusSearch();
   }
 
-  async function completeSale() {
+  function completeSale() {
+    if (!terminal || !account || !canCompleteSale) return;
+    setCheckoutPinOpen(true);
+  }
+
+  async function issueInvoiceAfterPin(pin: string) {
     if (!terminal || !account || !canCompleteSale) return;
     setError("");
     const unavailable = cartLines.find((line) => productSaleBlockReason(line.product, line.qty - 1));
@@ -800,26 +826,32 @@ export default function App() {
       }))
     };
     try {
+      await verifyCashierPin(terminal, account, pin);
       await pushCheckout(terminal, account, nextReceipt);
       setReceipt(nextReceipt);
       setLastReceipt(nextReceipt);
       setCart({});
       setCustomerName("");
+      setCheckoutPinOpen(false);
       setStatus(`Open invoice ${receiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
-      setError(`Checkout failed: ${String(err)}`);
+      const message = String(err).includes("invalid_pin") ? "PIN does not match this cashier." : `Checkout failed: ${String(err)}`;
+      setError(message);
+      throw new Error(message);
     } finally {
       focusSearch();
     }
   }
 
-  async function handleLogout() {
+  async function handleLogout(reason: "manual" | "inactivity" = "manual") {
     await logout(sessionToken);
     setAccount(null);
     setSessionToken("");
     setCart({});
-    setStatus("Signed out.");
+    setCustomerName("");
+    setCheckoutPinOpen(false);
+    setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
   }
 
   async function handleCloseApp() {
@@ -943,7 +975,7 @@ export default function App() {
                   {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
                 </button>
                 <button onClick={() => lastReceipt ? setReceipt(lastReceipt) : setStatus("No receipt to reprint yet.")} title="Reprint receipt"><FileText size={18} /></button>
-                <button className="mini-logout" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
+                <button className="mini-logout" onClick={() => handleLogout()} title="Logout"><LogOut size={18} /></button>
               </div>
             </>
           ) : (
@@ -1081,7 +1113,7 @@ export default function App() {
                 <button className="rail-update-pill" onClick={restartForUpdate}>Update</button>
               )}
             </div>
-            <button className="rail-logout-small" onClick={handleLogout}><LogOut size={15} />Logout</button>
+            <button className="rail-logout-small" onClick={() => handleLogout()}><LogOut size={15} />Logout</button>
           </footer>
           </>
           )}
@@ -1198,6 +1230,13 @@ export default function App() {
       )}
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
+      {checkoutPinOpen && account && (
+        <CashierPinPrompt
+          cashierName={account.name}
+          onClose={() => { setCheckoutPinOpen(false); focusSearch(); }}
+          onConfirm={issueInvoiceAfterPin}
+        />
+      )}
       {updateModal}
       {updatePrompt && updateState === "ready" && !updateToastDismissed && (
         <UpdateReadyToast
@@ -2565,6 +2604,64 @@ function LoginScreen({
         <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
       </LoginCard>
     </AuthShell>
+  );
+}
+
+function CashierPinPrompt({
+  cashierName,
+  onClose,
+  onConfirm
+}: {
+  cashierName: string;
+  onClose: () => void;
+  onConfirm: (pin: string) => Promise<void>;
+}) {
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const canSubmit = !busy && pin.trim().length >= 4;
+
+  async function submit() {
+    if (!canSubmit) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await onConfirm(pin.trim());
+    } catch (err) {
+      setMessage(String(err).replace(/^Error:\s*/, ""));
+      setPin("");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="pin-confirm-backdrop" role="presentation">
+      <form className="pin-confirm-card" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <div className="pin-confirm-head">
+          <span><ShieldCheck size={18} /> Cashier confirmation</span>
+          <button type="button" onClick={onClose} aria-label="Cancel PIN confirmation"><X size={18} /></button>
+        </div>
+        <h2>Enter {cashierName}'s PIN</h2>
+        <p>This confirms the invoice is being issued by the logged-in cashier.</p>
+        <label>Cashier PIN</label>
+        <div className="pin-confirm-input">
+          <KeyRound size={21} />
+          <input
+            value={pin}
+            onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 8))}
+            type="password"
+            inputMode="numeric"
+            autoFocus
+            placeholder="Enter PIN"
+          />
+        </div>
+        {message && <div className="pin-confirm-error">{message}</div>}
+        <button className="pin-confirm-primary" type="submit" disabled={!canSubmit}>
+          {busy ? <span className="spinner" /> : <Check size={20} />}
+          {busy ? "Verifying..." : "Confirm and issue invoice"}
+        </button>
+      </form>
+    </div>
   );
 }
 

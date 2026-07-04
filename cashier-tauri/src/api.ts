@@ -174,6 +174,14 @@ export async function loginCashier(terminal: TerminalCredentials, employeeNumber
   });
 }
 
+export async function verifyCashierPin(terminal: TerminalCredentials, account: Account, pin: string): Promise<void> {
+  await jsonFetch("/api/auth/verify-pin", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({ accountId: account.id, pin })
+  });
+}
+
 export async function logout(sessionToken: string): Promise<void> {
   if (!sessionToken) return;
   await jsonFetch("/api/auth/logout", {
