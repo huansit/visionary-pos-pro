@@ -385,6 +385,7 @@ export default function App() {
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
   const [updateState, setUpdateState] = useState<CashierUpdateState>("idle");
+  const [updateInstallOpen, setUpdateInstallOpen] = useState(false);
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false);
   const [restartWhenCartEmpty, setRestartWhenCartEmpty] = useState(false);
   const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
@@ -450,11 +451,14 @@ export default function App() {
   const canCompleteSale = cartLines.length > 0
     && Boolean(customerName.trim())
     && !creditLocked;
-  const updateStatusLabel = updatePrompt
-    ? `v${updatePrompt.version} ready`
+  const updateStatusLabelRaw = updatePrompt
+    ? `v${updatePrompt.version} available`
     : updateState === "downloading"
       ? `v${APP_VERSION} · downloading`
       : `v${APP_VERSION} · up to date`;
+  const updateStatusLabel = updateStatusLabelRaw
+    .replace("· downloading", "- checking")
+    .replace("· up to date", "- up to date");
   const session = useMemo(() => ({
     businessName: "VisionPOS",
     cashierName: account?.name || "Cashier",
@@ -538,11 +542,12 @@ export default function App() {
 
   async function checkForUpdates(manual = false) {
     if (updateCheckInFlight.current) return;
-    if (updateStateRef.current === "downloading" || updateStateRef.current === "ready") {
-      if (manual && updatePrompt) setStatus(`Update ${updatePrompt.version} is ready to install.`);
+    if (updateStateRef.current === "ready") {
+      if (manual && updatePrompt) setStatus(`Update ${updatePrompt.version} is available.`);
       return;
     }
     updateCheckInFlight.current = true;
+    setUpdateState("downloading");
     if (manual) setStatus("Checking for desktop updates...");
     try {
       logUpdateEvent("check_started", { manual, currentVersion: APP_VERSION });
@@ -550,6 +555,9 @@ export default function App() {
 
       if (!update) {
         logUpdateEvent("already_current", { manual, currentVersion: APP_VERSION });
+        setUpdatePrompt(null);
+        setUpdateToastDismissed(false);
+        setUpdateState("idle");
         if (manual) {
           setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
           setLatestUpdateNotice(true);
@@ -558,21 +566,6 @@ export default function App() {
       }
 
       logUpdateEvent("update_available", { currentVersion: APP_VERSION, version: update.version });
-      setUpdateState("downloading");
-      setStatus(`Downloading update ${update.version} in the background...`);
-      logUpdateEvent("download_started", { version: update.version, silent: true });
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          logUpdateEvent("download_payload_started", {
-            version: update.version,
-            contentLength: Number(event.data.contentLength || 0)
-          });
-        }
-        if (event.event === "Finished") {
-          logUpdateEvent("download_finished", { version: update.version });
-        }
-      });
-      logUpdateEvent("install_ready_for_restart", { version: update.version });
       setUpdatePrompt({
         version: update.version,
         currentVersion: APP_VERSION,
@@ -581,7 +574,7 @@ export default function App() {
       });
       setUpdateToastDismissed(false);
       setUpdateState("ready");
-      setStatus(`Update ${update.version} is ready. Restart when the cart is clear.`);
+      setStatus(`Update ${update.version} is available. Install it when the cart is clear.`);
     } catch (err) {
       const message = String(err);
       logUpdateEvent("check_failed", { manual, currentVersion: APP_VERSION, message });
@@ -872,22 +865,25 @@ export default function App() {
     setStatus("Day closed by supervisor. New day started.");
   }
 
-  async function restartForUpdate() {
+  function restartForUpdate() {
     if (!updatePrompt) return;
     if (cartLines.length > 0) {
       setRestartWhenCartEmpty(true);
       setUpdateToastDismissed(true);
-      setStatus("Update is ready. VISIONPOS will restart after this cart is empty.");
-      logUpdateEvent("restart_waiting_for_empty_cart", { version: updatePrompt.version });
+      setStatus("Finish or clear the current cart before installing the update.");
+      logUpdateEvent("install_waiting_for_empty_cart", { version: updatePrompt.version });
       return;
     }
     setRestartWhenCartEmpty(false);
-    logUpdateEvent("restart_requested", { version: updatePrompt.version });
-    await relaunch();
+    setUpdateToastDismissed(true);
+    setUpdateInstallOpen(true);
+    logUpdateEvent("install_prompt_opened", { version: updatePrompt.version });
   }
 
   const updateModal = latestUpdateNotice
       ? <LatestUpdateModal version={APP_VERSION} onClose={() => setLatestUpdateNotice(false)} />
+    : updatePrompt && updateInstallOpen
+      ? <UpdatePromptModal update={updatePrompt} onClose={() => setUpdateInstallOpen(false)} />
     : null;
 
   if (!terminal) {
@@ -1721,14 +1717,14 @@ function UpdateReadyToast({
       <button className="toast-close" onClick={onLater} aria-label="Dismiss update notice"><X size={16} /></button>
       <div className="toast-icon"><Download size={18} /></div>
       <div className="toast-copy">
-        <b>Update v{version} ready</b>
-        <span>Downloaded. Restart to install (~10s).</span>
-        {cartBlocked && <small>Finish or clear the current cart before restarting.</small>}
-        {queued && <small>Restart will run automatically once the cart is empty.</small>}
+        <b>Update v{version} available</b>
+        <span>Install inside VisionPOS when this terminal is idle.</span>
+        {cartBlocked && <small>Finish or clear the current cart before updating.</small>}
+        {queued && <small>The installer will open once the cart is empty.</small>}
       </div>
       <div className="toast-actions">
         <button onClick={onLater}>Later</button>
-        <button className="primary" onClick={onRestart}>Restart now</button>
+        <button className="primary" onClick={onRestart} disabled={cartBlocked}>Update now</button>
       </div>
     </aside>
   );
