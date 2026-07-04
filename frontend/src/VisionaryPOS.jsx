@@ -518,6 +518,7 @@ const SEED = () => {
     products,
     barcodeCatalog,
     stockMovements,
+    stockCountSessions: [],
     orders: [],
     payments: [],
     invoices: [
@@ -551,6 +552,7 @@ const CLEAN_SETUP = () => {
     products: [],
     barcodeCatalog: [],
     stockMovements: [],
+    stockCountSessions: [],
     orders: [],
     payments: [],
     invoices: [],
@@ -754,7 +756,7 @@ function normalizeLoadedData(data) {
       barcodeCatalogIds: extraIds,
     };
   });
-  return reconcileInvoicePayments({ ...data, settings, products, barcodeCatalog });
+  return reconcileInvoicePayments({ ...data, settings, products, barcodeCatalog, stockCountSessions: data.stockCountSessions || [] });
 }
 
 async function loadData() {
@@ -911,6 +913,7 @@ const SYNC_MUTABLE = new Map([
   ["branches", "branch"],
   ["suppliers", "supplier"],
   ["supplierPrices", "supplierPrice"],
+  ["stockCountSessions", "stockCountSession"],
 ]);
 const SYNC_ARRAYS = [...SYNC_APPEND.keys(), ...SYNC_MUTABLE.keys()];
 
@@ -1533,6 +1536,90 @@ function sortProductsAZ(products) {
   return [...(products || [])].sort((a, b) =>
     String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base", numeric: true })
   );
+}
+function stockCountSessions(data) {
+  return data?.stockCountSessions || [];
+}
+function activeStockCountSession(data, branchId) {
+  return stockCountSessions(data).find((s) => s.branchId === branchId && ["open", "paused"].includes(s.status)) || null;
+}
+function nextStockCountCode(data) {
+  const max = stockCountSessions(data).reduce((m, s) => {
+    const n = parseInt(String(s.code || "").replace(/\D/g, ""), 10);
+    return Number.isFinite(n) ? Math.max(m, n) : m;
+  }, 0);
+  return "SC-" + String(max + 1).padStart(4, "0");
+}
+function stockCountOperator(data) {
+  return data?.admin?.name || data?.session?.account?.name || data?.session?.name || "Admin";
+}
+function createStockCountSession(data, branchId, operator) {
+  const ts = now();
+  const items = branchProductsUnique(data, branchId).map((product) => ({
+    productId: product.id,
+    expectedQty: productOnHand(data, product, branchId),
+    countedQty: null,
+    countedAt: null,
+    countedBy: "",
+  }));
+  return {
+    id: uid("sc"),
+    code: nextStockCountCode(data),
+    branchId,
+    status: "open",
+    startedBy: operator,
+    startedAt: ts,
+    snapshotAt: ts,
+    note: "",
+    items,
+    synced: false,
+    updatedAt: ts,
+  };
+}
+function updateStockCountSessionItem(session, productId, countedQty, countedBy) {
+  const ts = now();
+  return {
+    ...session,
+    items: (session.items || []).map((item) => item.productId === productId ? { ...item, countedQty, countedAt: ts, countedBy } : item),
+    synced: false,
+    updatedAt: ts,
+  };
+}
+function salesSinceStockCount(data, session, productId) {
+  const since = Number(session?.snapshotAt || session?.startedAt || 0);
+  return (data?.stockMovements || [])
+    .filter((m) => m.branchId === session?.branchId && m.productId === productId && Number(m.ts || 0) > since && Number(m.qty || 0) < 0 && /sale|invoice/i.test(String(m.reason || "")))
+    .reduce((sum, m) => sum + Math.abs(Number(m.qty) || 0), 0);
+}
+function stockCountRows(data, session) {
+  if (!session) return [];
+  const productsById = new Map((data?.products || []).map((p) => [p.id, p]));
+  return (session.items || []).map((item) => {
+    const product = productsById.get(item.productId);
+    const expectedQty = Number(item.expectedQty) || 0;
+    const countedRaw = item.countedQty === null || item.countedQty === undefined || item.countedQty === "" ? null : Number(item.countedQty);
+    const countedQty = Number.isFinite(countedRaw) ? countedRaw : null;
+    const soldSince = salesSinceStockCount(data, session, item.productId);
+    const finalQty = countedQty === null ? null : Math.max(0, countedQty - soldSince);
+    const liveQty = product ? productOnHand(data, product, session.branchId) : onHand(data, item.productId, session.branchId);
+    return {
+      ...item,
+      product,
+      expectedQty,
+      countedQty,
+      soldSince,
+      finalQty,
+      liveQty,
+      varianceQty: countedQty === null ? null : countedQty - expectedQty,
+      commitDelta: finalQty === null ? 0 : finalQty - liveQty,
+      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * (product?.costCents || 0),
+    };
+  }).filter((row) => row.product);
+}
+function stockCountProgress(session) {
+  const items = session?.items || [];
+  const counted = items.filter((item) => item.countedQty !== null && item.countedQty !== undefined && item.countedQty !== "").length;
+  return { counted, total: items.length, percent: items.length ? Math.round((counted / items.length) * 100) : 0 };
 }
 function generateBarcodeValue() {
   return "VP" + String(Date.now()).slice(-8) + Math.floor(1000 + Math.random() * 9000);
@@ -5458,6 +5545,312 @@ function ProductsTab({ data, update, branch, isAdmin }) {
 
 /* ---- Stock ---- */
 function StockTab({ data, update, branch }) {
+  const cur = data.settings.currency;
+  const [bId, setBId] = useState(branch.id);
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [report, setReport] = useState(null);
+  const [lossOpen, setLossOpen] = useState(false);
+  const [scannerOn, setScannerOn] = useState(true);
+  const [scanMsg, setScanMsg] = useState("");
+  const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
+  const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
+  const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
+  const session = activeStockCountSession(data, bId);
+  const operator = stockCountOperator(data);
+  const rows = stockCountRows(data, session);
+  const progress = stockCountProgress(session);
+  const uniqueProducts = branchProductsUnique(data, bId);
+  const salesDuringCount = session ? rows.reduce((sum, row) => sum + row.soldSince, 0) : 0;
+  const visibleRows = rows.filter((row) => {
+    const term = q.trim().toLowerCase();
+    const p = row.product;
+    const matches = !term || p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term) || productMatchesBarcode(p, term) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, term));
+    if (!matches) return false;
+    if (filter === "uncounted") return row.countedQty === null;
+    if (filter === "counted") return row.countedQty !== null;
+    if (filter === "variance") return row.countedQty !== null && row.varianceQty !== 0;
+    return true;
+  }).sort((a, b) => a.product.name.localeCompare(b.product.name));
+  const varianceRows = rows.filter((row) => row.countedQty !== null && row.varianceQty !== 0);
+  const countedRows = rows.filter((row) => row.countedQty !== null);
+  const totalProducts = uniqueProducts.length;
+  const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * p.costCents, 0);
+  const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
+  const lossValue = lossList.reduce((s, m) => s + Math.abs(m.qty) * (data.products.find((p) => p.id === m.productId)?.costCents || 0), 0);
+  const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
+  const lossProd = data.products.find((p) => p.id === lf.productId);
+
+  const upsertSession = (nextSession) => update((d) => {
+    const existing = d.stockCountSessions || [];
+    const found = existing.some((s) => s.id === nextSession.id);
+    return { ...d, stockCountSessions: found ? existing.map((s) => s.id === nextSession.id ? nextSession : s) : [...existing, nextSession] };
+  });
+  const startSession = () => {
+    const existing = activeStockCountSession(data, bId);
+    if (existing) {
+      setScanMsg(existing.code + " is already " + existing.status + " for " + bname + ".");
+      return;
+    }
+    const next = createStockCountSession(data, bId, operator);
+    upsertSession(next);
+    setReport(null);
+    setScanMsg(next.code + " started. Expected quantities are now frozen.");
+  };
+  const setSessionStatus = (status) => {
+    if (!session) return;
+    const ts = now();
+    const next = { ...session, status, synced: false, updatedAt: ts };
+    if (status === "paused") Object.assign(next, { pausedBy: operator, pausedAt: ts });
+    if (status === "open") Object.assign(next, { resumedBy: operator, resumedAt: ts });
+    if (status === "cancelled") Object.assign(next, { cancelledBy: operator, cancelledAt: ts });
+    upsertSession(next);
+    setScanMsg(status === "cancelled" ? session.code + " cancelled." : session.code + " is now " + status + ".");
+  };
+  const setCount = (productId, raw) => {
+    if (!session || session.status !== "open") return;
+    const cleaned = String(raw || "").replace(/\D/g, "");
+    const countedQty = cleaned === "" ? null : parseInt(cleaned, 10);
+    upsertSession(updateStockCountSessionItem(session, productId, countedQty, operator));
+  };
+  const commitSession = () => {
+    if (!session || session.status !== "open") return;
+    if (progress.counted !== progress.total) {
+      setScanMsg("Count every product before committing. " + (progress.total - progress.counted) + " item(s) remain.");
+      return;
+    }
+    const ts = now();
+    const movements = rows.filter((row) => row.commitDelta !== 0).map((row) => ({
+      id: uid("mv"),
+      productId: row.productId,
+      branchId: bId,
+      qty: row.commitDelta,
+      mode: "count",
+      reason: "Stock count " + session.code,
+      stockCountSessionId: session.id,
+      expectedQty: row.expectedQty,
+      countedQty: row.countedQty,
+      soldSince: row.soldSince,
+      finalQty: row.finalQty,
+      ts,
+      synced: false,
+    }));
+    const logs = rows.map((row) => ({
+      id: uid("cl"),
+      productId: row.productId,
+      branchId: bId,
+      qty: row.countedQty,
+      mode: "count",
+      stockCountSessionId: session.id,
+      system: row.expectedQty,
+      counted: row.countedQty,
+      soldSince: row.soldSince,
+      finalQty: row.finalQty,
+      variance: row.varianceQty,
+      kind: "session",
+      ts,
+      synced: false,
+    }));
+    const committed = {
+      ...session,
+      status: "committed",
+      committedBy: operator,
+      committedAt: ts,
+      summary: {
+        counted: progress.counted,
+        total: progress.total,
+        variances: varianceRows.length,
+        salesDuringCount,
+        adjustments: movements.length,
+        valueImpact: rows.reduce((s, row) => s + row.valueImpact, 0),
+      },
+      synced: false,
+      updatedAt: ts,
+    };
+    update((d) => ({ ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...movements], countLog: [...(d.countLog || []), ...logs] }));
+    setReport(buildStockCountReport(committed, rows, movements, data, bname));
+    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied.");
+  };
+  const handleStockScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setScanMsg("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "stock:invalid" });
+      return;
+    }
+    if (!session || session.status !== "open") {
+      setScanMsg("Start or resume a stock count session before scanning.");
+      appendBarcodeScanLog({ barcode, status: "stock:no_session" });
+      return;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setScanMsg(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "stock:branch_unavailable" : "stock:not_found" });
+      return;
+    }
+    const item = (session.items || []).find((x) => x.productId === hit.product.id);
+    if (!item) {
+      setScanMsg(hit.name + " is not part of this session snapshot.");
+      appendBarcodeScanLog({ barcode, status: "stock:not_in_session", productId: hit.product.id });
+      return;
+    }
+    const nextQty = (Number(item.countedQty) || 0) + 1;
+    upsertSession(updateStockCountSessionItem(session, hit.product.id, nextQty, operator));
+    setScanMsg("Counted " + hit.name + " - running count " + nextQty + ".");
+    appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
+  };
+  useBarcodeScanner({ enabled: scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
+  const recordLoss = () => {
+    const qty = parseInt(lf.qty, 10);
+    if (!lf.productId || !qty || qty <= 0) return;
+    const oh = onHand(data, lf.productId, bId);
+    const dq = Math.min(qty, Math.max(0, oh));
+    if (dq <= 0) return;
+    const reason = "Loss/Damage - " + lf.reason + (lf.note.trim() ? " - " + lf.note.trim() : "");
+    update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, reason, ts: now(), synced: false }] }));
+    setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
+  };
+  const exportReport = (kind) => report && exportDiscrepancy(report, cur, kind);
+
+  return (
+    <div>
+      <PageHead title="Stock" sub={"Locked stock count sessions & levels - " + bname} />
+      <div className="ptools">
+        <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => { setBId(e.target.value); setReport(null); }}>
+          {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><ClipboardCheck /> Scanner</button>
+        <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
+      </div>
+      {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
+      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
+        <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Total products</div><div className="cv">{totalProducts}</div></div></div>
+        <div className="ctile"><div className="ic"><Package /></div><div><div className="cl">Live units</div><div className="cv">{totalUnits}</div></div></div>
+        <div className="ctile"><div className="ic"><Wallet /></div><div><div className="cl">Stock value</div><div className="cv">{fmt(stockValue, cur)}</div></div></div>
+        <div className={"ctile" + (lossValue > 0 ? " warn" : "")}><div className="ic"><TrendingDown /></div><div><div className="cl">Loss &amp; damage</div><div className="cv">{fmt(lossValue, cur)}</div><div className="cs">{lossList.length} write-off{lossList.length === 1 ? "" : "s"}</div></div></div>
+      </div>
+
+      {!session ? (
+        <div className="panel fade" style={{ padding: 22 }}>
+          <div className="page-h" style={{ marginBottom: 10 }}>
+            <div><div className="title" style={{ fontSize: 20 }}>No active stock count</div><div className="sub">Starting a count locks {bname} to one resumable session. Expected quantities are frozen at start.</div></div>
+            <button className="btn btn-primary" onClick={startSession}><ClipboardCheck /> Start stock count</button>
+          </div>
+          <div className="notice">Sales can continue during a count. On commit, VisionPOS reconciles counted stock against sales made after the snapshot.</div>
+        </div>
+      ) : (
+        <div className="panel fade" style={{ padding: 18 }}>
+          <div className="page-h" style={{ marginBottom: 12 }}>
+            <div>
+              <div className="title" style={{ fontSize: 19 }}>{session.code} <span className={"ist " + (session.status === "open" ? "paid" : "open")}>{session.status}</span></div>
+              <div className="sub">Started by {session.startedBy || "Unknown"} - {dt(session.startedAt)} - {bname}</div>
+            </div>
+            <div className="expbtns">
+              {session.status === "open" ? <button className="btn xs btn-ghost" onClick={() => setSessionStatus("paused")}><RefreshCw /> Pause</button> : <button className="btn xs btn-primary" onClick={() => setSessionStatus("open")}><RefreshCw /> Resume</button>}
+              <button className="btn xs btn-primary" disabled={session.status !== "open" || progress.counted !== progress.total} onClick={commitSession}><Check /> Review &amp; commit</button>
+              <button className="btn xs btn-ghost" onClick={() => setSessionStatus("cancelled")}><X /> Cancel</button>
+            </div>
+          </div>
+          <div className="stats" style={{ marginBottom: 12 }}>
+            <div className="stat"><div className="sl">Progress</div><div className="sv">{progress.counted}/{progress.total}</div></div>
+            <div className="stat"><div className="sl">Variances</div><div className={"sv" + (varianceRows.length ? " warn" : "")}>{varianceRows.length}</div></div>
+            <div className="stat"><div className="sl">Sales during count</div><div className={"sv" + (salesDuringCount ? " warn" : "")}>{salesDuringCount}</div></div>
+            <div className="stat"><div className="sl">Value impact</div><div className="sv">{fmt(rows.reduce((s, row) => s + row.valueImpact, 0), cur)}</div></div>
+          </div>
+          <div style={{ height: 8, borderRadius: 99, background: "var(--line)", overflow: "hidden", marginBottom: 12 }}><div style={{ width: progress.percent + "%", height: "100%", background: "var(--accent)" }} /></div>
+          {salesDuringCount > 0 && <div className="notice" style={{ marginBottom: 12 }}>Sales happened after the snapshot. Commit will reconcile final stock as counted minus sold since start.</div>}
+          <div className="cfilter">
+            {[["all", "All"], ["uncounted", "Uncounted"], ["counted", "Counted"], ["variance", "Variances"]].map(([k, l]) => <button key={k} className={"seg" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{l}</button>)}
+            <span className="cfilthint">{visibleRows.length} shown</span>
+          </div>
+          <div className="tablewrap tblscroll" style={{ marginTop: 12 }}>
+            <table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Value</th><th>Final</th></tr></thead>
+              <tbody>{visibleRows.map((row) => (
+                <tr key={row.productId} className={row.countedQty !== null ? "rowsel" : ""}>
+                  <td><div className="nm">{row.product.name}</div><div className="mt2">{row.product.sku} / {row.product.size}</div></td>
+                  <td style={{ fontWeight: 700 }}>{row.expectedQty}</td>
+                  <td><input className="input" disabled={session.status !== "open"} style={{ width: 92, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" placeholder="Count" value={row.countedQty ?? ""} onChange={(e) => setCount(row.productId, e.target.value)} /></td>
+                  <td style={{ fontWeight: 700, color: row.varianceQty < 0 ? "var(--danger)" : row.varianceQty > 0 ? "var(--ok)" : "var(--muted-2)" }}>{row.countedQty === null ? "-" : (row.varianceQty > 0 ? "+" : "") + row.varianceQty}</td>
+                  <td className="amt">{fmt(row.valueImpact, cur)}</td>
+                  <td><div className="nm">{row.finalQty === null ? "-" : row.finalQty}</div>{row.soldSince > 0 && <div className="mt2">{row.soldSince} sold after snapshot</div>}</td>
+                </tr>
+              ))}
+              {visibleRows.length === 0 && <tr><td colSpan="6"><div className="notice">No products match.</div></td></tr>}</tbody></table>
+          </div>
+        </div>
+      )}
+
+      {report && (
+        <div className="panel fade" style={{ marginTop: 18 }}>
+          <div className="page-h" style={{ marginBottom: 4 }}>
+            <div><div className="title" style={{ fontSize: 17 }}>Stock Count Report</div><div className="sub">{report.branchName} - {report.code} - {dt(report.ts)} - {report.discrepancies.length} variance(s)</div></div>
+            <div className="expbtns"><button className="btn xs btn-primary" onClick={() => exportReport("pdf")}><FileText /> Download PDF</button><button className="btn xs btn-ghost" onClick={() => exportReport("print")}><Printer /> Print</button><button className="btn xs btn-ghost" onClick={() => exportReport("csv")}>CSV</button><button className="btn xs btn-ghost" onClick={() => exportReport("json")}>JSON</button><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
+          </div>
+          <div className="stats">
+            <div className="stat"><div className="sl">Discrepancies</div><div className={"sv" + (report.discrepancies.length ? " warn" : "")}>{report.discrepancies.length}</div></div>
+            <div className="stat"><div className="sl">Shortage total</div><div className={"sv" + (report.shortCost ? " warn" : "")}>{fmt(report.shortCost, cur)}</div></div>
+            <div className="stat"><div className="sl">Overage total</div><div className="sv">{fmt(report.overCost, cur)}</div></div>
+            <div className="stat"><div className="sl">Net variance value</div><div className={"sv" + (report.varianceCost < 0 ? " warn" : "")}>{fmt(report.varianceCost, cur)}</div></div>
+          </div>
+        </div>
+      )}
+      {lossOpen && (
+        <div className="scrim" onClick={() => setLossOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Record loss / damage</div></div><button className="iconbtn" onClick={() => setLossOpen(false)}><X /></button></div>
+            <label className="label" style={{ marginTop: 12 }}>Find product</label>
+            <div className="possearch" style={{ height: 44 }}><Search /><input placeholder="Search name or SKU..." value={lf.q} onChange={(e) => setLf({ ...lf, q: e.target.value, productId: "" })} /></div>
+            {lf.q.trim() !== "" && !lossProd && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>{lossProdMatches.length === 0 ? <span className="cust-meta">No match.</span> : lossProdMatches.map((p) => <button key={p.id} className="inschip" onClick={() => setLf({ ...lf, productId: p.id, q: p.name })}>{p.name} - {productOnHand(data, p, bId)} on hand</button>)}</div>}
+            {lossProd && <>
+              <div className="notice" style={{ marginTop: 10 }}>{lossProd.name} - <b>{onHand(data, lossProd.id, bId)}</b> on hand at {bname}</div>
+              <div className="grid2" style={{ marginTop: 12 }}><div><label className="label">Quantity lost</label><input className="input" inputMode="numeric" value={lf.qty} onChange={(e) => setLf({ ...lf, qty: e.target.value.replace(/\D/g, "") })} placeholder="1" /></div><div><label className="label">Reason</label><select className="select" value={lf.reason} onChange={(e) => setLf({ ...lf, reason: e.target.value })}>{LOSS_REASONS.map((r) => <option key={r}>{r}</option>)}</select></div></div>
+              <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={lf.note} onChange={(e) => setLf({ ...lf, note: e.target.value })} placeholder="e.g. broken in transit" /></div>
+              <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={!(parseInt(lf.qty, 10) > 0)} onClick={recordLoss}><Check /> Record write-off</button>
+            </>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildStockCountReport(session, rows, movements, data, branchName) {
+  const discrepancies = rows.filter((row) => row.varianceQty !== 0).map((row) => ({
+    id: row.productId,
+    name: row.product.name,
+    sku: row.product.sku,
+    system: row.expectedQty,
+    counted: row.countedQty,
+    variance: row.varianceQty,
+    costCents: row.product.costCents || 0,
+    kind: "session",
+  }));
+  return {
+    branchName,
+    branchId: session.branchId,
+    code: session.code,
+    ts: session.committedAt || now(),
+    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: row.product.costCents || 0, kind: "session" })),
+    discrepancies,
+    varianceUnits: rows.reduce((s, row) => s + (row.varianceQty || 0), 0),
+    varianceCost: rows.reduce((s, row) => s + row.valueImpact, 0),
+    shortUnits: discrepancies.filter((l) => l.variance < 0).reduce((s, l) => s - l.variance, 0),
+    overUnits: discrepancies.filter((l) => l.variance > 0).reduce((s, l) => s + l.variance, 0),
+    shortCost: discrepancies.filter((l) => l.variance < 0).reduce((s, l) => s + Math.abs(l.variance * l.costCents), 0),
+    overCost: discrepancies.filter((l) => l.variance > 0).reduce((s, l) => s + l.variance * l.costCents, 0),
+    invUnits: rows.reduce((s, row) => s + (row.finalQty || 0), 0),
+    invCost: rows.reduce((s, row) => s + (row.finalQty || 0) * (row.product.costCents || 0), 0),
+    invRetail: rows.reduce((s, row) => s + (row.finalQty || 0) * (row.product.priceCents || 0), 0),
+    applied: movements.length,
+    amendments: 0,
+    store: data.settings.store,
+  };
+}
+
+function StockTabLegacy({ data, update, branch }) {
   const cur = data.settings.currency;
   const [bId, setBId] = useState(branch.id);
   const [q, setQ] = useState("");

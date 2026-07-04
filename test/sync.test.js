@@ -708,6 +708,124 @@ test("9. sync push reports rejected invalid events so clients can clear non-retr
     });
 });
 
+test("9a. stock count sessions are branch-locked, resumable, and terminal-restricted", async () => {
+  const sessionId = "sc-test-lock-a";
+  const startedAt = Date.now();
+  const openSession = {
+    id: sessionId,
+    type: "stockCountSession",
+    branchId: "b_sip",
+    clientTs: startedAt,
+    updatedAt: startedAt,
+    payload: {
+      branchId: "b_sip",
+      code: "SC-TEST",
+      status: "open",
+      startedBy: "Admin",
+      startedAt,
+      snapshotAt: startedAt,
+      items: [{ productId: "prod-stock-count-1", expectedQty: 5, countedQty: null }],
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [openSession] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(sessionId));
+    });
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      events: [{
+        ...openSession,
+        id: "sc-test-lock-b",
+        clientTs: startedAt + 1,
+        updatedAt: startedAt + 1,
+        payload: { ...openSession.payload, code: "SC-TEST-2" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "stock_count_session_locked");
+      assert.equal(res.body.rejected[0].sessionId, sessionId);
+    });
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      events: [{
+        ...openSession,
+        clientTs: startedAt + 2,
+        updatedAt: startedAt + 2,
+        payload: {
+          ...openSession.payload,
+          items: [{ productId: "prod-stock-count-1", expectedQty: 5, countedQty: 6, countedBy: "Admin", countedAt: startedAt + 2 }],
+        },
+      }],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(sessionId));
+    });
+
+  const stored = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [sessionId]);
+  assert.equal(stored.rows[0].payload.items[0].countedQty, 6);
+
+  const stockCountTerminal = await activateTestTerminal("Stock Count Lock Till");
+
+  await withTerminalAuth(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{ ...openSession, id: "sc-test-terminal-blocked" }] }), stockCountTerminal)
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
+    });
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({
+      events: [
+        {
+          ...openSession,
+          clientTs: startedAt + 3,
+          updatedAt: startedAt + 3,
+          payload: { ...openSession.payload, status: "committed", committedBy: "Admin", committedAt: startedAt + 3 },
+        },
+        {
+          id: "mv-stock-count-commit",
+          type: "stockMovement",
+          branchId: "b_sip",
+          clientTs: startedAt + 3,
+          payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 1, mode: "count", stockCountSessionId: sessionId },
+        },
+        {
+          id: "cl-stock-count-commit",
+          type: "countLog",
+          branchId: "b_sip",
+          clientTs: startedAt + 3,
+          payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 6, mode: "count", stockCountSessionId: sessionId },
+        },
+      ],
+    })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes("mv-stock-count-commit"));
+      assert.ok(res.body.accepted.includes("cl-stock-count-commit"));
+    });
+});
+
 test("10. user credentials created on one device work for login on another device", async () => {
   state.loginTerminal = await activateTestTerminal();
   const unique = Date.now().toString(36);

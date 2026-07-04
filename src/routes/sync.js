@@ -210,9 +210,13 @@ const RECORD_TYPE_ALIASES = new Map([
   ["suppliers", "supplier"],
   ["supplierPrice", "supplierPrice"],
   ["supplierPrices", "supplierPrice"],
+  ["stockCountSession", "stockCountSession"],
+  ["stockCountSessions", "stockCountSession"],
+  ["stock_count_session", "stockCountSession"],
+  ["stock_count_sessions", "stockCountSession"],
 ]);
 
-const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory"]);
+const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession"]);
 const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set(["borrowing", "cashMovement", "endOfDay", "payment", "purchase"]);
 
 function normalizeType(type) {
@@ -257,6 +261,33 @@ function enforceTerminalWritePolicy(req, type) {
   return { ok: true };
 }
 
+async function validateStockCountSessionWrite(client, ev) {
+  const payload = ev.payload || {};
+  const branchId = ev.branchId || payload.branchId;
+  const status = String(payload.status || "").toLowerCase();
+  if (!branchId) return { ok: false, reason: "stock_count_branch_required" };
+  if (!["open", "paused", "committed", "cancelled"].includes(status)) {
+    return { ok: false, reason: "stock_count_status_invalid" };
+  }
+  if (["open", "paused"].includes(status) && !ev.deleted) {
+    const existing = await client.query(
+      `SELECT id, payload
+         FROM records
+        WHERE type = 'stockCountSession'
+          AND deleted = false
+          AND id <> $1
+          AND COALESCE(branch_id, payload->>'branchId') = $2
+          AND payload->>'status' IN ('open', 'paused')
+        LIMIT 1`,
+      [ev.id, branchId]
+    );
+    if (existing.rows.length) {
+      return { ok: false, reason: "stock_count_session_locked", sessionId: existing.rows[0].id };
+    }
+  }
+  return { ok: true };
+}
+
 router.post("/push", async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
@@ -297,6 +328,13 @@ router.post("/push", async (req, res) => {
         accepted.push(guardedEvent.id);
         serverTs[guardedEvent.id] = ts;
       } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
+        if (type === "stockCountSession") {
+          const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
+          if (!stockCountValidation.ok) {
+            rejected.push({ id: ev.id, type, reason: stockCountValidation.reason, sessionId: stockCountValidation.sessionId });
+            continue;
+          }
+        }
         const ts = await upsertMutableRecord(client, guardedEvent, type, req.deviceId, nextServerTs());
         if (type === "product") await propagateProductGlobalFields(client, guardedEvent, req.deviceId, ts);
         accepted.push(guardedEvent.id);
