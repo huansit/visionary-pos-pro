@@ -726,7 +726,6 @@ function normalizeLoadedData(data) {
   if (!data) return data;
   const settings = { ...(data.settings || {}) };
   if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
-  const defaultBranchId = settings.activeBranchId || data.branches?.[0]?.id || "b_sip";
   const catalogByCode = new Map((data.barcodeCatalog || []).map((entry) => [normalizeBarcode(entry.barcode).toLowerCase(), entry]));
   const barcodeCatalog = [...(data.barcodeCatalog || [])];
   const ensureEntry = (code) => {
@@ -750,7 +749,7 @@ function normalizeLoadedData(data) {
     });
     return {
       ...product,
-      branchId: product.branchId || defaultBranchId,
+      branchId: product.branchId || product.branch_id || "",
       barcode: primary || product.barcode || product.sku,
       barcodeCatalogId: product.barcodeCatalogId || entry?.id || null,
       barcodeCatalogIds: extraIds,
@@ -774,7 +773,14 @@ async function saveData(data) {
 
 function normalizeBarcode(value) { return String(value || "").trim().replace(/\s+/g, ""); }
 function isValidBarcode(value) { return /^[A-Za-z0-9._-]{4,64}$/.test(normalizeBarcode(value)); }
-function productBranchId(product, data) { return product?.branchId || data?.settings?.activeBranchId || data?.branches?.[0]?.id || ""; }
+function productBranchId(product) { return product?.branchId || product?.branch_id || ""; }
+function productVisibleInBranch(product, data, branchId) {
+  if (!branchId) return true;
+  const explicitBranch = productBranchId(product);
+  if (!explicitBranch || explicitBranch === branchId) return true;
+  const key = productDedupeKey(product);
+  return !(data?.products || []).some((p) => productBranchId(p) === branchId && productDedupeKey(p) === key);
+}
 function findBarcodeCatalogEntry(data, code) {
   const normalized = normalizeBarcode(code).toLowerCase();
   if (!normalized) return null;
@@ -792,12 +798,12 @@ function productMatchesCatalog(product, catalogEntry) {
   return !!catalogEntry && barcodeCatalogIdsForProduct(product).includes(catalogEntry.id);
 }
 function productDedupeKey(product) {
-  const catalogId = barcodeCatalogIdsForProduct(product)[0];
-  if (catalogId) return "catalog:" + catalogId;
   const sku = normalizeBarcode(product?.sku).toLowerCase();
   if (sku) return "sku:" + sku;
   const barcode = normalizeBarcode(product?.barcode).toLowerCase();
   if (barcode) return "barcode:" + barcode;
+  const catalogId = barcodeCatalogIdsForProduct(product)[0];
+  if (catalogId) return "catalog:" + catalogId;
   const name = String(product?.name || "").trim().toLowerCase();
   const size = String(product?.size || "").trim().toLowerCase();
   if (name) return "name:" + name + "|" + size;
@@ -820,12 +826,12 @@ function dedupeProductsByCode(products) {
   return Array.from(byKey.values());
 }
 function branchProductsUnique(data, branchId) {
-  return dedupeProductsByCode((data?.products || []).filter((p) => !branchId || productBranchId(p, data) === branchId));
+  return dedupeProductsByCode((data?.products || []).filter((p) => productVisibleInBranch(p, data, branchId)));
 }
 function duplicateProductIds(data, product, branchId) {
   const key = productDedupeKey(product);
   return (data?.products || [])
-    .filter((p) => (!branchId || productBranchId(p, data) === branchId) && productDedupeKey(p) === key)
+    .filter((p) => productVisibleInBranch(p, data, branchId) && productDedupeKey(p) === key)
     .map((p) => p.id);
 }
 function productOnHand(data, product, branchId) {
@@ -837,7 +843,7 @@ function findProductByBarcode(data, code, branchId) {
   const normalized = normalizeBarcode(code);
   if (!normalized) return null;
   const catalogEntry = findBarcodeCatalogEntry(data, normalized);
-  const branchProducts = (data?.products || []).filter((p) => !branchId || productBranchId(p, data) === branchId);
+  const branchProducts = (data?.products || []).filter((p) => productVisibleInBranch(p, data, branchId));
   return branchProducts.find((p) => productMatchesCatalog(p, catalogEntry)) || branchProducts.find((p) => productMatchesBarcode(p, normalized)) || null;
 }
 function barcodeLookup(data, code, branchId) {
@@ -3721,7 +3727,7 @@ function Register({ data, update, online, employee, branch }) {
     if (force || !isEditing || active === searchInputRef.current) searchInputRef.current?.focus();
   }, 0);
 
-  const branchProducts = sortProductsAZ(data.products.filter((p) => productBranchId(p, data) === branch.id));
+  const branchProducts = branchProductsUnique(data, branch.id);
   const activeExpenseCategories = cashierExpenseCategories(data);
   const defaultExpenseCategory = activeExpenseCategories[0]?.name || "Other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
@@ -3872,7 +3878,7 @@ function Register({ data, update, online, employee, branch }) {
     if (!isValidBarcode(barcode)) return setScanErr("Scan a valid barcode.");
     if (!scanProduct.name.trim()) return setScanErr("Add a product name.");
     if (!price || price <= 0) return setScanErr("Enter a valid price.");
-    const existingInBranch = data.products.some((p) => productBranchId(p, data) === branch.id && (productMatchesBarcode(p, barcode) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, barcode))));
+    const existingInBranch = data.products.some((p) => productVisibleInBranch(p, data, branch.id) && (productMatchesBarcode(p, barcode) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, barcode))));
     if (existingInBranch) return setScanErr("Barcode already exists in this branch.");
     const sku = scanProduct.sku.trim() || barcode;
     if (data.products.some((p) => normalizeBarcode(p.sku).toLowerCase() === normalizeBarcode(sku).toLowerCase())) return setScanErr("SKU already exists.");
@@ -5177,7 +5183,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [editId, setEditId] = useState(null);
   const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
-  const isBranchProduct = (p) => productBranchId(p, data) === branch.id;
+  const isBranchProduct = (p) => productVisibleInBranch(p, data, branch.id);
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
@@ -5309,13 +5315,13 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
     if (price < (Number.isNaN(cost) ? p.costCents : cost)) return setErr("Selling price cannot be below cost.");
     const otherProducts = data.products.filter((x) => x.id !== p.id);
-    if (otherProducts.some((x) => productBranchId(x, data) === productBranchId(p, data) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
+    if (otherProducts.some((x) => productVisibleInBranch(x, data, branch.id) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), p.sku.toLowerCase()]);
     const duplicateExtra = extraBarcodes.find((code) => {
       const normalized = code.toLowerCase();
       if (seenCodes.has(normalized)) return true;
       seenCodes.add(normalized);
-      return otherProducts.some((x) => productBranchId(x, data) === productBranchId(p, data) && productCodeMatch(x, code));
+      return otherProducts.some((x) => productVisibleInBranch(x, data, branch.id) && productCodeMatch(x, code));
     });
     if (duplicateExtra) return setErr("Duplicate barcode: " + duplicateExtra);
     update((d) => {
@@ -5330,9 +5336,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const copyBranches = data.branches.filter((b) => b.id !== branch.id);
   const copySource = data.branches.find((b) => b.id === copyFrom) || copyBranches[0] || null;
   const countMissingFromSource = (sourceId = copyFrom) => {
-    const targetIds = new Set(data.products.filter(isBranchProduct).flatMap((p) => barcodeCatalogIdsForProduct(p)));
-    return data.products.filter((p) => productBranchId(p, data) === sourceId)
-      .filter((p) => barcodeCatalogIdsForProduct(p).some((id) => id && !targetIds.has(id))).length;
+    const targetKeys = new Set(branchProductsUnique(data, branch.id).map(productDedupeKey));
+    return branchProductsUnique(data, sourceId)
+      .filter((p) => !targetKeys.has(productDedupeKey(p)))
+      .length;
   };
   const copyMissingProducts = () => {
     const sourceId = copyFrom || copyBranches[0]?.id;
@@ -5341,8 +5348,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     let copied = 0;
     update((d) => {
       let barcodeCatalog = d.barcodeCatalog || [];
-      const sourceProducts = sortProductsAZ(d.products.filter((p) => productBranchId(p, d) === sourceId));
-      const targetIds = new Set(d.products.filter((p) => productBranchId(p, d) === branch.id).flatMap((p) => barcodeCatalogIdsForProduct(p)));
+      const sourceProducts = sortProductsAZ(branchProductsUnique(d, sourceId));
+      const targetKeys = new Set(branchProductsUnique(d, branch.id).map(productDedupeKey));
+      const targetIds = new Set(branchProductsUnique(d, branch.id).flatMap((p) => barcodeCatalogIdsForProduct(p)));
       const products = [...d.products];
       for (const source of sourceProducts) {
         let primaryId = source.barcodeCatalogId;
@@ -5353,7 +5361,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           primaryId = ensured.entries[0]?.id || null;
           extraIds = ensured.entries.slice(1).map((entry) => entry.id);
         }
-        if (!primaryId || targetIds.has(primaryId)) continue;
+        if (!primaryId || targetIds.has(primaryId) || targetKeys.has(productDedupeKey(source))) continue;
         products.push({
           ...source,
           id: uid("p"),
@@ -5366,6 +5374,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           updatedAt: ts,
         });
         targetIds.add(primaryId);
+        targetKeys.add(productDedupeKey(source));
         copied++;
       }
       return { ...d, products, barcodeCatalog };
@@ -6727,7 +6736,7 @@ function PricingTab({ data, update, branch }) {
     return sortProductsAZ(Array.from(byKey.values()));
   };
   const list = dedupePricingProducts(data.products.filter((p) =>
-    productBranchId(p, data) === bId &&
+    productVisibleInBranch(p, data, bId) &&
     (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
   const draftFor = (p) => priceDrafts[p.id] ?? (p.priceCents > 0 ? String(p.priceCents / 100) : "");
@@ -6743,7 +6752,7 @@ function PricingTab({ data, update, branch }) {
     });
     update((d) => ({
       ...d,
-      products: d.products.map((x) => productBranchId(x, d) === bId && pricingKey(x) === pricingKey(p) ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
+      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
     }));
   };
   return (
