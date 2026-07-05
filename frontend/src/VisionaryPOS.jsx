@@ -4756,7 +4756,8 @@ function InsightsTab({ data, online }) {
 function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onEnvironmentChange, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
-  const isAdmin = role === "Admin";
+  const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
+  const isAdmin = role === "Admin" || accountRole === "admin" || accountRole === "owner" || hasRight(rights, "admin") || hasRight(rights, "owner");
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
   const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);

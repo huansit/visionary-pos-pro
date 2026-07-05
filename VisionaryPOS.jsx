@@ -2461,9 +2461,15 @@ function InsightsTab({ data, online }) {
 function AdminWorkspace({ data, update, branch, user, role, rights, online, onCleanReset }) {
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
-  const isAdmin = role === "Admin";
+  const normalizedRights = Array.isArray(rights)
+    ? rights
+    : rights && typeof rights === "object"
+      ? [...(Array.isArray(rights.rights) ? rights.rights : []), ...Object.entries(rights).filter(([, value]) => value === true).map(([key]) => key)]
+      : [];
+  const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
+  const isAdmin = role === "Admin" || accountRole === "admin" || accountRole === "owner" || normalizedRights.includes("admin") || normalizedRights.includes("owner");
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; return !req || (rights || []).includes(req); };
+  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; return !req || normalizedRights.includes(req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
