@@ -6,7 +6,8 @@ const router = Router();
 
 function isOwner(account) {
   const role = String(account?.role || account?.kind || "").toLowerCase();
-  return role === "owner";
+  const rights = account?.rights && typeof account.rights === "object" ? account.rights : {};
+  return role === "owner" || rights.owner === true || String(rights.role || "").toLowerCase() === "owner";
 }
 
 router.get("/public", async (_req, res, next) => {
