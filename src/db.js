@@ -1,11 +1,56 @@
 import pg from "pg";
 import "dotenv/config";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 let Pool = pg.Pool;
-const databaseUrl = process.env.DATABASE_URL || "";
+const ENVIRONMENTS = new Set(["test", "live"]);
+const defaultDatabaseUrl = process.env.DATABASE_URL || "";
+const environmentStatePath = process.env.VISIONPOS_ENVIRONMENT_STATE_FILE || join(process.cwd(), ".visionpos-environment.json");
+const poolByMode = new Map();
+
+function normalizeDbEnvironment(value) {
+  const mode = String(value || "").trim().toLowerCase();
+  return ENVIRONMENTS.has(mode) ? mode : "test";
+}
+
+function readPersistedEnvironment() {
+  try {
+    if (!existsSync(environmentStatePath)) return null;
+    const parsed = JSON.parse(readFileSync(environmentStatePath, "utf8"));
+    return normalizeDbEnvironment(parsed?.mode);
+  } catch {
+    return null;
+  }
+}
+
+let activeDatabaseEnvironment = normalizeDbEnvironment(
+  readPersistedEnvironment() || process.env.VISIONPOS_ENVIRONMENT || process.env.APP_ENVIRONMENT || "test"
+);
+
+export function getActiveDatabaseEnvironment() {
+  return process.env.PG_MEM === "1" ? "test" : activeDatabaseEnvironment;
+}
+
+export function setActiveDatabaseEnvironment(mode) {
+  activeDatabaseEnvironment = normalizeDbEnvironment(mode);
+  if (process.env.PG_MEM === "1") return activeDatabaseEnvironment;
+  mkdirSync(dirname(environmentStatePath), { recursive: true });
+  const tmp = `${environmentStatePath}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ mode: activeDatabaseEnvironment, updatedAt: new Date().toISOString() }, null, 2));
+  renameSync(tmp, environmentStatePath);
+  return activeDatabaseEnvironment;
+}
+
+export function getDatabaseUrlForMode(mode = getActiveDatabaseEnvironment()) {
+  if (process.env.PG_MEM === "1") return defaultDatabaseUrl;
+  const normalized = normalizeDbEnvironment(mode);
+  const specific = process.env[`DATABASE_URL_${normalized.toUpperCase()}`];
+  return specific || defaultDatabaseUrl;
+}
+
+const databaseUrl = getDatabaseUrlForMode(activeDatabaseEnvironment);
 export const isMySql = databaseUrl.startsWith("mysql://") || databaseUrl.startsWith("mysql2://");
 
 if (process.env.PG_MEM === "1") {
@@ -17,7 +62,7 @@ if (process.env.PG_MEM === "1") {
 
 function postgresPool() {
   return new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: getDatabaseUrlForMode(),
     max: parseInt(process.env.PGPOOL_MAX || "20", 10),
     idleTimeoutMillis: parseInt(process.env.PGPOOL_IDLE_TIMEOUT_MS || "30000", 10),
     connectionTimeoutMillis: parseInt(process.env.PGPOOL_CONNECTION_TIMEOUT_MS || "5000", 10),
@@ -74,10 +119,12 @@ function mysqlPool(rawPool) {
 }
 
 async function createPool() {
-  if (isMySql) {
+  const url = getDatabaseUrlForMode();
+  const currentIsMySql = url.startsWith("mysql://") || url.startsWith("mysql2://");
+  if (currentIsMySql) {
     const mysql = await import("mysql2/promise");
     const rawPool = mysql.createPool({
-      uri: databaseUrl,
+      uri: url,
       waitForConnections: true,
       connectionLimit: parseInt(process.env.MYSQL_POOL_MAX || process.env.PGPOOL_MAX || "20", 10),
       queueLimit: 0,
@@ -87,8 +134,27 @@ async function createPool() {
   return postgresPool();
 }
 
-// Single shared connection pool (don't open a connection per request).
-export const pool = await createPool();
+async function poolForActiveEnvironment() {
+  const mode = getActiveDatabaseEnvironment();
+  if (!poolByMode.has(mode)) {
+    poolByMode.set(mode, await createPool());
+  }
+  return poolByMode.get(mode);
+}
+
+// Dynamic pool facade: existing imports keep working while TEST/LIVE switch databases.
+export const pool = {
+  async query(text, params) {
+    return (await poolForActiveEnvironment()).query(text, params);
+  },
+  async connect() {
+    return (await poolForActiveEnvironment()).connect();
+  },
+  async end() {
+    await Promise.all([...poolByMode.values()].map((activePool) => activePool.end?.()));
+    poolByMode.clear();
+  }
+};
 
 export const q = (text, params) => pool.query(text, params);
 

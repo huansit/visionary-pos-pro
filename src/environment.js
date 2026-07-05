@@ -1,5 +1,11 @@
 import crypto from "node:crypto";
-import { isMySql, q } from "./db.js";
+import {
+  getActiveDatabaseEnvironment,
+  getDatabaseUrlForMode,
+  isMySql,
+  q,
+  setActiveDatabaseEnvironment,
+} from "./db.js";
 
 const ENVIRONMENTS = new Set(["test", "live"]);
 
@@ -13,7 +19,7 @@ export function environmentLabel(mode) {
 }
 
 export function configuredEnvironmentMode() {
-  return normalizeEnvironmentMode(process.env.VISIONPOS_ENVIRONMENT || process.env.APP_ENVIRONMENT || "test");
+  return normalizeEnvironmentMode(getActiveDatabaseEnvironment() || process.env.VISIONPOS_ENVIRONMENT || process.env.APP_ENVIRONMENT || "test");
 }
 
 function redactDatabaseUrl(value) {
@@ -34,7 +40,7 @@ export function environmentConfig(mode = configuredEnvironmentMode()) {
   return {
     mode: normalized,
     label: environmentLabel(normalized),
-    database: redactDatabaseUrl(process.env[`DATABASE_URL_${suffix}`] || process.env.DATABASE_URL),
+    database: redactDatabaseUrl(getDatabaseUrlForMode(normalized) || process.env[`DATABASE_URL_${suffix}`] || process.env.DATABASE_URL),
     api: process.env.PUBLIC_APP_URL || process.env.APP_URL || "https://visionarypos.cloud",
     version: process.env.npm_package_version || "0.1.0"
   };
@@ -52,11 +58,11 @@ async function optionalSchema(statement) {
   }
 }
 
-let schemaReady = false;
+const schemaReady = new Set();
 
 export async function ensureEnvironmentSchema() {
-  if (schemaReady) return;
   const initialMode = configuredEnvironmentMode();
+  if (schemaReady.has(initialMode)) return;
 
   if (isMySql) {
     await q(`
@@ -86,6 +92,10 @@ export async function ensureEnvironmentSchema() {
     `);
     await q(
       "INSERT IGNORE INTO system_environment (id, mode, metadata) VALUES ('active', $1, $2)",
+      [initialMode, JSON.stringify(environmentConfig(initialMode))]
+    );
+    await q(
+      "UPDATE system_environment SET mode = $1, metadata = $2, updated_at = NOW() WHERE id = 'active' AND mode <> $1",
       [initialMode, JSON.stringify(environmentConfig(initialMode))]
     );
     await optionalSchema(`ALTER TABLE devices ADD COLUMN environment VARCHAR(16) NOT NULL DEFAULT '${initialMode}'`);
@@ -123,6 +133,15 @@ export async function ensureEnvironmentSchema() {
        ON CONFLICT (id) DO NOTHING`,
       [initialMode, JSON.stringify(environmentConfig(initialMode))]
     );
+    await q(
+      `UPDATE system_environment
+          SET mode = $1,
+              metadata = $2,
+              updated_at = now()
+        WHERE id = 'active'
+          AND mode <> $1`,
+      [initialMode, JSON.stringify(environmentConfig(initialMode))]
+    );
     await optionalSchema(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT '${initialMode}'`);
     await optionalSchema(`ALTER TABLE terminal_activation_codes ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT '${initialMode}'`);
     await optionalSchema(`ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT '${initialMode}'`);
@@ -131,7 +150,7 @@ export async function ensureEnvironmentSchema() {
     await optionalSchema("CREATE INDEX IF NOT EXISTS idx_user_sessions_environment ON user_sessions(environment)");
   }
 
-  schemaReady = true;
+  schemaReady.add(initialMode);
 }
 
 export function sameEnvironment(left, right) {
@@ -220,8 +239,29 @@ export async function switchEnvironment({ req, user, mode, confirmation }) {
     throw error;
   }
 
-  const nowExpr = isMySql ? "NOW()" : "now()";
   const switchedBy = user?.name || user?.email || user?.id || "owner";
+  const currentDetail = JSON.stringify({ label: environmentLabel(nextMode), targetDatabase: environmentConfig(nextMode).database });
+
+  await q(
+    `INSERT INTO environment_audit_log
+      (id, user_id, user_name, previous_environment, new_environment, ip_address, device, detail)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      crypto.randomUUID(),
+      user?.id || null,
+      switchedBy,
+      currentMode,
+      nextMode,
+      req?.ip || req?.headers?.["x-forwarded-for"] || null,
+      req?.headers?.["user-agent"] || null,
+      currentDetail
+    ]
+  );
+
+  setActiveDatabaseEnvironment(nextMode);
+  await ensureEnvironmentSchema();
+
+  const nowExpr = isMySql ? "NOW()" : "now()";
   const config = JSON.stringify(environmentConfig(nextMode));
 
   await q(
@@ -248,7 +288,7 @@ export async function switchEnvironment({ req, user, mode, confirmation }) {
       nextMode,
       req?.ip || req?.headers?.["x-forwarded-for"] || null,
       req?.headers?.["user-agent"] || null,
-      JSON.stringify({ label: environmentLabel(nextMode) })
+      JSON.stringify({ label: environmentLabel(nextMode), sourceEnvironment: currentMode })
     ]
   );
 
