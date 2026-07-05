@@ -36,6 +36,7 @@ const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 5 * 60 * 1000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
+let activeSessionToken = "";
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -600,7 +601,7 @@ async function loadJson(key, fallback) {
 async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
 async function loadSessionState() { return await loadJson(SESSION_KEY, null); }
 async function saveSessionState(value) { await saveJson(SESSION_KEY, value); }
-async function clearSessionState() { await kvSet(SESSION_KEY, ""); }
+async function clearSessionState() { activeSessionToken = ""; await kvSet(SESSION_KEY, ""); }
 
 function storageKeys() {
   try {
@@ -1062,7 +1063,7 @@ async function deviceAuthHeaders(branchId = null, base = {}) {
   return headers;
 }
 function sessionAuthHeaders(base = {}) {
-  const token = storedSessionTokenSync();
+  const token = activeSessionToken || storedSessionTokenSync();
   return token ? { ...base, "X-Session-Token": token } : { ...base };
 }
 async function authApi(path, body, options = {}) {
@@ -1129,6 +1130,7 @@ function storedSessionTokenSync() {
   } catch (_) { return ""; }
 }
 function clearSessionStateSync() {
+  activeSessionToken = "";
   try {
     if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(SESSION_KEY, "");
   } catch (_) {}
@@ -2840,6 +2842,7 @@ export default function VisionPOS() {
     const savedSession = await loadSessionState();
     if (savedSession?.sessionToken) {
       try {
+        activeSessionToken = savedSession.sessionToken;
         const active = await cloudSession(savedSession.sessionToken);
         const restored = accountToSession(active.account, loaded.settings.activeBranchId);
         if (restored?.status === "active") {
@@ -2852,9 +2855,11 @@ export default function VisionPOS() {
           setSession({ ...restored, sessionToken: savedSession.sessionToken });
           setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
         } else {
+          activeSessionToken = "";
           await clearSessionState();
         }
       } catch (_) {
+        activeSessionToken = "";
         await clearSessionState();
       }
     }
@@ -2862,6 +2867,7 @@ export default function VisionPOS() {
   })(); }, []);
   const signInSession = (nextView, emp = null, sessionToken = "") => {
     const signedIn = emp || null;
+    activeSessionToken = sessionToken || signedIn?.sessionToken || "";
     setSession(signedIn);
     setView(nextView);
     saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: now() });
