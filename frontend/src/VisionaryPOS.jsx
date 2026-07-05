@@ -725,10 +725,37 @@ async function runMaintenanceService({ data, mode = "light", runSync } = {}) {
 
 function normalizeLoadedData(data) {
   if (!data) return data;
-  const settings = { ...(data.settings || {}) };
+  const clean = CLEAN_SETUP();
+  const settings = { ...clean.settings, ...(data.settings || {}) };
   if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
-  const catalogByCode = new Map((data.barcodeCatalog || []).map((entry) => [normalizeBarcode(entry.barcode).toLowerCase(), entry]));
-  const barcodeCatalog = [...(data.barcodeCatalog || [])];
+  const normalized = {
+    ...clean,
+    ...data,
+    settings,
+    admin: { ...clean.admin, ...(data.admin || {}) },
+    branches: Array.isArray(data.branches) ? data.branches : [],
+    employees: Array.isArray(data.employees) ? data.employees : [],
+    customers: Array.isArray(data.customers) ? data.customers : clean.customers,
+    suppliers: Array.isArray(data.suppliers) ? data.suppliers : [],
+    supplierPrices: Array.isArray(data.supplierPrices) ? data.supplierPrices : [],
+    products: Array.isArray(data.products) ? data.products : [],
+    barcodeCatalog: Array.isArray(data.barcodeCatalog) ? data.barcodeCatalog : [],
+    stockMovements: Array.isArray(data.stockMovements) ? data.stockMovements : [],
+    stockCountSessions: Array.isArray(data.stockCountSessions) ? data.stockCountSessions : [],
+    orders: Array.isArray(data.orders) ? data.orders : [],
+    payments: Array.isArray(data.payments) ? data.payments : [],
+    invoices: Array.isArray(data.invoices) ? data.invoices : [],
+    purchases: Array.isArray(data.purchases) ? data.purchases : [],
+    expenses: Array.isArray(data.expenses) ? data.expenses : [],
+    expenseCategories: Array.isArray(data.expenseCategories) ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES,
+    cashMovements: Array.isArray(data.cashMovements) ? data.cashMovements : [],
+    borrowings: Array.isArray(data.borrowings) ? data.borrowings : [],
+    endOfDays: Array.isArray(data.endOfDays) ? data.endOfDays : [],
+    countLog: Array.isArray(data.countLog) ? data.countLog : [],
+    branchPricing: data.branchPricing && typeof data.branchPricing === "object" ? data.branchPricing : {},
+  };
+  const catalogByCode = new Map((normalized.barcodeCatalog || []).map((entry) => [normalizeBarcode(entry.barcode).toLowerCase(), entry]));
+  const barcodeCatalog = [...(normalized.barcodeCatalog || [])];
   const ensureEntry = (code) => {
     const barcode = normalizeBarcode(code);
     if (!barcode) return null;
@@ -740,7 +767,7 @@ function normalizeLoadedData(data) {
     barcodeCatalog.push(entry);
     return entry;
   };
-  const products = (data.products || []).map((product) => {
+  const products = (normalized.products || []).map((product) => {
     const primary = normalizeBarcode(product.barcode || product.sku);
     const entry = product.barcodeCatalogId ? null : ensureEntry(primary);
     const extraIds = [...(product.barcodeCatalogIds || [])];
@@ -756,7 +783,7 @@ function normalizeLoadedData(data) {
       barcodeCatalogIds: extraIds,
     };
   });
-  return reconcileInvoicePayments({ ...data, settings, products, barcodeCatalog, stockCountSessions: data.stockCountSessions || [] });
+  return reconcileInvoicePayments({ ...normalized, products, barcodeCatalog });
 }
 
 async function loadData() {
@@ -1468,6 +1495,29 @@ async function syncStatus() {
   const outbox = await loadOutbox();
   const cursor = await loadCursor();
   return { outboxLength: outbox.length, cursor };
+}
+function applyEnvironmentMode(data, mode) {
+  const normalized = normalizeLoadedData(data || CLEAN_SETUP()) || CLEAN_SETUP();
+  return {
+    ...normalized,
+    settings: {
+      ...normalized.settings,
+      environmentMode: normalizeEnvironmentMode(mode),
+    },
+  };
+}
+async function resetEnvironmentSyncState(mode) {
+  await saveOutbox([]);
+  await saveCursor(0);
+  return { ...applyEnvironmentMode(CLEAN_SETUP(), mode), _sync: await syncStatus() };
+}
+async function loadEnvironmentAwareData(env) {
+  const mode = normalizeEnvironmentMode(env?.mode);
+  const loaded = await loadData();
+  const storedMode = loaded?.settings?.environmentMode;
+  const needsEnvironmentReset = !!loaded && (!storedMode || normalizeEnvironmentMode(storedMode) !== mode);
+  const base = needsEnvironmentReset ? await resetEnvironmentSyncState(mode) : { ...applyEnvironmentMode(loaded || CLEAN_SETUP(), mode), _sync: await syncStatus() };
+  return await cloudBootstrapData(base);
 }
 async function enqueueChanges(prev, next) {
   const changes = diffToSyncEvents(prev, next);
@@ -2828,10 +2878,13 @@ export default function VisionPOS() {
     const hasRegisteredTerminal = await hasDesktopTerminalAuth();
     setTerminalLoginAvailable(hasRegisteredTerminal);
     const resetToken = (() => { try { return new URLSearchParams(window.location.search).get("resetToken") || ""; } catch (_) { return ""; } })();
-    const l = await loadData();
-    const loaded = await cloudBootstrapData(l);
+    let env = null;
+    try {
+      env = await environmentPublic();
+      setEnvironmentInfo(env);
+    } catch (_) {}
+    const loaded = await loadEnvironmentAwareData(env);
     saveData(loaded);
-    try { setEnvironmentInfo(await environmentPublic()); } catch (_) {}
     if (resetToken) {
       await clearSessionState();
       setSession(null);
@@ -2958,7 +3011,16 @@ export default function VisionPOS() {
   const switchActiveEnvironment = async (mode, confirmation) => {
     const env = await environmentSwitch(mode, confirmation);
     setEnvironmentInfo(env);
-    await runSync({ force: true, source: "environment-switch" });
+    const clean = await resetEnvironmentSyncState(env.mode);
+    await saveData(clean);
+    dataRef.current = clean;
+    setData(clean);
+    try {
+      const result = await runSyncClient(clean);
+      setData(result.data);
+    } catch (error) {
+      setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
+    }
     return env;
   };
   useEffect(() => {
