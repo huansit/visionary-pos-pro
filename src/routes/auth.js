@@ -1016,12 +1016,12 @@ router.post("/register-owner", async (req, res) => {
            rights = VALUES(rights),
            email_verified = VALUES(email_verified),
            updated_at = NOW()`,
-        [id, String(name).trim(), email, phone, passwordHash, { admin: true }, channel === "email"]
+        [id, String(name).trim(), email, phone, passwordHash, { admin: true, owner: true, role: "owner" }, channel === "email"]
       );
     } else {
       await q(
         `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights, email_verified)
-         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, '{"admin":true}'::jsonb, $6)
+         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, '{"admin":true,"owner":true,"role":"owner"}'::jsonb, $6)
          ON CONFLICT (id) DO UPDATE SET
            name = EXCLUDED.name,
            email = EXCLUDED.email,
