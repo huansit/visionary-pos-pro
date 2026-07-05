@@ -1147,6 +1147,24 @@ async function cloudLogout(sessionToken) {
   if (!sessionToken) return;
   try { await authApi("/api/auth/logout", { sessionToken }); } catch (_) {}
 }
+function rightsList(value) {
+  if (Array.isArray(value)) return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  if (!value) return [];
+  if (typeof value === "string") {
+    try { return rightsList(JSON.parse(value)); } catch (_) { return value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean); }
+  }
+  if (typeof value === "object") {
+    const nested = rightsList(value.rights || value.permissions || value.scopes);
+    const flags = Object.entries(value)
+      .filter(([key, enabled]) => enabled === true && !["role", "kind", "branchId", "branch_id", "email", "phone"].includes(key))
+      .map(([key]) => key);
+    return [...new Set([...nested, ...flags])];
+  }
+  return [];
+}
+function hasRight(value, right) {
+  return rightsList(value).includes(right);
+}
 function storedSessionStateSync() {
   try {
     if (typeof window === "undefined" || !window.localStorage) return null;
@@ -4740,7 +4758,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
   const [navCollapsed, setNavCollapsed] = useState(false);
   const isAdmin = role === "Admin";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || (rights || []).includes(req); };
+  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
@@ -8377,7 +8395,7 @@ function UsersTab({ data, update, isAdmin }) {
   };
   const reset = () => { setF({ name: "", role: ROLES[0], pin: "", email: "", password: "", branchId: data.branches[0]?.id || "", rights: ROLE_RIGHTS.Cashier.slice() }); setErr(""); setAdding(false); };
   const setRole = (role) => setF((p) => ({ ...p, role, rights: (ROLE_RIGHTS[role] || []).slice(), branchId: role === "Cashier" && !p.branchId ? (data.branches[0]?.id || "") : p.branchId }));
-  const toggleNew = (r) => setF((p) => ({ ...p, rights: p.rights.includes(r) ? p.rights.filter((x) => x !== r) : [...p.rights, r] }));
+  const toggleNew = (r) => setF((p) => { const cur = rightsList(p.rights); return { ...p, rights: cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r] }; });
   const add = () => {
     if (!f.name.trim()) return setErr("Add a name.");
     if (f.role === "Cashier") {
@@ -8463,7 +8481,7 @@ function UsersTab({ data, update, isAdmin }) {
       setFpBusy(false);
     }
   };
-  const toggleRight = (id, r) => update((d) => ({ ...d, employees: d.employees.map((e) => { if (e.id !== id) return e; const cur = e.rights || []; const rights = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]; return { ...e, rights, synced: false }; }) }));
+  const toggleRight = (id, r) => update((d) => ({ ...d, employees: d.employees.map((e) => { if (e.id !== id) return e; const cur = rightsList(e.rights); const rights = cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]; return { ...e, rights, synced: false }; }) }));
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const loadTerminals = async () => {
     setTerminalBusy(true);
@@ -8505,10 +8523,11 @@ function UsersTab({ data, update, isAdmin }) {
     }
   };
   useEffect(() => { if (isAdmin) loadTerminals(); }, [isAdmin]); // eslint-disable-line
-  const RightsGrid = ({ selected, onToggle }) => (
-    <div className="rights-grid">{RIGHTS.map((r) => { const on = selected.includes(r.id); return (
-      <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>
-  );
+  const RightsGrid = ({ selected, onToggle }) => {
+    const selectedRights = rightsList(selected);
+    return <div className="rights-grid">{RIGHTS.map((r) => { const on = selectedRights.includes(r.id); return (
+      <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>;
+  };
   return (
     <div><PageHead title="Users & Security" sub="Cashiers sign in with a PIN at their branch. Supervisors and managers sign in with email & password." />
       {delMsg && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)" }}><AlertCircle style={{ width: 14, height: 14, verticalAlign: "-2px", color: "var(--danger)" }} /> {delMsg} <button className="linknum" onClick={() => setDelMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}

@@ -33,10 +33,17 @@ function eventId(prefix) {
 }
 
 function readRights(row) {
-  const rights = row?.rights && typeof row.rights === "object" ? row.rights : {};
+  const rights = row?.rights;
   if (Array.isArray(rights)) return rights;
-  if (Array.isArray(rights.rights)) return rights.rights;
-  return rights.admin ? ["admin"] : [];
+  if (typeof rights === "string") {
+    try { return readRights({ rights: JSON.parse(rights) }); } catch (_) { return rights.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean); }
+  }
+  if (rights && typeof rights === "object") {
+    const nested = Array.isArray(rights.rights) ? rights.rights : [];
+    const flags = Object.entries(rights).filter(([key, enabled]) => enabled === true && key !== "role").map(([key]) => key);
+    return [...new Set([...nested, ...flags])];
+  }
+  return [];
 }
 
 function roleFromCredential(row, source = "credentials") {
