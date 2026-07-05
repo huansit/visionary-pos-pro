@@ -90,7 +90,7 @@ async function requireTerminalHeaders(req) {
   return terminal;
 }
 
-async function loadUserSession(token) {
+export async function loadUserSession(token) {
   if (!token) return null;
   await ensureEnvironmentSchema();
   const activeEnvironment = await getActiveEnvironmentMode();

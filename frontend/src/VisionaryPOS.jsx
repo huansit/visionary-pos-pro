@@ -1147,14 +1147,27 @@ async function cloudLogout(sessionToken) {
   if (!sessionToken) return;
   try { await authApi("/api/auth/logout", { sessionToken }); } catch (_) {}
 }
-function storedSessionTokenSync() {
+function storedSessionStateSync() {
   try {
-    if (typeof window === "undefined" || !window.localStorage) return "";
+    if (typeof window === "undefined" || !window.localStorage) return null;
     const raw = window.localStorage.getItem(SESSION_KEY);
-    if (!raw) return "";
-    const saved = JSON.parse(raw);
-    return saved?.sessionToken || "";
-  } catch (_) { return ""; }
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+function storedSessionTokenSync() {
+  return storedSessionStateSync()?.sessionToken || "";
+}
+function syncUsesSessionAuth() {
+  const saved = storedSessionStateSync();
+  const token = activeSessionToken || saved?.sessionToken;
+  const view = String(saved?.view || "").toLowerCase();
+  const role = String(saved?.account?.role || saved?.account?.kind || saved?.account?.rights?.role || "").toLowerCase();
+  const terminalRuntime = typeof window !== "undefined" && Boolean(window.visionposTerminalAuth);
+  return Boolean(token && !terminalRuntime && (view === "admin" || !["cashier", "employee"].includes(role)));
+}
+async function syncAuthHeaders(branchId = null, base = {}) {
+  return syncUsesSessionAuth() ? sessionAuthHeaders(base) : await deviceAuthHeaders(branchId, base);
 }
 function clearSessionStateSync() {
   activeSessionToken = "";
@@ -1538,7 +1551,7 @@ async function runSyncClient(currentData) {
   const credentialProvision = await provisionCloudEmployeeCredentials(data);
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
-  const headers = await deviceAuthHeaders(branchId, { "Content-Type": "application/json" });
+  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
   let rejected = [];
   if (outbox.length) {
     const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox }) });
@@ -1569,6 +1582,10 @@ async function runSyncClient(currentData) {
 }
 async function syncStreamUrl(branchId = null) {
   const cfg = syncConfig();
+  if (syncUsesSessionAuth()) {
+    const token = activeSessionToken || storedSessionTokenSync();
+    return cfg.apiBaseUrl + "/api/sync/stream?sessionToken=" + encodeURIComponent(token) + "&t=" + Date.now();
+  }
   const token = cfg.deviceToken || await ensureDeviceToken(branchId);
   return cfg.apiBaseUrl + "/api/sync/stream?token=" + encodeURIComponent(token) + "&t=" + Date.now();
 }

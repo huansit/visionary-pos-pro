@@ -1,10 +1,63 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { isMySql, pool, q, serverNow } from "../db.js";
-import { requireDevice } from "../auth.js";
+import { loadUserSession, requireDevice } from "../auth.js";
 import { addRealtimeClient, getLatestRealtimeChange, getRealtimeVersion, publishSyncChange } from "../realtime.js";
 
 const router = Router();
-router.use(requireDevice);
+
+const MANAGEMENT_SYNC_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
+
+function sessionTokenFromSyncRequest(req) {
+  return String(req.get("x-session-token") || req.query?.sessionToken || req.body?.sessionToken || "").trim();
+}
+
+function syncRole(account = {}) {
+  return String(account.role || account.kind || account.rights?.role || "").toLowerCase();
+}
+
+function syncActorId(req) {
+  return req.deviceId || (req.account?.id ? `session:${req.account.id}` : "unknown");
+}
+
+async function trySessionSync(req, res) {
+  const token = sessionTokenFromSyncRequest(req);
+  if (!token) return "none";
+  const session = await loadUserSession(token);
+  if (!session) {
+    res.status(401).json({ error: "invalid_or_missing_user_session" });
+    return "handled";
+  }
+  if (!MANAGEMENT_SYNC_ROLES.has(syncRole(session.account))) {
+    res.status(403).json({ error: "insufficient_role" });
+    return "handled";
+  }
+  req.sessionId = session.sessionId;
+  req.account = session.account;
+  req.syncActor = "session";
+  return "ok";
+}
+
+async function requireSyncRead(req, res, next) {
+  try {
+    const sessionResult = await trySessionSync(req, res);
+    if (sessionResult === "handled") return;
+    if (sessionResult === "ok") return next();
+    return requireDevice(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function requireSyncWrite(req, res, next) {
+  try {
+    const sessionResult = await trySessionSync(req, res);
+    if (sessionResult === "handled") return;
+    if (sessionResult === "ok") return next();
+    return requireDevice(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+}
 router.use((req, res, next) => {
   const started = process.hrtime.bigint();
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -12,16 +65,16 @@ router.use((req, res, next) => {
   res.set("Expires", "0");
   res.on("finish", () => {
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
-    console.log(`[sync] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms device=${req.deviceId || "-"} branch=${req.deviceBranchId || "-"}`);
+    console.log(`[sync] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms actor=${req.deviceId || req.account?.id || "-"} branch=${req.deviceBranchId || req.account?.branchId || "-"}`);
   });
   next();
 });
 
-router.get("/stream", (req, res) => {
+router.get("/stream", requireSyncRead, (req, res) => {
   addRealtimeClient(req, res);
 });
 
-router.get("/version", (_req, res) => {
+router.get("/version", requireSyncRead, (_req, res) => {
   const change = getLatestRealtimeChange();
   res.json({ version: getRealtimeVersion(), ts: Date.now(), change });
 });
@@ -111,7 +164,7 @@ function normalizeProduct(row, branchId, stockQty) {
   };
 }
 
-router.get("/catalog", async (req, res) => {
+router.get("/catalog", requireDevice, async (req, res) => {
   const branchId = req.deviceBranchId;
   if (!branchId) return res.status(403).json({ error: "terminal_branch_required" });
 
@@ -288,7 +341,7 @@ async function validateStockCountSessionWrite(client, ev) {
   return { ok: true };
 }
 
-router.post("/push", async (req, res) => {
+router.post("/push", requireSyncWrite, async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
 
@@ -297,6 +350,7 @@ router.post("/push", async (req, res) => {
   const rejected = [];
   const client = await pool.connect();
   let lastIssuedTs = serverNow();
+  const actorDeviceId = syncActorId(req);
 
   try {
     await client.query("BEGIN");
@@ -324,7 +378,7 @@ router.post("/push", async (req, res) => {
       }
 
       if (EVENT_TYPES.has(type)) {
-        const ts = await insertAppendOnlyEvent(client, guardedEvent, type, req.deviceId, nextServerTs());
+        const ts = await insertAppendOnlyEvent(client, guardedEvent, type, actorDeviceId, nextServerTs());
         accepted.push(guardedEvent.id);
         serverTs[guardedEvent.id] = ts;
       } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
@@ -335,8 +389,8 @@ router.post("/push", async (req, res) => {
             continue;
           }
         }
-        const ts = await upsertMutableRecord(client, guardedEvent, type, req.deviceId, nextServerTs());
-        if (type === "product") await propagateProductGlobalFields(client, guardedEvent, req.deviceId, ts);
+        const ts = await upsertMutableRecord(client, guardedEvent, type, actorDeviceId, nextServerTs());
+        if (type === "product") await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, ts);
         accepted.push(guardedEvent.id);
         serverTs[guardedEvent.id] = ts;
       } else {
@@ -344,14 +398,16 @@ router.post("/push", async (req, res) => {
       }
     }
 
-    await client.query(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [req.deviceId]);
+    if (req.deviceId) {
+      await client.query(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [req.deviceId]);
+    }
     await client.query("COMMIT");
     const cursor = Object.values(serverTs).reduce((max, ts) => Math.max(max, ts), Number(req.body?.cursor || 0));
     if (accepted.length) {
       const changedTypes = [...new Set(events.filter((ev) => accepted.includes(ev.id)).map((ev) => normalizeType(ev.type)))];
       publishSyncChange({
-        sourceDeviceId: req.deviceId,
-        branchId: req.deviceBranchId || null,
+        sourceDeviceId: actorDeviceId,
+        branchId: req.deviceBranchId || req.account?.branchId || null,
         cursor,
         accepted: accepted.length,
         types: changedTypes,
@@ -372,7 +428,7 @@ router.post("/push", async (req, res) => {
   }
 });
 
-router.get("/pull", async (req, res) => {
+router.get("/pull", requireSyncRead, async (req, res) => {
   const since = Number(req.query.since || 0);
   const limit = Math.min(Number(req.query.limit || 500), 2000);
   if (!Number.isFinite(since) || since < 0) return res.status(400).json({ error: "invalid_since_cursor" });
@@ -666,3 +722,5 @@ async function propagateProductGlobalFields(client, ev, deviceId, ts) {
 }
 
 export default router;
+
+
