@@ -1133,10 +1133,6 @@ async function environmentGet() {
   const data = await authGet("/api/environment", { session: true });
   return data.environment || data;
 }
-async function environmentSwitch(mode, confirmation) {
-  const data = await authApi("/api/environment/switch", { mode, confirmation }, { session: true });
-  return data.environment || data;
-}
 async function cloudLogin(payload) {
   return await authApi("/api/auth/login", payload, { device: Boolean(payload?.pin) });
 }
@@ -3043,21 +3039,6 @@ export default function VisionPOS() {
       return null;
     }
   };
-  const switchActiveEnvironment = async (mode, confirmation) => {
-    const env = await environmentSwitch(mode, confirmation);
-    setEnvironmentInfo(env);
-    const clean = await resetEnvironmentSyncState(env.mode);
-    await saveData(clean);
-    dataRef.current = clean;
-    setData(clean);
-    try {
-      const result = await runSyncClient(clean);
-      setData(result.data);
-    } catch (error) {
-      setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
-    }
-    return env;
-  };
   useEffect(() => {
     const goOn = () => { setOnline(true); setTimeout(runSync, 400); };
     const goOff = () => setOnline(false);
@@ -3210,7 +3191,7 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} onEnvironmentChange={switchActiveEnvironment} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -4753,7 +4734,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onEnvironmentChange, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
@@ -4799,7 +4780,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
-      case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} onEnvironmentChange={onEnvironmentChange} />;
+      case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
       default: return <DashboardTab data={data} update={update} branch={branch} online={online} />;
@@ -8657,139 +8638,73 @@ function formatEnvDate(value) {
   try { return new Date(value).toLocaleString(); } catch (_) { return String(value); }
 }
 
-function EnvironmentTab({ data, environment, role, onRefresh, onEnvironmentChange }) {
+function EnvironmentTab({ environment, onRefresh }) {
   const [state, setState] = useState(environment || null);
-  const [targetMode, setTargetMode] = useState("");
-  const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const currentMode = normalizeEnvironmentMode(state?.mode || environment?.mode || data?.settings?.environmentMode || "test");
-  const activeTarget = targetMode ? normalizeEnvironmentMode(targetMode) : "";
-  const required = activeTarget.toUpperCase();
-  const blockers = Array.isArray(state?.blockers) ? state.blockers : [];
-  const isOwner = ["owner", "admin"].includes(String(role || "").toLowerCase());
-  const switchBlocked = blockers.length > 0 || busy || !isOwner;
+  const current = normalizeEnvironment(state?.mode || environment?.mode || "test");
   const cfg = state?.config || {};
-  const switchedBy = state?.switchedBy || "System";
 
   useEffect(() => { setState(environment || null); }, [environment]);
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const next = await onRefresh?.();
-      if (mounted && next) setState(next);
-    })();
-    return () => { mounted = false; };
-  }, []); // eslint-disable-line
 
   const refresh = async () => {
-    setError("");
-    const next = await onRefresh?.();
-    if (next) setState(next);
-  };
-  const openSwitch = (mode) => {
-    setTargetMode(mode);
-    setConfirmText("");
-    setError("");
-  };
-  const submitSwitch = async () => {
-    if (!activeTarget) return;
     setBusy(true);
-    setError("");
     try {
-      const next = await onEnvironmentChange(activeTarget, confirmText);
-      setState(next);
-      setTargetMode("");
-      setConfirmText("");
-    } catch (err) {
-      setError(err?.message || "Environment switch failed.");
-      if (err?.blockers) setState((s) => ({ ...(s || {}), blockers: err.blockers }));
+      const next = await onRefresh?.();
+      if (next) setState(next);
     } finally {
       setBusy(false);
     }
   };
-  const InfoTile = ({ label, value }) => (
-    <div className="tile"><div className="k">{label}</div><div className="v">{value}</div></div>
-  );
+
+  const deploymentCard = (mode, title, description, database, api) => {
+    const active = current.mode === mode;
+    return (
+      <div className={"env-card " + mode + (active ? " active" : "")}>
+        <div className="split">
+          <EnvironmentBadge mode={mode} />
+          {active && <span className="pill success">Active deployment</span>}
+        </div>
+        <h3>{title}</h3>
+        <p>{description}</p>
+        <div className="env-info-row"><span>Database</span><strong>{database}</strong></div>
+        <div className="env-info-row"><span>API</span><strong>{api}</strong></div>
+      </div>
+    );
+  };
 
   return (
     <div>
       <PageHead
         title="Environment"
-        sub="Owner-only Test / Live control with isolated terminals, sessions, sales, and inventory."
-        right={<button className="btn sm btn-ghost" onClick={refresh}><RefreshCw /> Refresh</button>}
+        sub="Live and Test are separate deployments. This server connects to one database at startup from its environment file."
+        right={<button className="btn sm btn-ghost" onClick={refresh} disabled={busy}><RefreshCw /> {busy ? "Refreshing" : "Refresh"}</button>}
       />
       <div className="poscard env-current">
         <div>
-          <div className="sub">Current Environment</div>
-          <EnvironmentBadge mode={currentMode} />
+          <div className="sub">Current deployment</div>
+          <EnvironmentBadge mode={current.mode} />
         </div>
-        <div className="sub">Terminals must be activated in the same environment they connect to.</div>
+        <div className="sub">There is no in-app switch. Start the Live or Test deployment process to change environments.</div>
       </div>
-      {currentMode === "test" && (
+      {current.mode === "test" && (
         <div className="notice warn"><AlertCircle /> TEST MODE is active. Receipts are marked as test and dashboards show a TEST watermark.</div>
       )}
       <div className="env-grid">
-        <div className={"env-card test" + (currentMode === "test" ? " active" : "")}>
-          <EnvironmentBadge mode="test" />
-          <h3>TEST MODE</h3>
-          <p>Safe environment for testing features, demo terminals, receipts, inventory, and integrations.</p>
-          <button className="btn btn-ghost" disabled={currentMode === "test" || switchBlocked} onClick={() => openSwitch("test")}>Switch to Test</button>
-        </div>
-        <div className={"env-card live" + (currentMode === "live" ? " active" : "")}>
-          <EnvironmentBadge mode="live" />
-          <h3>LIVE MODE</h3>
-          <p>Production environment for real business operations. Sales, inventory changes, reports, and receipts are permanent.</p>
-          <button className="btn btn-primary" disabled={currentMode === "live" || switchBlocked} onClick={() => openSwitch("live")}>Switch to Live</button>
-        </div>
+        {deploymentCard("test", "Sandbox / Test", "Training environment for demo terminals, receipts, inventory tests, and integrations.", "visionary_test", "https://sandbox.visionarypos.cloud")}
+        {deploymentCard("live", "Production / Live", "Real business environment for permanent sales, inventory, reports, and receipts.", "visionary_live", "https://visionarypos.cloud")}
       </div>
       <div className="env-info">
-        <InfoTile label="Environment" value={currentMode.toUpperCase()} />
-        <InfoTile label="Database" value={cfg.database || "Configured by server"} />
-        <InfoTile label="API" value={cfg.api || "https://visionarypos.cloud"} />
-        <InfoTile label="Version" value={cfg.version || "0.1.0"} />
-        <InfoTile label="Last Switch" value={formatEnvDate(state?.lastSwitch)} />
-        <InfoTile label="Switched By" value={switchedBy} />
+        <div className="tile"><div className="k">Environment</div><div className="v">{current.label}</div></div>
+        <div className="tile"><div className="k">Database</div><div className="v">{cfg.database || "Configured by DATABASE_URL"}</div></div>
+        <div className="tile"><div className="k">API</div><div className="v">{cfg.api || window.location.origin}</div></div>
+        <div className="tile"><div className="k">Version</div><div className="v">{cfg.version || "0.1.0"}</div></div>
       </div>
-      {blockers.length ? (
-        <div className="env-blockers">
-          <b>Switching is blocked</b>
-          <div className="sub">Clear these first so no business activity is stranded between environments.</div>
-          <ul>{blockers.map((b, i) => <li key={i}>{b.message || b.type}</li>)}</ul>
-        </div>
-      ) : (
-        <div className="notice" style={{ marginTop: 14 }}><Check /> No open shifts, pending purchases, stock counts, or active sync blockers detected.</div>
-      )}
-      {!isOwner && <div className="alert" style={{ marginTop: 14 }}><Lock /> Only the Owner can switch environments.</div>}
       <div className="notice" style={{ marginTop: 14 }}>
-        Application code, license, owner account, and system configuration are shared. Employees, terminals, sessions, inventory, sales, reports, sync events, WhatsApp data, and AI data are isolated by environment.
+        To change environments, restart the appropriate process: <strong>npm run start:live</strong> for production or <strong>npm run start:test</strong> for sandbox. Each process uses its own DATABASE_URL, uploads, backups, logs, and credentials.
       </div>
-      {activeTarget && (
-        <div className="scrim" onClick={() => !busy && setTargetMode("")}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <div className="modal-head">
-              <div><div className="sub" style={{ margin: 0 }}>Environment switch</div><div className="title" style={{ fontSize: 22 }}>Switch to {required} MODE?</div></div>
-              <button className="iconbtn" disabled={busy} onClick={() => setTargetMode("")}><X /></button>
-            </div>
-            <div className="notice warn" style={{ marginTop: 12 }}>
-              <AlertCircle /> You are about to connect VisionPOS to the {activeTarget === "live" ? "production" : "test"} environment. {activeTarget === "live" ? "All sales, inventory changes, reports, and receipts will become permanent." : "Terminals and sessions will need to use test credentials."}
-            </div>
-            <div className="field">
-              <label className="label">Type {required} to continue</label>
-              <input className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder={required} autoFocus />
-            </div>
-            {error && <div className="alert"><AlertCircle />{error}</div>}
-            <div className="grid2" style={{ marginTop: 14 }}>
-              <button className="btn btn-ghost" disabled={busy} onClick={() => setTargetMode("")}>Cancel</button>
-              <button className="btn btn-primary" disabled={busy || confirmText.trim().toUpperCase() !== required} onClick={submitSwitch}>{busy ? "Switching..." : "Switch"}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-
 function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenance }) {
   const [busy, setBusy] = useState("");
   const m = maintenance || {};

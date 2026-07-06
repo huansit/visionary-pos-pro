@@ -3,6 +3,7 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import "dotenv/config";
+import { assertStartupConfig } from "./config.js";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,8 @@ const dbReady = ready.catch((error) => {
   dbReadyError = error;
   console.error("database initialization failed:", error);
 });
+
+assertStartupConfig();
 
 const app = express();
 const here = dirname(fileURLToPath(import.meta.url));
@@ -169,3 +172,4 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 export default app;
+

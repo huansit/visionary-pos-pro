@@ -1,45 +1,47 @@
 {
-  "name": "visionary-pos-api",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "Sync backend for Visionary POS — multi-branch (SIPCITY + Cape Town) event-log sync over Postgres.",
-  "main": "src/server.js",
-  "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "dev:mem": "node db/dev-mem-server.js",
-    "migrate": "node db/migrate.js",
-    "products:go-live": "node db/go-live-products.js",
-    "seed:device": "node db/make-device.js",
-    "seed:staff-logins": "node db/provision-staff-logins.js",
-    "repair:branches": "node db/repair-cloud-branches.js",
-    "hash": "node db/hash-credential.js",
-    "test:sync": "node --test test/sync.test.js",
-    "desktop:start": "npm --prefix desktop start",
-    "desktop:dist:win": "npm --prefix desktop run dist:win",
-    "desktop:pack:win": "npm --prefix desktop run pack:win",
-    "cashier-tauri:dev": "npm --prefix cashier-tauri run tauri:dev",
-    "cashier-tauri:build": "npm --prefix cashier-tauri run build",
-    "cashier-tauri:dist:win": "npm --prefix cashier-tauri run tauri:build"
-  },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "helmet": "^8.0.0",
-    "morgan": "^1.10.0",
-    "mysql2": "^3.22.5",
-    "nodemailer": "^9.0.1",
-    "pg": "^8.12.0",
-    "pg-mem": "^3.0.5",
-    "supertest": "^7.0.0"
-  },
-  "engines": {
-    "node": ">=20"
-  },
-  "devDependencies": {
-    "@babel/parser": "^8.0.0"
-  }
+    "name":  "visionary-pos-api",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "description":  "Sync backend for Visionary POS â€” multi-branch (SIPCITY + Cape Town) event-log sync over Postgres.",
+    "main":  "src/server.js",
+    "scripts":  {
+                    "start":  "node src/server.js",
+                    "dev":  "node --watch src/server.js",
+                    "dev:mem":  "node db/dev-mem-server.js",
+                    "migrate":  "node db/migrate.js",
+                    "products:go-live":  "node db/go-live-products.js",
+                    "seed:device":  "node db/make-device.js",
+                    "seed:staff-logins":  "node db/provision-staff-logins.js",
+                    "repair:branches":  "node db/repair-cloud-branches.js",
+                    "hash":  "node db/hash-credential.js",
+                    "test:sync":  "node --test test/sync.test.js",
+                    "desktop:start":  "npm --prefix desktop start",
+                    "desktop:dist:win":  "npm --prefix desktop run dist:win",
+                    "desktop:pack:win":  "npm --prefix desktop run pack:win",
+                    "cashier-tauri:dev":  "npm --prefix cashier-tauri run tauri:dev",
+                    "cashier-tauri:build":  "npm --prefix cashier-tauri run build",
+                    "cashier-tauri:dist:win":  "npm --prefix cashier-tauri run tauri:build",
+                    "start:live":  "node --env-file=.env.live src/server.js",
+                    "start:test":  "node --env-file=.env.test src/server.js"
+                },
+    "dependencies":  {
+                         "bcryptjs":  "^2.4.3",
+                         "cors":  "^2.8.5",
+                         "dotenv":  "^16.4.5",
+                         "express":  "^4.19.2",
+                         "helmet":  "^8.0.0",
+                         "morgan":  "^1.10.0",
+                         "mysql2":  "^3.22.5",
+                         "nodemailer":  "^9.0.1",
+                         "pg":  "^8.12.0",
+                         "pg-mem":  "^3.0.5",
+                         "supertest":  "^7.0.0"
+                     },
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "devDependencies":  {
+                            "@babel/parser":  "^8.0.0"
+                        }
 }

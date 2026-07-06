@@ -225,33 +225,17 @@ test("1g. device tokens cannot access admin management routes", async () => {
     .expect(401);
 });
 
-test("1h. environment switching requires an owner user session, not a device token", async () => {
-  await request(app)
-    .post("/api/environment/switch")
-    .send({ mode: "live", confirmation: "LIVE" })
-    .expect(401)
-    .expect((res) => {
-      assert.equal(res.body.error, "invalid_or_missing_user_session");
-    });
+test("1h. environment status is read-only and runtime switching is disabled", async () => {
+  const publicRes = await request(app).get("/api/environment/public").expect(200);
+  assert.deepEqual(Object.keys(publicRes.body).sort(), ["label", "mode"]);
+  assert.match(publicRes.body.mode, /^(live|test)$/);
+  assert.match(publicRes.body.label, /^(LIVE MODE|TEST MODE)$/);
 
   await request(app)
     .post("/api/environment/switch")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({ mode: "live", confirmation: "LIVE" })
-    .expect(401)
-    .expect((res) => {
-      assert.equal(res.body.error, "invalid_or_missing_user_session");
-    });
-
-  await withAdminSession(request(app)
-    .post("/api/environment/switch")
-    .send({ mode: "live", confirmation: "LIVE" }))
-    .expect(403)
-    .expect((res) => {
-      assert.equal(res.body.error, "owner_required");
-    });
+    .expect(404);
 });
-
 test("1d. terminal sync cannot submit transactions for a different branch", async () => {
   await withTerminalAuth(request(app).post("/api/sync/push"), state.terminal)
     .send({
