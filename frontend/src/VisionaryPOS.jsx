@@ -1173,12 +1173,9 @@ function storedSessionTokenSync() {
   return storedSessionStateSync()?.sessionToken || "";
 }
 function syncUsesSessionAuth() {
-  const saved = storedSessionStateSync();
-  const token = activeSessionToken || saved?.sessionToken;
-  const view = String(saved?.view || "").toLowerCase();
-  const role = String(saved?.account?.role || saved?.account?.kind || saved?.account?.rights?.role || "").toLowerCase();
+  const token = activeSessionToken || storedSessionTokenSync();
   const terminalRuntime = typeof window !== "undefined" && Boolean(window.visionposTerminalAuth);
-  return Boolean(token && !terminalRuntime && (view === "admin" || !["cashier", "employee"].includes(role)));
+  return Boolean(token && !terminalRuntime);
 }
 async function syncAuthHeaders(branchId = null, base = {}) {
   return syncUsesSessionAuth() ? sessionAuthHeaders(base) : await deviceAuthHeaders(branchId, base);
