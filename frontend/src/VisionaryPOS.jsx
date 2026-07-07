@@ -1564,15 +1564,23 @@ async function runSyncClient(currentData) {
   let cursor = await loadCursor();
   const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
   let rejected = [];
+  let pushErrorText = "";
   if (outbox.length) {
-    const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox }) });
-    if (!pushed.ok) throw new Error("push_failed_" + pushed.status);
-    const body = await pushed.json();
-    rejected = Array.isArray(body.rejected) ? body.rejected : [];
-    const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
-    outbox = outbox.filter((ev) => !done.has(ev.id));
-    await saveOutbox(outbox);
-    data = markAcceptedSynced(data, body.accepted || []);
+    try {
+      const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox }) });
+      if (!pushed.ok) {
+        const errorBody = await pushed.json().catch(() => ({}));
+        throw new Error(errorBody?.error ? `push_failed_${pushed.status}_${errorBody.error}` : "push_failed_" + pushed.status);
+      }
+      const body = await pushed.json();
+      rejected = Array.isArray(body.rejected) ? body.rejected : [];
+      const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
+      outbox = outbox.filter((ev) => !done.has(ev.id));
+      await saveOutbox(outbox);
+      data = markAcceptedSynced(data, body.accepted || []);
+    } catch (error) {
+      pushErrorText = error?.message || "push_failed";
+    }
   }
   let hasMore = true;
   while (hasMore) {
@@ -1587,7 +1595,7 @@ async function runSyncClient(currentData) {
   }
   const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
   const credentialText = credentialProvision.failed ? `${credentialProvision.failed} staff login(s) could not be updated in cloud.` : "";
-  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [rejectedText, credentialText].filter(Boolean).join(" ") } };
+  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") } };
   await saveData(data);
   return { data, status: data._sync };
 }
