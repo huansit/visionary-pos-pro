@@ -1603,7 +1603,13 @@ async function syncStreamUrl(branchId = null) {
 async function cloudBootstrapData(localData) {
   const base = localData || { ...CLEAN_SETUP(), _sync: await syncStatus() };
   try {
-    return (await runSyncClient(base)).data;
+    const first = (await runSyncClient(base)).data;
+    if (!Array.isArray(first.branches) || first.branches.length === 0) {
+      await saveCursor(0);
+      const retryBase = { ...first, _sync: { ...(first._sync || {}), cursor: 0 } };
+      return (await runSyncClient(retryBase)).data;
+    }
+    return first;
   } catch (error) {
     return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };
   }
