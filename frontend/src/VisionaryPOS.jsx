@@ -1089,8 +1089,11 @@ async function deviceAuthHeaders(branchId = null, base = {}) {
   headers.Authorization = "Bearer " + (cfg.deviceToken || await ensureDeviceToken(branchId));
   return headers;
 }
-function sessionAuthHeaders(base = {}) {
-  const token = activeSessionToken || storedSessionTokenSync();
+function syncSessionToken(tokenOverride = "") {
+  return String(tokenOverride || activeSessionToken || storedSessionTokenSync() || "").trim();
+}
+function sessionAuthHeaders(base = {}, tokenOverride = "") {
+  const token = syncSessionToken(tokenOverride);
   return token ? { ...base, "X-Session-Token": token } : { ...base };
 }
 async function authApi(path, body, options = {}) {
@@ -1172,13 +1175,13 @@ function storedSessionStateSync() {
 function storedSessionTokenSync() {
   return storedSessionStateSync()?.sessionToken || "";
 }
-function syncUsesSessionAuth() {
-  const token = activeSessionToken || storedSessionTokenSync();
+function syncUsesSessionAuth(tokenOverride = "") {
+  const token = syncSessionToken(tokenOverride);
   const terminalRuntime = typeof window !== "undefined" && Boolean(window.visionposTerminalAuth);
   return Boolean(token && !terminalRuntime);
 }
-async function syncAuthHeaders(branchId = null, base = {}) {
-  return syncUsesSessionAuth() ? sessionAuthHeaders(base) : await deviceAuthHeaders(branchId, base);
+async function syncAuthHeaders(branchId = null, base = {}, tokenOverride = "") {
+  return syncUsesSessionAuth(tokenOverride) ? sessionAuthHeaders(base, tokenOverride) : await deviceAuthHeaders(branchId, base);
 }
 function clearSessionStateSync() {
   activeSessionToken = "";
@@ -1555,14 +1558,18 @@ async function enqueueChanges(prev, next) {
   await saveOutbox(outbox);
   return { outboxLength: outbox.length, cursor: await loadCursor() };
 }
-async function runSyncClient(currentData) {
+async function runSyncClient(currentData, options = {}) {
   const cfg = syncConfig();
   const branchId = currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null;
   let data = currentData;
   const credentialProvision = await provisionCloudEmployeeCredentials(data);
   let outbox = await loadOutbox();
   let cursor = await loadCursor();
-  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
+  if (options.forceFullPull) {
+    cursor = 0;
+    await saveCursor(0);
+  }
+  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" }, options.sessionToken || "");
   let rejected = [];
   let pushErrorText = "";
   if (outbox.length) {
@@ -1585,7 +1592,10 @@ async function runSyncClient(currentData) {
   let hasMore = true;
   while (hasMore) {
     const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor) + "&t=" + Date.now(), { headers, cache: "no-store" });
-    if (!pulled.ok) throw new Error("pull_failed_" + pulled.status);
+    if (!pulled.ok) {
+      const errorBody = await pulled.json().catch(() => ({}));
+      throw new Error(errorBody?.error ? `pull_failed_${pulled.status}_${errorBody.error}` : "pull_failed_" + pulled.status);
+    }
     const body = await pulled.json();
     data = mergeSyncEvents(data, body.events || []);
     const nextCursor = Number(body.cursor || cursor || 0);
@@ -1608,14 +1618,18 @@ async function syncStreamUrl(branchId = null) {
   const token = cfg.deviceToken || await ensureDeviceToken(branchId);
   return cfg.apiBaseUrl + "/api/sync/stream?token=" + encodeURIComponent(token) + "&t=" + Date.now();
 }
-async function cloudBootstrapData(localData) {
+async function cloudBootstrapData(localData, options = {}) {
   const base = localData || { ...CLEAN_SETUP(), _sync: await syncStatus() };
   try {
-    const first = (await runSyncClient(base)).data;
-    if (!Array.isArray(first.branches) || first.branches.length === 0) {
+    const localHasBranches = Array.isArray(base.branches) && base.branches.length > 0;
+    const localHasProducts = Array.isArray(base.products) && base.products.length > 0;
+    const needsFullBootstrap = Boolean(options.forceFullPull || !localHasBranches || !localHasProducts);
+    if (needsFullBootstrap) await saveCursor(0);
+    const first = (await runSyncClient(base, { ...options, forceFullPull: needsFullBootstrap })).data;
+    if (!Array.isArray(first.branches) || first.branches.length === 0 || !Array.isArray(first.products) || first.products.length === 0) {
       await saveCursor(0);
       const retryBase = { ...first, _sync: { ...(first._sync || {}), cursor: 0 } };
-      return (await runSyncClient(retryBase)).data;
+      return (await runSyncClient(retryBase, { ...options, forceFullPull: true })).data;
     }
     return first;
   } catch (error) {
@@ -3010,12 +3024,8 @@ export default function VisionPOS() {
       logoutSessionToken(token, { keepalive: true });
       clearSessionStateSync();
     };
-    window.addEventListener("pagehide", logoutBeforeClose);
-    window.addEventListener("beforeunload", logoutBeforeClose);
     window.addEventListener("visionpos:desktop-closing", logoutBeforeClose);
     return () => {
-      window.removeEventListener("pagehide", logoutBeforeClose);
-      window.removeEventListener("beforeunload", logoutBeforeClose);
       window.removeEventListener("visionpos:desktop-closing", logoutBeforeClose);
     };
   }, [session?.id, session?.sessionToken]);
@@ -3038,7 +3048,7 @@ export default function VisionPOS() {
     syncRequestRef.current = false;
     setSyncing(true);
     try {
-      const result = await runSyncClient(dataRef.current);
+      const result = await runSyncClient(dataRef.current, opts);
       setData(result.data);
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
@@ -3050,7 +3060,7 @@ export default function VisionPOS() {
     if (!navigator.onLine || !dataRef.current) return;
     setSyncing(true);
     try {
-      const recovered = await cloudBootstrapData({ ...dataRef.current, _sync: await syncStatus() });
+      const recovered = await cloudBootstrapData({ ...dataRef.current, _sync: await syncStatus() }, { forceFullPull: true });
       setData(recovered);
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
@@ -3184,7 +3194,11 @@ export default function VisionPOS() {
   if (view === "pin" || view === "adminLogin" || view === "signup") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
-      {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin admin={data.admin} employees={data.employees} onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignup={() => setView("signup")} onSignedIn={(emp) => { if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } })); signInSession("admin", emp || null); }} />}
+      {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin admin={data.admin} employees={data.employees} onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignup={() => setView("signup")} onSignedIn={(emp) => {
+        signInSession("admin", emp || null);
+        if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } }));
+        setTimeout(() => recoverCloudData(), 100);
+      }} />}
       {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
   }
