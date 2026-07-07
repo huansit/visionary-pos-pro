@@ -2894,6 +2894,17 @@ function Brand({ sm }) { return (<div className={"brand" + (sm ? " sm" : "")}><d
 function normalizeEnvironmentMode(mode) {
   return String(mode || "test").trim().toLowerCase() === "live" ? "live" : "test";
 }
+function normalizeEnvironment(value) {
+  const raw = typeof value === "object" && value !== null
+    ? (value.mode || value.environment || value.label)
+    : value;
+  const mode = String(raw || "test").trim().toLowerCase().includes("live") ? "live" : "test";
+  return {
+    ...(typeof value === "object" && value !== null ? value : {}),
+    mode,
+    label: mode === "live" ? "LIVE MODE" : "TEST MODE",
+  };
+}
 function EnvironmentBadge({ mode, compact }) {
   const env = normalizeEnvironmentMode(mode);
   return <div className={"envbadge " + env + (compact ? " compact" : "")}><span className="envdot" />{env === "live" ? "LIVE MODE" : "TEST MODE"}</div>;
@@ -2915,6 +2926,7 @@ export default function VisionPOS() {
   const [environmentInfo, setEnvironmentInfo] = useState(null);
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
+  const cloudRecoveryAttemptRef = useRef("");
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { (async () => {
     const hasRegisteredTerminal = await hasDesktopTerminalAuth();
@@ -2925,6 +2937,8 @@ export default function VisionPOS() {
       env = await environmentPublic();
       setEnvironmentInfo(env);
     } catch (_) {}
+    const savedSession = await loadSessionState();
+    if (savedSession?.sessionToken) activeSessionToken = savedSession.sessionToken;
     const loaded = await loadEnvironmentAwareData(env);
     saveData(loaded);
     if (resetToken) {
@@ -2934,10 +2948,8 @@ export default function VisionPOS() {
       setData(loaded);
       return;
     }
-    const savedSession = await loadSessionState();
     if (savedSession?.sessionToken) {
       try {
-        activeSessionToken = savedSession.sessionToken;
         const active = await cloudSession(savedSession.sessionToken);
         const restored = accountToSession(active.account, loaded.settings.activeBranchId);
         if (restored?.status === "active") {
@@ -3028,6 +3040,18 @@ export default function VisionPOS() {
     try {
       const result = await runSyncClient(dataRef.current);
       setData(result.data);
+    } catch (error) {
+      setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
+    } finally {
+      setSyncing(false);
+    }
+  };
+  const recoverCloudData = async () => {
+    if (!navigator.onLine || !dataRef.current) return;
+    setSyncing(true);
+    try {
+      const recovered = await cloudBootstrapData({ ...dataRef.current, _sync: await syncStatus() });
+      setData(recovered);
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
     } finally {
@@ -3129,16 +3153,22 @@ export default function VisionPOS() {
     const products = Array.isArray(data.products) ? data.products : [];
     const hasCashierBranch = branches.some((b) => b.id === session.branchId);
     if (hasCashierBranch && products.length) return;
-    const id = setTimeout(() => runSync({ force: true, source: "cashier-recovery" }), 500);
+    const recoveryKey = `register:${session.sessionToken || session.id || ""}`;
+    if (cloudRecoveryAttemptRef.current === recoveryKey) return;
+    cloudRecoveryAttemptRef.current = recoveryKey;
+    const id = setTimeout(recoverCloudData, 500);
     return () => clearTimeout(id);
   }, [data, view, session?.id, session?.branchId, syncing]); // eslint-disable-line
   useEffect(() => {
-    if (!data || view !== "admin" || syncing || !navigator.onLine) return;
+    if (!data || view !== "admin" || !session || syncing || !navigator.onLine) return;
     const branches = Array.isArray(data.branches) ? data.branches : [];
     if (branches.length) return;
-    const id = setTimeout(() => runSync({ force: true, source: "admin-recovery" }), 500);
+    const recoveryKey = `admin:${session.sessionToken || session.id || ""}`;
+    if (cloudRecoveryAttemptRef.current === recoveryKey) return;
+    cloudRecoveryAttemptRef.current = recoveryKey;
+    const id = setTimeout(recoverCloudData, 500);
     return () => clearTimeout(id);
-  }, [data, view, syncing]); // eslint-disable-line
+  }, [data, view, session?.sessionToken, syncing]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const routePath = typeof window !== "undefined" ? window.location.pathname.replace(/\/$/, "") || "/" : "/";
   if (routePath === "/downloads") return <DownloadsPage />;
@@ -3200,10 +3230,10 @@ export default function VisionPOS() {
           {activeEnvironmentMode === "test" && <div className="env-watermark">TEST</div>}
           {view === "register" && (session && cashierBranch
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
-            : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
+            : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
             ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} />
-            : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={() => runSync({ force: true })} onSignOut={signOutSession} />)}
+            : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
         </div>
       </div>
     </div>
