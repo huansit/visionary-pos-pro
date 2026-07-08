@@ -951,7 +951,26 @@ const SYNC_MUTABLE = new Map([
   ["supplierPrices", "supplierPrice"],
   ["stockCountSessions", "stockCountSession"],
 ]);
-const AUTH_SYNC_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
+const AUTH_SYNC_TYPES = new Set([
+  "user",
+  "users",
+  "employee",
+  "employees",
+  "credential",
+  "credentials",
+  "staffLogin",
+  "staff_login",
+  "cashier",
+  "cashiers",
+  "session",
+  "sessions",
+  "userSession",
+  "user_sessions",
+  "passwordReset",
+  "password_reset",
+  "emailVerification",
+  "email_verification",
+]);
 const AUTH_SYNC_COLLECTIONS = new Set(["employees"]);
 const SYNC_ARRAYS = [...SYNC_APPEND.keys(), ...SYNC_MUTABLE.keys()];
 
@@ -1521,7 +1540,14 @@ function markAcceptedSynced(data, acceptedIds) {
 }
 async function loadOutbox() { return await loadJson(OUTBOX_KEY, []); }
 async function saveOutbox(outbox) { await saveJson(OUTBOX_KEY, outbox || []); }
-function isAuthSyncEvent(ev) { return AUTH_SYNC_TYPES.has(String(ev?.type || "")); }
+function hasCredentialLikePayload(ev) {
+  const payload = ev?.payload || {};
+  if (!payload || typeof payload !== "object") return false;
+  return ["pin", "password", "passwordHash", "password_hash", "credential", "credentials", "rights"].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
+}
+function isAuthSyncEvent(ev) {
+  return AUTH_SYNC_TYPES.has(String(ev?.type || "")) || hasCredentialLikePayload(ev);
+}
 async function pruneAuthSyncEvents(outbox) {
   const list = Array.isArray(outbox) ? outbox : [];
   const next = list.filter((ev) => !isAuthSyncEvent(ev));
@@ -1559,7 +1585,7 @@ async function loadEnvironmentAwareData(env) {
   return await cloudBootstrapData(base);
 }
 async function enqueueChanges(prev, next) {
-  const changes = diffToSyncEvents(prev, next);
+  const changes = diffToSyncEvents(prev, next).filter((ev) => !isAuthSyncEvent(ev));
   if (!changes.length) return await syncStatus();
   const outbox = await pruneAuthSyncEvents(await loadOutbox());
   const seen = new Set(outbox.map((e) => e.type + ":" + e.id + ":" + (e.updatedAt || e.clientTs || "")));
@@ -1619,7 +1645,8 @@ async function runSyncClient(currentData, options = {}) {
   const rejectedText = visibleRejected.length ? `${visibleRejected.length} queued change(s) were rejected by the server: ${visibleRejected.map((item) => item.reason || "unknown").join(", ")}` : "";
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
-  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") } };
+  const nextSyncError = outbox.length ? [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") : "";
+  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: nextSyncError } };
   await saveData(data);
   return { data, status: data._sync };
 }
@@ -1880,7 +1907,7 @@ function markSynced(data) {
     products: m(data.products), employees: m(data.employees), invoices: m(data.invoices), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
-    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0 } };
+    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
 }
 
 /* ================================================================== */
@@ -3198,7 +3225,7 @@ export default function VisionPOS() {
   if (routePath === "/downloads") return <DownloadsPage />;
   const pending = countPending(data);
   const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
-  const syncError = data?._sync?.error || "";
+  const syncError = pending > 0 ? (data?._sync?.error || "") : "";
   const syncState = !online || syncError ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
   const activeEnvironmentMode = normalizeEnvironmentMode(environmentInfo?.mode || data?.settings?.environmentMode || "test");
   const syncCls = syncState === "ok" ? "" : syncState === "err" ? " err" : " warn";
@@ -8780,8 +8807,9 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
   const storage = m.storage || storageUsageSnapshot();
   const lastCleanup = m.lastCleanupAt ? new Date(m.lastCleanupAt).toLocaleString() : "Not yet";
   const lastSync = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "Not yet";
-  const syncError = m.syncError || "";
-  const syncText = syncError ? "Sync error" : m.pendingUploads > 0 ? "Pending uploads" : "Synced";
+  const pendingUploads = Number(m.pendingUploads || 0);
+  const syncError = pendingUploads > 0 ? (m.syncError || "") : "";
+  const syncText = syncError ? "Sync error" : pendingUploads > 0 ? "Pending uploads" : "Synced";
   const run = async (mode) => {
     setBusy(mode);
     try { await onRunMaintenance?.(mode); }
@@ -8807,7 +8835,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
       <div className="stats compact">
         <div className="stat"><div className="sl">Device status</div><div className={"sv" + (online ? "" : " warn")}>{online ? "Online" : "Offline"}</div></div>
         <div className="stat"><div className="sl">Sync status</div><div className={"sv" + (syncError ? " warn" : "")}>{syncText}</div></div>
-        <div className="stat"><div className="sl">Pending uploads</div><div className="sv">{m.pendingUploads || 0}</div></div>
+        <div className="stat"><div className="sl">Pending uploads</div><div className="sv">{pendingUploads}</div></div>
         <div className="stat"><div className="sl">Storage used</div><div className="sv">{fmtBytes(storage.total)}</div></div>
       </div>
       <div className="notice" style={{ marginTop: 12 }}>

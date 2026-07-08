@@ -250,6 +250,7 @@ async function ensureAuthSchema() {
           "ALTER TABLE devices ADD COLUMN terminal_secret_hash varchar(64)",
           "ALTER TABLE devices ADD COLUMN app_version varchar(80)",
           "ALTER TABLE devices ADD COLUMN status enum('ACTIVE','DISABLED','REVOKED') NOT NULL DEFAULT 'ACTIVE'",
+          "ALTER TABLE devices ADD COLUMN environment varchar(32) NOT NULL DEFAULT 'live'",
           "CREATE INDEX devices_status_idx ON devices (status)",
           "CREATE UNIQUE INDEX devices_terminal_uuid_idx ON devices (terminal_uuid)",
           `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
@@ -262,8 +263,10 @@ async function ensureAuthSchema() {
              expires_at datetime NOT NULL,
              used_at datetime,
              used_by_terminal_uuid varchar(191),
-             revoked_at datetime
+             revoked_at datetime,
+             environment varchar(32) NOT NULL DEFAULT 'live'
            )`,
+          "ALTER TABLE terminal_activation_codes ADD COLUMN environment varchar(32) NOT NULL DEFAULT 'live'",
           "CREATE INDEX terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN status enum('active','inactive','deleted') NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN email_verified boolean NOT NULL DEFAULT false",
@@ -278,15 +281,17 @@ async function ensureAuthSchema() {
              token_hash varchar(255) NOT NULL UNIQUE,
              device_id varchar(191),
              terminal_uuid varchar(191),
+             environment varchar(32) NOT NULL DEFAULT 'live',
              device_name varchar(255),
              ip_address varchar(80),
              login_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
              last_seen datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
              expires_at datetime NOT NULL,
              is_active boolean NOT NULL DEFAULT true
-           )`,
+          )`,
           "ALTER TABLE user_sessions ADD COLUMN device_id varchar(191)",
           "ALTER TABLE user_sessions ADD COLUMN terminal_uuid varchar(191)",
+          "ALTER TABLE user_sessions ADD COLUMN environment varchar(32) NOT NULL DEFAULT 'live'",
           "CREATE INDEX user_sessions_user_active_idx ON user_sessions (user_id, is_active)",
           "CREATE INDEX user_sessions_expires_idx ON user_sessions (expires_at)",
           "CREATE INDEX user_sessions_terminal_idx ON user_sessions (terminal_uuid, is_active)",
@@ -333,6 +338,7 @@ async function ensureAuthSchema() {
           "ALTER TABLE devices ADD COLUMN IF NOT EXISTS terminal_secret_hash text",
           "ALTER TABLE devices ADD COLUMN IF NOT EXISTS app_version text",
           "ALTER TABLE devices ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
+          "ALTER TABLE devices ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT 'live'",
           "CREATE INDEX IF NOT EXISTS devices_status_idx ON devices (status)",
           "CREATE UNIQUE INDEX IF NOT EXISTS devices_terminal_uuid_idx ON devices (terminal_uuid)",
           pgMem
@@ -346,7 +352,8 @@ async function ensureAuthSchema() {
                expires_at timestamptz,
                used_at timestamptz,
                used_by_terminal_uuid text,
-               revoked_at timestamptz
+               revoked_at timestamptz,
+               environment text
              )`
             : `CREATE TABLE IF NOT EXISTS terminal_activation_codes (
                id text PRIMARY KEY,
@@ -358,8 +365,10 @@ async function ensureAuthSchema() {
                expires_at timestamptz NOT NULL,
                used_at timestamptz,
                used_by_terminal_uuid text,
-               revoked_at timestamptz
+               revoked_at timestamptz,
+               environment text NOT NULL DEFAULT 'live'
              )`,
+          "ALTER TABLE terminal_activation_codes ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT 'live'",
           "CREATE INDEX IF NOT EXISTS terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at)",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'",
           "ALTER TABLE credentials ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false",
@@ -375,6 +384,7 @@ async function ensureAuthSchema() {
                token_hash text,
                device_id text,
                terminal_uuid text,
+               environment text,
                device_name text,
                ip_address text,
                login_time timestamptz,
@@ -388,15 +398,17 @@ async function ensureAuthSchema() {
                token_hash text NOT NULL,
                device_id text,
                terminal_uuid text,
+               environment text NOT NULL DEFAULT 'live',
                device_name text,
                ip_address text,
                login_time timestamptz NOT NULL DEFAULT now(),
                last_seen timestamptz NOT NULL DEFAULT now(),
                expires_at timestamptz NOT NULL,
                is_active boolean NOT NULL DEFAULT true
-             )`,
+          )`,
           "ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS device_id text",
           "ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS terminal_uuid text",
+          "ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT 'live'",
           "CREATE UNIQUE INDEX IF NOT EXISTS user_sessions_token_hash_idx ON user_sessions (token_hash)",
           "CREATE INDEX IF NOT EXISTS user_sessions_user_active_idx ON user_sessions (user_id, is_active)",
           "CREATE INDEX IF NOT EXISTS user_sessions_expires_idx ON user_sessions (expires_at)",

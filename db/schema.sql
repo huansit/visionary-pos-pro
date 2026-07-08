@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS devices (
   terminal_secret_hash text,
   app_version text,
   status       text NOT NULL DEFAULT 'ACTIVE' CHECK (upper(status) IN ('ACTIVE', 'DISABLED', 'REVOKED')),
+  environment  text NOT NULL DEFAULT 'live',
   revoked_at   timestamptz,
   created_at   timestamptz NOT NULL DEFAULT now(),
   last_seen_at timestamptz,
@@ -31,7 +32,8 @@ CREATE TABLE IF NOT EXISTS terminal_activation_codes (
   expires_at   timestamptz NOT NULL,
   used_at      timestamptz,
   used_by_terminal_uuid text,
-  revoked_at   timestamptz
+  revoked_at   timestamptz,
+  environment  text NOT NULL DEFAULT 'live'
 );
 
 CREATE INDEX IF NOT EXISTS terminal_activation_codes_active_idx ON terminal_activation_codes (expires_at, used_at, revoked_at);
@@ -170,6 +172,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   token_hash   text NOT NULL,
   device_id    text,
   terminal_uuid text,
+  environment  text NOT NULL DEFAULT 'live',
   device_name  text,
   ip_address   text,
   login_time   timestamptz NOT NULL DEFAULT now(),

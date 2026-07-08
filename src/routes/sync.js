@@ -141,6 +141,75 @@ function preferCatalogRecord(current, candidate) {
     : current;
 }
 
+function buildProductAliasMap(rows = []) {
+  const rowsByKey = new Map();
+  const canonicalByKey = new Map();
+
+  for (const row of rows) {
+    const key = productCatalogKey(row);
+    if (!key || key === "name::") continue;
+    if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+    rowsByKey.get(key).push(row);
+    if (!row.deleted) canonicalByKey.set(key, preferCatalogRecord(canonicalByKey.get(key), row));
+  }
+
+  const aliasById = new Map();
+  for (const [key, keyedRows] of rowsByKey.entries()) {
+    const canonical = canonicalByKey.get(key);
+    if (!canonical) continue;
+    for (const row of keyedRows) aliasById.set(String(row.id), String(canonical.id));
+  }
+  return aliasById;
+}
+
+function canonicalProductId(productId, aliasById) {
+  const id = String(productId || "");
+  if (!id) return "";
+  return aliasById.get(id) || id;
+}
+
+function remapProductReferencesInPayload(payload, aliasById) {
+  if (!payload || typeof payload !== "object") return payload;
+  let changed = false;
+  const next = { ...payload };
+
+  for (const key of ["productId", "product_id"]) {
+    if (!next[key]) continue;
+    const mapped = canonicalProductId(next[key], aliasById);
+    if (mapped && mapped !== String(next[key])) {
+      next[key] = mapped;
+      changed = true;
+    }
+  }
+
+  for (const key of ["items", "lines", "products"]) {
+    if (!Array.isArray(next[key])) continue;
+    const mappedItems = next[key].map((item) => {
+      if (!item || typeof item !== "object") return item;
+      let itemChanged = false;
+      const mappedItem = { ...item };
+      for (const productKey of ["productId", "product_id"]) {
+        if (!mappedItem[productKey]) continue;
+        const mapped = canonicalProductId(mappedItem[productKey], aliasById);
+        if (mapped && mapped !== String(mappedItem[productKey])) {
+          mappedItem[productKey] = mapped;
+          itemChanged = true;
+        }
+      }
+      if (itemChanged) changed = true;
+      return itemChanged ? mappedItem : item;
+    });
+    if (mappedItems !== next[key]) next[key] = mappedItems;
+  }
+
+  return changed ? next : payload;
+}
+
+function remapEventProductReferences(event, aliasById) {
+  const payload = remapProductReferencesInPayload(event.payload || {}, aliasById);
+  return payload === event.payload ? event : { ...event, payload };
+}
+
 function normalizeProduct(row, branchId, stockQty) {
   const payload = row.payload || {};
   const sku = String(payload.sku || "").trim();
@@ -171,15 +240,16 @@ router.get("/catalog", requireDevice, async (req, res) => {
   try {
     const records = await q(
       isMySql
-        ? `SELECT id, branch_id AS branchId, updated_at AS updatedAt, server_ts AS serverTs, payload
+        ? `SELECT id, branch_id AS branchId, updated_at AS updatedAt, server_ts AS serverTs, deleted, payload
              FROM records
-            WHERE type = 'product' AND deleted = false
+            WHERE type = 'product'
             ORDER BY server_ts DESC, id ASC`
-        : `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", payload
+        : `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", deleted, payload
              FROM records
-            WHERE type = 'product' AND deleted = false
+            WHERE type = 'product'
             ORDER BY server_ts DESC, id ASC`
     );
+    const productAliases = buildProductAliasMap(records.rows);
 
     const stockEvents = await q(
       isMySql
@@ -196,6 +266,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
 
     const byKey = new Map();
     for (const row of records.rows) {
+      if (row.deleted) continue;
       const recordBranchId = row.branchId || row.payload?.branchId || row.payload?.branch_id || "";
       if (recordBranchId && recordBranchId !== branchId) continue;
       const key = productCatalogKey(row);
@@ -206,7 +277,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
     const stockByProduct = new Map();
     for (const row of stockEvents.rows) {
       const payload = row.payload || {};
-      const productId = String(payload.productId || payload.product_id || "");
+      const productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
       if (!productId || !canonicalIds.has(productId)) continue;
       const qty = Number(payload.qty ?? payload.quantity ?? 0);
       if (!Number.isFinite(qty)) continue;
@@ -356,6 +427,22 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const client = await pool.connect();
   let lastIssuedTs = serverNow();
   const actorDeviceId = syncActorId(req);
+  let productAliases = null;
+
+  async function getProductAliases() {
+    if (productAliases) return productAliases;
+    const records = await client.query(
+      isMySql
+        ? `SELECT id, branch_id AS branchId, updated_at AS updatedAt, server_ts AS serverTs, deleted, payload
+             FROM records
+            WHERE type = 'product'`
+        : `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", deleted, payload
+             FROM records
+            WHERE type = 'product'`
+    );
+    productAliases = buildProductAliasMap(records.rows);
+    return productAliases;
+  }
 
   try {
     await client.query("BEGIN");
@@ -386,38 +473,38 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         continue;
       }
 
-      await client.query("SAVEPOINT sync_event");
       try {
         let acceptedId = null;
         let acceptedTs = null;
 
         if (EVENT_TYPES.has(type)) {
-          acceptedTs = await insertAppendOnlyEvent(client, guardedEvent, type, actorDeviceId, nextServerTs());
-          acceptedId = guardedEvent.id;
+          const eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
+            ? remapEventProductReferences(guardedEvent, await getProductAliases())
+            : guardedEvent;
+          acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, actorDeviceId, nextServerTs());
+          acceptedId = eventToStore.id;
         } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
           if (type === "stockCountSession") {
             const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
             if (!stockCountValidation.ok) {
-              await client.query("RELEASE SAVEPOINT sync_event");
               rejected.push({ id: ev.id, type, reason: stockCountValidation.reason, sessionId: stockCountValidation.sessionId });
               continue;
             }
           }
           acceptedTs = await upsertMutableRecord(client, guardedEvent, type, actorDeviceId, nextServerTs());
-          if (type === "product") await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, acceptedTs);
+          if (type === "product") {
+            await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, acceptedTs);
+            productAliases = null;
+          }
           acceptedId = guardedEvent.id;
         } else {
-          await client.query("RELEASE SAVEPOINT sync_event");
           rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
           continue;
         }
 
-        await client.query("RELEASE SAVEPOINT sync_event");
         accepted.push(acceptedId);
         serverTs[acceptedId] = acceptedTs;
       } catch (eventError) {
-        await client.query("ROLLBACK TO SAVEPOINT sync_event").catch(() => {});
-        await client.query("RELEASE SAVEPOINT sync_event").catch(() => {});
         console.error("sync event rejected:", {
           id: ev.id,
           type,
