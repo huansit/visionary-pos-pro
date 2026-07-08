@@ -649,11 +649,13 @@ async function maintenanceSnapshot(data) {
   const outbox = await loadOutbox();
   const audit = await loadJson(MAINTENANCE_LOG_KEY, []);
   const usage = storageUsageSnapshot();
+  const syncError = outbox.length ? data?._sync?.error || "" : "";
   return {
     ...meta,
     storage: usage,
     audit: Array.isArray(audit) ? audit.slice(0, 12) : [],
-    syncStatus: data?._sync?.error ? "error" : outbox.length ? "pending" : "ok",
+    syncStatus: syncError ? "error" : outbox.length ? "pending" : "ok",
+    syncError,
     pendingUploads: outbox.length,
     lastSyncedAt: data?.lastSyncedAt || 0,
     deviceId: typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("visionary:sync:deviceId") || "" : "",
@@ -8778,7 +8780,8 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
   const storage = m.storage || storageUsageSnapshot();
   const lastCleanup = m.lastCleanupAt ? new Date(m.lastCleanupAt).toLocaleString() : "Not yet";
   const lastSync = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "Not yet";
-  const syncText = m.syncStatus === "error" ? "Sync error" : m.pendingUploads > 0 ? "Pending uploads" : "Synced";
+  const syncError = m.syncError || "";
+  const syncText = syncError ? "Sync error" : m.pendingUploads > 0 ? "Pending uploads" : "Synced";
   const run = async (mode) => {
     setBusy(mode);
     try { await onRunMaintenance?.(mode); }
@@ -8803,14 +8806,14 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
         </div>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Device status</div><div className={"sv" + (online ? "" : " warn")}>{online ? "Online" : "Offline"}</div></div>
-        <div className="stat"><div className="sl">Sync status</div><div className={"sv" + (m.syncStatus === "error" ? " warn" : "")}>{syncText}</div></div>
+        <div className="stat"><div className="sl">Sync status</div><div className={"sv" + (syncError ? " warn" : "")}>{syncText}</div></div>
         <div className="stat"><div className="sl">Pending uploads</div><div className="sv">{m.pendingUploads || 0}</div></div>
         <div className="stat"><div className="sl">Storage used</div><div className="sv">{fmtBytes(storage.total)}</div></div>
       </div>
       <div className="notice" style={{ marginTop: 12 }}>
         Automatic maintenance runs at startup, hourly for lightweight cleanup, and daily for deep maintenance. It never deletes sales, payments, inventory transactions, user settings, authentication data, or the sync queue.
       </div>
-      {data?._sync?.error && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{data._sync.error}</div>}
+      {syncError && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{syncError}</div>}
       <div className="grid2" style={{ marginTop: 14 }}>
         <div className="addpanel">
           <div className="section-title" style={{ marginTop: 0 }}>Maintenance Schedule</div>
