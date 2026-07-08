@@ -1613,7 +1613,8 @@ async function runSyncClient(currentData, options = {}) {
     cursor = nextCursor;
     await saveCursor(cursor);
   }
-  const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
+  const visibleRejected = rejected.filter((item) => item?.reason !== "auth_records_do_not_sync");
+  const rejectedText = visibleRejected.length ? `${visibleRejected.length} queued change(s) were rejected by the server: ${visibleRejected.map((item) => item.reason || "unknown").join(", ")}` : "";
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
   data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") } };
