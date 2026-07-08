@@ -271,9 +271,14 @@ const RECORD_TYPE_ALIASES = new Map([
 
 const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession"]);
 const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set(["borrowing", "cashMovement", "endOfDay", "payment", "purchase"]);
+const AUTH_SYNC_RECORD_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
 
 function normalizeType(type) {
   return RECORD_TYPE_ALIASES.get(type) || type;
+}
+
+function isAuthSyncRecordType(type) {
+  return AUTH_SYNC_RECORD_TYPES.has(String(type || ""));
 }
 
 function hasPlainCredential(ev) {
@@ -372,29 +377,53 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         continue;
       }
       const guardedEvent = branchGuard.event;
+      if (isAuthSyncRecordType(ev.type) || isAuthSyncRecordType(type)) {
+        rejected.push({ id: ev.id, type: ev.type, reason: "auth_records_do_not_sync" });
+        continue;
+      }
       if (hasPlainCredential(ev)) {
         rejected.push({ id: ev.id, type, reason: "plain_password_or_pin_not_allowed" });
         continue;
       }
 
-      if (EVENT_TYPES.has(type)) {
-        const ts = await insertAppendOnlyEvent(client, guardedEvent, type, actorDeviceId, nextServerTs());
-        accepted.push(guardedEvent.id);
-        serverTs[guardedEvent.id] = ts;
-      } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
-        if (type === "stockCountSession") {
-          const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
-          if (!stockCountValidation.ok) {
-            rejected.push({ id: ev.id, type, reason: stockCountValidation.reason, sessionId: stockCountValidation.sessionId });
-            continue;
+      await client.query("SAVEPOINT sync_event");
+      try {
+        let acceptedId = null;
+        let acceptedTs = null;
+
+        if (EVENT_TYPES.has(type)) {
+          acceptedTs = await insertAppendOnlyEvent(client, guardedEvent, type, actorDeviceId, nextServerTs());
+          acceptedId = guardedEvent.id;
+        } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
+          if (type === "stockCountSession") {
+            const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
+            if (!stockCountValidation.ok) {
+              await client.query("RELEASE SAVEPOINT sync_event");
+              rejected.push({ id: ev.id, type, reason: stockCountValidation.reason, sessionId: stockCountValidation.sessionId });
+              continue;
+            }
           }
+          acceptedTs = await upsertMutableRecord(client, guardedEvent, type, actorDeviceId, nextServerTs());
+          if (type === "product") await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, acceptedTs);
+          acceptedId = guardedEvent.id;
+        } else {
+          await client.query("RELEASE SAVEPOINT sync_event");
+          rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
+          continue;
         }
-        const ts = await upsertMutableRecord(client, guardedEvent, type, actorDeviceId, nextServerTs());
-        if (type === "product") await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, ts);
-        accepted.push(guardedEvent.id);
-        serverTs[guardedEvent.id] = ts;
-      } else {
-        rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
+
+        await client.query("RELEASE SAVEPOINT sync_event");
+        accepted.push(acceptedId);
+        serverTs[acceptedId] = acceptedTs;
+      } catch (eventError) {
+        await client.query("ROLLBACK TO SAVEPOINT sync_event").catch(() => {});
+        await client.query("RELEASE SAVEPOINT sync_event").catch(() => {});
+        console.error("sync event rejected:", {
+          id: ev.id,
+          type,
+          reason: eventError?.message || "event_failed",
+        });
+        rejected.push({ id: ev.id, type, reason: "event_failed" });
       }
     }
 

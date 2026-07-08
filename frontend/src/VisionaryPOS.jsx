@@ -1531,7 +1531,7 @@ async function saveCursor(cursor) { await kvSet(CURSOR_KEY, String(cursor || 0))
 async function syncStatus() {
   const outbox = await pruneAuthSyncEvents(await loadOutbox());
   const cursor = await loadCursor();
-  return { outboxLength: outbox.length, cursor };
+  return { outboxLength: outbox.length, cursor, error: "" };
 }
 function applyEnvironmentMode(data, mode) {
   const normalized = normalizeLoadedData(data || CLEAN_SETUP()) || CLEAN_SETUP();
