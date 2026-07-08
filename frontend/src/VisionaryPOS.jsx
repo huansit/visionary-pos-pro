@@ -949,6 +949,8 @@ const SYNC_MUTABLE = new Map([
   ["supplierPrices", "supplierPrice"],
   ["stockCountSessions", "stockCountSession"],
 ]);
+const AUTH_SYNC_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
+const AUTH_SYNC_COLLECTIONS = new Set(["employees"]);
 const SYNC_ARRAYS = [...SYNC_APPEND.keys(), ...SYNC_MUTABLE.keys()];
 
 function syncConfig() {
@@ -1431,6 +1433,7 @@ function diffToSyncEvents(prev, next) {
   if (!prev || !next) return [];
   const events = [];
   for (const collection of SYNC_ARRAYS) {
+    if (AUTH_SYNC_COLLECTIONS.has(collection)) continue;
     const type = SYNC_APPEND.get(collection) || SYNC_MUTABLE.get(collection);
     const before = new Map((prev[collection] || []).map((x) => [x.id, x]));
     for (const record of next[collection] || []) {
@@ -1516,10 +1519,17 @@ function markAcceptedSynced(data, acceptedIds) {
 }
 async function loadOutbox() { return await loadJson(OUTBOX_KEY, []); }
 async function saveOutbox(outbox) { await saveJson(OUTBOX_KEY, outbox || []); }
+function isAuthSyncEvent(ev) { return AUTH_SYNC_TYPES.has(String(ev?.type || "")); }
+async function pruneAuthSyncEvents(outbox) {
+  const list = Array.isArray(outbox) ? outbox : [];
+  const next = list.filter((ev) => !isAuthSyncEvent(ev));
+  if (next.length !== list.length) await saveOutbox(next);
+  return next;
+}
 async function loadCursor() { return Number(await kvGet(CURSOR_KEY) || 0); }
 async function saveCursor(cursor) { await kvSet(CURSOR_KEY, String(cursor || 0)); }
 async function syncStatus() {
-  const outbox = await loadOutbox();
+  const outbox = await pruneAuthSyncEvents(await loadOutbox());
   const cursor = await loadCursor();
   return { outboxLength: outbox.length, cursor };
 }
@@ -1549,7 +1559,7 @@ async function loadEnvironmentAwareData(env) {
 async function enqueueChanges(prev, next) {
   const changes = diffToSyncEvents(prev, next);
   if (!changes.length) return await syncStatus();
-  const outbox = await loadOutbox();
+  const outbox = await pruneAuthSyncEvents(await loadOutbox());
   const seen = new Set(outbox.map((e) => e.type + ":" + e.id + ":" + (e.updatedAt || e.clientTs || "")));
   for (const ev of changes) {
     const key = ev.type + ":" + ev.id + ":" + (ev.updatedAt || ev.clientTs || "");
@@ -1562,8 +1572,8 @@ async function runSyncClient(currentData, options = {}) {
   const cfg = syncConfig();
   const branchId = currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null;
   let data = currentData;
-  const credentialProvision = await provisionCloudEmployeeCredentials(data);
-  let outbox = await loadOutbox();
+  const credentialProvision = { ok: 0, failed: 0 };
+  let outbox = await pruneAuthSyncEvents(await loadOutbox());
   let cursor = await loadCursor();
   if (options.forceFullPull) {
     cursor = 0;
@@ -1604,7 +1614,8 @@ async function runSyncClient(currentData, options = {}) {
     await saveCursor(cursor);
   }
   const rejectedText = rejected.length ? `${rejected.length} queued change(s) were rejected by the server: ${rejected.map((item) => item.reason || "unknown").join(", ")}` : "";
-  const credentialText = credentialProvision.failed ? `${credentialProvision.failed} staff login(s) could not be updated in cloud.` : "";
+  if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
+  const credentialText = "";
   data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") } };
   await saveData(data);
   return { data, status: data._sync };
