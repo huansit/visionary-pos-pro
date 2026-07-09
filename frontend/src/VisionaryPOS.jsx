@@ -6985,10 +6985,37 @@ function PricingTab({ data, update, branch }) {
     if (barcode) return "barcode:" + barcode;
     return "product:" + p.id;
   };
+  const branchValueAsCents = (value) => {
+    if (value === undefined || value === null || value === "") return 0;
+    if (typeof value === "object") {
+      return branchValueAsCents(value.priceCents ?? value.sellingPriceCents ?? value.sellPriceCents ?? value.price ?? value.sellingPrice);
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n > 999 ? Math.round(n) : Math.round(n * 100);
+  };
+  const branchPriceFor = (p, bid = bId) => {
+    for (const key of ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"]) {
+      const cents = branchValueAsCents(p?.[key]?.[bid]);
+      if (cents > 0) return cents;
+    }
+    return p.priceCents || 0;
+  };
+  const withBranchPrice = (p, price) => ({
+    ...p,
+    branchPrices: { ...(p.branchPrices || {}), [bId]: price },
+    priceByBranch: { ...(p.priceByBranch || {}), [bId]: price },
+    sellingPriceByBranch: { ...(p.sellingPriceByBranch || {}), [bId]: price },
+    branchSellingPrices: { ...(p.branchSellingPrices || {}), [bId]: price },
+    synced: false,
+    updatedAt: now()
+  });
   const preferPricingRow = (current, candidate) => {
     if (!current) return candidate;
-    if ((candidate.priceCents || 0) > 0 && !(current.priceCents || 0)) return candidate;
-    if (!(candidate.priceCents || 0) && (current.priceCents || 0) > 0) return current;
+    const currentPrice = branchPriceFor(current);
+    const candidatePrice = branchPriceFor(candidate);
+    if (candidatePrice > 0 && !currentPrice) return candidate;
+    if (!candidatePrice && currentPrice > 0) return current;
     if ((candidate.updatedAt || 0) > (current.updatedAt || 0)) return candidate;
     return current;
   };
@@ -7001,7 +7028,10 @@ function PricingTab({ data, update, branch }) {
     productVisibleInBranch(p, data, bId) &&
     (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
-  const draftFor = (p) => priceDrafts[p.id] ?? (p.priceCents > 0 ? String(p.priceCents / 100) : "");
+  const draftFor = (p) => {
+    const price = branchPriceFor(p);
+    return priceDrafts[p.id] ?? (price > 0 ? String(price / 100) : "");
+  };
   const savePrice = (p) => {
     const raw = draftFor(p).trim();
     const price = Math.round((parseFloat(raw) || 0) * 100);
@@ -7014,7 +7044,7 @@ function PricingTab({ data, update, branch }) {
     });
     update((d) => ({
       ...d,
-      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? { ...x, priceCents: price, synced: false, updatedAt: now() } : x)
+      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? withBranchPrice(x, price) : x)
     }));
   };
   return (
@@ -7033,7 +7063,7 @@ function PricingTab({ data, update, branch }) {
       </div>
       <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
         <tbody>{list.map((p) => {
-          const price = p.priceCents; const cost = p.costCents;
+          const price = branchPriceFor(p); const cost = p.costCents;
           const margin = price > 0 ? Math.round((price - cost) / price * 100) : null;
           const markup = cost > 0 ? Math.round((price - cost) / cost * 100) : null;
           return (<tr key={p.id}>

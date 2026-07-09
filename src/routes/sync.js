@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { isMySql, pool, q, serverNow } from "../db.js";
 import { loadUserSession, requireDevice } from "../auth.js";
 import { addRealtimeClient, getLatestRealtimeChange, getRealtimeVersion, publishSyncChange } from "../realtime.js";
@@ -120,6 +120,141 @@ function productCatalogKey(row) {
   return `name:${normalizeCode(payload.name)}:${normalizeCode(payload.size || payload.unit)}`;
 }
 
+const PRODUCT_PRICE_CENT_FIELDS = ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"];
+const PRODUCT_PRICE_MONEY_FIELDS = ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"];
+const PRODUCT_COST_CENT_FIELDS = ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"];
+const PRODUCT_COST_MONEY_FIELDS = ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"];
+const PRODUCT_STOCK_FIELDS = ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand", "currentStock", "current_stock"];
+const BRANCH_PRODUCT_RECORD_TYPES = ["branchProduct", "branch_product", "branchInventory", "branch_inventory"];
+
+function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = []) {
+  for (const field of centFields) {
+    const raw = payload[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return Math.round(value);
+  }
+  for (const field of moneyFields) {
+    const raw = payload[field];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const value = Number(raw);
+    if (Number.isFinite(value)) return Math.round(value * 100);
+  }
+  return null;
+}
+
+function mapValueForBranch(map, branchId) {
+  if (!map || typeof map !== "object" || !branchId) return undefined;
+  if (Object.prototype.hasOwnProperty.call(map, branchId)) return map[branchId];
+  const wanted = String(branchId).toLowerCase();
+  const match = Object.entries(map).find(([key]) => String(key).toLowerCase() === wanted);
+  return match ? match[1] : undefined;
+}
+
+function branchValueFromMap(payload = {}, mapNames = [], branchId = "") {
+  for (const name of mapNames) {
+    const value = mapValueForBranch(payload[name], branchId);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function centsFromBranchValue(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "object") {
+    return fieldCentsFromPayload(value, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function stockFromBranchValue(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "object") return numberFromPayload(value, PRODUCT_STOCK_FIELDS, null);
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function productOverlayFromPayload(payload = {}, branchId = "") {
+  const overlay = {};
+  const priceFromMap = centsFromBranchValue(branchValueFromMap(payload, ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"], branchId));
+  const stockFromMap = stockFromBranchValue(branchValueFromMap(payload, ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"], branchId));
+  const directPrice = fieldCentsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
+  const directCost = fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS);
+  const directStock = numberFromPayload(payload, PRODUCT_STOCK_FIELDS, null);
+
+  if (priceFromMap !== null) overlay.priceCents = priceFromMap;
+  else if (directPrice !== null) overlay.priceCents = directPrice;
+  if (directCost !== null) overlay.costCents = directCost;
+  if (stockFromMap !== null && Number.isFinite(stockFromMap)) overlay.stockQty = stockFromMap;
+  else if (directStock !== null && Number.isFinite(directStock)) overlay.stockQty = directStock;
+  for (const key of ["reorderLevel", "shelfLocation", "availability"]) {
+    if (payload[key] !== undefined && payload[key] !== null && payload[key] !== "") overlay[key] = payload[key];
+  }
+  return overlay;
+}
+
+function mergeOverlay(base = {}, next = {}) {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(next || {})) {
+    if (value !== undefined && value !== null && value !== "") out[key] = value;
+  }
+  return out;
+}
+
+function addProductIndexes(indexes, row, canonicalId) {
+  const payload = row.payload || {};
+  const id = String(canonicalId || row.id || "");
+  if (!id) return;
+  indexes.byId.set(String(row.id), id);
+  for (const value of [payload.sku, payload.SKU]) {
+    const code = normalizeCode(value);
+    if (code) indexes.bySku.set(code, id);
+  }
+  for (const value of [payload.barcode, payload.barcodeValue, payload.barcode_value]) {
+    const code = normalizeCode(value);
+    if (code) indexes.byBarcode.set(code, id);
+  }
+  if (Array.isArray(payload.barcodes)) {
+    for (const value of payload.barcodes) {
+      const code = normalizeCode(typeof value === "object" ? value?.barcode || value?.value : value);
+      if (code) indexes.byBarcode.set(code, id);
+    }
+  }
+  for (const value of [payload.barcodeCatalogId, payload.barcode_catalog_id, payload.catalogBarcodeId]) {
+    const code = normalizeCode(value);
+    if (code) indexes.byCatalog.set(code, id);
+  }
+}
+
+function buildCanonicalProductIndexes(allRows, canonicalRows, aliasById) {
+  const indexes = { byId: new Map(), bySku: new Map(), byBarcode: new Map(), byCatalog: new Map() };
+  for (const row of canonicalRows) addProductIndexes(indexes, row, String(row.id));
+  for (const row of allRows) {
+    const canonicalId = canonicalProductId(row.id, aliasById);
+    if (canonicalId && indexes.byId.has(String(canonicalId))) addProductIndexes(indexes, row, String(canonicalId));
+  }
+  return indexes;
+}
+
+function overlayProductId(payload = {}, indexes, aliasById) {
+  const direct = canonicalProductId(payload.productId || payload.product_id || payload.productID || payload.productRecordId, aliasById);
+  if (direct && indexes.byId.has(String(direct))) return String(direct);
+  for (const value of [payload.productSku, payload.product_sku, payload.sku, payload.SKU]) {
+    const code = normalizeCode(value);
+    if (code && indexes.bySku.has(code)) return indexes.bySku.get(code);
+  }
+  for (const value of [payload.barcode, payload.productBarcode, payload.product_barcode]) {
+    const code = normalizeCode(value);
+    if (code && indexes.byBarcode.has(code)) return indexes.byBarcode.get(code);
+  }
+  for (const value of [payload.barcodeCatalogId, payload.barcode_catalog_id, payload.catalogBarcodeId]) {
+    const code = normalizeCode(value);
+    if (code && indexes.byCatalog.has(code)) return indexes.byCatalog.get(code);
+  }
+  return "";
+}
+
 function productCompletenessScore(row) {
   const payload = row.payload || {};
   return (
@@ -210,7 +345,7 @@ function remapEventProductReferences(event, aliasById) {
   return payload === event.payload ? event : { ...event, payload };
 }
 
-function normalizeProduct(row, branchId, stockQty) {
+function normalizeProduct(row, branchId, stockQty, overlay = {}) {
   const payload = row.payload || {};
   const sku = String(payload.sku || "").trim();
   const barcode = String(payload.barcode || "").trim();
@@ -226,9 +361,9 @@ function normalizeProduct(row, branchId, stockQty) {
     category: payload.category || payload.categoryId || "Uncategorised",
     categoryId: payload.categoryId || payload.category || "",
     image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
-    priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"]),
-    costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"]),
-    stockQty,
+    priceCents: overlay.priceCents ?? centsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS),
+    costCents: overlay.costCents ?? centsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS),
+    stockQty: Number.isFinite(Number(stockQty)) ? Number(stockQty) : 0,
     serverTs: Number(row.serverTs || row.updatedAt || 0),
   };
 }
@@ -250,6 +385,14 @@ router.get("/catalog", requireDevice, async (req, res) => {
             ORDER BY server_ts DESC, id ASC`
     );
     const productAliases = buildProductAliasMap(records.rows);
+
+    const overlayRows = await q(
+      `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", deleted, type, payload
+       FROM records
+       WHERE type = ANY($1::text[])
+       ORDER BY server_ts ASC, id ASC`,
+      [BRANCH_PRODUCT_RECORD_TYPES]
+    );
 
     const stockEvents = await q(
       isMySql
@@ -273,21 +416,37 @@ router.get("/catalog", requireDevice, async (req, res) => {
       byKey.set(key, preferCatalogRecord(byKey.get(key), row));
     }
 
-    const canonicalIds = new Set([...byKey.values()].map((row) => String(row.id)));
+    const canonicalRows = [...byKey.values()];
+    const productIndexes = buildCanonicalProductIndexes(records.rows, canonicalRows, productAliases);
+    const overlaysByProduct = new Map();
+    for (const row of overlayRows.rows || []) {
+      if (row.deleted) continue;
+      const payload = row.payload || {};
+      const recordBranchId = String(row.branchId || payload.branchId || payload.branch_id || "");
+      if (recordBranchId && recordBranchId !== branchId) continue;
+      const productId = overlayProductId(payload, productIndexes, productAliases);
+      if (!productId) continue;
+      overlaysByProduct.set(productId, mergeOverlay(overlaysByProduct.get(productId), productOverlayFromPayload(payload, branchId)));
+    }
+
+    const canonicalIds = new Set(canonicalRows.map((row) => String(row.id)));
     const stockByProduct = new Map();
     for (const row of stockEvents.rows) {
       const payload = row.payload || {};
-      const productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
+      let productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
+      if (!productId || !canonicalIds.has(productId)) productId = overlayProductId(payload, productIndexes, productAliases);
       if (!productId || !canonicalIds.has(productId)) continue;
       const qty = Number(payload.qty ?? payload.quantity ?? 0);
       if (!Number.isFinite(qty)) continue;
       stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + qty);
     }
 
-    const products = [...byKey.values()]
+    const products = canonicalRows
       .map((row) => {
-        const baseStock = numberFromPayload(row.payload || {}, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0);
-        return normalizeProduct(row, branchId, baseStock + (stockByProduct.get(String(row.id)) || 0));
+        const productId = String(row.id);
+        const overlay = mergeOverlay(productOverlayFromPayload(row.payload || {}, branchId), overlaysByProduct.get(productId));
+        const baseStock = overlay.stockQty ?? numberFromPayload(row.payload || {}, PRODUCT_STOCK_FIELDS, 0);
+        return normalizeProduct(row, branchId, baseStock + (stockByProduct.get(productId) || 0), overlay);
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
 
@@ -340,7 +499,7 @@ const RECORD_TYPE_ALIASES = new Map([
   ["stock_count_sessions", "stockCountSession"],
 ]);
 
-const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession"]);
+const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession", "branchProduct"]);
 const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set(["borrowing", "cashMovement", "endOfDay", "payment", "purchase"]);
 const AUTH_SYNC_RECORD_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
 
