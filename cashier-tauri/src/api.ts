@@ -411,14 +411,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   });
 
   for (const item of productRecords.values()) {
-    const productBranchId = item.branchId || item.payload?.branchId || item.payload?.branch_id || "";
-    if (!productBranchId || productBranchId === terminal.branchId) {
-      const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
-      const key = productDedupeKey(product);
-      productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
-      baseStockByKey.set(key, (baseStockByKey.get(key) || 0) + product.stockQty);
-      productDeduped.set(key, preferProductRow(productDeduped.get(key), product));
-    }
+    const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
+    const key = productDedupeKey(product);
+    productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
+    baseStockByKey.set(key, (baseStockByKey.get(key) || 0) + product.stockQty);
+    productDeduped.set(key, preferProductRow(productDeduped.get(key), product));
   }
 
   const invoices = Array.from(invoiceRecords.values())

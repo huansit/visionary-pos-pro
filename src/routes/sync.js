@@ -410,8 +410,10 @@ router.get("/catalog", requireDevice, async (req, res) => {
     const byKey = new Map();
     for (const row of records.rows) {
       if (row.deleted) continue;
-      const recordBranchId = row.branchId || row.payload?.branchId || row.payload?.branch_id || "";
-      if (recordBranchId && recordBranchId !== branchId) continue;
+      // Product records are the shared catalogue. Legacy imports may still
+      // carry branch_id, but branch scoping belongs to branchProduct overlays
+      // and stock movement events below. Filtering here hides valid catalogue
+      // rows from terminals in the other branch.
       const key = productCatalogKey(row);
       byKey.set(key, preferCatalogRecord(byKey.get(key), row));
     }
