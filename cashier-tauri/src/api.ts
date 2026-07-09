@@ -130,6 +130,113 @@ function numberFromPayload(payload: any, fields: string[], fallback = 0) {
   return fallback;
 }
 
+const PRODUCT_PRICE_CENT_FIELDS = ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"];
+const PRODUCT_PRICE_MONEY_FIELDS = ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"];
+const PRODUCT_COST_CENT_FIELDS = ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"];
+const PRODUCT_COST_MONEY_FIELDS = ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"];
+const PRODUCT_STOCK_FIELDS = ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand", "currentStock", "current_stock"];
+const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
+const BRANCH_STOCK_MAP_FIELDS = ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"];
+
+function valueFromObject(raw: any, fields: string[]) {
+  if (!raw || typeof raw !== "object") return undefined;
+  for (const field of fields) {
+    const value = raw[field];
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return undefined;
+}
+
+function branchMappedValue(payload: any, mapFields: string[], branchId: string, valueFields: string[]) {
+  const branchKeys = [branchId, branchId.toLowerCase(), branchId.toUpperCase()].filter(Boolean);
+  for (const field of mapFields) {
+    const map = payload?.[field];
+    if (!map || typeof map !== "object") continue;
+    for (const key of branchKeys) {
+      const raw = map[key];
+      if (raw === undefined || raw === null || raw === "") continue;
+      if (typeof raw === "object") {
+        const nested = valueFromObject(raw, valueFields);
+        if (nested !== undefined) return nested;
+      }
+      return raw;
+    }
+  }
+  return undefined;
+}
+
+function centsFromAny(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "object") {
+    return centsFromAny(valueFromObject(raw, PRODUCT_PRICE_CENT_FIELDS));
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value);
+}
+
+function moneyCentsFromAny(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "object") {
+    return moneyCentsFromAny(valueFromObject(raw, PRODUCT_PRICE_MONEY_FIELDS));
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  return Math.round(value * 100);
+}
+
+function numberFromAny(raw: any): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "object") {
+    return numberFromAny(valueFromObject(raw, PRODUCT_STOCK_FIELDS));
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function normalizeProductForBranch(source: any, branchId: string): Product {
+  const payload = { ...(source?.payload || {}), ...(source || {}) };
+  const sku = String(payload.sku || "").trim();
+  const barcode = String(payload.barcode || "").trim();
+  const branchPrice =
+    centsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_CENT_FIELDS)) ??
+    moneyCentsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_MONEY_FIELDS));
+  const branchStock = numberFromAny(branchMappedValue(payload, BRANCH_STOCK_MAP_FIELDS, branchId, PRODUCT_STOCK_FIELDS));
+  const directPrice = centsFromPayload(
+    payload,
+    PRODUCT_PRICE_CENT_FIELDS,
+    moneyToCentsFromPayload(payload, PRODUCT_PRICE_MONEY_FIELDS)
+  );
+  const directCost = centsFromPayload(
+    payload,
+    PRODUCT_COST_CENT_FIELDS,
+    moneyToCentsFromPayload(payload, PRODUCT_COST_MONEY_FIELDS)
+  );
+  const directStock = numberFromPayload(payload, PRODUCT_STOCK_FIELDS, 0);
+
+  return {
+    id: String(payload.id || source?.id || (sku ? `product_${sku}` : uid("product"))),
+    branchId: String(payload.branchId || payload.branch_id || branchId),
+    name: String(payload.name || "Unnamed product"),
+    sku,
+    size: String(payload.size || payload.unit || ""),
+    barcode,
+    barcodes: Array.isArray(payload.barcodes) ? payload.barcodes : barcode ? [barcode] : [],
+    barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
+    category: payload.category || payload.categoryId || "Uncategorised",
+    categoryId: payload.categoryId || payload.category || "",
+    image: productDisplayImage({
+      sku,
+      barcode,
+      image: payload.image || payload.imageUrl || payload.image_url || payload.photo || ""
+    }),
+    priceCents: branchPrice ?? directPrice,
+    costCents: directCost,
+    stockQty: branchStock ?? directStock,
+    serverTs: Number(payload.serverTs || payload.updatedAt || source?.serverTs || source?.updatedAt || 0)
+  };
+}
+
 function productDedupeKey(product: Product) {
   const catalogId = product.barcodeCatalogId || "";
   if (catalogId) return `${product.branchId}|catalog:${catalogId}`;
@@ -204,18 +311,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     });
     if (Array.isArray(catalog.products)) {
       serverCatalogProducts = catalog.products
-        .map((product) => ({
-          ...product,
-          branchId: product.branchId || terminal.branchId,
-          image: productDisplayImage({
-            sku: product.sku || "",
-            barcode: product.barcode || "",
-            image: product.image || ""
-          }),
-          priceCents: Number(product.priceCents || 0),
-          costCents: Number(product.costCents || 0),
-          stockQty: Number(product.stockQty || 0)
-        }))
+        .map((product) => normalizeProductForBranch(product, terminal.branchId))
         .sort((a, b) => a.name.localeCompare(b.name));
     }
   } catch (error) {
@@ -317,28 +413,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   for (const item of productRecords.values()) {
     const productBranchId = item.branchId || item.payload?.branchId || item.payload?.branch_id || "";
     if (!productBranchId || productBranchId === terminal.branchId) {
-      const payload = item.payload || {};
-      const product: Product = {
-        id: String(item.id),
-        branchId: terminal.branchId,
-        name: payload.name || "Unnamed product",
-        sku: payload.sku || "",
-        size: payload.size || "",
-        barcode: payload.barcode || "",
-        barcodes: Array.isArray(payload.barcodes) ? payload.barcodes : [],
-        barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
-        category: payload.category || payload.categoryId || "Uncategorised",
-        categoryId: payload.categoryId || payload.category || "",
-        image: productDisplayImage({
-          sku: payload.sku || "",
-          barcode: payload.barcode || "",
-          image: payload.image || payload.imageUrl || payload.image_url || payload.photo || ""
-        }),
-        priceCents: centsFromPayload(payload, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(payload, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
-        costCents: centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(payload, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
-        stockQty: numberFromPayload(payload, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0),
-        serverTs: Number(item.serverTs || item.updatedAt || 0)
-      };
+      const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
       const key = productDedupeKey(product);
       productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
       baseStockByKey.set(key, (baseStockByKey.get(key) || 0) + product.stockQty);
@@ -379,24 +454,7 @@ export async function resolveBarcode(terminal: TerminalCredentials, barcode: str
     body: JSON.stringify({ barcode, branchId: terminal.branchId })
   });
   if (!data.available || !data.product) return null;
-  return {
-    id: data.product.id,
-    branchId: data.product.branchId,
-    name: data.product.name,
-    sku: data.product.sku || "",
-    size: data.product.size || "",
-    barcode,
-    barcodes: Array.isArray(data.product.barcodes) ? data.product.barcodes : [],
-    categoryId: data.product.categoryId,
-    image: productDisplayImage({
-      sku: data.product.sku || "",
-      barcode,
-      image: data.product.image || data.product.imageUrl || data.product.image_url || ""
-    }),
-    priceCents: centsFromPayload(data.product, ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"], moneyToCentsFromPayload(data.product, ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"])),
-    costCents: centsFromPayload(data.product, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], moneyToCentsFromPayload(data.product, ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"])),
-    stockQty: numberFromPayload(data.product, ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand"], 0)
-  };
+  return normalizeProductForBranch({ ...data.product, barcode }, terminal.branchId);
 }
 
 function assertSyncAccepted(

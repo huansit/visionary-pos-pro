@@ -52,7 +52,7 @@ import {
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
-const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v1";
+const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v1";
 const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
