@@ -437,11 +437,21 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return {
-    branches,
-    invoices,
-    products: serverCatalogProducts?.length ? serverCatalogProducts : fallbackProducts
-  };
+  const mergedProducts = new Map<string, Product>();
+  for (const product of serverCatalogProducts || []) {
+    const key = productDedupeKey(product);
+    mergedProducts.set(key, preferProductRow(mergedProducts.get(key), product));
+  }
+  for (const product of fallbackProducts) {
+    const key = productDedupeKey(product);
+    mergedProducts.set(key, preferProductRow(mergedProducts.get(key), product));
+  }
+
+  const products = Array.from(mergedProducts.values()).sort(
+    (a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || ""))
+  );
+
+  return { branches, invoices, products };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {
