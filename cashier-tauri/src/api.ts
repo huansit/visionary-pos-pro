@@ -63,6 +63,29 @@ function uid(prefix: string) {
   return `${prefix}_${random}`;
 }
 
+function firstArray(...values: unknown[]): any[] {
+  for (const value of values) {
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function eventQuantity(payload: Record<string, any>) {
+  for (const value of [payload.qty, payload.quantity, payload.receivedQty, payload.received_qty, payload.units, payload.count]) {
+    const qty = Number(value);
+    if (Number.isFinite(qty)) return qty;
+  }
+  return 0;
+}
+
+function addStock(stockByProduct: Map<string, number>, productId: unknown, qty: unknown) {
+  if (!productId) return;
+  const quantity = Number(qty);
+  if (!Number.isFinite(quantity) || quantity === 0) return;
+  const id = String(productId);
+  stockByProduct.set(id, (stockByProduct.get(id) || 0) + quantity);
+}
+
 function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -400,7 +423,22 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
       if (productId && (payload.branchId || item.branchId) === terminal.branchId) {
-        stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + Number(payload.qty || 0));
+        addStock(stockByProduct, productId, eventQuantity(payload));
+      }
+    }
+    if (item.type === "purchase") {
+      const payload = item.payload || {};
+      const status = String(payload.status || "").toLowerCase();
+      if (["cancelled", "canceled", "void", "rejected"].includes(status)) continue;
+      if ((payload.branchId || item.branchId) === terminal.branchId) {
+        const lines = firstArray(payload.items, payload.lines, payload.products, payload.purchaseItems, payload.purchase_items, payload.stockItems);
+        if (lines.length) {
+          for (const line of lines) {
+            addStock(stockByProduct, line.productId || line.product_id || line.productRecordId, eventQuantity(line));
+          }
+        } else {
+          addStock(stockByProduct, payload.productId || payload.product_id || item.productId, eventQuantity(payload));
+        }
       }
     }
   }

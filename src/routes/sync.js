@@ -255,6 +255,28 @@ function overlayProductId(payload = {}, indexes, aliasById) {
   return "";
 }
 
+function purchaseLinesFromPayload(payload = {}) {
+  for (const value of [payload.items, payload.lines, payload.products, payload.purchaseItems, payload.purchase_items, payload.stockItems]) {
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function quantityFromPayload(payload = {}) {
+  for (const value of [payload.qty, payload.quantity, payload.receivedQty, payload.received_qty, payload.units, payload.count]) {
+    const qty = Number(value);
+    if (Number.isFinite(qty)) return qty;
+  }
+  return 0;
+}
+
+function addCatalogStock(stockByProduct, productId, qty) {
+  if (!productId) return;
+  const quantity = Number(qty);
+  if (!Number.isFinite(quantity) || quantity === 0) return;
+  stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + quantity);
+}
+
 function productCompletenessScore(row) {
   const payload = row.payload || {};
   return (
@@ -396,13 +418,13 @@ router.get("/catalog", requireDevice, async (req, res) => {
 
     const stockEvents = await q(
       isMySql
-        ? `SELECT id, branch_id AS branchId, payload
+        ? `SELECT id, type, branch_id AS branchId, payload
              FROM events
-            WHERE type = 'stockMovement'
+            WHERE type IN ('stockMovement', 'purchase')
               AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branch_id')) = $1)`
-        : `SELECT id, branch_id AS "branchId", payload
+        : `SELECT id, type, branch_id AS "branchId", payload
              FROM events
-            WHERE type = 'stockMovement'
+            WHERE type IN ('stockMovement', 'purchase')
               AND (branch_id = $1 OR payload->>'branchId' = $1 OR payload->>'branch_id' = $1)`,
       [branchId]
     );
@@ -435,12 +457,24 @@ router.get("/catalog", requireDevice, async (req, res) => {
     const stockByProduct = new Map();
     for (const row of stockEvents.rows) {
       const payload = row.payload || {};
+      const status = String(payload.status || "").toLowerCase();
+      if (["cancelled", "canceled", "void", "rejected"].includes(status)) continue;
+      if (row.type === "purchase") {
+        const lines = purchaseLinesFromPayload(payload);
+        if (lines.length) {
+          for (const line of lines) {
+            let lineProductId = canonicalProductId(line.productId || line.product_id || line.productID || line.productRecordId, productAliases);
+            if (!lineProductId || !canonicalIds.has(lineProductId)) lineProductId = overlayProductId(line, productIndexes, productAliases);
+            if (!lineProductId || !canonicalIds.has(lineProductId)) continue;
+            addCatalogStock(stockByProduct, lineProductId, quantityFromPayload(line));
+          }
+          continue;
+        }
+      }
       let productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
       if (!productId || !canonicalIds.has(productId)) productId = overlayProductId(payload, productIndexes, productAliases);
       if (!productId || !canonicalIds.has(productId)) continue;
-      const qty = Number(payload.qty ?? payload.quantity ?? 0);
-      if (!Number.isFinite(qty)) continue;
-      stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + qty);
+      addCatalogStock(stockByProduct, productId, quantityFromPayload(payload));
     }
 
     const products = canonicalRows
