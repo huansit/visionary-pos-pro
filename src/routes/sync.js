@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { isMySql, pool, q, serverNow } from "../db.js";
+import { isMySql, isPgMem, pool, q, serverNow } from "../db.js";
 import { loadUserSession, requireDevice } from "../auth.js";
 import { addRealtimeClient, getLatestRealtimeChange, getRealtimeVersion, publishSyncChange } from "../realtime.js";
 
@@ -641,7 +641,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
 
   try {
     await client.query("BEGIN");
-    for (const ev of events) {
+    for (const [eventIndex, ev] of events.entries()) {
       if (!ev || !ev.id || !ev.type) {
         rejected.push({ id: ev?.id, reason: "missing_id_or_type" });
         continue;
@@ -668,20 +668,30 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         continue;
       }
 
+      const isAppendOnlyEvent = EVENT_TYPES.has(type);
+      const isMutableRecord = RECORD_TYPE_ALIASES.has(ev.type);
+      if (!isAppendOnlyEvent && !isMutableRecord) {
+        rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
+        continue;
+      }
+
+      const savepoint = `sync_event_${eventIndex}`;
+      if (!isPgMem) await client.query(`SAVEPOINT ${savepoint}`);
       try {
         let acceptedId = null;
         let acceptedTs = null;
 
-        if (EVENT_TYPES.has(type)) {
+        if (isAppendOnlyEvent) {
           const eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
           acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, actorDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
-        } else if (RECORD_TYPE_ALIASES.has(ev.type)) {
+        } else {
           if (type === "stockCountSession") {
             const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
             if (!stockCountValidation.ok) {
+            if (!isPgMem) await client.query(`RELEASE SAVEPOINT ${savepoint}`);
               rejected.push({ id: ev.id, type, reason: stockCountValidation.reason, sessionId: stockCountValidation.sessionId });
               continue;
             }
@@ -692,14 +702,25 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             productAliases = null;
           }
           acceptedId = guardedEvent.id;
-        } else {
-          rejected.push({ id: ev.id, type: ev.type, reason: "unknown_type" });
-          continue;
         }
 
+        if (!isPgMem) await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         accepted.push(acceptedId);
         serverTs[acceptedId] = acceptedTs;
       } catch (eventError) {
+        if (!isPgMem) {
+          try {
+            await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+            await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+          } catch (savepointError) {
+            console.error("sync savepoint recovery failed:", {
+              id: ev.id,
+              type,
+              reason: savepointError?.message || "savepoint_recovery_failed",
+            });
+            throw savepointError;
+          }
+        }
         console.error("sync event rejected:", {
           id: ev.id,
           type,

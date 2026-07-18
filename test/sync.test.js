@@ -501,6 +501,51 @@ test("6. product record last-write-wins keeps newer updatedAt and ignores older"
       assert.equal(products.length, 1);
       assert.equal(products[0].updatedAt, 2000);
       assert.deepEqual(products[0].payload, newerProduct.payload);
+  });
+});
+
+test("6a. a rejected event does not abort later product writes in the same push batch", async () => {
+  const rejectedEvent = {
+    id: "invalid-event-before-product",
+    type: "invoice",
+    branchId: "b_sip",
+    clientTs: "not-a-number",
+    payload: { number: "INVALID" },
+  };
+  const validProduct = {
+    id: "prod-after-rejected-event",
+    type: "product",
+    branchId: "b_sip",
+    updatedAt: 2050,
+    payload: {
+      name: "Batch Recovery Product",
+      sku: "BATCHREC001",
+      barcode: "BATCHREC001",
+      costCents: 1000,
+      priceCents: 1500,
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [rejectedEvent, validProduct] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, [validProduct.id]);
+      assert.ok(res.body.rejected.some((event) => event.id === rejectedEvent.id));
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const product = res.body.events.find(
+        (event) => event.id === validProduct.id && event.type === "product"
+      );
+      assert.ok(product, "the product after a rejected event should still reach another terminal");
+      assert.equal(product.payload.priceCents, 1500);
     });
 });
 

@@ -25,8 +25,9 @@ export function getDatabaseUrlForMode() {
 }
 
 export const isMySql = databaseUrl.startsWith("mysql://") || databaseUrl.startsWith("mysql2://");
+export const isPgMem = process.env.PG_MEM === "1";
 
-if (process.env.PG_MEM === "1") {
+if (isPgMem) {
   const { newDb } = await import("pg-mem");
   const mem = newDb({ autoCreateForeignKeyIndices: true });
   const adapter = mem.adapters.createPg();
