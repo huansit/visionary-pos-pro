@@ -288,14 +288,15 @@ function productCompletenessScore(row) {
   );
 }
 
-function preferCatalogRecord(current, candidate) {
+export function preferCatalogRecord(current, candidate) {
   if (!current) return candidate;
+  const currentTs = Number(current.serverTs || current.updatedAt || 0);
+  const candidateTs = Number(candidate.serverTs || candidate.updatedAt || 0);
+  if (candidateTs !== currentTs) return candidateTs > currentTs ? candidate : current;
   const currentScore = productCompletenessScore(current);
   const candidateScore = productCompletenessScore(candidate);
   if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
-  return Number(candidate.serverTs || candidate.updatedAt || 0) >= Number(current.serverTs || current.updatedAt || 0)
-    ? candidate
-    : current;
+  return String(candidate.id || "").localeCompare(String(current.id || "")) >= 0 ? candidate : current;
 }
 
 function buildProductAliasMap(rows = []) {

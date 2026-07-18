@@ -270,6 +270,9 @@ function productDedupeKey(product: Product) {
 
 function preferProductRow(current: Product | undefined, candidate: Product) {
   if (!current) return candidate;
+  const currentTs = Number(current.serverTs || 0);
+  const candidateTs = Number(candidate.serverTs || 0);
+  if (candidateTs !== currentTs) return candidateTs > currentTs ? candidate : current;
   const score = (product: Product) =>
     (product.priceCents > 0 ? 8 : 0) +
     (product.costCents > 0 ? 4 : 0) +
@@ -278,7 +281,7 @@ function preferProductRow(current: Product | undefined, candidate: Product) {
   const currentScore = score(current);
   const candidateScore = score(candidate);
   if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
-  return Number(candidate.serverTs || 0) >= Number(current.serverTs || 0) ? candidate : current;
+  return String(candidate.id || "").localeCompare(String(current.id || "")) >= 0 ? candidate : current;
 }
 
 export async function activateTerminal(activationCode: string, terminalName: string): Promise<TerminalCredentials> {
@@ -475,19 +478,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const mergedProducts = new Map<string, Product>();
-  for (const product of serverCatalogProducts || []) {
-    const key = productDedupeKey(product);
-    mergedProducts.set(key, product);
-  }
-  for (const product of fallbackProducts) {
-    const key = productDedupeKey(product);
-    if (!mergedProducts.has(key)) {
-      mergedProducts.set(key, product);
-    }
-  }
-
-  const products = Array.from(mergedProducts.values()).sort(
+  const products = (serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts).sort(
     (a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || ""))
   );
 

@@ -22,6 +22,7 @@ const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8"
   .replace(/,\s*CONSTRAINT auth_verification_code_hash_is_bcrypt CHECK \(code_hash ~ '[^']+'\)/g, "");
 await pool.query(schema);
 const { default: app } = await import("../src/server.js");
+const { preferCatalogRecord } = await import("../src/routes/sync.js");
 
 after(async () => {
   await pool.end();
@@ -624,6 +625,34 @@ test("6b. product records are shared globally by SKU and duplicate pushes tombst
       assert.equal(tombstone.deleted, true);
       assert.equal(tombstone.payload.dedupedInto, "prod-global-sip");
     });
+});
+
+test("6c. catalog prefers newer admin edits over older complete product rows", () => {
+  const olderComplete = {
+    id: "product-old",
+    serverTs: 100,
+    updatedAt: 100,
+    payload: {
+      sku: "SIP-SYNC-PRICE",
+      name: "Sync Price Product",
+      priceCents: 180000,
+      costCents: 120000,
+      image: "https://example.test/product.png",
+    },
+  };
+  const newerAdminEdit = {
+    id: "product-new",
+    serverTs: 200,
+    updatedAt: 200,
+    payload: {
+      sku: "SIP-SYNC-PRICE",
+      name: "Sync Price Product",
+      priceCents: 0,
+    },
+  };
+
+  assert.equal(preferCatalogRecord(olderComplete, newerAdminEdit), newerAdminEdit);
+  assert.equal(preferCatalogRecord(newerAdminEdit, olderComplete), newerAdminEdit);
 });
 
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {

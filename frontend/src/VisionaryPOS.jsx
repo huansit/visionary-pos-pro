@@ -4745,10 +4745,10 @@ const NAV_GROUPS = [
   { id: "salesgrp", label: "Sales & Customers", icon: Receipt, items: [
     { id: "invoices", label: "Sales", icon: FileText },
     { id: "customers", label: "Customers", icon: Users },
-    { id: "pricing", label: "Pricing", icon: Tags },
   ] },
   { id: "invgrp", label: "Inventory", icon: Boxes, items: [
     { id: "products", label: "Products", icon: Tag },
+    { id: "pricing", label: "Pricing", icon: Tags },
     { id: "stock", label: "Stock", icon: Boxes },
     { id: "purchases", label: "Purchasing", icon: ShoppingBag },
     { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
