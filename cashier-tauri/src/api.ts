@@ -478,11 +478,13 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const mergedProducts = new Map<string, Product>();
   for (const product of serverCatalogProducts || []) {
     const key = productDedupeKey(product);
-    mergedProducts.set(key, preferProductRow(mergedProducts.get(key), product));
+    mergedProducts.set(key, product);
   }
   for (const product of fallbackProducts) {
     const key = productDedupeKey(product);
-    mergedProducts.set(key, preferProductRow(mergedProducts.get(key), product));
+    if (!mergedProducts.has(key)) {
+      mergedProducts.set(key, product);
+    }
   }
 
   const products = Array.from(mergedProducts.values()).sort(
