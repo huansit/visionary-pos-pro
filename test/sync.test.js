@@ -655,6 +655,100 @@ test("6c. catalog prefers newer admin edits over older complete product rows", (
   assert.equal(preferCatalogRecord(newerAdminEdit, olderComplete), newerAdminEdit);
 });
 
+test("6d. admin branch pricing changes reach the activated cashier catalog", async () => {
+  const terminal = await activateTestTerminal("Admin Catalog Sync Till");
+  const product = {
+    id: "prod-admin-catalog-sync",
+    type: "product",
+    branchId: "b_sip",
+    updatedAt: 7100,
+    payload: {
+      name: "Admin Catalog Sync Product",
+      sku: "ADMIN-SYNC-001",
+      barcode: "ADMIN-SYNC-001",
+      category: "Spirits",
+      costCents: 0,
+      priceCents: 0,
+    },
+  };
+  const branchProduct = {
+    id: "branch-product-admin-catalog-sync",
+    type: "branchProducts",
+    branchId: "b_sip",
+    updatedAt: 7101,
+    payload: {
+      branchId: "b_sip",
+      productId: product.id,
+      sku: product.payload.sku,
+      sellingPriceCents: 225000,
+      movingAverageCostCents: 150000,
+      stockQty: 7,
+    },
+  };
+
+  const beforeVersion = await withTerminalAuth(
+    request(app).get("/api/sync/version"),
+    terminal,
+  ).expect(200);
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [product, branchProduct] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected));
+      assert.deepEqual(res.body.accepted, [product.id, branchProduct.id]);
+    });
+
+  const afterVersion = await withTerminalAuth(
+    request(app).get("/api/sync/version"),
+    terminal,
+  ).expect(200);
+  assert.ok(
+    afterVersion.body.version > beforeVersion.body.version,
+    "admin catalog writes must notify connected cashier terminals",
+  );
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.products.find((item) => item.sku === product.payload.sku);
+      assert.ok(synced, "admin-created product must appear in the cashier catalog");
+      assert.equal(synced.priceCents, 225000, JSON.stringify(synced));
+      assert.equal(synced.costCents, 150000, JSON.stringify(synced));
+      assert.equal(synced.stockQty, 7, JSON.stringify(synced));
+    });
+
+  const changedBranchProduct = {
+    ...branchProduct,
+    updatedAt: 7200,
+    payload: {
+      ...branchProduct.payload,
+      sellingPriceCents: 240000,
+      movingAverageCostCents: 155000,
+    },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [changedBranchProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [changedBranchProduct.id]));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.products.find((item) => item.sku === product.payload.sku);
+      assert.equal(synced.priceCents, 240000);
+      assert.equal(synced.costCents, 155000);
+    });
+
+  await withTerminalAuth(request(app).post("/api/sync/push"), terminal)
+    .send({ events: [{ ...changedBranchProduct, id: "terminal-forbidden-branch-price" }] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.reason, "terminal_write_not_allowed");
+    });
+});
+
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {
   await request(app)
     .post("/api/barcodes/products")

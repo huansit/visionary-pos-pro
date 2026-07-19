@@ -412,6 +412,7 @@ export default function App() {
   const [lastSyncAt, setLastSyncAt] = useState<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const catalogSyncInFlight = useRef(false);
+  const catalogSyncPending = useRef(false);
   const updateCheckInFlight = useRef(false);
   const updateStateRef = useRef<CashierUpdateState>("idle");
 
@@ -695,25 +696,34 @@ export default function App() {
 
   async function refreshCatalog(nextTerminal = terminal, options: { silent?: boolean } = {}) {
     if (!nextTerminal) return;
-    if (catalogSyncInFlight.current) return;
+    if (catalogSyncInFlight.current) {
+      catalogSyncPending.current = true;
+      return;
+    }
     catalogSyncInFlight.current = true;
     try {
-      if (!options.silent) setStatus("Syncing products...");
-      const pulled = await pullCatalog(nextTerminal);
-      setBranches(pulled.branches);
-      setProducts(pulled.products);
-      setInvoices(pulled.invoices);
-      setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
-      setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
-      setError("");
-    } catch (err) {
-      if (String(err).includes("terminal_not_authorized")) {
-        await clearTerminalCredentials();
-        setTerminal(null);
-        setAccount(null);
-      }
-      if (!options.silent) setStatus("Using last cached catalog.");
-      setError(String(err));
+      do {
+        catalogSyncPending.current = false;
+        try {
+          if (!options.silent) setStatus("Syncing products...");
+          const pulled = await pullCatalog(nextTerminal);
+          setBranches(pulled.branches);
+          setProducts(pulled.products);
+          setInvoices(pulled.invoices);
+          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
+          setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
+          setError("");
+        } catch (err) {
+          if (String(err).includes("terminal_not_authorized")) {
+            await clearTerminalCredentials();
+            setTerminal(null);
+            setAccount(null);
+            catalogSyncPending.current = false;
+          }
+          if (!options.silent) setStatus("Using last cached catalog.");
+          setError(String(err));
+        }
+      } while (catalogSyncPending.current);
     } finally {
       catalogSyncInFlight.current = false;
     }

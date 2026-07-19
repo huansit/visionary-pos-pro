@@ -1704,7 +1704,54 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
   if (denom <= 0) return addCost;
   return Math.round((q * prevCost + addQty * addCost) / denom);
 }
-function priceFor(data, p) { return p.priceCents; }
+const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPriceByBranch"];
+const BRANCH_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
+function branchMappedCents(product, branchId, mapFields, valueFields) {
+  if (!product || !branchId) return null;
+  for (const mapField of mapFields) {
+    const map = product[mapField];
+    if (!map || typeof map !== "object" || Array.isArray(map) || !Object.prototype.hasOwnProperty.call(map, branchId)) continue;
+    const raw = map[branchId];
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      for (const valueField of valueFields) {
+        if (raw[valueField] !== undefined && raw[valueField] !== null && raw[valueField] !== "") {
+          const value = Number(raw[valueField]);
+          if (Number.isFinite(value)) return Math.max(0, Math.round(value));
+        }
+      }
+      continue;
+    }
+    const value = Number(raw);
+    if (Number.isFinite(value)) return Math.max(0, Math.round(value));
+  }
+  return null;
+}
+function branchProductPriceCents(product, branchId) {
+  return branchMappedCents(product, branchId, BRANCH_PRICE_MAP_FIELDS, ["priceCents", "sellingPriceCents", "price", "sellingPrice"])
+    ?? Math.max(0, Math.round(Number(product?.priceCents) || 0));
+}
+function branchProductCostCents(product, branchId) {
+  return branchMappedCents(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"])
+    ?? Math.max(0, Math.round(Number(product?.costCents) || 0));
+}
+function withBranchMappedCents(product, branchId, mapField, valueField, cents) {
+  if (!product || !branchId) return product;
+  return {
+    ...product,
+    [mapField]: {
+      ...(product[mapField] && typeof product[mapField] === "object" && !Array.isArray(product[mapField]) ? product[mapField] : {}),
+      [branchId]: { [valueField]: Math.max(0, Math.round(Number(cents) || 0)) },
+    },
+    synced: false,
+  };
+}
+function withBranchProductPrice(product, branchId, cents) {
+  return withBranchMappedCents(product, branchId, "branchPrices", "priceCents", cents);
+}
+function withBranchProductCost(product, branchId, cents) {
+  return withBranchMappedCents(product, branchId, "branchCosts", "costCents", cents);
+}
+function priceFor(data, p, branchId) { return branchProductPriceCents(p, branchId); }
 function reorderList(data, branchId) { return branchProductsUnique(data, branchId).filter((p) => productOnHand(data, p, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
 function sortProductsAZ(products) {
   return [...(products || [])].sort((a, b) =>
@@ -5539,7 +5586,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const productId = uid("p");
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
-    const product = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: price, costCents: cost, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
+    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
+    const product = withBranchProductCost(withBranchProductPrice(productBase, branch.id, price), branch.id, cost);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
       const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
@@ -5567,7 +5615,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setDelMsg("");
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
   };
-  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ price: (p.priceCents / 100).toString(), cost: (p.costCents / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
+  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ price: (branchProductPriceCents(p, branch.id) / 100).toString(), cost: (branchProductCostCents(p, branch.id) / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
   const saveEdit = (p) => {
     const price = Math.round(parseFloat(ef.price) * 100);
     if (!price || price <= 0) return;
@@ -5575,7 +5623,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const barcode = cleanCode(ef.barcode) || p.barcode || p.sku;
     const extraBarcodes = String(ef.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
-    if (price < (Number.isNaN(cost) ? p.costCents : cost)) return setErr("Selling price cannot be below cost.");
+    if (price < (Number.isNaN(cost) ? branchProductCostCents(p, branch.id) : cost)) return setErr("Selling price cannot be below cost.");
     const otherProducts = data.products.filter((x) => x.id !== p.id);
     if (otherProducts.some((x) => productVisibleInBranch(x, data, branch.id) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), p.sku.toLowerCase()]);
@@ -5589,7 +5637,16 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     update((d) => {
       const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
       const [primary, ...extras] = result.entries;
-      return { ...d, barcodeCatalog: result.barcodeCatalog, products: d.products.map((x) => x.id === p.id ? { ...x, priceCents: price, costCents: Number.isNaN(cost) ? x.costCents : cost, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() } : x) };
+      return {
+        ...d,
+        barcodeCatalog: result.barcodeCatalog,
+        products: d.products.map((x) => {
+          if (x.id !== p.id) return x;
+          let next = withBranchProductPrice(x, branch.id, price);
+          if (!Number.isNaN(cost)) next = withBranchProductCost(next, branch.id, cost);
+          return { ...next, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
+        }),
+      };
     });
     setEditId(null);
     setErr("");
@@ -5624,17 +5681,18 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           extraIds = ensured.entries.slice(1).map((entry) => entry.id);
         }
         if (!primaryId || targetIds.has(primaryId) || targetKeys.has(productDedupeKey(source))) continue;
-        products.push({
+        let copiedProduct = {
           ...source,
           id: uid("p"),
           branchId: branch.id,
           barcodeCatalogId: primaryId,
           barcodeCatalogIds: extraIds,
-          costCents: source.costCents || 0,
-          priceCents: 0,
           synced: false,
           updatedAt: ts,
-        });
+        };
+        copiedProduct = withBranchProductCost(copiedProduct, branch.id, branchProductCostCents(source, sourceId));
+        copiedProduct = withBranchProductPrice(copiedProduct, branch.id, 0);
+        products.push(copiedProduct);
         targetIds.add(primaryId);
         targetKeys.add(productDedupeKey(source));
         copied++;
@@ -5645,12 +5703,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
-    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, p.costCents / 100, p.priceCents / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
+    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, branchProductCostCents(p, branch.id) / 100, branchProductPriceCents(p, branch.id) / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
     downloadFile("visionary-products.csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
   };
-  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: p.costCents, priceCents: p.priceCents, onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
+  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: branchProductCostCents(p, branch.id), priceCents: branchProductPriceCents(p, branch.id), onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
   const emailSummary = () => {
-    const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * p.costCents, 0);
+    const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * branchProductCostCents(p, branch.id), 0);
     const subject = encodeURIComponent("Product catalog · " + branch.name);
     const body = encodeURIComponent("Products: " + visibleBranchProducts.length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
     try { window.open("mailto:?subject=" + subject + "&body=" + body, "_blank"); } catch (_) {}
@@ -5671,13 +5729,20 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       let barcodeCatalog = d.barcodeCatalog || [];
       parsed.forEach((r) => {
         const i = r.sku ? products.findIndex((p) => p.sku && p.sku.toLowerCase() === r.sku.toLowerCase()) : -1;
-        if (i >= 0) { products[i] = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, costCents: r.cost || products[i].costCents, priceCents: r.price || products[i].priceCents, synced: false }; updated++; }
+        if (i >= 0) {
+          let next = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, synced: false, updatedAt: now() };
+          if (r.cost) next = withBranchProductCost(next, branch.id, r.cost);
+          if (r.price) next = withBranchProductPrice(next, branch.id, r.price);
+          products[i] = next;
+          updated++;
+        }
         else {
           const sku = r.sku || ("SIP" + Math.floor(1000 + Math.random() * 9000));
           const result = ensureBarcodeEntries({ ...d, barcodeCatalog }, [sku]);
           const entry = result.entries[0];
           barcodeCatalog = result.barcodeCatalog;
-          products.push({ id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: r.price, costCents: r.cost, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false });
+          const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() };
+          products.push(withBranchProductCost(withBranchProductPrice(productBase, branch.id, r.price), branch.id, r.cost));
           added++;
         }
       });
@@ -6456,17 +6521,21 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
       const batchId = uid("pb");
       const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1;
       const batchNo = "PO-" + String(bn).padStart(4, "0");
-      const getOH = (pid) => { if (ohCache[pid] === undefined) ohCache[pid] = onHand(d, pid); return ohCache[pid]; };
+      const getOH = (pid, bid) => {
+        const key = bid + ":" + pid;
+        if (ohCache[key] === undefined) ohCache[key] = onHand(d, pid, bid);
+        return ohCache[key];
+      };
       for (const l of list) {
         const lbr = l.branchId || branch.id;
         purchases.push({ id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false });
         if (l.received) {
           const idx = products.findIndex((p) => p.id === l.productId);
-          const curCost = idx >= 0 ? products[idx].costCents : l.costCents;
-          const oh = getOH(l.productId);
+          const curCost = idx >= 0 ? branchProductCostCents(products[idx], lbr) : l.costCents;
+          const oh = getOH(l.productId, lbr);
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
-          if (idx >= 0) products[idx] = { ...products[idx], costCents: newCost, synced: false };
-          ohCache[l.productId] = oh + l.qty;
+          if (idx >= 0) products[idx] = withBranchProductCost(products[idx], lbr, newCost);
+          ohCache[lbr + ":" + l.productId] = oh + l.qty;
           movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
@@ -6476,11 +6545,12 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   };
   const receive = (po) => update((d) => {
     const cur = d.products.find((p) => p.id === po.productId);
-    const newCost = wacCost(onHand(d, po.productId), cur ? cur.costCents : po.costCents, po.qty, po.costCents);
+    const targetBranchId = po.branchId || branch.id;
+    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchProductCostCents(cur, targetBranchId) : po.costCents, po.qty, po.costCents);
     return { ...d,
       purchases: d.purchases.map((x) => x.id === po.id ? { ...x, status: "received", synced: false } : x),
-      products: d.products.map((p) => p.id === po.productId ? { ...p, costCents: newCost, synced: false } : p),
-      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: po.branchId || branch.id, qty: po.qty, reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
+      products: d.products.map((p) => p.id === po.productId ? withBranchProductCost(p, targetBranchId, newCost) : p),
+      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
     };
   });
   const remove = (id) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
@@ -6492,7 +6562,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const suggestQty = (p, bid) => { const oh = productOnHand(data, p, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
   const buildLines = (bid) => reorderList(data, bid).map((p) => {
     const qs = quotesFor(p.id); const r = qs[0] || null;
-    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : p.costCents, hasQuote: !!r, quotes: qs };
+    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : branchProductCostCents(p, bid), hasQuote: !!r, quotes: qs };
   });
   const localNote = (lines) => { const named = lines.filter((l) => l.hasQuote).length; const total = lines.reduce((s, l) => s + l.qty * l.costCents, 0); return named + " of " + lines.length + " item(s) have supplier quotes — each matched to its cheapest supplier. Estimated order value " + fmt(total, cur) + (named < lines.length ? ". Items without quotes need a supplier chosen manually." : "."); };
   const prepare = async (bid) => {
@@ -6985,35 +7055,10 @@ function PricingTab({ data, update, branch }) {
     if (barcode) return "barcode:" + barcode;
     return "product:" + p.id;
   };
-  const branchValueAsCents = (value) => {
-    if (value === undefined || value === null || value === "") return 0;
-    if (typeof value === "object") {
-      return branchValueAsCents(value.priceCents ?? value.sellingPriceCents ?? value.sellPriceCents ?? value.price ?? value.sellingPrice);
-    }
-    const n = Number(value);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return n > 999 ? Math.round(n) : Math.round(n * 100);
-  };
-  const branchPriceFor = (p, bid = bId) => {
-    for (const key of ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"]) {
-      const cents = branchValueAsCents(p?.[key]?.[bid]);
-      if (cents > 0) return cents;
-    }
-    return p.priceCents || 0;
-  };
-  const withBranchPrice = (p, price) => ({
-    ...p,
-    branchPrices: { ...(p.branchPrices || {}), [bId]: price },
-    priceByBranch: { ...(p.priceByBranch || {}), [bId]: price },
-    sellingPriceByBranch: { ...(p.sellingPriceByBranch || {}), [bId]: price },
-    branchSellingPrices: { ...(p.branchSellingPrices || {}), [bId]: price },
-    synced: false,
-    updatedAt: now()
-  });
   const preferPricingRow = (current, candidate) => {
     if (!current) return candidate;
-    const currentPrice = branchPriceFor(current);
-    const candidatePrice = branchPriceFor(candidate);
+    const currentPrice = branchProductPriceCents(current, bId);
+    const candidatePrice = branchProductPriceCents(candidate, bId);
     if (candidatePrice > 0 && !currentPrice) return candidate;
     if (!candidatePrice && currentPrice > 0) return current;
     if ((candidate.updatedAt || 0) > (current.updatedAt || 0)) return candidate;
@@ -7029,14 +7074,15 @@ function PricingTab({ data, update, branch }) {
     (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
   ));
   const draftFor = (p) => {
-    const price = branchPriceFor(p);
+    const price = branchProductPriceCents(p, bId);
     return priceDrafts[p.id] ?? (price > 0 ? String(price / 100) : "");
   };
   const savePrice = (p) => {
     const raw = draftFor(p).trim();
     const price = Math.round((parseFloat(raw) || 0) * 100);
     if (!price || price <= 0) return setPriceErr("Enter a valid selling price for " + p.name + ".");
-    if (price < p.costCents) return setPriceErr("Selling price for " + p.name + " cannot be below cost.");
+    const cost = branchProductCostCents(p, bId);
+    if (price < cost) return setPriceErr("Selling price for " + p.name + " cannot be below cost.");
     setPriceErr("");
     setPriceDrafts((drafts) => {
       const { [p.id]: _saved, ...rest } = drafts;
@@ -7044,7 +7090,7 @@ function PricingTab({ data, update, branch }) {
     });
     update((d) => ({
       ...d,
-      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? withBranchPrice(x, price) : x)
+      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? withBranchProductPrice(x, bId, price) : x)
     }));
   };
   return (
@@ -7063,7 +7109,7 @@ function PricingTab({ data, update, branch }) {
       </div>
       <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
         <tbody>{list.map((p) => {
-          const price = branchPriceFor(p); const cost = p.costCents;
+          const price = branchProductPriceCents(p, bId); const cost = branchProductCostCents(p, bId);
           const margin = price > 0 ? Math.round((price - cost) / price * 100) : null;
           const markup = cost > 0 ? Math.round((price - cost) / cost * 100) : null;
           return (<tr key={p.id}>
