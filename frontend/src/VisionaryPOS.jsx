@@ -5562,13 +5562,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     w.document.close();
   };
   const add = () => {
-    const price = Math.round(parseFloat(f.price) * 100);
     const cost = Math.round((parseFloat(f.cost) || 0) * 100);
     const initialStock = parseInt(f.initialStock, 10) || 0;
     const reorderLevel = parseInt(f.lowStockAlert, 10) || data.settings.reorderLevel;
     if (!f.name.trim()) return setErr("Add a product name.");
-    if (!price || price <= 0) return setErr("Enter a valid price.");
-    if (price < cost) return setErr("Selling price cannot be below cost.");
     if (initialStock < 0) return setErr("Initial stock cannot be negative.");
     const sku = f.sku.trim() || "SIP" + Math.floor(1000 + Math.random() * 9000);
     const barcode = cleanCode(f.barcode) || generateBarcodeValue();
@@ -5589,7 +5586,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
     const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
-    const product = withBranchProductCost(withBranchProductPrice(productBase, branch.id, price), branch.id, cost);
+    const product = withBranchProductCost(productBase, branch.id, cost);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
       const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
@@ -5619,13 +5616,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   };
   function startEdit(p) { setEditId(p.id); setErr(""); setEf({ price: (branchProductPriceCents(p, branch.id) / 100).toString(), cost: (branchProductCostCents(p, branch.id) / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
   const saveEdit = (p) => {
-    const price = Math.round(parseFloat(ef.price) * 100);
-    if (!price || price <= 0) return;
     const cost = Math.round(parseFloat(ef.cost) * 100);
     const barcode = cleanCode(ef.barcode) || p.barcode || p.sku;
     const extraBarcodes = String(ef.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
-    if (price < (Number.isNaN(cost) ? branchProductCostCents(p, branch.id) : cost)) return setErr("Selling price cannot be below cost.");
     const otherProducts = data.products.filter((x) => x.id !== p.id);
     if (otherProducts.some((x) => productVisibleInBranch(x, data, branch.id) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
     const seenCodes = new Set([barcode.toLowerCase(), p.sku.toLowerCase()]);
@@ -5644,7 +5638,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         barcodeCatalog: result.barcodeCatalog,
         products: d.products.map((x) => {
           if (x.id !== p.id) return x;
-          let next = withBranchProductPrice(x, branch.id, price);
+          let next = x;
           if (!Number.isNaN(cost)) next = withBranchProductCost(next, branch.id, cost);
           return { ...next, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
         }),
@@ -5693,7 +5687,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           updatedAt: ts,
         };
         copiedProduct = withBranchProductCost(copiedProduct, branch.id, branchProductCostCents(source, sourceId));
-        copiedProduct = withBranchProductPrice(copiedProduct, branch.id, 0);
         products.push(copiedProduct);
         targetIds.add(primaryId);
         targetKeys.add(productDedupeKey(source));
@@ -5734,7 +5727,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         if (i >= 0) {
           let next = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, synced: false, updatedAt: now() };
           if (r.cost) next = withBranchProductCost(next, branch.id, r.cost);
-          if (r.price) next = withBranchProductPrice(next, branch.id, r.price);
           products[i] = next;
           updated++;
         }
@@ -5744,7 +5736,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           const entry = result.entries[0];
           barcodeCatalog = result.barcodeCatalog;
           const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() };
-          products.push(withBranchProductCost(withBranchProductPrice(productBase, branch.id, r.price), branch.id, r.cost));
+          products.push(withBranchProductCost(productBase, branch.id, r.cost));
           added++;
         }
       });
@@ -5809,7 +5801,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Size</label><input className="input" value={f.size} onChange={(e) => setF({ ...f, size: e.target.value })} placeholder="750 ML" /></div>
             <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
-            <div><label className="label">Price ({cur})</label><input className="input" inputMode="decimal" value={f.price} onChange={(e) => { setF({ ...f, price: e.target.value }); setErr(""); }} placeholder="3000" /></div></div>
+            <div><label className="label">Selling price ({cur})</label><input className="input" value="Set in Pricing" readOnly disabled title="Selling prices are branch-specific and managed from Inventory > Pricing." /></div></div>
           <div className="grid3" style={{ marginTop: 12 }}>
             <div><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div>
             <div><label className="label">Tax (%)</label><input className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" /></div>
@@ -5851,7 +5843,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                           <b style={{ marginRight: 4 }}>{p.name}</b>
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
                           <input className="input" style={{ width: 220, height: 38, fontFamily: "var(--font-mono)" }} value={ef.extraBarcodes} onChange={(e) => setEf({ ...ef, extraBarcodes: e.target.value })} placeholder="Extra barcodes" />
-                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} inputMode="decimal" value={ef.price} onChange={(e) => setEf({ ...ef, price: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Price" />
+                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={ef.price || "0"} readOnly disabled title="Edit selling prices from Inventory > Pricing." />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} inputMode="decimal" value={ef.cost} onChange={(e) => setEf({ ...ef, cost: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Cost" />
                           <button className="btn xs btn-primary" onClick={() => saveEdit(p)}><Check /> Save</button>
                           <button className="btn xs btn-ghost" onClick={() => setEditId(null)}>Cancel</button>
