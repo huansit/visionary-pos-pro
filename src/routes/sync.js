@@ -519,7 +519,6 @@ const EVENT_TYPES = new Set([
   "payment",
   "invoiceNote",
   "stockMovement",
-  "expense",
   "borrowing",
   "endOfDay",
   "cashMovement",
@@ -532,6 +531,8 @@ const RECORD_TYPE_ALIASES = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
   ["barcode_catalog", "barcodeCatalog"],
   ["barcodes", "barcodeCatalog"],
+  ["expense", "expense"],
+  ["expenses", "expense"],
   ["expenseCategory", "expenseCategory"],
   ["expenseCategories", "expenseCategory"],
   ["expense_category", "expenseCategory"],
@@ -727,6 +728,11 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             }
           }
           acceptedTs = await upsertMutableRecord(client, guardedEvent, type, recordDeviceId, nextServerTs());
+          if (type === "expense") {
+            // Older cashier builds stored expenses as append-only events. Once an
+            // expense is updated, the mutable record becomes the canonical copy.
+            await client.query("DELETE FROM events WHERE id = $1 AND type = 'expense'", [guardedEvent.id]);
+          }
           if (type === "product") {
             await propagateProductGlobalFields(client, guardedEvent, recordDeviceId, acceptedTs);
             productAliases = null;
@@ -799,17 +805,17 @@ router.get("/pull", requireSyncRead, async (req, res) => {
   try {
     const evs = await q(
       isMySql
-        ? `SELECT id, type, branch_id AS branchId, device_id AS deviceId,
-                  client_ts AS clientTs, server_ts AS serverTs, payload
-             FROM events
-            WHERE server_ts > $1
-            ORDER BY server_ts ASC, id ASC
+        ? `SELECT e.id, e.type, e.branch_id AS branchId, e.device_id AS deviceId,
+                  e.client_ts AS clientTs, e.server_ts AS serverTs, e.payload
+             FROM events e
+            WHERE e.server_ts > $1
+            ORDER BY e.server_ts ASC, e.id ASC
             LIMIT $2`
-        : `SELECT id, type, branch_id AS "branchId", device_id AS "deviceId",
-                  client_ts AS "clientTs", server_ts AS "serverTs", payload
-             FROM events
-            WHERE server_ts > $1
-            ORDER BY server_ts ASC, id ASC
+        : `SELECT e.id, e.type, e.branch_id AS "branchId", e.device_id AS "deviceId",
+                  e.client_ts AS "clientTs", e.server_ts AS "serverTs", e.payload
+             FROM events e
+            WHERE e.server_ts > $1
+            ORDER BY e.server_ts ASC, e.id ASC
             LIMIT $2`,
       [since, limit]
     );

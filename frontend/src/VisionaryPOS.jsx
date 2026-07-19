@@ -932,7 +932,6 @@ const SYNC_APPEND = new Map([
   ["invoices", "invoice"],
   ["payments", "payment"],
   ["stockMovements", "stockMovement"],
-  ["expenses", "expense"],
   ["borrowings", "borrowing"],
   ["endOfDays", "endOfDay"],
   ["cashMovements", "cashMovement"],
@@ -942,6 +941,7 @@ const SYNC_APPEND = new Map([
 ]);
 const SYNC_MUTABLE = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
+  ["expenses", "expense"],
   ["expenseCategories", "expenseCategory"],
   ["products", "product"],
   ["customers", "customer"],
@@ -4300,7 +4300,8 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const c = Math.round(parseFloat(exp.amount) * 100); if (!c || c <= 0) return;
     const status = c > APPROVAL_LIMIT ? "pending" : "approved";
     const note = "Quick expense · " + employee.name + (exp.note.trim() ? " · " + exp.note.trim() : "");
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: exp.category, amountCents: c, note, status, enteredBy: employee.name, branchId: branch.id, date: todayStr(), ts: now(), synced: online }] }));
+    const ts = now();
+    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: exp.category, amountCents: c, note, status, enteredBy: employee.name, branchId: branch.id, date: todayStr(), ts, updatedAt: ts, synced: online }] }));
     setFlash(status === "pending" ? "Expense sent for admin approval." : "Expense recorded."); setExp(null);
   };
   const stock = (p) => { const left = onHand(data, p.id, branch.id) - (cart[p.id] || 0); return { left, cls: left <= 0 ? "out" : left <= reorder ? "low" : "ok" }; };
@@ -4550,7 +4551,8 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 function QuickExpenseModal({ employee, online, update, cur, onClose }) {
   const [catx, setCatx] = useState(QEXP[0]); const [amt, setAmt] = useState("");
   const save = () => { const c = Math.round(parseFloat(amt) * 100); if (!c || c <= 0) return;
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: catx, amountCents: c, note: "Quick expense · " + employee.name, date: todayStr(), ts: now(), synced: online }] })); onClose(); };
+    const ts = now();
+    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: catx, amountCents: c, note: "Quick expense · " + employee.name, date: todayStr(), ts, updatedAt: ts, synced: online }] })); onClose(); };
   return (
     <div className="scrim" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -4914,7 +4916,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} online={online} isAdmin={isAdmin} />;
       case "borrowing": return <BorrowingTab data={data} update={update} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "cash": return <CashTab data={data} update={update} />;
+      case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "financials": return <ReportsTab key="financials" data={data} initialTab="pnl" />;
       case "branches": return <BranchesTab data={data} update={update} />;
@@ -7137,24 +7139,48 @@ function PricingTab({ data, update, branch }) {
 }
 
 /* ---- Cash / Expenses ---- */
-function CashTab({ data, update }) {
+function CashTab({ data, update, branch }) {
   const cur = data.settings.currency;
-  const todayPays = data.payments.filter((p) => isToday(p.ts) && p.status === "captured");
+  const [branchFilter, setBranchFilter] = useState(branch?.id || "all");
+  useEffect(() => {
+    if (branch?.id) setBranchFilter(branch.id);
+  }, [branch?.id]);
+  const invoiceById = Object.fromEntries((data.invoices || []).map((invoice) => [invoice.id, invoice]));
+  const matchesBranch = (branchId) => branchFilter === "all" || branchId === branchFilter;
+  const paymentBranchId = (payment) => payment.branchId || invoiceById[paymentInvoiceId(payment)]?.branchId;
+  const todayPays = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)));
   const sumM = (re) => todayPays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + p.amountCents, 0);
   const mpesa = sumM(/mpesa|m-?pesa|mobile/i), card = sumM(/card/i), cash = sumM(/cash/i);
-  const todayInv = data.invoices.filter((i) => isToday(i.ts));
+  const todayInv = data.invoices.filter((i) => isToday(i.ts) && matchesBranch(i.branchId));
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const outstanding = todayInv.reduce((s, i) => s + invOutstanding(i), 0);
-  const expToday = data.expenses.filter((e) => (!e.status || e.status === "approved") && isToday(e.ts)).reduce((s, e) => s + e.amountCents, 0);
+  const expToday = data.expenses.filter((e) => (!e.status || e.status === "approved") && isToday(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + e.amountCents, 0);
   const net = todaySales - expToday;
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const tile = (cls, icon, label, value, sub) => (
     <div className={"ctile" + (cls ? " " + cls : "")}><div className="ic">{icon}</div>
       <div><div className="cl">{label}</div><div className="cv">{value}</div>{sub && <div className="cs">{sub}</div>}</div></div>
   );
-  const eods = [...(data.endOfDays || [])].sort((a, b) => b.ts - a.ts).slice(0, 6);
+  const eods = [...(data.endOfDays || [])].filter((entry) => matchesBranch(entry.branchId)).sort((a, b) => b.ts - a.ts).slice(0, 6);
+  const selectedBranchName = branchFilter === "all" ? "All branches" : bname(branchFilter);
   return (
-    <div><PageHead title="Cash Management" sub="Today's money flow and closings." />
+    <div><PageHead
+      title="Cash Management"
+      sub={"Today's money flow and closings · " + selectedBranchName}
+      right={<div style={{ minWidth: 190 }}>
+        <label className="label" htmlFor="cash-branch-filter">Branch</label>
+        <select
+          id="cash-branch-filter"
+          className="select"
+          style={{ width: "100%" }}
+          value={branchFilter}
+          onChange={(event) => setBranchFilter(event.target.value)}
+        >
+          <option value="all">All branches</option>
+          {(data.branches || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </div>}
+    />
       <div className="cashtiles">
         {tile("primary", <Banknote />, "Cash sales today", fmt(cash, cur), "Cash collected from sales")}
         {tile("", <Receipt />, "Today's sales", fmt(todaySales, cur), todayInv.length + " invoice" + (todayInv.length === 1 ? "" : "s"))}
@@ -7250,13 +7276,14 @@ function ExpensesTab({ data, update, branch, user }) {
   const total = periodApproved.reduce((s, e) => s + e.amountCents, 0);
   const pendingTotal = pending.reduce((s, e) => s + e.amountCents, 0);
   const add = () => { const amt = Math.round(parseFloat(f.amount) * 100); if (!amt || amt <= 0) return;
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: f.category || defaultCategory, amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts: now(), synced: false }] })); setF({ category: defaultCategory, amount: "", note: "", branchId: f.branchId }); };
+    const ts = now();
+    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: f.category || defaultCategory, amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts, updatedAt: ts, synced: false }] })); setF({ category: defaultCategory, amount: "", note: "", branchId: f.branchId }); };
   const remove = (id) => update((d) => ({ ...d, expenses: d.expenses.filter((e) => e.id !== id) }));
-  const approve = (id) => { const ts = now(); const by = actor(); update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", decidedBy: by, decidedAt: ts, approvedBy: by, approvedAt: ts, rejectReason: "", synced: false } : e) })); };
+  const approve = (id) => { const ts = now(); const by = actor(); update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", decidedBy: by, decidedAt: ts, approvedBy: by, approvedAt: ts, rejectReason: "", updatedAt: ts, synced: false } : e) })); };
   const reject = (id) => {
     const reason = rejectReason.trim(); if (reason.length < 3) return;
     const ts = now(); const by = actor();
-    update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "rejected", rejectReason: reason, decidedBy: by, decidedAt: ts, rejectedBy: by, rejectedAt: ts, synced: false } : e) }));
+    update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "rejected", rejectReason: reason, decidedBy: by, decidedAt: ts, rejectedBy: by, rejectedAt: ts, updatedAt: ts, synced: false } : e) }));
     setRejecting(null); setRejectReason("");
   };
   const groupBars = (keyFn) => { const g = {}; periodApproved.forEach((e) => { const k = keyFn(e); g[k] = (g[k] || 0) + e.amountCents; }); const rows = Object.entries(g).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...rows.map(([, v]) => v)); return { rows, max }; };

@@ -547,7 +547,71 @@ test("6a. a rejected event does not abort later product writes in the same push 
       );
       assert.ok(product, "the product after a rejected event should still reach another terminal");
       assert.equal(product.payload.priceCents, 1500);
+  });
+});
+
+test("6aa. an approved expense replaces the earlier pending state on every device", async () => {
+  const pendingExpense = {
+    id: "expense-approval-sync-001",
+    type: "expense",
+    branchId: "b_sip",
+    clientTs: 2100,
+    payload: {
+      amountCents: 80000,
+      category: "Utilities",
+      status: "pending",
+      enteredBy: "Cashier",
+    },
+  };
+  const approvedExpense = {
+    ...pendingExpense,
+    updatedAt: 2200,
+    payload: {
+      ...pendingExpense.payload,
+      status: "approved",
+      approvedBy: "Supervisor",
+      approvedAt: 2200,
+    },
+  };
+  delete approvedExpense.clientTs;
+
+  // Simulate the append-only storage used by already-installed cashier builds.
+  await pool.query(
+    `INSERT INTO events
+      (id, type, branch_id, device_id, client_ts, server_ts, payload)
+     VALUES ($1, 'expense', $2, NULL, $3, $4, $5)`,
+    [
+      pendingExpense.id,
+      pendingExpense.branchId,
+      pendingExpense.clientTs,
+      pendingExpense.clientTs,
+      pendingExpense.payload,
+    ]
+  );
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [approvedExpense] })
+    .expect(200);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const expenses = res.body.events.filter(
+        (event) => event.id === approvedExpense.id && event.type === "expense"
+      );
+      assert.equal(expenses.length, 1);
+      assert.equal(expenses[0].updatedAt, approvedExpense.updatedAt);
+      assert.equal(expenses[0].payload.status, "approved");
+      assert.equal(expenses[0].payload.approvedBy, "Supervisor");
     });
+
+  const legacyRows = await pool.query(
+    "SELECT id FROM events WHERE id = $1 AND type = 'expense'",
+    [approvedExpense.id]
+  );
+  assert.equal(legacyRows.rows.length, 0);
 });
 
 test("6b. product records are shared globally by SKU and duplicate pushes tombstone the extra id", async () => {
