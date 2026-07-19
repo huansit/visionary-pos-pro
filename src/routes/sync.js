@@ -19,6 +19,10 @@ function syncActorId(req) {
   return req.deviceId || (req.account?.id ? `session:${req.account.id}` : "unknown");
 }
 
+function syncRecordDeviceId(req) {
+  return req.deviceId || null;
+}
+
 async function trySessionSync(req, res) {
   const token = sessionTokenFromSyncRequest(req);
   if (!token) return "none";
@@ -122,10 +126,16 @@ function productCatalogKey(row) {
 
 const PRODUCT_PRICE_CENT_FIELDS = ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"];
 const PRODUCT_PRICE_MONEY_FIELDS = ["sellingPrice", "selling_price", "sellPrice", "sell_price", "price", "retailPrice"];
-const PRODUCT_COST_CENT_FIELDS = ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"];
+const PRODUCT_COST_CENT_FIELDS = [
+  "costCents",
+  "costPriceCents",
+  "cost_price_cents",
+  "buyingPriceCents",
+  "movingAverageCostCents",
+  "averageCostCents",
+];
 const PRODUCT_COST_MONEY_FIELDS = ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"];
 const PRODUCT_STOCK_FIELDS = ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand", "currentStock", "current_stock"];
-const BRANCH_PRODUCT_RECORD_TYPES = ["branchProduct", "branch_product", "branchInventory", "branch_inventory"];
 
 function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = []) {
   for (const field of centFields) {
@@ -159,10 +169,14 @@ function branchValueFromMap(payload = {}, mapNames = [], branchId = "") {
   return undefined;
 }
 
-function centsFromBranchValue(value) {
+function centsFromBranchValue(
+  value,
+  centFields = PRODUCT_PRICE_CENT_FIELDS,
+  moneyFields = PRODUCT_PRICE_MONEY_FIELDS,
+) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value === "object") {
-    return fieldCentsFromPayload(value, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
+    return fieldCentsFromPayload(value, centFields, moneyFields);
   }
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number) : null;
@@ -178,6 +192,11 @@ function stockFromBranchValue(value) {
 function productOverlayFromPayload(payload = {}, branchId = "") {
   const overlay = {};
   const priceFromMap = centsFromBranchValue(branchValueFromMap(payload, ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"], branchId));
+  const costFromMap = centsFromBranchValue(
+    branchValueFromMap(payload, ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"], branchId),
+    PRODUCT_COST_CENT_FIELDS,
+    PRODUCT_COST_MONEY_FIELDS,
+  );
   const stockFromMap = stockFromBranchValue(branchValueFromMap(payload, ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"], branchId));
   const directPrice = fieldCentsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
   const directCost = fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS);
@@ -185,7 +204,8 @@ function productOverlayFromPayload(payload = {}, branchId = "") {
 
   if (priceFromMap !== null) overlay.priceCents = priceFromMap;
   else if (directPrice !== null) overlay.priceCents = directPrice;
-  if (directCost !== null) overlay.costCents = directCost;
+  if (costFromMap !== null) overlay.costCents = costFromMap;
+  else if (directCost !== null) overlay.costCents = directCost;
   if (stockFromMap !== null && Number.isFinite(stockFromMap)) overlay.stockQty = stockFromMap;
   else if (directStock !== null && Number.isFinite(directStock)) overlay.stockQty = directStock;
   for (const key of ["reorderLevel", "shelfLocation", "availability"]) {
@@ -412,9 +432,9 @@ router.get("/catalog", requireDevice, async (req, res) => {
     const overlayRows = await q(
       `SELECT id, branch_id AS "branchId", updated_at AS "updatedAt", server_ts AS "serverTs", deleted, type, payload
        FROM records
-       WHERE type = ANY($1::text[])
-       ORDER BY server_ts ASC, id ASC`,
-      [BRANCH_PRODUCT_RECORD_TYPES]
+       WHERE type IN ('branchProduct', 'branchProducts', 'branch_product', 'branch_products',
+                      'branchInventory', 'branchInventories', 'branch_inventory', 'branch_inventories')
+       ORDER BY server_ts ASC, id ASC`
     );
 
     const stockEvents = await q(
@@ -518,6 +538,14 @@ const RECORD_TYPE_ALIASES = new Map([
   ["expense_categories", "expenseCategory"],
   ["product", "product"],
   ["products", "product"],
+  ["branchProduct", "branchProduct"],
+  ["branchProducts", "branchProduct"],
+  ["branch_product", "branchProduct"],
+  ["branch_products", "branchProduct"],
+  ["branchInventory", "branchProduct"],
+  ["branchInventories", "branchProduct"],
+  ["branch_inventory", "branchProduct"],
+  ["branch_inventories", "branchProduct"],
   ["customer", "customer"],
   ["customers", "customer"],
   ["user", "user"],
@@ -622,7 +650,8 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const rejected = [];
   const client = await pool.connect();
   let lastIssuedTs = serverNow();
-  const actorDeviceId = syncActorId(req);
+  const actorId = syncActorId(req);
+  const recordDeviceId = syncRecordDeviceId(req);
   let productAliases = null;
 
   async function getProductAliases() {
@@ -686,7 +715,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           const eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
-          acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, actorDeviceId, nextServerTs());
+          acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
         } else {
           if (type === "stockCountSession") {
@@ -697,9 +726,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
               continue;
             }
           }
-          acceptedTs = await upsertMutableRecord(client, guardedEvent, type, actorDeviceId, nextServerTs());
+          acceptedTs = await upsertMutableRecord(client, guardedEvent, type, recordDeviceId, nextServerTs());
           if (type === "product") {
-            await propagateProductGlobalFields(client, guardedEvent, actorDeviceId, acceptedTs);
+            await propagateProductGlobalFields(client, guardedEvent, recordDeviceId, acceptedTs);
             productAliases = null;
           }
           acceptedId = guardedEvent.id;
@@ -739,7 +768,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
     if (accepted.length) {
       const changedTypes = [...new Set(events.filter((ev) => accepted.includes(ev.id)).map((ev) => normalizeType(ev.type)))];
       publishSyncChange({
-        sourceDeviceId: actorDeviceId,
+        sourceDeviceId: actorId,
         branchId: req.deviceBranchId || req.account?.branchId || null,
         cursor,
         accepted: accepted.length,

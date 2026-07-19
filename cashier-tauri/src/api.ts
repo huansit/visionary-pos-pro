@@ -159,6 +159,7 @@ const PRODUCT_COST_CENT_FIELDS = ["costCents", "costPriceCents", "cost_price_cen
 const PRODUCT_COST_MONEY_FIELDS = ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"];
 const PRODUCT_STOCK_FIELDS = ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand", "currentStock", "current_stock"];
 const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
+const BRANCH_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
 const BRANCH_STOCK_MAP_FIELDS = ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"];
 
 function valueFromObject(raw: any, fields: string[]) {
@@ -224,6 +225,9 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
   const branchPrice =
     centsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_CENT_FIELDS)) ??
     moneyCentsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_MONEY_FIELDS));
+  const branchCost =
+    centsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_CENT_FIELDS)) ??
+    moneyCentsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_MONEY_FIELDS));
   const branchStock = numberFromAny(branchMappedValue(payload, BRANCH_STOCK_MAP_FIELDS, branchId, PRODUCT_STOCK_FIELDS));
   const directPrice = centsFromPayload(
     payload,
@@ -254,7 +258,7 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
       image: payload.image || payload.imageUrl || payload.image_url || payload.photo || ""
     }),
     priceCents: branchPrice ?? directPrice,
-    costCents: directCost,
+    costCents: branchCost ?? directCost,
     stockQty: branchStock ?? directStock,
     serverTs: Number(payload.serverTs || payload.updatedAt || source?.serverTs || source?.updatedAt || 0)
   };
