@@ -1913,13 +1913,6 @@ function branchLastEndDay(data, branchId) {
     .reduce((latest, entry) => Math.max(latest, Number(entry.closedAt || entry.ts || 0)), 0);
   return Math.max(mapped, recorded);
 }
-function branchClosedForDate(data, branchId, businessDate) {
-  return (data?.endOfDays || []).some((entry) => {
-    const entryDate = entry.businessDate || entry.date ||
-      (entry.closedAt || entry.ts ? new Date(entry.closedAt || entry.ts).toISOString().slice(0, 10) : "");
-    return entry.branchId === branchId && entryDate === businessDate;
-  });
-}
 // P&L recognition is intentionally conservative: an invoice must be cleared and its
 // business day must have been closed. Open invoices stay out of profit/margin.
 function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.ts <= lastEndFor(settings, inv.branchId); }
@@ -4999,7 +4992,6 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const totalInvoiced = invoices.reduce((s, i) => s + i.totalCents, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const sinceEndDay = invoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
-  const branchClosedToday = branchClosedForDate(data, branch.id, todayStr());
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
   const needle = query.trim().toLowerCase();
   const filtered = invoices
@@ -5023,10 +5015,10 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
       <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
         right={<button
           className="btn sm btn-primary"
-          disabled={sinceEndDay.length === 0 || branchClosedToday}
-          title={branchClosedToday ? `${branch.name} is already closed for today.` : sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's business day"}
+          disabled={sinceEndDay.length === 0}
+          title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
           onClick={() => setEod({ mode: "live" })}
-        ><Check /> {branchClosedToday ? "Closed today" : sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>} />
+        ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
         <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
@@ -5133,6 +5125,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     const now0 = new Date();
     d = {
       cashier: user, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: now0.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      periodStartedAt: since,
       transactions: inv.length, itemsSold: lines.reduce((s, l) => s + l.qty, 0), totalSalesCents: inv.reduce((s, i) => s + i.totalCents, 0),
       cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC, expenseCents: expenseC,
       paidCount: paidInv.length, openCount: openInv.length, openDebtCents: openInv.reduce((s, i) => s + invOutstanding(i), 0),
@@ -5144,7 +5137,15 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const dayQty = dayLines.reduce((s, l) => s + l.qty, 0);
   const dayValue = dayLines.reduce((s, l) => s + l.totalCents, 0);
   const businessDate = d.businessDate || d.date || todayStr();
-  const alreadyClosed = live && branchClosedForDate(data, d.branchId, businessDate);
+  const periodStartedAt = Number(d.periodStartedAt ?? branchLastEndDay(data, d.branchId));
+  const periodInvoices = live
+    ? data.invoices.filter((invoice) => invoice.branchId === d.branchId && invoice.ts > periodStartedAt)
+    : [];
+  const periodLastInvoiceAt = live
+    ? periodInvoices.reduce((latest, invoice) => Math.max(latest, Number(invoice.ts || 0)), 0)
+    : Number(d.lastInvoiceAt || d.periodEndedAt || d.closedAt || d.ts || 0);
+  const closeBatchId = `eod_${d.branchId}_${periodStartedAt}_${periodLastInvoiceAt}`;
+  const batchAlreadyClosed = live && (data.endOfDays || []).some((entry) => entry.id === closeBatchId);
   const hasInvoices = Number(d.transactions || 0) > 0;
   const printEndDay = () => {
     const report = buildReportDocument({
@@ -5183,8 +5184,8 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       setCloseError("Close day is blocked while a cashier cart is active for this branch.");
       return;
     }
-    if (alreadyClosed) {
-      setCloseError(`${d.branchName} has already been closed for ${businessDate}.`);
+    if (batchAlreadyClosed) {
+      setCloseError("This invoice period has already been closed.");
       return;
     }
     if (!hasInvoices) {
@@ -5196,11 +5197,11 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     setClosing(true);
     setCloseError("");
     const ts = now();
-    const closeId = `eod_${d.branchId}_${businessDate}`;
-    const record = { id: closeId, type: "day_closed", eventType: "day_closed", ...d, businessDate, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
+    const closeId = closeBatchId;
+    const record = { id: closeId, type: "day_closed", eventType: "day_closed", ...d, businessDate, periodStartedAt, periodEndedAt: ts, lastInvoiceAt: periodLastInvoiceAt, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
     update((dd) => {
       const current = reconcileInvoicePayments(dd);
-      if (branchClosedForDate(current, d.branchId, businessDate)) return current;
+      if ((current.endOfDays || []).some((entry) => entry.id === closeId)) return current;
       const since = branchLastEndDay(current, d.branchId);
       const eligibleInvoices = current.invoices.filter((i) => i.branchId === d.branchId && i.ts > since && i.ts <= ts);
       if (eligibleInvoices.length === 0) return current;
@@ -5259,13 +5260,13 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
           </div>
         )}
 
-        {alreadyClosed && (
+        {batchAlreadyClosed && (
           <div className="alert danger" style={{ marginTop: 14 }}>
-            {d.branchName} has already been closed for {businessDate}. A duplicate close is blocked.
+            This exact invoice period has already been closed. A duplicate close is blocked.
           </div>
         )}
 
-        {live && !alreadyClosed && !hasInvoices && (
+        {live && !batchAlreadyClosed && !hasInvoices && (
           <div className="alert" style={{ marginTop: 14 }}>
             There are no new invoices to close for {d.branchName}. No Z-report will be generated.
           </div>
@@ -5305,7 +5306,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
               <button
                 className="btn btn-primary"
-                disabled={activeCarts.length > 0 || alreadyClosed || !hasInvoices || closing}
+                disabled={activeCarts.length > 0 || batchAlreadyClosed || !hasInvoices || closing}
                 onClick={closeDay}
               ><Check /> {closing ? "Closing..." : "Close day & print Z-report"}</button>
             </>
