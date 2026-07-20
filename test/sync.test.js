@@ -813,6 +813,75 @@ test("6d. admin branch pricing changes reach the activated cashier catalog", asy
     });
 });
 
+test("6e. product branch maps isolate price and moving average cost by branch", async () => {
+  const sipTerminal = await activateTestTerminal("Mapped Price SIP Till", "b_sip");
+  const cptTerminal = await activateTestTerminal("Mapped Price CPT Till", "b_cpt");
+  const product = {
+    id: "prod-branch-map-sync",
+    type: "product",
+    updatedAt: 7300,
+    payload: {
+      name: "Branch Map Product",
+      sku: "BRANCH-MAP-001",
+      barcode: "BRANCH-MAP-001",
+      category: "Spirits",
+      priceCents: 0,
+      costCents: 0,
+      branchPrices: {
+        b_sip: { priceCents: 225000 },
+        b_cpt: { priceCents: 260000 },
+      },
+      branchCosts: {
+        b_sip: { costCents: 150000 },
+        b_cpt: { costCents: 175000 },
+      },
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [product] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [product.id]));
+
+  const expectBranchValues = async (terminal, priceCents, costCents) => {
+    await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+      .expect(200)
+      .expect((res) => {
+        const synced = res.body.products.find((item) => item.sku === product.payload.sku);
+        assert.ok(synced, "branch-mapped product must appear in the cashier catalog");
+        assert.equal(synced.priceCents, priceCents, JSON.stringify(synced));
+        assert.equal(synced.costCents, costCents, JSON.stringify(synced));
+      });
+  };
+
+  await expectBranchValues(sipTerminal, 225000, 150000);
+  await expectBranchValues(cptTerminal, 260000, 175000);
+
+  const changedProduct = {
+    ...product,
+    updatedAt: 7400,
+    payload: {
+      ...product.payload,
+      branchPrices: {
+        ...product.payload.branchPrices,
+        b_sip: { priceCents: 240000 },
+      },
+      branchCosts: {
+        ...product.payload.branchCosts,
+        b_sip: { costCents: 155000 },
+      },
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [changedProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [changedProduct.id]));
+
+  await expectBranchValues(sipTerminal, 240000, 155000);
+  await expectBranchValues(cptTerminal, 260000, 175000);
+});
+
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {
   await request(app)
     .post("/api/barcodes/products")

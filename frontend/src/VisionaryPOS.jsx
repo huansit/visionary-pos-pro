@@ -1704,7 +1704,7 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
   if (denom <= 0) return addCost;
   return Math.round((q * prevCost + addQty * addCost) / denom);
 }
-const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPriceByBranch"];
+const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
 const BRANCH_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
 function branchMappedCents(product, branchId, mapFields, valueFields) {
   if (!product || !branchId) return null;
@@ -1742,6 +1742,7 @@ function withBranchMappedCents(product, branchId, mapField, valueField, cents) {
       ...(product[mapField] && typeof product[mapField] === "object" && !Array.isArray(product[mapField]) ? product[mapField] : {}),
       [branchId]: { [valueField]: Math.max(0, Math.round(Number(cents) || 0)) },
     },
+    updatedAt: now(),
     synced: false,
   };
 }
@@ -7084,7 +7085,7 @@ function PricingTab({ data, update, branch }) {
     });
     update((d) => ({
       ...d,
-      products: d.products.map((x) => productVisibleInBranch(x, d, bId) && pricingKey(x) === pricingKey(p) ? withBranchProductPrice(x, bId, price) : x)
+      products: d.products.map((x) => pricingKey(x) === pricingKey(p) ? withBranchProductPrice(x, bId, price) : x)
     }));
   };
   return (
