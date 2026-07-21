@@ -128,9 +128,9 @@
         <div class="download">
           <div>
             <div class="title">Windows Installer (.exe)</div>
-            <div class="meta" id="download-version">Version 2.0.28</div>
+            <div class="meta" id="download-version">Version 2.0.34</div>
           </div>
-          <a class="btn" id="download-link" href="/downloads/VISIONPOS-Cashier_2.0.28_x64-setup.exe">Download</a>
+          <a class="btn" id="download-link" href="/downloads/VISIONPOS-Cashier-Setup.exe">Download</a>
         </div>
         <div class="notes" id="release-notes" aria-label="Release notes">
           <div class="note">Secure first-run terminal activation with admin-generated codes.</div>
@@ -153,14 +153,16 @@
         var versionEl = document.getElementById("download-version");
         var linkEl = document.getElementById("download-link");
         var notesEl = document.getElementById("release-notes");
-        fetch("/downloads/release.json?v=" + Date.now(), { cache: "no-store" })
+        fetch("/downloads/latest.json?v=" + Date.now(), { cache: "no-store" })
           .then(function (response) { return response.ok ? response.json() : null; })
           .then(function (release) {
             if (!release) return;
             if (release.version && versionEl) versionEl.textContent = "Version " + release.version;
-            if (release.installer && linkEl) linkEl.href = release.installer;
-            if (Array.isArray(release.releaseNotes) && release.releaseNotes.length && notesEl) {
-              notesEl.innerHTML = release.releaseNotes.map(function (note) {
+            var windows = release.platforms && release.platforms["windows-x86_64"];
+            if (windows && windows.url && linkEl) linkEl.href = windows.url;
+            var releaseNotes = typeof release.notes === "string" ? release.notes.split(/\r?\n/).filter(Boolean) : release.releaseNotes;
+            if (Array.isArray(releaseNotes) && releaseNotes.length && notesEl) {
+              notesEl.innerHTML = releaseNotes.map(function (note) {
                 return '<div class="note">' + String(note).replace(/[&<>"]/g, function (ch) {
                   return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch];
                 }) + "</div>";

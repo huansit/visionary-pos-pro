@@ -7,6 +7,21 @@ declare const __APP_VERSION__: string;
 
 export const APP_VERSION = __APP_VERSION__;
 
+const TERMINAL_REGISTRATION_ERRORS = new Set([
+  "terminal_not_authorized",
+  "terminal_environment_mismatch",
+  "invalid_or_missing_device_token",
+  "unknown_terminal",
+  "terminal_disabled",
+  "terminal_revoked",
+  "invalid_terminal_secret"
+]);
+
+export function isTerminalRegistrationError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return [...TERMINAL_REGISTRATION_ERRORS].some((code) => message.includes(code));
+}
+
 export type SyncVersionChange = {
   version?: number;
   type?: string;

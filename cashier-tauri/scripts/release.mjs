@@ -92,6 +92,7 @@ if (!signature) {
 const safeVersion = version.replace(/[^\w.-]/g, "_");
 const versionedInstallerName = `VISIONPOS-Cashier_${safeVersion}_x64-setup.exe`;
 const versionedInstallerPath = path.join(outDir, versionedInstallerName);
+const stableInstallerPath = path.join(outDir, "VISIONPOS-Cashier-Setup.exe");
 const latestJsonPath = path.join(outDir, "latest.json");
 const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
@@ -103,6 +104,7 @@ const releaseNotes = [
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.copyFileSync(installer.fullPath, versionedInstallerPath);
+fs.copyFileSync(installer.fullPath, stableInstallerPath);
 
 const latest = {
   version,
@@ -143,6 +145,7 @@ if (generatedLatest.version !== version) {
 
 console.log("\nRelease files ready to upload:");
 console.log(`- ${versionedInstallerPath} -> ${installerUrl}`);
+console.log(`- ${stableInstallerPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/VISIONPOS-Cashier-Setup.exe`);
 console.log(`- ${latestJsonPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/latest.json`);
 console.log(`- ${compatibilityJsonPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/release.json`);
 console.log("\nKeep publishing release.json only during the 2.0.17 transition window; new app builds use latest.json only.");

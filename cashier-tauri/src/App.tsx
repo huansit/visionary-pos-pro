@@ -47,6 +47,7 @@ import {
   pushCheckout,
   pushExpense,
   resolveBarcode,
+  isTerminalRegistrationError,
   verifyCashierPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
@@ -714,11 +715,20 @@ export default function App() {
           setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
           setError("");
         } catch (err) {
-          if (String(err).includes("terminal_not_authorized")) {
+          if (isTerminalRegistrationError(err)) {
             await clearTerminalCredentials();
             setTerminal(null);
             setAccount(null);
+            setSessionToken("");
+            setBranches([]);
+            setProducts([]);
+            setInvoices([]);
+            setCart({});
+            setCustomerName("");
             catalogSyncPending.current = false;
+            setStatus("Terminal registration reset.");
+            setError("This terminal is no longer registered. Enter a new activation code.");
+            return;
           }
           if (!options.silent) setStatus("Using last cached catalog.");
           setError(String(err));
