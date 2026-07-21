@@ -290,13 +290,6 @@ function overlayProductId(payload = {}, indexes, aliasById) {
   return "";
 }
 
-function purchaseLinesFromPayload(payload = {}) {
-  for (const value of [payload.items, payload.lines, payload.products, payload.purchaseItems, payload.purchase_items, payload.stockItems]) {
-    if (Array.isArray(value)) return value;
-  }
-  return [];
-}
-
 function quantityFromPayload(payload = {}) {
   for (const value of [payload.qty, payload.quantity, payload.receivedQty, payload.received_qty, payload.units, payload.count]) {
     const qty = Number(value);
@@ -456,11 +449,11 @@ router.get("/catalog", requireDevice, async (req, res) => {
       isMySql
         ? `SELECT id, type, branch_id AS branchId, payload
              FROM events
-            WHERE type IN ('stockMovement', 'purchase')
+            WHERE type = 'stockMovement'
               AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branch_id')) = $1)`
         : `SELECT id, type, branch_id AS "branchId", payload
              FROM events
-            WHERE type IN ('stockMovement', 'purchase')
+            WHERE type = 'stockMovement'
               AND (branch_id = $1 OR payload->>'branchId' = $1 OR payload->>'branch_id' = $1)`,
       [branchId]
     );
@@ -495,18 +488,6 @@ router.get("/catalog", requireDevice, async (req, res) => {
       const payload = row.payload || {};
       const status = String(payload.status || "").toLowerCase();
       if (["cancelled", "canceled", "void", "rejected"].includes(status)) continue;
-      if (row.type === "purchase") {
-        const lines = purchaseLinesFromPayload(payload);
-        if (lines.length) {
-          for (const line of lines) {
-            let lineProductId = canonicalProductId(line.productId || line.product_id || line.productID || line.productRecordId, productAliases);
-            if (!lineProductId || !canonicalIds.has(lineProductId)) lineProductId = overlayProductId(line, productIndexes, productAliases);
-            if (!lineProductId || !canonicalIds.has(lineProductId)) continue;
-            addCatalogStock(stockByProduct, lineProductId, quantityFromPayload(line));
-          }
-          continue;
-        }
-      }
       let productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
       if (!productId || !canonicalIds.has(productId)) productId = overlayProductId(payload, productIndexes, productAliases);
       if (!productId || !canonicalIds.has(productId)) continue;
@@ -518,7 +499,12 @@ router.get("/catalog", requireDevice, async (req, res) => {
         const productId = String(row.id);
         const overlay = mergeOverlay(productOverlayFromPayload(row.payload || {}, branchId), overlaysByProduct.get(productId));
         const baseStock = overlay.stockQty ?? numberFromPayload(row.payload || {}, PRODUCT_STOCK_FIELDS, 0);
-        return normalizeProduct(row, branchId, baseStock + (stockByProduct.get(productId) || 0), overlay);
+        // Stock movements are the same authoritative ledger used by the admin
+        // workspace. Purchase events are business documents and already emit a
+        // stock movement when received; adding both inflated cashier stock.
+        // Legacy branch stock remains a fallback only until a movement exists.
+        const stockQty = stockByProduct.has(productId) ? stockByProduct.get(productId) : baseStock;
+        return normalizeProduct(row, branchId, stockQty, overlay);
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
 

@@ -804,6 +804,41 @@ test("6d. admin branch pricing changes reach the activated cashier catalog", asy
       assert.equal(synced.costCents, 155000);
     });
 
+  const receivedPurchase = {
+    id: "purchase-admin-catalog-sync",
+    type: "purchase",
+    branchId: "b_sip",
+    updatedAt: 7300,
+    payload: {
+      branchId: "b_sip",
+      status: "received",
+      items: [{ productId: product.id, quantity: 20 }],
+    },
+  };
+  const receivedStock = {
+    id: "movement-admin-catalog-sync",
+    type: "stockMovement",
+    branchId: "b_sip",
+    updatedAt: 7301,
+    payload: {
+      branchId: "b_sip",
+      productId: product.id,
+      qty: 20,
+      reason: "Purchase received",
+    },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [receivedPurchase, receivedStock] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected)));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.products.find((item) => item.sku === product.payload.sku);
+      assert.equal(synced.stockQty, 20, "purchase document must not duplicate its stock movement");
+    });
+
   await withTerminalAuth(request(app).post("/api/sync/push"), terminal)
     .send({ events: [{ ...changedBranchProduct, id: "terminal-forbidden-branch-price" }] })
     .expect(200)
