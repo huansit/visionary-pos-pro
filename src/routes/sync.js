@@ -7,6 +7,19 @@ const router = Router();
 
 const MANAGEMENT_SYNC_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
 
+async function operationalResetEpoch(client = null) {
+  const run = client?.query ? client.query.bind(client) : q;
+  const result = await run(
+    `SELECT payload
+       FROM records
+      WHERE type = 'systemReset'
+        AND id = 'operational-reset'
+        AND deleted = false
+      LIMIT 1`
+  );
+  return String(result.rows[0]?.payload?.resetEpoch || "");
+}
+
 function sessionTokenFromSyncRequest(req) {
   return String(req.get("x-session-token") || req.query?.sessionToken || req.body?.sessionToken || "").trim();
 }
@@ -508,7 +521,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
 
-    res.json({ branchId, products, total: products.length });
+    res.json({ branchId, products, total: products.length, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
     console.error("catalog failed:", error);
     res.status(500).json({ error: "catalog_failed" });
@@ -647,6 +660,11 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
 
+  const resetEpoch = await operationalResetEpoch();
+  if (resetEpoch && String(req.body?.resetEpoch || "") !== resetEpoch) {
+    return res.status(409).json({ error: "operational_reset_required", resetEpoch });
+  }
+
   const accepted = [];
   const serverTs = {};
   const rejected = [];
@@ -782,7 +800,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         types: changedTypes,
       });
     }
-    return res.json({ accepted, serverTs, rejected, cursor });
+    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("push failed:", error);
@@ -840,7 +858,7 @@ router.get("/pull", requireSyncRead, async (req, res) => {
     const page = all.slice(0, limit);
     const cursor = page.length ? page[page.length - 1].serverTs : since;
     const hasMore = all.length > limit || evs.rows.length === limit || recs.rows.length === limit;
-    res.json({ events: page, cursor, hasMore });
+    res.json({ events: page, cursor, hasMore, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
     console.error("pull failed:", error);
     res.status(500).json({ error: "pull_failed" });

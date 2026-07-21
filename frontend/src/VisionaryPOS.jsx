@@ -20,6 +20,7 @@ const STORE_KEY = "visionary:pos:full:v11";
 const SESSION_KEY = "visionary:pos:session:v1";
 const OUTBOX_KEY = "visionary:pos:sync:outbox:v1";
 const CURSOR_KEY = "visionary:pos:sync:cursor:v1";
+const RESET_EPOCH_KEY = "visionary:pos:sync:reset-epoch:v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -29,8 +30,8 @@ const MAINTENANCE_LOG_KEY = "visionary:maintenance:audit:v1";
 const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visionary:tmp:", "visionary:image-cache:"];
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
-const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
+const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 5 * 60 * 1000;
@@ -1560,6 +1561,16 @@ async function pruneAuthSyncEvents(outbox) {
 }
 async function loadCursor() { return Number(await kvGet(CURSOR_KEY) || 0); }
 async function saveCursor(cursor) { await kvSet(CURSOR_KEY, String(cursor || 0)); }
+async function loadResetEpoch() { return String(await kvGet(RESET_EPOCH_KEY) || ""); }
+async function saveResetEpoch(epoch) { await kvSet(RESET_EPOCH_KEY, String(epoch || "")); }
+async function applyOperationalReset(epoch, mode) {
+  await saveOutbox([]);
+  await saveCursor(0);
+  await saveResetEpoch(epoch);
+  const clean = applyEnvironmentMode(CLEAN_SETUP(), mode);
+  await saveData(clean);
+  return clean;
+}
 async function syncStatus() {
   const outbox = await pruneAuthSyncEvents(await loadOutbox());
   const cursor = await loadCursor();
@@ -1607,6 +1618,7 @@ async function runSyncClient(currentData, options = {}) {
   const credentialProvision = { ok: 0, failed: 0 };
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
   let cursor = await loadCursor();
+  let resetEpoch = await loadResetEpoch();
   if (options.forceFullPull) {
     cursor = 0;
     await saveCursor(0);
@@ -1616,9 +1628,17 @@ async function runSyncClient(currentData, options = {}) {
   let pushErrorText = "";
   if (outbox.length) {
     try {
-      const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox }) });
+      const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox, resetEpoch }) });
       if (!pushed.ok) {
         const errorBody = await pushed.json().catch(() => ({}));
+        if (pushed.status === 409 && errorBody?.error === "operational_reset_required") {
+          resetEpoch = String(errorBody.resetEpoch || "");
+          data = await applyOperationalReset(resetEpoch, currentData?.settings?.environmentMode);
+          outbox = [];
+          cursor = 0;
+          pushErrorText = "";
+          return await runSyncClient(data, { ...options, forceFullPull: true });
+        }
         throw new Error(errorBody?.error ? `push_failed_${pushed.status}_${errorBody.error}` : "push_failed_" + pushed.status);
       }
       const body = await pushed.json();
@@ -1639,6 +1659,15 @@ async function runSyncClient(currentData, options = {}) {
       throw new Error(errorBody?.error ? `pull_failed_${pulled.status}_${errorBody.error}` : "pull_failed_" + pulled.status);
     }
     const body = await pulled.json();
+    const serverResetEpoch = String(body.resetEpoch || "");
+    if (serverResetEpoch && serverResetEpoch !== resetEpoch) {
+      resetEpoch = serverResetEpoch;
+      data = await applyOperationalReset(resetEpoch, currentData?.settings?.environmentMode);
+      outbox = [];
+      cursor = 0;
+      await saveCursor(0);
+      continue;
+    }
     data = mergeSyncEvents(data, body.events || []);
     const nextCursor = Number(body.cursor || cursor || 0);
     hasMore = !!body.hasMore && nextCursor > cursor;
