@@ -23,7 +23,8 @@
                     "cashier-tauri:build":  "npm --prefix cashier-tauri run build",
                     "cashier-tauri:dist:win":  "npm --prefix cashier-tauri run tauri:build",
                     "start:live":  "node --env-file=.env.live src/server.js",
-                    "start:test":  "node --env-file=.env.test src/server.js"
+                    "start:test":  "node --env-file=.env.test src/server.js",
+                    "reset:test":  "node --env-file=.env.test db/reset-test-environment.js"
                 },
     "dependencies":  {
                          "bcryptjs":  "^2.4.3",
