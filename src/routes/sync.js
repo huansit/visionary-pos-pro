@@ -136,6 +136,14 @@ const PRODUCT_COST_CENT_FIELDS = [
 ];
 const PRODUCT_COST_MONEY_FIELDS = ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"];
 const PRODUCT_STOCK_FIELDS = ["stockQty", "stock_qty", "stock", "_stock", "qty", "quantity", "onHand", "currentStock", "current_stock"];
+const PRODUCT_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
+const PRODUCT_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
+const PRODUCT_STOCK_MAP_FIELDS = ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"];
+const BRANCH_SCOPED_PRODUCT_MAP_FIELDS = [...new Set([
+  ...PRODUCT_PRICE_MAP_FIELDS,
+  ...PRODUCT_COST_MAP_FIELDS,
+  ...PRODUCT_STOCK_MAP_FIELDS,
+])];
 
 function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = []) {
   for (const field of centFields) {
@@ -154,11 +162,15 @@ function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = []) 
 }
 
 function mapValueForBranch(map, branchId) {
-  if (!map || typeof map !== "object" || !branchId) return undefined;
+  if (!map || typeof map !== "object" || Array.isArray(map) || !branchId) return undefined;
   if (Object.prototype.hasOwnProperty.call(map, branchId)) return map[branchId];
-  const wanted = String(branchId).toLowerCase();
-  const match = Object.entries(map).find(([key]) => String(key).toLowerCase() === wanted);
+  const wanted = String(branchId).trim().toLowerCase();
+  const match = Object.entries(map).find(([key]) => String(key).trim().toLowerCase() === wanted);
   return match ? match[1] : undefined;
+}
+
+function hasBranchMap(payload = {}, mapNames = []) {
+  return mapNames.some((name) => payload[name] && typeof payload[name] === "object" && !Array.isArray(payload[name]));
 }
 
 function branchValueFromMap(payload = {}, mapNames = [], branchId = "") {
@@ -191,22 +203,25 @@ function stockFromBranchValue(value) {
 
 function productOverlayFromPayload(payload = {}, branchId = "") {
   const overlay = {};
-  const priceFromMap = centsFromBranchValue(branchValueFromMap(payload, ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"], branchId));
+  const hasPriceMap = hasBranchMap(payload, PRODUCT_PRICE_MAP_FIELDS);
+  const hasCostMap = hasBranchMap(payload, PRODUCT_COST_MAP_FIELDS);
+  const hasStockMap = hasBranchMap(payload, PRODUCT_STOCK_MAP_FIELDS);
+  const priceFromMap = centsFromBranchValue(branchValueFromMap(payload, PRODUCT_PRICE_MAP_FIELDS, branchId));
   const costFromMap = centsFromBranchValue(
-    branchValueFromMap(payload, ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"], branchId),
+    branchValueFromMap(payload, PRODUCT_COST_MAP_FIELDS, branchId),
     PRODUCT_COST_CENT_FIELDS,
     PRODUCT_COST_MONEY_FIELDS,
   );
-  const stockFromMap = stockFromBranchValue(branchValueFromMap(payload, ["branchStock", "stockByBranch", "stockQtyByBranch", "branchInventory"], branchId));
+  const stockFromMap = stockFromBranchValue(branchValueFromMap(payload, PRODUCT_STOCK_MAP_FIELDS, branchId));
   const directPrice = fieldCentsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
   const directCost = fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS);
   const directStock = numberFromPayload(payload, PRODUCT_STOCK_FIELDS, null);
 
-  if (priceFromMap !== null) overlay.priceCents = priceFromMap;
+  if (hasPriceMap) overlay.priceCents = priceFromMap ?? 0;
   else if (directPrice !== null) overlay.priceCents = directPrice;
-  if (costFromMap !== null) overlay.costCents = costFromMap;
+  if (hasCostMap) overlay.costCents = costFromMap ?? 0;
   else if (directCost !== null) overlay.costCents = directCost;
-  if (stockFromMap !== null && Number.isFinite(stockFromMap)) overlay.stockQty = stockFromMap;
+  if (hasStockMap) overlay.stockQty = stockFromMap !== null && Number.isFinite(stockFromMap) ? stockFromMap : 0;
   else if (directStock !== null && Number.isFinite(directStock)) overlay.stockQty = directStock;
   for (const key of ["reorderLevel", "shelfLocation", "availability"]) {
     if (payload[key] !== undefined && payload[key] !== null && payload[key] !== "") overlay[key] = payload[key];
@@ -881,6 +896,18 @@ function sanitizeSharedProductPayload(payload = {}) {
   return next;
 }
 
+function mergeSharedProductPayload(existingPayload = {}, incomingPayload = {}) {
+  const existing = existingPayload && typeof existingPayload === "object" ? existingPayload : {};
+  const incoming = incomingPayload && typeof incomingPayload === "object" ? incomingPayload : {};
+  const merged = { ...existing, ...incoming };
+  for (const field of BRANCH_SCOPED_PRODUCT_MAP_FIELDS) {
+    const previousMap = existing[field] && typeof existing[field] === "object" && !Array.isArray(existing[field]) ? existing[field] : null;
+    const incomingMap = incoming[field] && typeof incoming[field] === "object" && !Array.isArray(incoming[field]) ? incoming[field] : null;
+    if (previousMap || incomingMap) merged[field] = { ...(previousMap || {}), ...(incomingMap || {}) };
+  }
+  return sanitizeSharedProductPayload(merged);
+}
+
 async function upsertProductRecordBySku(client, ev, deviceId, ts) {
   const updatedAt = Number(ev.updatedAt ?? ev.clientTs ?? ts);
   const payload = sanitizeSharedProductPayload(ev.payload ?? {});
@@ -918,7 +945,7 @@ async function upsertProductRecordBySku(client, ev, deviceId, ts) {
 
   if (existingProduct && existingProduct.id === ev.id) {
     if (Number(existingProduct.updatedAt || 0) <= updatedAt) {
-      const merged = sanitizeSharedProductPayload({ ...(existingProduct.payload || {}), ...payload });
+      const merged = mergeSharedProductPayload(existingProduct.payload, payload);
       await client.query(
         `UPDATE records
          SET branch_id = NULL,
@@ -936,7 +963,7 @@ async function upsertProductRecordBySku(client, ev, deviceId, ts) {
   }
 
   if (existingProduct && existingProduct.id !== ev.id) {
-    const merged = sanitizeSharedProductPayload({ ...(existingProduct.payload || {}), ...payload });
+    const merged = mergeSharedProductPayload(existingProduct.payload, payload);
     await client.query(
       `UPDATE records
        SET branch_id = NULL,

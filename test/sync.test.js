@@ -861,13 +861,13 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
     ...product,
     updatedAt: 7400,
     payload: {
-      ...product.payload,
+      name: product.payload.name,
+      sku: product.payload.sku,
+      barcode: product.payload.barcode,
       branchPrices: {
-        ...product.payload.branchPrices,
         b_sip: { priceCents: 240000 },
       },
       branchCosts: {
-        ...product.payload.branchCosts,
         b_sip: { costCents: 155000 },
       },
     },
@@ -880,6 +880,40 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
 
   await expectBranchValues(sipTerminal, 240000, 155000);
   await expectBranchValues(cptTerminal, 260000, 175000);
+
+  const branchOnlyProduct = {
+    id: "prod-branch-authoritative-sync",
+    type: "product",
+    updatedAt: 7500,
+    payload: {
+      name: "Branch Authoritative Product",
+      sku: "BRANCH-MAP-002",
+      barcode: "BRANCH-MAP-002",
+      priceCents: 999999,
+      costCents: 888888,
+      branchPrices: { b_sip: { priceCents: 310000 } },
+      branchCosts: { b_sip: { costCents: 200000 } },
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [branchOnlyProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [branchOnlyProduct.id]));
+
+  const expectAuthoritativeValues = async (terminal, priceCents, costCents) => {
+    await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+      .expect(200)
+      .expect((res) => {
+        const synced = res.body.products.find((item) => item.sku === branchOnlyProduct.payload.sku);
+        assert.ok(synced, "branch-authoritative product must appear in the cashier catalog");
+        assert.equal(synced.priceCents, priceCents, JSON.stringify(synced));
+        assert.equal(synced.costCents, costCents, JSON.stringify(synced));
+      });
+  };
+
+  await expectAuthoritativeValues(sipTerminal, 310000, 200000);
+  await expectAuthoritativeValues(cptTerminal, 0, 0);
 });
 
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {

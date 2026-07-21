@@ -1706,33 +1706,38 @@ function wacCost(prevQty, prevCost, addQty, addCost) {
 }
 const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
 const BRANCH_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
-function branchMappedCents(product, branchId, mapFields, valueFields) {
-  if (!product || !branchId) return null;
+function branchMappedCentsState(product, branchId, mapFields, valueFields) {
+  if (!product || !branchId) return { hasMap: false, value: null };
+  const wantedBranch = String(branchId).trim().toLowerCase();
+  let hasMap = false;
   for (const mapField of mapFields) {
     const map = product[mapField];
-    if (!map || typeof map !== "object" || Array.isArray(map) || !Object.prototype.hasOwnProperty.call(map, branchId)) continue;
-    const raw = map[branchId];
+    if (!map || typeof map !== "object" || Array.isArray(map)) continue;
+    hasMap = true;
+    const branchKey = Object.keys(map).find((key) => String(key).trim().toLowerCase() === wantedBranch);
+    if (!branchKey) continue;
+    const raw = map[branchKey];
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       for (const valueField of valueFields) {
         if (raw[valueField] !== undefined && raw[valueField] !== null && raw[valueField] !== "") {
           const value = Number(raw[valueField]);
-          if (Number.isFinite(value)) return Math.max(0, Math.round(value));
+          if (Number.isFinite(value)) return { hasMap, value: Math.max(0, Math.round(value)) };
         }
       }
       continue;
     }
     const value = Number(raw);
-    if (Number.isFinite(value)) return Math.max(0, Math.round(value));
+    if (Number.isFinite(value)) return { hasMap, value: Math.max(0, Math.round(value)) };
   }
-  return null;
+  return { hasMap, value: null };
 }
 function branchProductPriceCents(product, branchId) {
-  return branchMappedCents(product, branchId, BRANCH_PRICE_MAP_FIELDS, ["priceCents", "sellingPriceCents", "price", "sellingPrice"])
-    ?? Math.max(0, Math.round(Number(product?.priceCents) || 0));
+  const mapped = branchMappedCentsState(product, branchId, BRANCH_PRICE_MAP_FIELDS, ["priceCents", "sellingPriceCents", "price", "sellingPrice"]);
+  return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.priceCents) || 0));
 }
 function branchProductCostCents(product, branchId) {
-  return branchMappedCents(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"])
-    ?? Math.max(0, Math.round(Number(product?.costCents) || 0));
+  const mapped = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"]);
+  return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.costCents) || 0));
 }
 function withBranchMappedCents(product, branchId, mapField, valueField, cents) {
   if (!product || !branchId) return product;
@@ -6563,11 +6568,11 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
       const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
-      const newCost = wacCost(onHand(d, f.productId), cur ? cur.costCents : cost, qty, cost);
+      const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchProductCostCents(cur, lbr) : cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
         stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
-        products: d.products.map((p) => p.id === f.productId ? { ...p, costCents: newCost, synced: false } : p),
+        products: d.products.map((p) => p.id === f.productId ? withBranchProductCost(p, lbr, newCost) : p),
       };
     });
     setF({ ...f, qty: "", cost: "" }); setAdding(false); };
@@ -6691,9 +6696,12 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
           {(() => {
             const prodSel = data.products.find((p) => p.id === f.productId); const projQty = parseInt(f.qty, 10) || 0; const projCost = Math.round(parseFloat(f.cost) * 100) || 0;
             if (!f.received || !prodSel || projQty <= 0 || projCost <= 0) return null;
-            const avg = wacCost(onHand(data, f.productId), prodSel.costCents, projQty, projCost);
-            const m = prodSel.priceCents > 0 ? Math.round((prodSel.priceCents - avg) / prodSel.priceCents * 100) : 0;
-            return <div className="notice" style={{ marginTop: 10 }}>New average cost ≈ <b>{fmt(avg, cur)}</b> (was {fmt(prodSel.costCents, cur)}) · margin becomes <b>{m}%</b> at the {fmt(prodSel.priceCents, cur)} selling price. Selling price is unchanged.</div>;
+            const pricingBranchId = f.branchId || branch.id;
+            const currentCost = branchProductCostCents(prodSel, pricingBranchId);
+            const sellingPrice = branchProductPriceCents(prodSel, pricingBranchId);
+            const avg = wacCost(onHand(data, f.productId, pricingBranchId), currentCost, projQty, projCost);
+            const m = sellingPrice > 0 ? Math.round((sellingPrice - avg) / sellingPrice * 100) : 0;
+            return <div className="notice" style={{ marginTop: 10 }}>New average cost ≈ <b>{fmt(avg, cur)}</b> (was {fmt(currentCost, cur)}) · margin becomes <b>{m}%</b> at the {fmt(sellingPrice, cur)} selling price. Selling price is unchanged.</div>;
           })()}
           <label className="checkrow"><input type="checkbox" checked={f.received} onChange={(e) => setF({ ...f, received: e.target.checked })} /> Items already received — add to stock now</label>
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
