@@ -137,6 +137,23 @@ test("1a. provisions an admin session for management routes", async () => {
   state.adminSessionToken = login.body.sessionToken;
 });
 
+test("1aa. branch users require an active terminal in their branch", async () => {
+  await withAdminSession(request(app)
+    .post("/api/auth/users")
+    .send({
+      id: "cashier-without-terminal",
+      name: "Cashier Without Terminal",
+      role: "Cashier",
+      pin: "6611",
+      branchId: "b_sip",
+      rights: ["sell"],
+    }))
+    .expect(409)
+    .expect((res) => {
+      assert.equal(res.body.error, "branch_terminal_required");
+    });
+});
+
 test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
   const activation = await withAdminSession(request(app)
     .post("/api/auth/terminal-activations")

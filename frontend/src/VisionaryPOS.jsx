@@ -8808,33 +8808,42 @@ function UsersTab({ data, update, isAdmin }) {
   const [fpMsg, setFpMsg] = useState("");
   const [terminals, setTerminals] = useState([]);
   const [terminalBusy, setTerminalBusy] = useState(false);
-  const [terminalMsg, setTerminalMsg] = useState("");
-  const terminalBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
-  const [activation, setActivation] = useState({ terminalName: "", code: "" });
+  const [userBusy, setUserBusy] = useState(false);
   const visibleEmployees = activeEmployees(data);
-  const saveCloudCredential = async (emp, secret = {}) => {
-    try {
-      await authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
-    } catch (error) {
-      const msg = String(error.message || "");
-      setErr(msg.includes("duplicate_pin")
-        ? "User saved locally, but cloud login was not updated: that PIN is already assigned to another employee."
-        : "User saved locally, but cloud login was not updated: " + error.message);
-    }
+  const activeTerminalForBranch = (branchId) => terminals.find((terminal) => (
+    String(terminal.branchId || "") === String(branchId || "")
+    && String(terminal.status || "").toUpperCase() === "ACTIVE"
+  ));
+  const selectedTerminal = activeTerminalForBranch(f.branchId);
+  const credentialMessage = (error) => {
+    const message = String(error?.message || "");
+    if (message.includes("duplicate_pin")) return "That PIN is already assigned to another employee.";
+    if (message.includes("branch_terminal_required")) return "This branch has no active terminal. Activate one in Terminals before creating or updating branch users.";
+    if (message.includes("branch_required")) return "Select a branch for this user.";
+    return message || "Cloud user validation failed.";
   };
+  const saveCloudCredential = (emp, secret = {}) => authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
   const openCred = (id) => { setCredEdit(id); setCredVal(""); setCredErr(""); setEditRights(null); };
-  const saveCred = (emp) => {
+  const saveCred = async (emp) => {
+    if (!emp.branchId) return setCredErr("This user must be assigned to a branch.");
+    if (!activeTerminalForBranch(emp.branchId)) return setCredErr("This branch has no active terminal. Activate one before changing user credentials.");
     if (emp.role === "Cashier") {
       if (!/^\d{4}$/.test(credVal)) return setCredErr("PIN must be 4 digits.");
       if (visibleEmployees.some((e) => e.id !== emp.id && e.pin === credVal)) return setCredErr("That PIN's already in use.");
-      update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, pin: credVal, synced: false } : e) }));
-      saveCloudCredential(emp, { pin: credVal });
     } else {
       const issue = passwordIssue(credVal); if (issue) return setCredErr(issue);
-      update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, password: credVal, synced: false } : e) }));
-      saveCloudCredential(emp, { password: credVal });
     }
-    setCredEdit(null); setCredVal(""); setCredErr("");
+    setUserBusy(true);
+    try {
+      const secret = emp.role === "Cashier" ? { pin: credVal } : { password: credVal };
+      await saveCloudCredential(emp, secret);
+      update((d) => ({ ...d, employees: d.employees.map((e) => e.id === emp.id ? { ...e, ...secret, synced: false } : e) }));
+      setCredEdit(null); setCredVal(""); setCredErr("");
+    } catch (error) {
+      setCredErr(credentialMessage(error));
+    } finally {
+      setUserBusy(false);
+    }
   };
   const saveAdminPw = () => {
     const issue = passwordIssue(adminPw); if (issue) return setAdminErr(issue);
@@ -8842,28 +8851,37 @@ function UsersTab({ data, update, isAdmin }) {
     setAdminCred(false); setAdminPw(""); setAdminErr("");
   };
   const reset = () => { setF({ name: "", role: ROLES[0], pin: "", email: "", password: "", branchId: data.branches[0]?.id || "", rights: ROLE_RIGHTS.Cashier.slice() }); setErr(""); setAdding(false); };
-  const setRole = (role) => setF((p) => ({ ...p, role, rights: (ROLE_RIGHTS[role] || []).slice(), branchId: role === "Cashier" && !p.branchId ? (data.branches[0]?.id || "") : p.branchId }));
+  const setRole = (role) => setF((p) => ({ ...p, role, rights: (ROLE_RIGHTS[role] || []).slice(), branchId: p.branchId || data.branches[0]?.id || "" }));
   const toggleNew = (r) => setF((p) => { const cur = rightsList(p.rights); return { ...p, rights: cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r] }; });
-  const add = () => {
+  const add = async () => {
     if (!f.name.trim()) return setErr("Add a name.");
+    if (!f.branchId) return setErr("Select a branch for this user.");
+    if (!selectedTerminal) return setErr("This branch has no active terminal. Activate one in Terminals before creating users.");
+    let emp;
+    let secret;
     if (f.role === "Cashier") {
-      if (!f.branchId) return setErr("Cashiers must be assigned to a branch.");
       if (!/^\d{4}$/.test(f.pin)) return setErr("Cashiers sign in with a 4-digit PIN.");
       if (visibleEmployees.some((e) => e.pin === f.pin)) return setErr("That PIN's taken.");
-      const emp = { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
-      update((d) => ({ ...d, employees: [...d.employees, emp] }));
-      saveCloudCredential(emp, { pin: f.pin });
-      reset(); return;
+      emp = { id: uid("e"), name: f.name.trim(), role: f.role, pin: f.pin, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
+      secret = { pin: f.pin };
+    } else {
+      const em = f.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
+      const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
+      if (em === data.admin.email.toLowerCase() || visibleEmployees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
+      emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
+      secret = { password: f.password };
     }
-    // Supervisor / Manager sign in with email + password
-    const em = f.email.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
-    const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
-    if (em === data.admin.email.toLowerCase() || visibleEmployees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
-    const emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
-    update((d) => ({ ...d, employees: [...d.employees, emp] }));
-    saveCloudCredential(emp, { password: f.password });
-    reset();
+    setUserBusy(true);
+    try {
+      await saveCloudCredential(emp, secret);
+      update((d) => ({ ...d, employees: [...d.employees, emp] }));
+      reset();
+    } catch (error) {
+      setErr(credentialMessage(error));
+    } finally {
+      setUserBusy(false);
+    }
   };
   const remove = (id) => {
     const emp = data.employees.find((e) => e.id === id); if (!emp) return;
@@ -8936,36 +8954,8 @@ function UsersTab({ data, update, isAdmin }) {
     try {
       const result = await authGet("/api/auth/terminals", { session: true });
       setTerminals(result.terminals || []);
-      setTerminalMsg("");
     } catch (error) {
-      setTerminalMsg("Could not load terminals: " + error.message);
-    } finally {
-      setTerminalBusy(false);
-    }
-  };
-  const generateActivation = async () => {
-    if (!terminalBranch?.id) return setTerminalMsg("Select your working branch before generating a terminal code.");
-    if (!activation.terminalName.trim()) return setTerminalMsg("Enter terminal name.");
-    setTerminalBusy(true);
-    try {
-      const result = await authApi("/api/auth/terminal-activations", { branchId: terminalBranch.id, terminalName: activation.terminalName.trim() }, { session: true });
-      setActivation((p) => ({ ...p, code: result.code || "" }));
-      setTerminalMsg("Activation code generated. Use it once on the desktop app.");
-    } catch (error) {
-      setTerminalMsg("Could not generate activation code: " + error.message);
-    } finally {
-      setTerminalBusy(false);
-    }
-  };
-  const updateTerminal = async (terminal, patch) => {
-    setTerminalBusy(true);
-    try {
-      const safePatch = { ...patch };
-      delete safePatch.branchId;
-      await authApi("/api/auth/terminals/" + encodeURIComponent(terminal.uuid), safePatch, { session: true });
-      await loadTerminals();
-    } catch (error) {
-      setTerminalMsg("Terminal update failed: " + error.message);
+      setErr("Could not load terminals: " + error.message);
     } finally {
       setTerminalBusy(false);
     }
@@ -8994,44 +8984,15 @@ function UsersTab({ data, update, isAdmin }) {
           {adminErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{adminErr}</div>}
         </div>
       )}
-      {isAdmin && (
-        <div className="addpanel fade" style={{ marginBottom: 14 }}>
-          <div className="section-title" style={{ marginTop: 0, display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-            <span>Terminal Authentication</span>
-            <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={loadTerminals}><RefreshCw /> Refresh</button>
-          </div>
-          <div className="grid3">
-            <div><label className="label">Terminal name</label><input className="input" value={activation.terminalName} onChange={(e) => setActivation({ ...activation, terminalName: e.target.value, code: "" })} placeholder="Main Till 1" /></div>
-            <div><label className="label">Branch</label><div className="notice" style={{ minHeight: 56, display: "flex", alignItems: "center", margin: 0 }}><Building2 style={{ width: 16, height: 16 }} /> {terminalBranch?.name || "No branch selected"}</div></div>
-            <div style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" disabled={terminalBusy} onClick={generateActivation}><KeyRound /> Generate code</button></div>
-          </div>
-          {activation.code && <div className="notice" style={{ marginTop: 12, fontSize: 18, fontWeight: 900, letterSpacing: ".08em", textAlign: "center" }}>{activation.code}</div>}
-          {terminalMsg && <div className="notice" style={{ marginTop: 12 }}>{terminalMsg}</div>}
-          <div className="tablewrap" style={{ marginTop: 14 }}>
-            <table><thead><tr><th>Terminal</th><th>Branch</th><th>Status</th><th>Version</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>
-              {terminals.length === 0 ? <tr><td colSpan="6">No activated terminals yet.</td></tr> : terminals.map((t) => (
-                <tr key={t.uuid}>
-                  <td><b>{t.terminalName}</b><div className="muted mono">{String(t.uuid || "").slice(0, 8)}...</div></td>
-                  <td>{bn(t.branchId) || "Unassigned"}</td>
-                  <td><span className={"ist " + (t.status === "ACTIVE" ? "paid" : t.status === "DISABLED" ? "hold" : "bad")}>{t.status}</span></td>
-                  <td>{t.appVersion || "-"}</td>
-                  <td>{t.lastSeen ? new Date(t.lastSeen).toLocaleString() : "Never"}</td>
-                  <td style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={() => { const name = prompt("Rename terminal", t.terminalName || ""); if (name) updateTerminal(t, { terminalName: name }); }}><Edit /> Rename</button>
-                    {t.status === "ACTIVE" ? <button className="btn xs btn-ghost" disabled={terminalBusy} onClick={() => updateTerminal(t, { action: "disable" })}><X /> Disable</button> : <button className="btn xs btn-ghost" disabled={terminalBusy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "activate" })}><Check /> Enable</button>}
-                    <button className="btn xs btn-ghost" disabled={terminalBusy || t.status === "REVOKED"} onClick={() => updateTerminal(t, { action: "revoke" })}><Trash2 /> Revoke</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody></table>
-          </div>
-        </div>
-      )}
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add user</button> : (
         <div className="addpanel fade"><div className="grid3">
           <div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setErr(""); }} placeholder="Full name" /></div>
           <div><label className="label">Role</label><select className="select" value={f.role} onChange={(e) => setRole(e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
-          <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{f.role !== "Cashier" && <option value="">All branches</option>}{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
+          <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => { setF({ ...f, branchId: e.target.value }); setErr(""); }}><option value="">Select branch</option>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
+          <div className="notice" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span>{terminalBusy ? "Checking active terminals..." : !f.branchId ? "Select a branch to check its terminal." : selectedTerminal ? `Active terminal detected: ${selectedTerminal.terminalName || selectedTerminal.name || "Registered terminal"}` : `No active terminal for ${bn(f.branchId)}. Activate one in Terminals before creating this user.`}</span>
+            <button type="button" className="btn xs btn-ghost" onClick={loadTerminals} disabled={terminalBusy}><RefreshCw /> Refresh</button>
+          </div>
           {f.role === "Cashier" ? (
             <div className="field"><label className="label">4-digit PIN <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· cashiers sign in by PIN</span></label><input className="input mono" inputMode="numeric" maxLength={4} value={f.pin} onChange={(e) => { setF({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }); setErr(""); }} placeholder="0000" /></div>
           ) : (
@@ -9043,7 +9004,7 @@ function UsersTab({ data, update, isAdmin }) {
           <div className="field"><label className="label">Access rights <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· {f.rights.length} selected · defaults from role, tap to change</span></label>
             <RightsGrid selected={f.rights} onToggle={toggleNew} /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
-          <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Create user</button></div></div>)}
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset} disabled={userBusy}>Cancel</button><button className="btn btn-primary" onClick={add} disabled={userBusy || terminalBusy || !selectedTerminal}><Check /> {userBusy ? "Creating..." : "Create user"}</button></div></div>)}
       <div className="list">{visibleEmployees.map((e) => (
         <div key={e.id}>
           <div className="row"><div className="avatar">{e.name.charAt(0)}</div>

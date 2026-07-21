@@ -236,6 +236,24 @@ async function pinAlreadyAssigned(pin, excludeId = null) {
   return null;
 }
 
+async function activeTerminalForBranch(branchId) {
+  const normalizedBranchId = String(branchId || "").trim();
+  if (!normalizedBranchId) return null;
+  const activeEnvironment = await getActiveEnvironmentMode();
+  const result = await q(
+    `SELECT device_id, terminal_uuid, name, branch_id, status, revoked_at, environment
+       FROM devices
+      WHERE branch_id = $1
+        AND terminal_uuid IS NOT NULL
+        AND revoked_at IS NULL`,
+    [normalizedBranchId]
+  );
+  return result.rows.find((row) => (
+    terminalStatus(row.status) === "ACTIVE"
+    && sameEnvironment(row.environment, activeEnvironment)
+  )) || null;
+}
+
 function uniqueViolation(error) {
   return ["23505", "ER_DUP_ENTRY"].includes(error?.code);
 }
@@ -1067,6 +1085,13 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   try {
     const credentialId = isAdmin ? "admin" : id;
     const kind = isAdmin ? "admin" : isCashier ? "cashier" : "user";
+    let credentialBranchId = null;
+    if (!isAdmin) {
+      credentialBranchId = String(branchId || "").trim();
+      if (!credentialBranchId) return res.status(400).json({ error: "branch_required" });
+      const terminal = await activeTerminalForBranch(credentialBranchId);
+      if (!terminal) return res.status(409).json({ error: "branch_terminal_required" });
+    }
     if (isCashier) {
       const duplicatePinOwner = await pinAlreadyAssigned(pin, credentialId);
       if (duplicatePinOwner) return res.status(409).json({ error: "duplicate_pin", ownerId: duplicatePinOwner });
@@ -1077,7 +1102,6 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
     const rightsPayload = isAdmin ? { admin: true, role: "Admin" } : Array.isArray(rights) ? { role, rights } : { ...(rights || {}), role };
-    const credentialBranchId = isAdmin ? null : branchId || null;
 
     if (isMySql) {
       await q(
