@@ -4130,7 +4130,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     if (hit) { add(hit); setQ(""); scanFocus(true); }
   };
   const openScannedProductForm = (barcode) => {
-    setScanProduct({ barcode, name: "", sku: "", size: "750 ML", category: CATS[0], price: "", cost: "" });
+    setScanProduct({ barcode, name: "", sku: "", size: "750 ML", category: CATS[0], price: "" });
     setScanErr("");
     setPtab("products");
   };
@@ -4202,7 +4202,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       return { ...d, barcodeCatalog: catalogResult.barcodeCatalog, products: [...d.products, {
       id: uid("p"), name: scanProduct.name.trim(), sku, barcode, size: scanProduct.size || "750 ML",
       category: scanProduct.category || CATS[0], priceCents: price,
-      costCents: Math.round((parseFloat(scanProduct.cost) || 0) * 100),
+      costCents: 0,
       barcodeCatalogId: catalogEntry?.id || null, branchId: branch.id, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now(),
     }] };
     });
@@ -4476,7 +4476,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <div><label className="label">Category</label><select className="select" value={scanProduct.category} onChange={(e) => setScanProduct({ ...scanProduct, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
               <div><label className="label">Price ({cur})</label><input className="input" inputMode="decimal" value={scanProduct.price} onChange={(e) => { setScanProduct({ ...scanProduct, price: e.target.value }); setScanErr(""); }} placeholder="3000" /></div>
             </div>
-            <div className="field"><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={scanProduct.cost} onChange={(e) => setScanProduct({ ...scanProduct, cost: e.target.value })} placeholder="2000" /></div>
+            <div className="field"><label className="label">Buying cost ({cur})</label><input className="input" value="Calculated from purchases" readOnly disabled title="Buying cost is recalculated from received branch purchases." /></div>
             {scanErr && <div className="alert"><AlertCircle />{scanErr}</div>}
             <div className="grid2" style={{ marginTop: 14 }}><button className="btn btn-ghost" onClick={() => setScanProduct(null)}>Cancel</button><button className="btn btn-primary" onClick={saveScannedProduct}><Check /> Add product</button></div>
           </div>
@@ -5556,7 +5556,7 @@ const CATS = ["Whisky", "Gin", "Vodka", "Rum", "Cognac", "Wine", "Beer", "Spirit
 function ProductsTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false);
-  const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", cost: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4), imageUrl: "" });
+  const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4), imageUrl: "" });
   const [f, setF] = useState(blankProductForm());
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
@@ -5570,7 +5570,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const barcodeInputRef = useRef(null);
   const editBarcodeInputRef = useRef(null);
   const [editId, setEditId] = useState(null);
-  const [ef, setEf] = useState({ price: "", cost: "", barcode: "", extraBarcodes: "" });
+  const [ef, setEf] = useState({ barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const isBranchProduct = (p) => productVisibleInBranch(p, data, branch.id);
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
@@ -5640,7 +5640,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     w.document.close();
   };
   const add = () => {
-    const cost = Math.round((parseFloat(f.cost) || 0) * 100);
     const initialStock = parseInt(f.initialStock, 10) || 0;
     const reorderLevel = parseInt(f.lowStockAlert, 10) || data.settings.reorderLevel;
     if (!f.name.trim()) return setErr("Add a product name.");
@@ -5664,7 +5663,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
     const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
-    const product = withBranchProductCost(productBase, branch.id, cost);
+    const product = withBranchProductCost(productBase, branch.id, 0);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
       const result = ensureBarcodeEntries(d, [barcode, ...extraBarcodes]);
@@ -5692,9 +5691,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setDelMsg("");
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
   };
-  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ price: (branchProductPriceCents(p, branch.id) / 100).toString(), cost: (branchProductCostCents(p, branch.id) / 100).toString(), barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
+  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
   const saveEdit = (p) => {
-    const cost = Math.round(parseFloat(ef.cost) * 100);
     const barcode = cleanCode(ef.barcode) || p.barcode || p.sku;
     const extraBarcodes = String(ef.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
@@ -5716,9 +5714,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         barcodeCatalog: result.barcodeCatalog,
         products: d.products.map((x) => {
           if (x.id !== p.id) return x;
-          let next = x;
-          if (!Number.isNaN(cost)) next = withBranchProductCost(next, branch.id, cost);
-          return { ...next, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
+          return { ...x, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
         }),
       };
     });
@@ -5764,7 +5760,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           synced: false,
           updatedAt: ts,
         };
-        copiedProduct = withBranchProductCost(copiedProduct, branch.id, branchProductCostCents(source, sourceId));
+        copiedProduct = withBranchProductCost(copiedProduct, branch.id, 0);
         products.push(copiedProduct);
         targetIds.add(primaryId);
         targetKeys.add(productDedupeKey(source));
@@ -5772,7 +5768,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       }
       return { ...d, products, barcodeCatalog };
     });
-    setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Cost was copied; selling price, margin, and stock start at 0." : "No missing products to copy.");
+    setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Buying cost, selling price, margin, and stock start at 0. Buying cost is recalculated from received purchases." : "No missing products to copy.");
   };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
@@ -5803,8 +5799,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       parsed.forEach((r) => {
         const i = r.sku ? products.findIndex((p) => p.sku && p.sku.toLowerCase() === r.sku.toLowerCase()) : -1;
         if (i >= 0) {
-          let next = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, synced: false, updatedAt: now() };
-          if (r.cost) next = withBranchProductCost(next, branch.id, r.cost);
+          const next = { ...products[i], name: r.name || products[i].name, size: r.size, category: r.category, synced: false, updatedAt: now() };
           products[i] = next;
           updated++;
         }
@@ -5814,7 +5809,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           const entry = result.entries[0];
           barcodeCatalog = result.barcodeCatalog;
           const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() };
-          products.push(withBranchProductCost(productBase, branch.id, r.cost));
+          products.push(withBranchProductCost(productBase, branch.id, 0));
           added++;
         }
       });
@@ -5840,7 +5835,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           <div className="page-h" style={{ marginBottom: 8 }}>
             <div>
               <div className="section-title" style={{ margin: 0 }}>Copy products to {branch.name}</div>
-              <div className="sub">Copies missing products only. Barcodes stay shared; cost is copied, while selling price, margin, and stock start at 0 for this branch.</div>
+              <div className="sub">Copies missing products only. Barcodes stay shared; buying cost, selling price, margin, and stock start at 0. Buying cost is recalculated from received purchases.</div>
             </div>
             <button className="iconbtn" onClick={() => setCopyOpen(false)}><X /></button>
           </div>
@@ -5881,7 +5876,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{CATS.map((c) => <option key={c}>{c}</option>)}</select></div>
             <div><label className="label">Selling price ({cur})</label><input className="input" value="Set in Pricing" readOnly disabled title="Selling prices are branch-specific and managed from Inventory > Pricing." /></div></div>
           <div className="grid3" style={{ marginTop: 12 }}>
-            <div><label className="label">Cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div>
+            <div><label className="label">Buying cost ({cur})</label><input className="input" value="Calculated from purchases" readOnly disabled title="Buying cost is recalculated from received branch purchases." /></div>
             <div><label className="label">Tax (%)</label><input className="input" inputMode="decimal" value={f.tax} onChange={(e) => setF({ ...f, tax: e.target.value.replace(/[^\d.]/g, "") })} placeholder="0" /></div>
             <div><label className="label">Unit</label><input className="input" value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} placeholder="bottle" /></div>
           </div>
@@ -5907,13 +5902,15 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         return (
           <div className="ptblwrap">
             <table className="ptbl">
-              <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Cost</th><th className="num">Price</th><th className="num">Margin</th><th></th></tr></thead>
+              <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th></th></tr></thead>
               <tbody>
                 {list.length === 0 && <tr><td colSpan={8} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
                 {list.map((p) => {
                   const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
-                  const marg = p.priceCents > 0 ? Math.round((p.priceCents - p.costCents) / p.priceCents * 100) : 0;
+                  const branchCost = branchProductCostCents(p, branch.id);
+                  const branchPrice = branchProductPriceCents(p, branch.id);
+                  const marg = branchPrice > 0 ? Math.round((branchPrice - branchCost) / branchPrice * 100) : 0;
                   if (editId === p.id) return (
                     <tr key={p.id}>
                       <td colSpan={8}>
@@ -5921,8 +5918,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                           <b style={{ marginRight: 4 }}>{p.name}</b>
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
                           <input className="input" style={{ width: 220, height: 38, fontFamily: "var(--font-mono)" }} value={ef.extraBarcodes} onChange={(e) => setEf({ ...ef, extraBarcodes: e.target.value })} placeholder="Extra barcodes" />
-                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={ef.price || "0"} readOnly disabled title="Edit selling prices from Inventory > Pricing." />
-                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} inputMode="decimal" value={ef.cost} onChange={(e) => setEf({ ...ef, cost: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Cost" />
+                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={(branchPrice / 100).toString()} readOnly disabled title="Selling price is managed from Inventory > Pricing." />
+                          <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={(branchCost / 100).toString()} readOnly disabled title="Buying cost is calculated from branch purchases." />
                           <button className="btn xs btn-primary" onClick={() => saveEdit(p)}><Check /> Save</button>
                           <button className="btn xs btn-ghost" onClick={() => setEditId(null)}>Cancel</button>
                         </div>
@@ -5935,8 +5932,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                       <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div></td>
                       <td><span className="ptcat">{p.category}</span></td>
                       <td className="num"><span className="ptstk"><span className={"dot " + cls} /> {left}</span></td>
-                      <td className="num">{fmt(p.costCents, cur)}</td>
-                      <td className="num">{fmt(p.priceCents, cur)}</td>
+                      <td className="num">{fmt(branchCost, cur)}</td>
+                      <td className="num">{fmt(branchPrice, cur)}</td>
                       <td className="num">{marg}%</td>
                       <td><div className="ptact"><button className="btn xs btn-ghost" onClick={() => startEdit(p)}>Edit</button><button className="smdel" onClick={() => remove(p.id)}><Trash2 /></button></div></td>
                     </tr>
@@ -5955,6 +5952,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
 function StockTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [bId, setBId] = useState(branch.id);
+  const [inventoryMode, setInventoryMode] = useState("full");
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("all");
   const [report, setReport] = useState(null);
@@ -5984,9 +5982,12 @@ function StockTab({ data, update, branch }) {
   const countedRows = rows.filter((row) => row.countedQty !== null);
   const totalProducts = uniqueProducts.length;
   const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
-  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * p.costCents, 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchProductCostCents(p, bId), 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
-  const lossValue = lossList.reduce((s, m) => s + Math.abs(m.qty) * (data.products.find((p) => p.id === m.productId)?.costCents || 0), 0);
+  const lossValue = lossList.reduce((s, m) => {
+    const product = data.products.find((p) => p.id === m.productId);
+    return s + Math.abs(m.qty) * (product ? branchProductCostCents(product, bId) : 0);
+  }, 0);
   const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
 
@@ -6109,7 +6110,7 @@ function StockTab({ data, update, branch }) {
     setScanMsg("Counted " + hit.name + " - running count " + nextQty + ".");
     appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
   };
-  useBarcodeScanner({ enabled: scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
+  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
   const recordLoss = () => {
     const qty = parseInt(lf.qty, 10);
     if (!lf.productId || !qty || qty <= 0) return;
@@ -6122,6 +6123,10 @@ function StockTab({ data, update, branch }) {
   };
   const exportReport = (kind) => report && exportDiscrepancy(report, cur, kind);
 
+  if (inventoryMode === "quick") {
+    return <QuickInventoryTab data={data} update={update} branch={branch} initialBranchId={bId} onBack={(nextBranchId) => { setBId(nextBranchId || bId); setInventoryMode("full"); }} />;
+  }
+
   return (
     <div>
       <PageHead title="Stock" sub={"Locked stock count sessions & levels - " + bname} />
@@ -6130,6 +6135,7 @@ function StockTab({ data, update, branch }) {
           {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <button className="btn sm btn-primary" onClick={() => setInventoryMode("quick")}><ClipboardCheck /> Quick inventory</button>
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><ClipboardCheck /> Scanner</button>
         <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
       </div>
@@ -6225,6 +6231,191 @@ function StockTab({ data, update, branch }) {
   );
 }
 
+function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
+  const cur = data.settings.currency;
+  const [bId, setBId] = useState(initialBranchId || branch.id);
+  const [q, setQ] = useState("");
+  const [counts, setCounts] = useState({});
+  const [scannerOn, setScannerOn] = useState(true);
+  const [message, setMessage] = useState("");
+  const [report, setReport] = useState(null);
+  const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
+  const lockedSession = activeStockCountSession(data, bId);
+  const products = sortProductsAZ(branchProductsUnique(data, bId));
+  const term = q.trim().toLowerCase();
+  const matches = term ? products.filter((p) => (
+    p.name.toLowerCase().includes(term)
+    || p.sku.toLowerCase().includes(term)
+    || productMatchesBarcode(p, term)
+    || productMatchesCatalog(p, findBarcodeCatalogEntry(data, term))
+  )).slice(0, 60) : [];
+  const selectedProducts = products.filter((p) => Object.prototype.hasOwnProperty.call(counts, p.id));
+  const displayedProducts = term
+    ? [...selectedProducts, ...matches.filter((p) => !Object.prototype.hasOwnProperty.call(counts, p.id))]
+    : selectedProducts;
+  const selectedRows = selectedProducts.map((product) => {
+    const current = productOnHand(data, product, bId);
+    const counted = Number(counts[product.id]);
+    return { product, current, counted, variance: counted - current };
+  });
+  const currentUnits = selectedRows.reduce((sum, row) => sum + row.current, 0);
+  const countedUnits = selectedRows.reduce((sum, row) => sum + row.counted, 0);
+  const varianceUnits = selectedRows.reduce((sum, row) => sum + row.variance, 0);
+  const adjustmentCount = selectedRows.filter((row) => row.variance !== 0).length;
+
+  const setCount = (productId, raw) => {
+    if (lockedSession) return;
+    const cleaned = String(raw ?? "").replace(/\D/g, "");
+    setCounts((existing) => {
+      const next = { ...existing };
+      if (cleaned === "") delete next[productId];
+      else next[productId] = String(Math.max(0, parseInt(cleaned, 10) || 0));
+      return next;
+    });
+  };
+  const clearSelection = (productId) => setCounts((existing) => {
+    const next = { ...existing };
+    delete next[productId];
+    return next;
+  });
+  const changeBranch = (nextBranchId) => {
+    setBId(nextBranchId);
+    setCounts({});
+    setQ("");
+    setMessage("");
+    setReport(null);
+  };
+  const handleQuickScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (lockedSession) {
+      setMessage("Quick inventory is unavailable while " + lockedSession.code + " is active for " + bname + ".");
+      return;
+    }
+    if (!isValidBarcode(barcode)) {
+      setMessage("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "quick_inventory:invalid" });
+      return;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setMessage(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "quick_inventory:branch_unavailable" : "quick_inventory:not_found" });
+      return;
+    }
+    setCounts((existing) => ({ ...existing, [hit.product.id]: String((parseInt(existing[hit.product.id], 10) || 0) + 1) }));
+    setMessage("Counted " + hit.name + ". Scan again to increase its physical count.");
+    appendBarcodeScanLog({ barcode, status: "quick_inventory:counted", productId: hit.product.id });
+  };
+  useBarcodeScanner({ enabled: scannerOn && !lockedSession, mode: "stock", onScan: handleQuickScan });
+
+  const applyCounts = () => {
+    if (lockedSession) {
+      setMessage("Finish or cancel " + lockedSession.code + " before using Quick inventory.");
+      return;
+    }
+    if (!selectedRows.length) {
+      setMessage("Search or scan at least one product and enter its physical count.");
+      return;
+    }
+    const ts = now();
+    const adjustments = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
+      id: uid("mv"),
+      productId: row.product.id,
+      branchId: bId,
+      qty: row.variance,
+      mode: "count",
+      reason: "Quick inventory",
+      expectedQty: row.current,
+      countedQty: row.counted,
+      ts,
+      synced: false,
+    }));
+    const logs = selectedRows.map((row) => ({
+      id: uid("cl"),
+      productId: row.product.id,
+      branchId: bId,
+      qty: row.counted,
+      mode: "quick_count",
+      system: row.current,
+      counted: row.counted,
+      variance: row.variance,
+      kind: "quick",
+      ts,
+      synced: false,
+    }));
+    update((d) => ({
+      ...d,
+      stockMovements: [...(d.stockMovements || []), ...adjustments],
+      countLog: [...(d.countLog || []), ...logs],
+    }));
+    setReport({ ts, branchName: bname, rows: selectedRows, adjustments: adjustments.length });
+    setCounts({});
+    setQ("");
+    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock adjustment(s) applied.");
+  };
+
+  return (
+    <div>
+      <PageHead title="Quick inventory" sub={"Count selected products only - " + bname} />
+      <div className="ptools">
+        <button className="btn sm btn-ghost" onClick={() => onBack(bId)}><ArrowLeft /> Full stock count</button>
+        <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => changeBranch(e.target.value)}>
+          {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} disabled={!!lockedSession} onClick={() => setScannerOn((value) => !value)}><ClipboardCheck /> Scanner</button>
+      </div>
+
+      {lockedSession ? (
+        <div className="alert" style={{ marginBottom: 14 }}><AlertTriangle /> <div><b>Quick inventory is locked.</b><div>{lockedSession.code} is already {lockedSession.status} for {bname}. Finish or cancel that formal count first.</div></div></div>
+      ) : (
+        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Blank products and all other catalogue stock remain unchanged.</div>
+      )}
+      {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
+
+      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
+        <div className="ctile"><div className="ic"><ClipboardCheck /></div><div><div className="cl">Selected products</div><div className="cv">{selectedRows.length}</div></div></div>
+        <div className="ctile"><div className="ic"><Package /></div><div><div className="cl">Current units</div><div className="cv">{currentUnits}</div></div></div>
+        <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Counted units</div><div className="cv">{countedUnits}</div></div></div>
+        <div className={"ctile" + (varianceUnits !== 0 ? " warn" : "")}><div className="ic"><TrendingDown /></div><div><div className="cl">Net difference</div><div className="cv">{varianceUnits > 0 ? "+" : ""}{varianceUnits}</div><div className="cs">{adjustmentCount} adjustment{adjustmentCount === 1 ? "" : "s"}</div></div></div>
+      </div>
+
+      <div className="panel fade" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="page-h" style={{ padding: "16px 18px", margin: 0 }}>
+          <div><div className="title" style={{ fontSize: 18 }}>Selected product counts</div><div className="sub">Search to find a product, then enter the physical quantity on hand.</div></div>
+          <button className="btn sm btn-primary" disabled={!!lockedSession || !selectedRows.length} onClick={applyCounts}><Check /> Apply selected counts</button>
+        </div>
+        <div className="tablewrap">
+          <table className="table">
+            <thead><tr><th>Product</th><th>Current</th><th style={{ width: 170 }}>Physical count</th><th>Difference</th><th style={{ width: 70 }}></th></tr></thead>
+            <tbody>
+              {!displayedProducts.length && <tr><td colSpan="5"><div className="empty"><Search /><b>{term ? "No matching products" : "Search or scan a product to begin"}</b><span>Quick inventory changes only the products you count.</span></div></td></tr>}
+              {displayedProducts.map((p) => {
+                const selected = Object.prototype.hasOwnProperty.call(counts, p.id);
+                const current = productOnHand(data, p, bId);
+                const counted = selected ? Number(counts[p.id]) : null;
+                const difference = selected ? counted - current : null;
+                return <tr key={p.id}>
+                  <td><div className="prodname"><b>{p.name}</b><span>{p.sku}{p.size ? " - " + p.size : ""}</span></div></td>
+                  <td><b>{current}</b></td>
+                  <td><input className="input" style={{ height: 40, width: 130 }} inputMode="numeric" placeholder="Count" value={selected ? counts[p.id] : ""} disabled={!!lockedSession} onChange={(e) => setCount(p.id, e.target.value)} /></td>
+                  <td><b className={difference === null ? "" : difference < 0 ? "bad" : difference > 0 ? "good" : ""}>{difference === null ? "-" : (difference > 0 ? "+" : "") + difference}</b></td>
+                  <td>{selected && <button className="iconbtn" title="Remove from quick inventory" onClick={() => clearSelection(p.id)}><Trash2 /></button>}</td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {report && <div className="panel fade" style={{ marginTop: 16 }}>
+        <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
+        <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
+      </div>}
+    </div>
+  );
+}
+
 function buildStockCountReport(session, rows, movements, data, branchName) {
   const discrepancies = rows.filter((row) => row.varianceQty !== 0).map((row) => ({
     id: row.productId,
@@ -6290,9 +6481,12 @@ function StockTabLegacy({ data, update, branch }) {
 
   const totalProducts = uniqueProducts.length;
   const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
-  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * p.costCents, 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchProductCostCents(p, bId), 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
-  const lossValue = lossList.reduce((s, m) => s + Math.abs(m.qty) * (data.products.find((p) => p.id === m.productId)?.costCents || 0), 0);
+  const lossValue = lossList.reduce((s, m) => {
+    const product = data.products.find((p) => p.id === m.productId);
+    return s + Math.abs(m.qty) * (product ? branchProductCostCents(product, bId) : 0);
+  }, 0);
   const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
   const recordLoss = () => {
