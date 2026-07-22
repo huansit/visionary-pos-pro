@@ -3,7 +3,7 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import "dotenv/config";
-import { assertStartupConfig } from "./config.js";
+import { assertStartupConfig, runtimeConfig } from "./config.js";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +32,14 @@ const frontendDist = join(here, "..", "frontend", "dist");
 
 app.use(helmet());
 app.use(express.json({ limit: "5mb" }));
-app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
+  skip: (req) => req.path === "/health",
+  stream: {
+    write(line) {
+      console.log(line.trim().replace(/([?&])(token|sessionToken)=[^&\s]+/gi, "$1$2=[REDACTED]"));
+    },
+  },
+}));
 app.use((req, res, next) => {
   const started = process.hrtime.bigint();
   if (req.originalUrl.startsWith("/api/") || req.originalUrl === "/health") {
@@ -43,24 +50,23 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     if (!req.originalUrl.startsWith("/api/") && req.originalUrl !== "/health") return;
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
-    console.log(`[api] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
+    console.log(`[api] ${req.method} ${req.path} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
   });
   next();
 });
 
 const configuredOrigins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
-const productionOrigins = [
-  "https://visionarypos.cloud",
-  "https://www.visionarypos.cloud",
+const defaultOrigins = [
+  new URL(runtimeConfig.publicAppUrl).origin,
   "tauri://localhost",
   "http://tauri.localhost",
   "https://tauri.localhost",
 ];
-const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : (process.env.NODE_ENV === "production" ? productionOrigins : []));
+if (runtimeConfig.mode === "live") defaultOrigins.push("https://www.visionarypos.cloud");
+const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : defaultOrigins);
 app.use(cors({
   origin(origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.size === 0) return callback(null, true);
     return callback(null, allowedOrigins.has(origin));
   },
 }));

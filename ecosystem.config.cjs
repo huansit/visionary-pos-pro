@@ -1,14 +1,25 @@
-// PM2 process config. Start with:  pm2 start ecosystem.config.cjs --env production
+// PM2 process config. Start with: pm2 start ecosystem.config.cjs
 module.exports = {
   apps: [
     {
-      name: "visionary-api",
-      script: "./src/server.js",
-      instances: 1,            // bump to "max" for cluster mode on a multi-core VPS
-      exec_mode: "fork",       // change to "cluster" if instances > 1
+      name: "visionary-live",
+      script: "npm",
+      args: "run start:live",
+      cwd: __dirname,
+      instances: 1,
+      exec_mode: "fork",
       watch: false,
       max_memory_restart: "300M",
-      env_production: { NODE_ENV: "production" },
+    },
+    {
+      name: "visionary-test",
+      script: "npm",
+      args: "run start:test",
+      cwd: __dirname,
+      instances: 1,
+      exec_mode: "fork",
+      watch: false,
+      max_memory_restart: "300M",
     },
   ],
 };

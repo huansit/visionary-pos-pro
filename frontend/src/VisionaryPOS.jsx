@@ -485,53 +485,26 @@ const SEED = () => {
   }));
   const barcodeCatalog = products.map((p) => ({ id: p.barcodeCatalogId, barcode: p.barcode, barcodeType: "code128", synced: true, updatedAt: t, createdAt: t }));
   const stockMovements = [];
-  products.forEach((p) => {
-    stockMovements.push({ id: uid("mv"), productId: p.id, branchId: "b_sip", qty: p._stock, reason: "Opening stock", ts: t, synced: true });
-  });
   products.forEach((p) => delete p._stock);
   return {
     settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", activeBranchId: "b_sip", lastEndDay: t - 86400000 },
-    admin: { name: "Owner", email: "admin@visionary.app", phone: "", password: "Admin@123", provisioned: false },
+    admin: { name: "", email: "", phone: "", password: "", provisioned: false },
     branches,
-    employees: [
-      { id: "e1", name: "Maya Chen", role: "Supervisor", pin: "2468", email: "maya@visionary.app", password: "Maya@123", branchId: "b_sip", rights: ["sell", "invoices", "customers", "stock", "expenses", "documents"], synced: true },
-      { id: "e2", name: "Theo Park", role: "Cashier", pin: "1357", branchId: "b_cpt", rights: ["sell", "customers"], synced: true },
-      { id: "e3", name: "John", role: "Cashier", pin: "1111", branchId: "b_sip", rights: ["sell", "customers"], synced: true },
-      { id: "e4", name: "Amina Yusuf", role: "Cashier", pin: "2222", branchId: "b_cpt", rights: ["sell", "customers"], synced: true },
-    ],
-    customers: [
-      { id: "c_walkin", name: "Walk-in", phone: "", synced: true },
-      { id: "c1", name: "Jane Wanjiru", phone: "0722 145 902", synced: true },
-    ],
-    suppliers: [
-      { id: "s1", name: "Maxam Distributors", contact: "Grace", phone: "0700 100 200", synced: true },
-      { id: "s2", name: "Wines of the World", contact: "Sam", phone: "0700 300 400", synced: true },
-      { id: "s3", name: "Nairobi Beverages", contact: "Otieno", phone: "0700 500 600", synced: true },
-    ],
-    supplierPrices: [
-      { id: "sp1", supplierId: "s1", productId: "SIP0001", costCents: 38000, synced: true },
-      { id: "sp2", supplierId: "s2", productId: "SIP0001", costCents: 41000, synced: true },
-      { id: "sp3", supplierId: "s3", productId: "SIP0001", costCents: 36500, synced: true },
-      { id: "sp4", supplierId: "s1", productId: "SIP0003", costCents: 112000, synced: true },
-      { id: "sp5", supplierId: "s2", productId: "SIP0003", costCents: 105000, synced: true },
-      { id: "sp6", supplierId: "s1", productId: "SIP0004", costCents: 150000, synced: true },
-      { id: "sp7", supplierId: "s3", productId: "SIP0004", costCents: 158000, synced: true },
-    ],
+    employees: [],
+    customers: [],
+    suppliers: [],
+    supplierPrices: [],
     products,
     barcodeCatalog,
     stockMovements,
     stockCountSessions: [],
     orders: [],
     payments: [],
-    invoices: [
-      { id: uid("inv"), number: "INV-1781607080324", customerId: "c_walkin", customerName: "Walk-in", note: "",
-        cashierId: "e3", cashier: "John", branchId: "b_sip", date: "2026-06-16", totalCents: 460000, paidCents: 0,
-        method: "M-Pesa", carriedOver: true, ts: t - 86400000, synced: true },
-    ],
+    invoices: [],
     purchases: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
-    cashMovements: [{ id: uid("cm"), type: "in", amountCents: 500000, reason: "Opening float", date: todayStr(), ts: t, synced: true }],
+    cashMovements: [],
     borrowings: [],
     endOfDays: [],
     countLog: [],

@@ -82,7 +82,7 @@ router.use((req, res, next) => {
   res.set("Expires", "0");
   res.on("finish", () => {
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
-    console.log(`[sync] ${req.method} ${req.originalUrl} ${res.statusCode} ${elapsedMs.toFixed(1)}ms actor=${req.deviceId || req.account?.id || "-"} branch=${req.deviceBranchId || req.account?.branchId || "-"}`);
+    console.log(`[sync] ${req.method} ${req.path} ${res.statusCode} ${elapsedMs.toFixed(1)}ms actor=${req.deviceId || req.account?.id || "-"} branch=${req.deviceBranchId || req.account?.branchId || "-"}`);
   });
   next();
 });

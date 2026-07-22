@@ -1,6 +1,16 @@
 import bcrypt from "bcryptjs";
 import { isMySql, pool, q } from "../src/db.js";
 
+const mode = String(process.env.VISIONPOS_MODE || "").trim().toLowerCase();
+if (
+  (process.env.NODE_ENV !== "test" && mode !== "test") ||
+  process.env.ALLOW_DEMO_STAFF_SEED !== "1"
+) {
+  throw new Error(
+    "Refusing to provision demo staff. Use the Test environment and explicitly set ALLOW_DEMO_STAFF_SEED=1."
+  );
+}
+
 const rounds = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
 
 const staff = [
