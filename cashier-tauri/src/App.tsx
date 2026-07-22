@@ -55,7 +55,7 @@ import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCred
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
-const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v1";
+const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
 const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
 const VIRTUAL_KEYBOARD_POSITION_KEY = "visionpos:cashier:virtual-keyboard-position:v1";
 const SUPERVISOR_EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
@@ -517,7 +517,7 @@ export default function App() {
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);
     const handleResize = () => {
-      if (window.innerWidth < 1100) setLeftCollapsed(true);
+      if (window.innerWidth < 900) setLeftCollapsed(true);
     };
     handleResize();
     window.addEventListener("online", handleOnline);

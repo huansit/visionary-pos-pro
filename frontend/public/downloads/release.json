@@ -1,11 +1,11 @@
 {
-  "version": "2.0.36",
+  "version": "2.0.37",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.36_x64-setup.exe",
-  "size": 3144174,
-  "sha512": "66E86FBB722AAF8405161F811943E7D5398011807B96841E5050DB5821FC0A85FDE2FBC2FC7EC932B4D16091F473FAC86EA88C759298962095CB1F6005185101",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.37_x64-setup.exe",
+  "size": 3146881,
+  "sha512": "737726AEDEE3BDE0840C2916937D55D7A5FADA963E2AFC76D78679796A2B239FB53FA0893DB2D890E7D5D5EF92D93D7229C789D1D8AD32EC1B80FDFC01B07EAA",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.36",
+    "VISIONPOS Cashier 2.0.37",
     "Native Tauri auto-update package.",
     "Download, verification, install, and restart are handled inside the app."
   ]
