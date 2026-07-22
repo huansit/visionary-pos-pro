@@ -4955,7 +4955,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} />;
       case "ai": return <AIManagerTab data={data} />;
       case "invoices": return <InvoicesTab data={data} update={update} branch={branch} user={user} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
-      case "customers": return <CustomersTab data={data} update={update} />;
+    case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} />;
@@ -5595,6 +5595,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [q, setQ] = useState("");
   const [catF, setCatF] = useState("All");
   const [delMsg, setDelMsg] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -5603,7 +5604,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const barcodeInputRef = useRef(null);
   const editBarcodeInputRef = useRef(null);
   const [editId, setEditId] = useState(null);
-  const [ef, setEf] = useState({ barcode: "", extraBarcodes: "" });
+  const [ef, setEf] = useState({ name: "", barcode: "", extraBarcodes: "" });
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const isBranchProduct = (p) => productVisibleInBranch(p, data, branch.id);
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
@@ -5718,16 +5719,20 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     if (pendInv.length) parts.push(pendInv.length + " pending invoice(s)");
     if (openPO.length) parts.push(openPO.length + " open purchase order(s)");
     if (parts.length) {
+      setDeleteTarget(null);
       setDelMsg("“" + p.name + "” can't be deleted — " + parts.join(", ") + ". A product can only be removed once it has zero stock and no activity in the past 60 days.");
       return;
     }
     setDelMsg("");
     update((d) => ({ ...d, products: d.products.filter((x) => x.id !== id) }));
+    setDeleteTarget(null);
   };
-  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
+  function startEdit(p) { setEditId(p.id); setErr(""); setEf({ name: p.name || "", barcode: p.barcode || "", extraBarcodes: (p.barcodes || []).join(", ") }); }
   const saveEdit = (p) => {
+    const name = String(ef.name || "").trim();
     const barcode = cleanCode(ef.barcode) || p.barcode || p.sku;
     const extraBarcodes = String(ef.extraBarcodes || "").split(",").map(cleanCode).filter(Boolean);
+    if (!name) return setErr("Product name is required.");
     if (!isValidBarcode(barcode)) return setErr("Barcode is required.");
     const otherProducts = data.products.filter((x) => x.id !== p.id);
     if (otherProducts.some((x) => productVisibleInBranch(x, data, branch.id) && productCodeMatch(x, barcode))) return setErr("Barcode already exists in this branch.");
@@ -5747,7 +5752,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         barcodeCatalog: result.barcodeCatalog,
         products: d.products.map((x) => {
           if (x.id !== p.id) return x;
-          return { ...x, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
+          return { ...x, name, barcode, barcodes: extraBarcodes, barcodeCatalogId: primary?.id || x.barcodeCatalogId || null, barcodeCatalogIds: extras.map((entry) => entry.id), synced: false, updatedAt: now() };
         }),
       };
     });
@@ -5892,6 +5897,14 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       {impMsg && <div className="notice" style={{ marginBottom: 12 }}>{impMsg} <button className="linknum" onClick={() => setImpMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {err && !adding && <div className="notice" style={{ marginBottom: 12 }}>{err} <button className="linknum" onClick={() => setErr("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       {delMsg && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)" }}><AlertCircle style={{ width: 14, height: 14, verticalAlign: "-2px", color: "var(--danger)" }} /> {delMsg} <button className="linknum" onClick={() => setDelMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
+      {deleteTarget && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <AlertCircle style={{ width: 16, height: 16, color: "var(--danger)" }} />
+        <span>Delete "{deleteTarget.name}"? This cannot be undone.</span>
+        <div style={{ display: "inline-flex", gap: 8, marginLeft: "auto" }}>
+          <button className="btn xs btn-ghost" onClick={() => setDeleteTarget(null)}>No</button>
+          <button className="btn xs" style={{ background: "var(--danger)", color: "#fff" }} onClick={() => remove(deleteTarget.id)}>Yes, delete</button>
+        </div>
+      </div>}
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add product</button> : (
         <div className="addpanel fade"><div className="section-title" style={{ margin: "0 0 12px" }}>New product</div>
           <div className="grid2"><div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setErr(""); }} placeholder="e.g. Jameson Whisky 750ML" /></div>
@@ -5948,7 +5961,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                     <tr key={p.id}>
                       <td colSpan={8}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <b style={{ marginRight: 4 }}>{p.name}</b>
+                          <input className="input" style={{ width: 220, height: 38 }} value={ef.name} onChange={(e) => { setEf({ ...ef, name: e.target.value }); setErr(""); }} placeholder="Product name" aria-label="Product name" />
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
                           <input className="input" style={{ width: 220, height: 38, fontFamily: "var(--font-mono)" }} value={ef.extraBarcodes} onChange={(e) => setEf({ ...ef, extraBarcodes: e.target.value })} placeholder="Extra barcodes" />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={(branchPrice / 100).toString()} readOnly disabled title="Selling price is managed from Inventory > Pricing." />
@@ -5968,7 +5981,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                       <td className="num">{fmt(branchCost, cur)}</td>
                       <td className="num">{fmt(branchPrice, cur)}</td>
                       <td className="num">{marg}%</td>
-                      <td><div className="ptact"><button className="btn xs btn-ghost" onClick={() => startEdit(p)}>Edit</button><button className="smdel" onClick={() => remove(p.id)}><Trash2 /></button></div></td>
+                      <td><div className="ptact"><button className="btn xs btn-ghost" onClick={() => startEdit(p)}>Edit</button><button className="smdel" onClick={() => { setDelMsg(""); setDeleteTarget(p); }} aria-label={`Delete ${p.name}`}><Trash2 /></button></div></td>
                     </tr>
                   );
                 })}
@@ -7128,21 +7141,47 @@ function SuppliersTab({ data, update }) {
     </div>
   );
 }
-function CustomersTab({ data, update }) {
-  const [adding, setAdding] = useState(false); const [f, setF] = useState({ name: "", phone: "" });
-  const add = () => { if (!f.name.trim()) return; update((d) => ({ ...d, customers: [...d.customers, { id: uid("c"), name: f.name.trim(), phone: f.phone, synced: false }] })); setF({ name: "", phone: "" }); setAdding(false); };
-  const remove = (id) => update((d) => ({ ...d, customers: d.customers.filter((c) => c.id !== id) }));
+function CustomersTab({ data, branch }) {
+  const [query, setQuery] = useState("");
+  const customers = useMemo(() => {
+    const grouped = new Map();
+    (data.invoices || []).filter((invoice) => !branch?.id || invoice.branchId === branch.id).forEach((invoice) => {
+      const customerObject = invoice.customer && typeof invoice.customer === "object" ? invoice.customer : null;
+      const customerString = typeof invoice.customer === "string" ? invoice.customer : "";
+      const name = String(invoice.customerName || customerObject?.name || customerString || "").trim();
+      if (!name || /^walk[- ]?in$/i.test(name)) return;
+      const phone = String(invoice.customerPhone || customerObject?.phone || invoice.phone || "").trim();
+      const key = (phone || name).toLowerCase();
+      const rawTs = invoice.ts ?? invoice.createdAt ?? 0;
+      const invoiceTs = typeof rawTs === "number" ? rawTs : Date.parse(rawTs) || 0;
+      const current = grouped.get(key) || { id: key, name, phone, invoiceCount: 0, totalCents: 0, outstandingCents: 0, lastInvoiceAt: 0, lastReceipt: "" };
+      current.invoiceCount += 1;
+      current.totalCents += Number(invoice.totalCents || 0);
+      current.outstandingCents += invOutstanding(invoice);
+      if (invoiceTs >= current.lastInvoiceAt) {
+        current.lastInvoiceAt = invoiceTs;
+        current.lastReceipt = invoice.number || invoice.receiptNo || "";
+      }
+      grouped.set(key, current);
+    });
+    return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [data.invoices, branch?.id]);
+  const search = query.trim().toLowerCase();
+  const visible = customers.filter((customer) => !search
+    || customer.name.toLowerCase().includes(search)
+    || customer.phone.toLowerCase().includes(search)
+    || customer.lastReceipt.toLowerCase().includes(search));
   return (
-    <div><PageHead title="Customers" sub={data.customers.length + " customers"} />
-      {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add customer</button> : (
-        <div className="addpanel fade"><div className="grid2">
-          <div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Customer" /></div>
-          <div><label className="label">Phone</label><input className="input" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="07.." /></div></div>
-          <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={() => setAdding(false)}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Add customer</button></div></div>)}
-      <div className="list">{data.customers.map((c) => { const due = data.invoices.filter((i) => i.customerName === c.name).reduce((s, i) => s + invOutstanding(i), 0);
-        return (<div className="row" key={c.id}><div className="avatar">{c.name.charAt(0)}</div><div className="meta"><div className="nm">{c.name}</div><div className="mt2">{c.phone || "No phone"}</div></div>
-          {due > 0 && <span className="pill plain" style={{ color: "var(--warn)" }}>{fmt(due, data.settings.currency)} due</span>}
-          {c.id !== "c_walkin" && <button className="smdel" onClick={() => remove(c.id)}><Trash2 /></button>}</div>); })}</div>
+    <div><PageHead title="Customers" sub={`${customers.length} customers from ${branch?.name || "all branches"} invoices`} />
+      <div className="ptools"><div className="possearch"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customers by name, phone, or receipt..." /></div></div>
+      <div className="list">
+        {visible.length === 0 && <div className="notice">Customers appear here after a cashier issues an invoice.</div>}
+        {visible.map((customer) => <div className="row" key={customer.id}>
+          <div className="avatar">{customer.name.charAt(0).toUpperCase()}</div>
+          <div className="meta"><div className="nm">{customer.name}</div><div className="mt2">{customer.phone || "No phone"} · {customer.invoiceCount} invoice(s){customer.lastReceipt ? ` · Last ${customer.lastReceipt}` : ""}{customer.lastInvoiceAt ? ` · ${new Date(customer.lastInvoiceAt).toLocaleDateString()}` : ""}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontWeight: 800 }}>{fmt(customer.totalCents, data.settings.currency)} sales</div><div style={{ color: customer.outstandingCents > 0 ? "var(--warn)" : "var(--muted-2)", fontSize: 12 }}>{fmt(customer.outstandingCents, data.settings.currency)} outstanding</div></div>
+        </div>)}
+      </div>
     </div>
   );
 }

@@ -3752,6 +3752,10 @@ body {
   overflow: hidden;
 }
 
+.debts-center-panel.has-customer-summary {
+  grid-template-rows: auto auto auto auto 1fr auto;
+}
+
 .debts-center-header {
   display: flex;
   flex-direction: column;
@@ -3901,6 +3905,86 @@ body {
   justify-self: end;
   padding-left: 12px;
   padding-right: 12px;
+}
+
+.customer-debt-summary {
+  min-width: 0;
+  border: 1px solid #dbe3ec;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.customer-debt-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.customer-debt-heading span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.customer-debt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.customer-debt-grid button {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.customer-debt-grid button:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.customer-debt-grid button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.customer-debt-grid button b,
+.customer-debt-grid button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-debt-grid button b {
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.customer-debt-grid button small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.customer-debt-grid button strong {
+  color: #be123c;
+  font-size: 13px;
+  font-weight: 950;
+  white-space: nowrap;
 }
 
 .debts-list {

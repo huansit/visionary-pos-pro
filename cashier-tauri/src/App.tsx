@@ -1523,6 +1523,32 @@ function DebtsCenterView({
   const [oldestFirst, setOldestFirst] = useState(mode === "debts");
   const debtInvoices = useMemo(() => [...openInvoices, ...carriedDebts], [openInvoices, carriedDebts]);
   const overdueInvoices = useMemo(() => debtInvoices.filter(isOverdueDebtInvoice), [debtInvoices]);
+  const customerDebts = useMemo(() => {
+    const grouped = new Map<string, {
+      key: string;
+      name: string;
+      amountCents: number;
+      count: number;
+      oldestAgeDays: number;
+    }>();
+    debtInvoices.forEach((invoice) => {
+      const label = invoiceCustomerLabel(invoice);
+      const name = label.trim().length > 1 ? label : invoice.number;
+      const key = name.trim().toLowerCase();
+      const current = grouped.get(key) || {
+        key,
+        name,
+        amountCents: 0,
+        count: 0,
+        oldestAgeDays: 0
+      };
+      current.amountCents += outstanding(invoice);
+      current.count += 1;
+      current.oldestAgeDays = Math.max(current.oldestAgeDays, invoiceAgeDays(invoice));
+      grouped.set(key, current);
+    });
+    return [...grouped.values()].sort((a, b) => b.amountCents - a.amountCents);
+  }, [debtInvoices]);
   const title = mode === "today" ? "Open invoices" : "Debts";
   const subline = mode === "today"
     ? `${todayInvoices.length} open today`
@@ -1552,7 +1578,7 @@ function DebtsCenterView({
   }, [carriedDebts, debtInvoices, filter, mode, oldestFirst, overdueInvoices, searchTerm, todayInvoices]);
 
   return (
-    <section className="debts-center-panel">
+    <section className={`debts-center-panel${mode === "debts" ? " has-customer-summary" : ""}`}>
       <header className="debts-center-header">
         <div>
           <h2 id="debts-center-title">{title}</h2>
@@ -1591,6 +1617,29 @@ function DebtsCenterView({
           {oldestFirst ? "Oldest first" : "Newest first"}
         </button>
       </div>
+
+      {mode === "debts" && customerDebts.length > 0 && (
+        <section className="customer-debt-summary" aria-label="Customer debt balances">
+          <div className="customer-debt-heading">
+            <b>Customer balances</b>
+            <span>{customerDebts.length} customer{customerDebts.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="customer-debt-grid">
+            {customerDebts.map((customer) => (
+              <button type="button" key={customer.key} onClick={() => setQuery(customer.name)}>
+                <span>
+                  <b>{customer.name}</b>
+                  <small>
+                    {customer.count} open invoice{customer.count === 1 ? "" : "s"}
+                    {customer.oldestAgeDays > 0 ? ` · oldest ${customer.oldestAgeDays}d` : ""}
+                  </small>
+                </span>
+                <strong>{money(customer.amountCents)}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="debts-list">
         {visibleInvoices.length === 0 ? (
