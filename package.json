@@ -40,6 +40,10 @@
                          "pg-mem":  "^3.0.5",
                          "supertest":  "^7.0.0"
                      },
+    "overrides":  {
+                      "body-parser":  "1.20.6",
+                      "immutable":  "4.3.9"
+                  },
     "engines":  {
                     "node":  "\u003e=20"
                 },
