@@ -7013,38 +7013,108 @@ function SuppliersTab({ data, update }) {
     </div>
   );
 }
+function customerSource(value) {
+  return value?.payload && typeof value.payload === "object" ? { ...value, ...value.payload } : (value || {});
+}
+function customerBranchId(value) {
+  const source = customerSource(value);
+  const branchValue = source.branch && typeof source.branch === "object" ? source.branch.id : source.branch;
+  return String(source.branchId ?? source.branch_id ?? branchValue ?? "").trim();
+}
+function customerIdentity(value, linkedCustomer = null) {
+  const source = customerSource(value);
+  const embedded = source.customer && typeof source.customer === "object" ? customerSource(source.customer) : {};
+  const linked = customerSource(linkedCustomer);
+  const customerText = typeof source.customer === "string" ? source.customer : "";
+  const id = String(source.customerId ?? source.customer_id ?? embedded.id ?? linked.id ?? source.id ?? "").trim();
+  const name = String(
+    source.customerName ?? source.customer_name ?? source.customerIdentifier ?? source.customer_identifier
+      ?? embedded.name ?? embedded.displayName ?? embedded.display_name
+      ?? linked.name ?? linked.displayName ?? linked.display_name ?? linked.identifier
+      ?? source.name ?? source.displayName ?? source.display_name ?? source.identifier ?? customerText ?? ""
+  ).trim();
+  const phone = String(
+    source.customerPhone ?? source.customer_phone ?? source.phone
+      ?? embedded.phone ?? embedded.phoneNumber ?? embedded.phone_number
+      ?? linked.phone ?? linked.phoneNumber ?? linked.phone_number ?? ""
+  ).trim();
+  return { id, name, phone };
+}
+function customerGroupKey(customer) {
+  const phone = customer.phone.replace(/[^0-9+]/g, "").toLowerCase();
+  return phone ? `phone:${phone}` : `name:${customer.name.toLowerCase()}`;
+}
+function customerInvoiceCents(invoice, field) {
+  const source = customerSource(invoice);
+  const value = field === "total"
+    ? (source.totalCents ?? source.total_cents)
+    : (source.paidCents ?? source.paid_cents);
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 function CustomersTab({ data, branch }) {
   const [query, setQuery] = useState("");
   const customers = useMemo(() => {
     const grouped = new Map();
-    (data.invoices || []).filter((invoice) => !branch?.id || invoice.branchId === branch.id).forEach((invoice) => {
-      const customerObject = invoice.customer && typeof invoice.customer === "object" ? invoice.customer : null;
-      const customerString = typeof invoice.customer === "string" ? invoice.customer : "";
-      const name = String(invoice.customerName || customerObject?.name || customerString || "").trim();
-      if (!name || /^walk[- ]?in$/i.test(name)) return;
-      const phone = String(invoice.customerPhone || customerObject?.phone || invoice.phone || "").trim();
-      const key = (phone || name).toLowerCase();
-      const rawTs = invoice.ts ?? invoice.createdAt ?? 0;
+    const customerById = new Map();
+    const selectedBranchId = String(branch?.id || "");
+    const isVisibleAtBranch = (value) => {
+      const recordBranchId = customerBranchId(value);
+      return !selectedBranchId || !recordBranchId || recordBranchId === selectedBranchId;
+    };
+    const isRealCustomer = (name) => name && !/^walk[- ]?in$/i.test(name);
+    const ensureCustomer = (identity) => {
+      if (!isRealCustomer(identity.name)) return null;
+      const key = customerGroupKey(identity);
+      const current = grouped.get(key) || {
+        id: identity.id || key,
+        name: identity.name,
+        phone: identity.phone,
+        invoiceCount: 0,
+        totalCents: 0,
+        outstandingCents: 0,
+        lastInvoiceAt: 0,
+        lastReceipt: "",
+      };
+      if (!current.phone && identity.phone) current.phone = identity.phone;
+      if ((!current.name || current.name === current.id) && identity.name) current.name = identity.name;
+      grouped.set(key, current);
+      return current;
+    };
+
+    (data.customers || []).forEach((rawCustomer) => {
+      const identity = customerIdentity(rawCustomer);
+      if (identity.id) customerById.set(identity.id, rawCustomer);
+      if (isVisibleAtBranch(rawCustomer)) ensureCustomer(identity);
+    });
+
+    (data.invoices || []).filter(isVisibleAtBranch).forEach((invoice) => {
+      const source = customerSource(invoice);
+      const rawCustomerId = String(source.customerId ?? source.customer_id ?? source.customer?.id ?? "").trim();
+      const identity = customerIdentity(source, customerById.get(rawCustomerId));
+      const current = ensureCustomer(identity);
+      if (!current) return;
+      const rawTs = source.ts ?? source.createdAt ?? source.created_at ?? source.issuedAt ?? source.issued_at ?? source.openedAt ?? 0;
       const invoiceTs = typeof rawTs === "number" ? rawTs : Date.parse(rawTs) || 0;
-      const current = grouped.get(key) || { id: key, name, phone, invoiceCount: 0, totalCents: 0, outstandingCents: 0, lastInvoiceAt: 0, lastReceipt: "" };
+      const totalCents = customerInvoiceCents(source, "total");
+      const paidCents = customerInvoiceCents(source, "paid");
       current.invoiceCount += 1;
-      current.totalCents += Number(invoice.totalCents || 0);
-      current.outstandingCents += invOutstanding(invoice);
+      current.totalCents += totalCents;
+      current.outstandingCents += Math.max(0, totalCents - paidCents);
       if (invoiceTs >= current.lastInvoiceAt) {
         current.lastInvoiceAt = invoiceTs;
-        current.lastReceipt = invoice.number || invoice.receiptNo || "";
+        current.lastReceipt = String(source.number ?? source.receiptNo ?? source.receipt_no ?? "");
       }
-      grouped.set(key, current);
     });
     return [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [data.invoices, branch?.id]);
+  }, [data.customers, data.invoices, branch?.id]);
   const search = query.trim().toLowerCase();
   const visible = customers.filter((customer) => !search
     || customer.name.toLowerCase().includes(search)
     || customer.phone.toLowerCase().includes(search)
     || customer.lastReceipt.toLowerCase().includes(search));
   return (
-    <div><PageHead title="Customers" sub={`${customers.length} customers from ${branch?.name || "all branches"} invoices`} />
+    <div><PageHead title="Customers" sub={`${customers.length} customers for ${branch?.name || "all branches"}`} />
       <div className="ptools"><div className="possearch"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customers by name, phone, or receipt..." /></div></div>
       <div className="list">
         {visible.length === 0 && <div className="notice">Customers appear here after a cashier issues an invoice.</div>}
