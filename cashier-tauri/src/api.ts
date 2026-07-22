@@ -7,6 +7,26 @@ declare const __APP_VERSION__: string;
 
 export const APP_VERSION = __APP_VERSION__;
 
+const RESET_EPOCH_KEY_PREFIX = "visionpos:cashier:reset-epoch:v1:";
+
+class ApiRequestError extends Error {
+  status: number;
+  body: any;
+
+  constructor(status: number, body: any) {
+    super(body?.error || `request_failed_${status}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+type SyncPushResult = {
+  accepted?: string[];
+  rejected?: Array<{ id?: string; reason?: string; type?: string }>;
+  resetEpoch?: string;
+};
+
 const TERMINAL_REGISTRATION_ERRORS = new Set([
   "terminal_not_authorized",
   "terminal_environment_mismatch",
@@ -111,6 +131,28 @@ function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
   };
 }
 
+function resetEpochKey(terminal: TerminalCredentials) {
+  return `${RESET_EPOCH_KEY_PREFIX}${terminal.uuid}`;
+}
+
+function readResetEpoch(terminal: TerminalCredentials) {
+  try {
+    return window.localStorage.getItem(resetEpochKey(terminal)) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function writeResetEpoch(terminal: TerminalCredentials, resetEpoch: unknown) {
+  const value = String(resetEpoch || "");
+  if (!value) return;
+  try {
+    window.localStorage.setItem(resetEpochKey(terminal), value);
+  } catch (_) {
+    // A blocked storage API must not prevent an online cashier operation.
+  }
+}
+
 async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
   if (!API_BASE_URL.startsWith("https://")) throw new Error("HTTPS is required.");
   const headers: Record<string, string> = { "Cache-Control": "no-store", "Pragma": "no-cache" };
@@ -132,8 +174,38 @@ async function jsonFetch<T>(path: string, init: RequestInit): Promise<T> {
     }
   });
 
-  if (!response.ok) throw new Error(response.body?.error || `request_failed_${response.status}`);
+  if (!response.ok) throw new ApiRequestError(response.status, response.body);
   return response.body as T;
+}
+
+async function pushSyncEvents(
+  terminal: TerminalCredentials,
+  events: Array<{ id: string; type: string; [key: string]: any }>
+): Promise<SyncPushResult> {
+  const submit = () => jsonFetch<SyncPushResult>("/api/sync/push", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({ events, resetEpoch: readResetEpoch(terminal) })
+  });
+
+  try {
+    const result = await submit();
+    writeResetEpoch(terminal, result.resetEpoch);
+    return result;
+  } catch (error) {
+    const isResetMismatch = error instanceof ApiRequestError
+      && error.status === 409
+      && error.message === "operational_reset_required"
+      && error.body?.resetEpoch;
+    if (!isResetMismatch) throw error;
+
+    // Accept the server's current reset generation, then retry only this
+    // in-memory cashier action once. Historical operations are never replayed.
+    writeResetEpoch(terminal, error.body.resetEpoch);
+    const result = await submit();
+    writeResetEpoch(terminal, result.resetEpoch);
+    return result;
+  }
 }
 
 function centsFromPayload(payload: any, fields: string[], fallback = 0) {
@@ -350,10 +422,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   let serverCatalogProducts: Product[] | null = null;
 
   try {
-    const catalog = await jsonFetch<{ products?: Product[] }>(`/api/sync/catalog?t=${Date.now()}`, {
+    const catalog = await jsonFetch<{ products?: Product[]; resetEpoch?: string }>(`/api/sync/catalog?t=${Date.now()}`, {
       method: "GET",
       headers: terminalHeaders(terminal)
     });
+    writeResetEpoch(terminal, catalog.resetEpoch);
     if (Array.isArray(catalog.products)) {
       serverCatalogProducts = catalog.products
         .map((product) => normalizeProductForBranch(product, terminal.branchId))
@@ -364,10 +437,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   }
 
   while (hasMore) {
-    const data = await jsonFetch<{ events: Array<any>; cursor?: number; hasMore?: boolean }>(`/api/sync/pull?since=${cursor}&limit=2000`, {
+    const data = await jsonFetch<{ events: Array<any>; cursor?: number; hasMore?: boolean; resetEpoch?: string }>(`/api/sync/pull?since=${cursor}&limit=2000`, {
       method: "GET",
       headers: terminalHeaders(terminal)
     });
+    writeResetEpoch(terminal, data.resetEpoch);
     events.push(...(data.events || []));
     hasMore = Boolean(data.hasMore && data.cursor && data.cursor !== cursor);
     cursor = Number(data.cursor || cursor);
@@ -572,11 +646,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
     }))
   ];
 
-  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> }>("/api/sync/push", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({ events })
-  });
+  const result = await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
 }
 
@@ -603,11 +673,7 @@ export async function patchInvoiceNote(
     }
   }];
 
-  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string; type?: string }> }>("/api/sync/push", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({ events })
-  });
+  const result = await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
 }
 
@@ -618,11 +684,7 @@ export async function pushExpense(
 ): Promise<void> {
   const ts = Date.now();
   const status = expense.status || (expense.amountCents > 50000 ? "pending" : "approved");
-  await jsonFetch("/api/sync/push", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({
-      events: [{
+  const events = [{
         id: uid("ex"),
         type: "expense",
         branchId: terminal.branchId,
@@ -639,9 +701,9 @@ export async function pushExpense(
           date: new Date(ts).toISOString().slice(0, 10),
           ts
         }
-      }]
-    })
-  });
+      }];
+  const result = await pushSyncEvents(terminal, events);
+  assertSyncAccepted(result, events);
 }
 
 export async function pushCashSessionEvent(
@@ -651,11 +713,7 @@ export async function pushCashSessionEvent(
   amountCents: number
 ): Promise<void> {
   const ts = Date.now();
-  await jsonFetch("/api/sync/push", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({
-      events: [{
+  const events = [{
         id: uid("cash"),
         type: "cashMovement",
         branchId: terminal.branchId,
@@ -669,7 +727,7 @@ export async function pushCashSessionEvent(
           reason: mode === "open" ? "Open cash session" : "Close cash session",
           ts
         }
-      }]
-    })
-  });
+      }];
+  const result = await pushSyncEvents(terminal, events);
+  assertSyncAccepted(result, events);
 }

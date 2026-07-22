@@ -2131,13 +2131,13 @@ body {
   width: 100vw;
   height: 100dvh;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .premium-auth {
   min-height: 100dvh;
   grid-template-columns: minmax(420px, 1.08fr) minmax(390px, .92fr);
-  overflow: auto;
+  overflow: hidden;
 }
 
 .auth-close-button,
@@ -2170,13 +2170,15 @@ body {
 
 .auth-right {
   align-content: center;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .auth-card {
   width: min(500px, 100%);
-  max-height: calc(100dvh - clamp(40px, 8vh, 96px));
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   padding: clamp(22px, 2.8vw, 38px);
   border-radius: clamp(18px, 2vw, 28px);
 }
@@ -2281,13 +2283,12 @@ body {
   }
 
   .auth-visual {
-    height: 170px;
-    margin-top: 14px;
+    display: none;
   }
 
   .status-panel {
-    max-height: 230px;
-    overflow: auto;
+    max-height: none;
+    overflow: hidden;
   }
 
   .status-checks div {
@@ -2307,17 +2308,111 @@ body {
 
 @media (max-width: 1180px) {
   .premium-auth {
-    grid-template-columns: 1fr;
-    min-height: 100dvh;
+    grid-template-columns: minmax(300px, .82fr) minmax(390px, 1.18fr);
+    height: 100dvh;
   }
 
   .auth-left {
-    min-height: auto;
+    min-height: 0;
     grid-template-rows: auto auto;
+    align-content: center;
+    padding: 24px;
+    gap: 18px;
+  }
+
+  .auth-brand {
+    align-self: auto;
+  }
+
+  .auth-brand h1 {
+    font-size: 44px;
+    letter-spacing: 0;
+  }
+
+  .brand-mark {
+    width: 54px;
+    height: 54px;
+    margin-bottom: 14px;
+    border-radius: 16px;
+    font-size: 34px;
+  }
+
+  .auth-brand p {
+    margin-top: 10px;
+    font-size: 18px;
+  }
+
+  .auth-visual,
+  .auth-footer {
+    display: none;
+  }
+
+  .status-panel {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .status-title {
+    margin-bottom: 10px;
+  }
+
+  .status-checks {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    margin-bottom: 8px;
+  }
+
+  .status-checks div {
+    min-height: 38px;
+    padding: 7px 9px;
+  }
+
+  .status-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .status-cards div {
+    min-height: 52px;
+    padding: 8px;
+    border-radius: 13px;
+  }
+
+  .status-cards span {
+    margin-bottom: 4px;
+    font-size: 9px;
+  }
+
+  .status-cards b {
+    font-size: 12px;
   }
 
   .auth-right {
-    padding-top: 0;
+    min-height: 0;
+    padding: 82px 24px 24px;
+    border-left: 1px solid rgba(148,163,184,.12);
+  }
+
+  .auth-card {
+    width: min(480px, 100%);
+    padding: 24px;
+  }
+
+  .login-panel h1 {
+    font-size: 32px;
+  }
+
+  .login-panel > p {
+    margin: 8px 0 18px;
+  }
+
+  .premium-input,
+  .premium-input input {
+    min-height: 50px;
+  }
+
+  .auth-card button {
+    margin-top: 14px;
   }
 }
 
@@ -2327,14 +2422,87 @@ body {
   }
 
   .premium-auth {
-    display: grid;
-    place-items: center;
-    padding: 18px;
+    display: block;
+    height: 100dvh;
+    padding: 0;
   }
 
   .auth-right {
+    height: 100dvh;
     width: 100%;
-    padding: 0;
+    padding: 84px 16px 16px;
+    border-left: 0;
+    align-content: start;
+  }
+
+  .auth-clock-chip {
+    top: 12px;
+    right: 16px;
+  }
+
+  .auth-card {
+    width: min(520px, 100%);
+  }
+}
+
+@media (max-height: 680px) and (min-width: 761px) {
+  .auth-left,
+  .auth-right {
+    padding-block: 12px;
+  }
+
+  .auth-right {
+    padding-top: 68px;
+  }
+
+  .auth-clock-chip {
+    top: 8px;
+    min-height: 48px;
+    padding-block: 7px;
+  }
+
+  .auth-clock-chip b {
+    font-size: 16px;
+  }
+
+  .auth-brand p,
+  .status-cards {
+    display: none;
+  }
+
+  .status-checks {
+    margin-bottom: 0;
+  }
+
+  .auth-card {
+    padding: 18px 22px;
+  }
+
+  .login-panel .panel-eyebrow {
+    margin-bottom: 8px;
+  }
+
+  .login-panel h1 {
+    font-size: 28px;
+  }
+
+  .login-panel > p {
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+
+  label {
+    margin-top: 9px;
+  }
+
+  .premium-input,
+  .premium-input input {
+    min-height: 46px;
+  }
+
+  .premium-primary,
+  .premium-secondary {
+    min-height: 48px;
   }
 }
 
