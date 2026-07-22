@@ -1,11 +1,11 @@
 {
-  "version": "2.0.34",
-  "notes": "VISIONPOS Cashier 2.0.34\nNative Tauri auto-update package.\nDownload, verification, install, and restart are handled inside the app.",
-  "pub_date": "2026-07-21T14:32:29.792Z",
+  "version": "2.0.36",
+  "notes": "VISIONPOS Cashier 2.0.36\nNative Tauri auto-update package.\nDownload, verification, install, and restart are handled inside the app.",
+  "pub_date": "2026-07-22T22:31:41.527Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmE1UTZUOVBQZEhYN2JOc2dDUGdhV2UxZktzZWY5OWg3VVQwc2lTMmN6WEMybWpsUk9oeWNGWmUvMitPb1dRWEIrOVk4cTk1RmxMZ0o4SHlSZ1BnbWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NjQ0MzQ5CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjM0X3g2NC1zZXR1cC5leGUKcm5hMG5qcHJMVmNVTVZGL1pxc0p1SDNHWVhBM25JdGxmc3c2RlYwb0J1QytDMmJYUzlQQjZLMzQ4R1hEWlZNZHE5Tk1QVTdBaFV4aG54M1hUUEo0Qnc9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.34_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdllsL0lvUUdhM1JKZVN0STE1ZVJnVER3N1RQdjA1bytnRmRocUxDbkFOVnVhT3BGK1h6aytaVmVQdWZkUEVoTk1mTXRrOXA5c3lDbFdsbW44REFjaGcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0NzU5NTAxCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjM2X3g2NC1zZXR1cC5leGUKc3ZIVlc2aHRxTG44NzhjK0ovbFpJNG8yUWNlNndGWnJKWllTRHZVcWRWemo4UHduaEErTjJ4U0RGd1hLVkpmZFovTjRjbE10R0FHdjREWW95bE1zRGc9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.36_x64-setup.exe"
     }
   }
 }
