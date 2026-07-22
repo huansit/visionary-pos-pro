@@ -154,6 +154,38 @@ test("1aa. branch users require an active terminal in their branch", async () =>
     });
 });
 
+test("1ab. supervisors and managers support all-branch or selected-branch access without a terminal", async () => {
+  const supervisor = await withAdminSession(request(app)
+    .post("/api/auth/users")
+    .send({
+      id: "supervisor-all-branches",
+      name: "All Branch Supervisor",
+      role: "Supervisor",
+      email: "supervisor.all@example.com",
+      password: "Supervisor@123",
+      branchId: "",
+      rights: ["sales", "customers", "inventory"],
+    }))
+    .expect(200);
+  assert.equal(supervisor.body.account.role, "Supervisor");
+  assert.equal(supervisor.body.account.branchId, null);
+
+  const manager = await withAdminSession(request(app)
+    .post("/api/auth/users")
+    .send({
+      id: "manager-cape-town",
+      name: "Cape Town Manager",
+      role: "Manager",
+      email: "manager.cape@example.com",
+      password: "Manager@123",
+      branchId: "b_cpt",
+      rights: ["sales", "customers", "inventory", "reports"],
+    }))
+    .expect(200);
+  assert.equal(manager.body.account.role, "Manager");
+  assert.equal(manager.body.account.branchId, "b_cpt");
+});
+
 test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
   const activation = await withAdminSession(request(app)
     .post("/api/auth/terminal-activations")

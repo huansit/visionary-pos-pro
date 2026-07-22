@@ -109,8 +109,24 @@ function bucketRateLimited(map, key, windowMinutes, max) {
 }
 
 function adminEmailCodeEnabled() {
-  return process.env.ADMIN_EMAIL_CODE_REQUIRED !== "0"
-    && Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return process.env.ADMIN_EMAIL_CODE_REQUIRED !== "0";
+}
+
+function credentialRole(row) {
+  let rights = row?.rights;
+  if (typeof rights === "string") {
+    try {
+      rights = JSON.parse(rights);
+    } catch {
+      rights = {};
+    }
+  }
+  if (!rights || typeof rights !== "object" || Array.isArray(rights)) rights = {};
+  return String(rights.role || (row?.kind === "admin" ? "Admin" : "")).trim().toLowerCase();
+}
+
+function requiresManagementEmailAuth(row) {
+  return row?.kind === "admin" || ["admin", "owner", "supervisor", "manager"].includes(credentialRole(row));
 }
 
 function requestMeta(req) {
@@ -952,7 +968,7 @@ router.post("/resend-email-verification", async (req, res) => {
   const { ipAddress } = requestMeta(req);
   try {
     const result = await q(
-      `SELECT id, kind, status, email_verified
+      `SELECT id, kind, status, email_verified, rights
          FROM credentials
         WHERE LOWER(email) = $1
           AND password_hash IS NOT NULL
@@ -961,7 +977,7 @@ router.post("/resend-email-verification", async (req, res) => {
       [target]
     );
     const account = result.rows[0];
-    if (!account || account.kind !== "admin") {
+    if (!account || !requiresManagementEmailAuth(account)) {
       await audit("email_verification_resend_requested", req, null, { target: maskEmail(target), accepted: false });
       return res.json({ ok: true, target: maskEmail(target), resendAfterSeconds: EMAIL_VERIFICATION_RESEND_SECONDS });
     }
@@ -990,7 +1006,7 @@ router.post("/verify-email", async (req, res) => {
   if (!validTarget("email", target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
   try {
     const result = await q(
-      `SELECT id, kind, status, email_verified
+      `SELECT id, kind, status, email_verified, rights
          FROM credentials
         WHERE LOWER(email) = $1
           AND password_hash IS NOT NULL
@@ -999,7 +1015,7 @@ router.post("/verify-email", async (req, res) => {
       [target]
     );
     const account = result.rows[0];
-    if (!account || account.kind !== "admin") {
+    if (!account || !requiresManagementEmailAuth(account)) {
       await audit("email_verification_failed", req, null, { target: maskEmail(target), reason: "account_not_found" });
       return res.status(401).json({ error: "invalid_code" });
     }
@@ -1085,9 +1101,8 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   try {
     const credentialId = isAdmin ? "admin" : id;
     const kind = isAdmin ? "admin" : isCashier ? "cashier" : "user";
-    let credentialBranchId = null;
-    if (!isAdmin) {
-      credentialBranchId = String(branchId || "").trim();
+    let credentialBranchId = isAdmin ? null : (String(branchId || "").trim() || null);
+    if (isCashier) {
       if (!credentialBranchId) return res.status(400).json({ error: "branch_required" });
       const terminal = await activeTerminalForBranch(credentialBranchId);
       if (!terminal) return res.status(409).json({ error: "branch_terminal_required" });
@@ -1411,7 +1426,8 @@ router.post("/login", async (req, res) => {
       if (rowEmail !== normalized && rowPhone !== String(identifier).trim()) continue;
       if (await bcrypt.compare(password, row.password_hash)) {
         const emailVerified = Boolean(row.email_verified ?? row.emailVerified);
-        if (row.kind === "admin" && rowEmail && validTarget("email", rowEmail) && !emailVerified) {
+        const managementEmailAuthRequired = requiresManagementEmailAuth(row);
+        if (managementEmailAuthRequired && adminEmailCodeEnabled() && rowEmail && validTarget("email", rowEmail) && !emailVerified) {
           try {
             const expiresInMinutes = await sendAndStoreCode({ channel: "email", target: rowEmail, purpose: "email_verification" });
             await audit("email_verification_required", req, row.id, { target: maskEmail(rowEmail), expiresInMinutes });
@@ -1430,7 +1446,7 @@ router.post("/login", async (req, res) => {
             return res.status(error.statusCode || 503).json({ error: "email_verification_send_failed" });
           }
         }
-        if (row.kind === "admin" && adminEmailCodeEnabled()) {
+        if (managementEmailAuthRequired && adminEmailCodeEnabled()) {
           const target = normalizeTarget("email", rowEmail);
           if (!validTarget("email", target)) {
             await audit("login_failed", req, row.id, { mode: "password", reason: "admin_email_required" });

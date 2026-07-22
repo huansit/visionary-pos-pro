@@ -3666,8 +3666,6 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
     const raw = email.trim();
-    const em = raw.toLowerCase();
-    const ph = normPhone(raw);
     setErr("");
     setBusy(true);
     try {
@@ -3695,24 +3693,18 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
         return onSignedIn(emp);
       }
     } catch (error) {
-      if (codeRequired || ["invalid_code", "code_not_found_or_expired", "too_many_attempts", "admin_email_required"].includes(error.message)) {
-        setErr(error.message === "invalid_code" ? "That email code is incorrect." :
-          error.message === "code_not_found_or_expired" ? "That email code expired. Sign in again to get a new code." :
-          error.message === "too_many_attempts" ? "Too many incorrect code attempts. Sign in again to get a new code." :
-          error.message === "admin_email_required" ? "This admin account needs an email address before email code login can work." :
-          error.message === "email_verification_send_failed" ? "Verification email could not be sent right now. Try again later." :
-          error.message === "Failed to fetch" ? "Cloud login is unreachable. Check your internet connection." : error.message);
-        setBusy(false);
-        return;
-      }
+      const message = String(error?.message || "login_failed");
+      setErr(message === "invalid_code" ? "That email code is incorrect." :
+        message === "code_not_found_or_expired" ? "That email code expired. Sign in again to get a new code." :
+        message === "too_many_attempts" ? "Too many incorrect code attempts. Sign in again to get a new code." :
+        message === "admin_email_required" ? "This management account needs an email address before email code login can work." :
+        message === "email_verification_send_failed" ? "Verification email could not be sent right now. Try again later." :
+        message === "Failed to fetch" ? "Cloud login is unreachable. Check your internet connection." :
+        "Those credentials don't match.");
+      return;
     } finally {
       setBusy(false);
     }
-    const ownerMatch = ((admin.email && em === admin.email.toLowerCase()) || (admin.phone && ph === normPhone(admin.phone))) && pw === admin.password;
-    if (ownerMatch) return onSignedIn(null); // owner admin
-    const emp = (employees || []).find((e) => isActiveEmployee(e) && e.role !== "Cashier" && (e.email || "").toLowerCase() === em && e.password && e.password === pw);
-    if (emp) return onSignedIn(emp);
-    setErr("Those credentials don't match.");
   };
   const scanFingerprint = async () => {
     setErr("");
@@ -8882,6 +8874,7 @@ function UsersTab({ data, update, isAdmin }) {
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
   const visibleEmployees = activeEmployees(data);
+  const isBranchWideRole = ["Supervisor", "Manager"].includes(f.role);
   const activeTerminalForBranch = (branchId) => terminals.find((terminal) => (
     String(terminal.branchId || "") === String(branchId || "")
     && String(terminal.status || "").toUpperCase() === "ACTIVE"
@@ -8897,9 +8890,9 @@ function UsersTab({ data, update, isAdmin }) {
   const saveCloudCredential = (emp, secret = {}) => authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
   const openCred = (id) => { setCredEdit(id); setCredVal(""); setCredErr(""); setEditRights(null); };
   const saveCred = async (emp) => {
-    if (!emp.branchId) return setCredErr("This user must be assigned to a branch.");
-    if (!activeTerminalForBranch(emp.branchId)) return setCredErr("This branch has no active terminal. Activate one before changing user credentials.");
     if (emp.role === "Cashier") {
+      if (!emp.branchId) return setCredErr("This cashier must be assigned to a branch.");
+      if (!activeTerminalForBranch(emp.branchId)) return setCredErr("This branch has no active terminal. Activate one before changing cashier credentials.");
       if (!/^\d{4}$/.test(credVal)) return setCredErr("PIN must be 4 digits.");
       if (visibleEmployees.some((e) => e.id !== emp.id && e.pin === credVal)) return setCredErr("That PIN's already in use.");
     } else {
@@ -8923,12 +8916,17 @@ function UsersTab({ data, update, isAdmin }) {
     setAdminCred(false); setAdminPw(""); setAdminErr("");
   };
   const reset = () => { setF({ name: "", role: ROLES[0], pin: "", email: "", password: "", branchId: data.branches[0]?.id || "", rights: ROLE_RIGHTS.Cashier.slice() }); setErr(""); setAdding(false); };
-  const setRole = (role) => setF((p) => ({ ...p, role, rights: (ROLE_RIGHTS[role] || []).slice(), branchId: p.branchId || data.branches[0]?.id || "" }));
+  const setRole = (role) => setF((p) => ({
+    ...p,
+    role,
+    rights: (ROLE_RIGHTS[role] || []).slice(),
+    branchId: ["Supervisor", "Manager"].includes(role) ? "" : (p.branchId || data.branches[0]?.id || ""),
+  }));
   const toggleNew = (r) => setF((p) => { const cur = rightsList(p.rights); return { ...p, rights: cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r] }; });
   const add = async () => {
     if (!f.name.trim()) return setErr("Add a name.");
-    if (!f.branchId) return setErr("Select a branch for this user.");
-    if (!selectedTerminal) return setErr("This branch has no active terminal. Activate one in Terminals before creating users.");
+    if (f.role === "Cashier" && !f.branchId) return setErr("Select a branch for this cashier.");
+    if (f.role === "Cashier" && !selectedTerminal) return setErr("This branch has no active terminal. Activate one in Terminals before creating cashiers.");
     let emp;
     let secret;
     if (f.role === "Cashier") {
@@ -8941,7 +8939,7 @@ function UsersTab({ data, update, isAdmin }) {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
       const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
       if (em === data.admin.email.toLowerCase() || visibleEmployees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
-      emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId, rights: f.rights, status: "active", synced: false };
+      emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId || null, rights: f.rights, status: "active", synced: false };
       secret = { password: f.password };
     }
     setUserBusy(true);
@@ -9039,7 +9037,7 @@ function UsersTab({ data, update, isAdmin }) {
       <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>;
   };
   return (
-    <div><PageHead title="Users & Security" sub="Cashiers sign in with a PIN at their branch. Supervisors and managers sign in with email & password." />
+    <div><PageHead title="Users & Security" sub="Cashiers sign in with a PIN at their branch. Supervisors and managers sign in with email, password, and an email code." />
       {delMsg && <div className="notice" style={{ marginBottom: 12, borderColor: "var(--danger)" }}><AlertCircle style={{ width: 14, height: 14, verticalAlign: "-2px", color: "var(--danger)" }} /> {delMsg} <button className="linknum" onClick={() => setDelMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       <div className="row" style={{ marginBottom: adminCred ? 8 : 14 }}><div className="avatar"><ShieldCheck style={{ width: 18, height: 18 }} /></div>
         <div className="meta"><div className="nm">Admin · {data.admin.email}</div><div className="mt2">Full access · all branches · all rights</div></div>
@@ -9060,23 +9058,23 @@ function UsersTab({ data, update, isAdmin }) {
         <div className="addpanel fade"><div className="grid3">
           <div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setErr(""); }} placeholder="Full name" /></div>
           <div><label className="label">Role</label><select className="select" value={f.role} onChange={(e) => setRole(e.target.value)}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
-          <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => { setF({ ...f, branchId: e.target.value }); setErr(""); }}><option value="">Select branch</option>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
-          <div className="notice" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div><label className="label">Branch</label><select className="select" value={f.branchId || ""} onChange={(e) => { setF({ ...f, branchId: e.target.value }); setErr(""); }}><option value="">{isBranchWideRole ? "All branches" : "Select branch"}</option>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div></div>
+          {f.role === "Cashier" && <div className="notice" style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <span>{terminalBusy ? "Checking active terminals..." : !f.branchId ? "Select a branch to check its terminal." : selectedTerminal ? `Active terminal detected: ${selectedTerminal.terminalName || selectedTerminal.name || "Registered terminal"}` : `No active terminal for ${bn(f.branchId)}. Activate one in Terminals before creating this user.`}</span>
             <button type="button" className="btn xs btn-ghost" onClick={loadTerminals} disabled={terminalBusy}><RefreshCw /> Refresh</button>
-          </div>
+          </div>}
           {f.role === "Cashier" ? (
             <div className="field"><label className="label">4-digit PIN <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· cashiers sign in by PIN</span></label><input className="input mono" inputMode="numeric" maxLength={4} value={f.pin} onChange={(e) => { setF({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }); setErr(""); }} placeholder="0000" /></div>
           ) : (
             <div className="grid2">
-              <div><label className="label">Email <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· signs in by email & password</span></label><input className="input" type="email" value={f.email} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(""); }} placeholder="name@store.com" /></div>
+              <div><label className="label">Email <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· signs in with password & email code</span></label><input className="input" type="email" value={f.email} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(""); }} placeholder="name@store.com" /></div>
               <div><label className="label">Password</label><input className="input" type="text" value={f.password} onChange={(e) => { setF({ ...f, password: e.target.value }); setErr(""); }} placeholder="8+ chars, upper, number, symbol" /></div>
             </div>
           )}
           <div className="field"><label className="label">Access rights <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· {f.rights.length} selected · defaults from role, tap to change</span></label>
             <RightsGrid selected={f.rights} onToggle={toggleNew} /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
-          <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset} disabled={userBusy}>Cancel</button><button className="btn btn-primary" onClick={add} disabled={userBusy || terminalBusy || !selectedTerminal}><Check /> {userBusy ? "Creating..." : "Create user"}</button></div></div>)}
+          <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset} disabled={userBusy}>Cancel</button><button className="btn btn-primary" onClick={add} disabled={userBusy || (f.role === "Cashier" && (terminalBusy || !selectedTerminal))}><Check /> {userBusy ? "Creating..." : "Create user"}</button></div></div>)}
       <div className="list">{visibleEmployees.map((e) => (
         <div key={e.id}>
           <div className="row"><div className="avatar">{e.name.charAt(0)}</div>
