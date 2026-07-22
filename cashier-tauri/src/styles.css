@@ -6311,3 +6311,219 @@ body {
   background: #fee2e2;
   color: #b91c1c;
 }
+
+/* True final viewport overrides. Keep this section last. */
+.auth.premium-auth {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.premium-auth .auth-left,
+.premium-auth .auth-right {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+@media (min-width: 761px) and (max-height: 900px) {
+  .premium-auth {
+    grid-template-columns: minmax(320px, .86fr) minmax(390px, 1.14fr);
+  }
+
+  .premium-auth .auth-left,
+  .premium-auth .auth-right {
+    padding: 64px clamp(18px, 2.4vw, 34px) 16px;
+  }
+
+  .premium-auth .auth-left {
+    grid-template-rows: auto auto;
+    align-content: center;
+    gap: 12px;
+  }
+
+  .premium-auth .auth-visual,
+  .premium-auth .auth-footer {
+    display: none;
+  }
+
+  .premium-auth .brand-mark {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 8px;
+    font-size: 28px;
+  }
+
+  .premium-auth .auth-brand h1 {
+    font-size: clamp(36px, 4vw, 54px);
+  }
+
+  .premium-auth .auth-brand p {
+    margin-top: 5px;
+    font-size: 16px;
+  }
+
+  .premium-auth .status-panel {
+    padding: 11px;
+  }
+
+  .premium-auth .status-title,
+  .premium-auth .status-checks {
+    margin-bottom: 7px;
+  }
+
+  .premium-auth .status-checks {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .premium-auth .status-checks div {
+    min-height: 36px;
+    padding: 6px;
+    font-size: 10px;
+  }
+
+  .premium-auth .status-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .premium-auth .status-cards div {
+    min-height: 44px;
+    padding: 7px;
+  }
+
+  .premium-auth .auth-card {
+    width: min(470px, 100%);
+    padding: 20px 22px;
+  }
+
+  .premium-auth .login-panel h1 {
+    font-size: 29px;
+  }
+
+  .premium-auth .login-panel > p {
+    margin: 6px 0 12px;
+  }
+
+  .premium-auth .terminal-summary {
+    margin-bottom: 10px;
+  }
+
+  .premium-auth .premium-input,
+  .premium-auth .premium-input input,
+  .premium-auth .premium-primary,
+  .premium-auth .premium-secondary {
+    min-height: 46px;
+  }
+
+  .premium-auth .auth-card button {
+    margin-top: 10px;
+  }
+}
+
+@media (min-width: 761px) and (max-height: 700px) {
+  .premium-auth .auth-left,
+  .premium-auth .auth-right {
+    padding-top: 54px;
+    align-content: start;
+  }
+
+  .premium-auth .auth-brand p,
+  .premium-auth .status-cards {
+    display: none;
+  }
+
+  .premium-auth .status-checks {
+    margin-bottom: 0;
+  }
+
+  .premium-auth .auth-card {
+    padding: 16px 20px;
+  }
+}
+
+@media (max-width: 760px) {
+  .premium-auth .auth-right {
+    overflow-y: auto;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .workstation .layout,
+  .workstation .layout.left-collapsed {
+    grid-template-columns: 48px minmax(0, 1fr) clamp(260px, 27vw, 282px);
+    gap: 6px;
+    min-width: 0;
+    padding: 6px;
+  }
+
+  .workstation .layout.left-collapsed .left-panel {
+    padding: 6px 4px;
+  }
+
+  .workstation .layout.left-collapsed .sidebar-menu-button,
+  .workstation .layout.left-collapsed .mini-sidebar button {
+    width: 38px;
+    min-height: 38px;
+    height: 38px;
+  }
+
+  .workstation .product-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .workstation .product-card {
+    min-height: 108px;
+    padding: 8px;
+    gap: 3px;
+    border-radius: 10px;
+  }
+
+  .workstation .product-name {
+    font-size: 12px;
+    line-height: 1.12;
+  }
+
+  .workstation .product-price {
+    font-size: 14px;
+  }
+
+  .workstation .product-sku,
+  .workstation .product-stock-row,
+  .workstation .product-action {
+    font-size: 10px;
+  }
+
+  .workstation .product-stock-row {
+    min-height: 16px;
+  }
+
+  .workstation .product-action {
+    margin-top: 1px;
+    padding: 6px 8px;
+  }
+
+  .workstation .cart-panel .cart-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 7px;
+    padding: 8px;
+  }
+
+  .workstation .cart-panel .cart-line > strong {
+    grid-column: 1 / -1;
+    min-width: 0;
+    font-size: 12px;
+  }
+}
+
+@media (min-width: 901px) and (max-height: 720px) {
+  .workstation .product-card {
+    min-height: 100px;
+  }
+}
