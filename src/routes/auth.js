@@ -809,34 +809,12 @@ router.post("/terminals/:uuid", requireAdminOrSupervisor, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/send-code", async (req, res) => {
-  const channel = req.body?.channel === "phone" ? "phone" : "email";
-  const target = normalizeTarget(channel, req.body?.target);
-  if (!validTarget(channel, target)) return res.status(400).json({ error: "invalid_target" });
+const ownerRegistrationDisabled = (_req, res) => {
+  res.status(403).json({ error: "owner_registration_disabled" });
+};
 
-  try {
-    const ttl = await sendAndStoreCode({ channel, target, purpose: "owner_signup" });
-    res.json({ ok: true, channel, target, expiresInMinutes: ttl });
-  } catch (error) {
-    console.error("send-code failed:", error);
-    res.status(error.statusCode || 500).json({ error: error.message || "send_code_failed" });
-  }
-});
-
-router.post("/verify-code", async (req, res) => {
-  const channel = req.body?.channel === "phone" ? "phone" : "email";
-  const target = normalizeTarget(channel, req.body?.target);
-  const code = String(req.body?.code || "").trim();
-  if (!validTarget(channel, target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
-
-  try {
-    const verified = await verifyOwnerCode({ channel, target, code });
-    res.json({ ok: verified });
-  } catch (error) {
-    console.error("verify-code failed:", error);
-    res.status(error.statusCode || 500).json({ error: error.message || "verify_code_failed" });
-  }
-});
+router.post("/send-code", ownerRegistrationDisabled);
+router.post("/verify-code", ownerRegistrationDisabled);
 
 router.post("/request-password-reset", async (req, res) => {
   await ensureAuthSchema();
@@ -1035,57 +1013,7 @@ router.post("/verify-email", async (req, res) => {
   }
 });
 
-router.post("/register-owner", async (req, res) => {
-  await ensureAuthSchema();
-  const { name, password } = req.body || {};
-  const channel = req.body?.channel === "phone" ? "phone" : "email";
-  const target = normalizeTarget(channel, req.body?.target);
-  const code = String(req.body?.code || "").trim();
-  if (!name || !password) return res.status(400).json({ error: "name_and_password_required" });
-  if (!validTarget(channel, target) || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "invalid_code_request" });
-
-  try {
-    await verifyOwnerCode({ channel, target, code, consume: true });
-    const passwordHash = await bcrypt.hash(password, ROUNDS);
-    const id = "admin";
-    const email = channel === "email" ? target : null;
-    const phone = channel === "phone" ? target : null;
-    if (isMySql) {
-      await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights, email_verified)
-         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, $6, $7)
-         ON DUPLICATE KEY UPDATE
-           name = VALUES(name),
-           email = VALUES(email),
-           phone = VALUES(phone),
-           password_hash = VALUES(password_hash),
-           rights = VALUES(rights),
-           email_verified = VALUES(email_verified),
-           updated_at = NOW()`,
-        [id, String(name).trim(), email, phone, passwordHash, { admin: true, owner: true, role: "owner" }, channel === "email"]
-      );
-    } else {
-      await q(
-        `INSERT INTO credentials (id, kind, name, email, phone, password_hash, branch_id, rights, email_verified)
-         VALUES ($1, 'admin', $2, $3, $4, $5, NULL, '{"admin":true,"owner":true,"role":"owner"}'::jsonb, $6)
-         ON CONFLICT (id) DO UPDATE SET
-           name = EXCLUDED.name,
-           email = EXCLUDED.email,
-           phone = EXCLUDED.phone,
-           password_hash = EXCLUDED.password_hash,
-           rights = EXCLUDED.rights,
-           email_verified = EXCLUDED.email_verified,
-           updated_at = now()`,
-        [id, String(name).trim(), email, phone, passwordHash, channel === "email"]
-      );
-    }
-    const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified FROM credentials WHERE id = $1", [id]);
-    res.json({ ok: true, account: publicAccount(result.rows[0]) });
-  } catch (error) {
-    console.error("register-owner failed:", error);
-    res.status(error.statusCode || 500).json({ error: error.message || "register_owner_failed" });
-  }
-});
+router.post("/register-owner", ownerRegistrationDisabled);
 
 router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
@@ -1610,7 +1538,7 @@ async function sendAndStoreCode({ channel, target, purpose }) {
   return ttl;
 }
 
-async function verifyAuthCode({ channel, target, code, purpose = "owner_signup", consume = false }) {
+async function verifyAuthCode({ channel, target, code, purpose, consume = false }) {
   const result = await q(
     `SELECT id, code_hash, attempts
        FROM auth_verification_codes
@@ -1634,10 +1562,6 @@ async function verifyAuthCode({ channel, target, code, purpose = "owner_signup",
   }
   if (consume) await q(`UPDATE auth_verification_codes SET consumed_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.id]);
   return true;
-}
-
-async function verifyOwnerCode(args) {
-  return verifyAuthCode({ ...args, purpose: "owner_signup" });
 }
 
 export default router;

@@ -3175,7 +3175,7 @@ export default function VisionPOS() {
   });
   const cleanReset = () => {
     const empty = { ...CLEAN_SETUP(), _sync: { outboxLength: 0, cursor: 0 } };
-    saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("signup");
+    saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("adminLogin");
   };
   const runSync = async (opts = {}) => {
     if (!navigator.onLine || (!opts.force && syncing) || !dataRef.current) return;
@@ -3325,15 +3325,14 @@ export default function VisionPOS() {
   const syncLabel = !online ? "Offline" : syncError ? "Sync error" : syncing ? "Syncing…" : pending > 0 ? pending + " to sync" : "Synced";
   const syncTitle = !online ? "Offline — changes are saved locally and will sync when you reconnect" : syncError ? "Sync failed: " + syncError : syncing ? "Syncing your data to the cloud…" : pending > 0 ? pending + " change(s) waiting to sync" : "All data synced to the cloud";
 
-  if (view === "pin" || view === "adminLogin" || view === "signup") {
+  if (view === "pin" || view === "adminLogin") {
     return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
-      {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin admin={data.admin} employees={data.employees} onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignup={() => setView("signup")} onSignedIn={(emp) => {
+      {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignedIn={(emp) => {
         signInSession("admin", emp || null);
         if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } }));
         setTimeout(() => recoverCloudData(), 100);
       }} />}
-      {view === "signup" && <OwnerSignup data={data} onBack={() => setView("adminLogin")} onRegistered={(acct) => { update((d) => ({ ...d, admin: { ...d.admin, ...acct } })); signInSession("admin", null); }} />}
     </div></div>);
   }
   const branches = Array.isArray(data.branches) ? data.branches : [];
@@ -3625,7 +3624,7 @@ function PinScreen({ employees, branchId, onAdmin, onSuccess }) {
     </AuthShellV3>
   );
 }
-function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
+function AdminLogin({ onBack, onSignedIn }) {
   const [email, setEmail] = useState(""), [pw, setPw] = useState(""), [show, setShow] = useState(false), [err, setErr] = useState(""), [forgot, setForgot] = useState(false);
   const initialResetToken = (() => {
     try { return new URLSearchParams(window.location.search).get("resetToken") || ""; } catch (_) { return ""; }
@@ -3884,105 +3883,13 @@ function AdminLogin({ admin, employees, onBack, onSignup, onSignedIn }) {
           <input className="input lead mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code} onFocus={() => setFocusField("code")} onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
           <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div></div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <div className={"auth-actions" + (admin && !admin.provisioned ? "" : " single")}>
+        <div className="auth-actions single">
           <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
-          {admin && !admin.provisioned && <div className="field"><button className="authmake" onClick={onSignup}><Users /> Sign up</button></div>}
         </div>
         <div className="authforgot" onClick={() => { setResetEmail(email.trim()); setForgot(true); setErr(""); }}>Forgot password?</div>
         {onBack && <button className="authback" onClick={onBack}><ArrowLeft /> Back to staff PIN</button>}
       </div>
       <DesktopDownloadSection />
-    </AuthShellV3>
-  );
-}
-
-/* Owner / admin first-time setup — register with email OR phone (format-validated only). */
-function OwnerSignup({ data, onBack, onRegistered }) {
-  const [name, setName] = useState("");
-  const [idType, setIdType] = useState("email"); // "email" | "phone"
-  const [ident, setIdent] = useState("");
-  const [code, setCode] = useState("");
-  const [codeSent, setCodeSent] = useState(false);
-  const [pw, setPw] = useState(""), [pw2, setPw2] = useState("");
-  const [show, setShow] = useState(false);
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const target = () => {
-    const id = ident.trim();
-    if (idType === "email") {
-      if (!isValidEmail(id)) throw new Error("Enter a valid email address.");
-      return id.toLowerCase();
-    }
-    if (!isValidPhone(id)) throw new Error("Enter a valid phone (e.g. 0712345678 or +254712345678).");
-    return normPhone(id);
-  };
-  const sendCode = async () => {
-    setErr("");
-    try {
-      const t = target();
-      setBusy(true);
-      await authApi("/api/auth/send-code", { channel: idType, target: t });
-      setCodeSent(true);
-    } catch (error) {
-      setErr(error.message === "email_provider_not_configured" ? "Email sending is not configured on the server." :
-        error.message === "sms_provider_not_configured" ? "SMS sending is not configured on the server." : error.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submit = async () => {
-    if (!name.trim()) return setErr("Enter the owner's name.");
-    let t;
-    try { t = target(); } catch (error) { return setErr(error.message); }
-    const emailVal = idType === "email" ? t : "";
-    const phoneVal = idType === "phone" ? t : "";
-    // uniqueness against existing accounts
-    const clash = (emailVal && (data.employees || []).some((e) => (e.email || "").toLowerCase() === emailVal))
-      || (phoneVal && (data.employees || []).some((e) => normPhone(e.phone) === phoneVal));
-    if (clash) return setErr("That email or phone is already in use by another user.");
-    const issue = passwordIssue(pw); if (issue) return setErr(issue);
-    if (pw !== pw2) return setErr("Passwords don't match.");
-    if (!/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit verification code.");
-    try {
-      setBusy(true);
-      await authApi("/api/auth/register-owner", { channel: idType, target: t, code: code.trim(), name: name.trim(), password: pw });
-      onRegistered({ name: name.trim(), email: emailVal, phone: phoneVal, password: pw, provisioned: true });
-    } catch (error) {
-      setErr(error.message === "invalid_code" ? "That verification code is incorrect." :
-        error.message === "code_not_found_or_expired" ? "That verification code expired. Send a new one." : error.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <AuthShellV3>
-      <div className="authform">
-        <div className="authfield-label" style={{ marginBottom: 4 }}>Create owner account</div>
-        <div className="authnote" style={{ marginTop: 0, marginBottom: 12 }}>First-time setup for the primary administrator. Register with an email or a phone number.</div>
-        <div className="field" style={{ marginTop: 0 }}><label className="label">Owner name</label>
-          <input className="input" value={name} placeholder="Full name" onChange={(e) => { setName(e.target.value); setErr(""); }} /></div>
-        <div className="field"><label className="label">Sign in with</label>
-          <div className="segrow">
-            <button type="button" className={"segbtn" + (idType === "email" ? " on" : "")} onClick={() => { setIdType("email"); setIdent(""); setErr(""); }}><Mail /> Email</button>
-            <button type="button" className={"segbtn" + (idType === "phone" ? " on" : "")} onClick={() => { setIdType("phone"); setIdent(""); setErr(""); }}><Smartphone /> Phone</button>
-          </div></div>
-        <div className="field"><label className="label">{idType === "email" ? "Email address" : "Phone number"}</label>
-          <input className="input" type={idType === "email" ? "email" : "tel"} inputMode={idType === "email" ? "email" : "tel"}
-            placeholder={idType === "email" ? "you@store.com" : "0712345678 or +254712345678"} value={ident}
-            onChange={(e) => { setIdent(e.target.value); setCode(""); setCodeSent(false); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && sendCode()} /></div>
-        <div className="field"><button className="btn btn-ghost" disabled={busy} onClick={sendCode}>{idType === "email" ? <Mail /> : <Smartphone />}{codeSent ? "Send code again" : "Send verification code"}</button></div>
-        {codeSent && <div className="field"><label className="label">Verification code</label>
-          <input className="input mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code}
-            onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} /></div>}
-        <div className="field"><label className="label">Password</label><div className="input-wrap">
-          <input className="input" type={show ? "text" : "password"} placeholder="8+ chars, upper, number, symbol" value={pw} onChange={(e) => { setPw(e.target.value); setErr(""); }} />
-          <button className="toggle-eye" onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
-        <div className="field"><label className="label">Confirm password</label>
-          <input className="input" type={show ? "text" : "password"} placeholder="Re-enter password" value={pw2} onChange={(e) => { setPw2(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
-        {err && <div className="alert"><AlertCircle />{err}</div>}
-        <div className="field"><button className="btn btn-primary" disabled={busy || !codeSent} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : "Create account & sign in"}</button></div>
-        <button className="authback" onClick={onBack}><ArrowLeft /> Back to sign-in</button>
-      </div>
     </AuthShellV3>
   );
 }

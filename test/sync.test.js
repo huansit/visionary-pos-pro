@@ -72,6 +72,28 @@ function withTerminalAuth(req, terminal) {
     .set("X-Terminal-Secret", terminal.secret);
 }
 
+test("public owner registration is disabled", async () => {
+  const attempts = [
+    ["/api/auth/send-code", { channel: "email", target: "new-owner@example.com" }],
+    ["/api/auth/verify-code", { channel: "email", target: "new-owner@example.com", code: "123456" }],
+    ["/api/auth/register-owner", {
+      channel: "email",
+      target: "new-owner@example.com",
+      code: "123456",
+      name: "New Owner",
+      password: "Strong@123",
+    }],
+  ];
+
+  for (const [endpoint, payload] of attempts) {
+    await request(app)
+      .post(endpoint)
+      .send(payload)
+      .expect(403)
+      .expect({ error: "owner_registration_disabled" });
+  }
+});
+
 test("1. registers two devices via /api/auth/device", async () => {
   const deviceA = await request(app)
     .post("/api/auth/device")
