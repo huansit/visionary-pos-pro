@@ -4733,7 +4733,7 @@ const TAB_RIGHT = {
   cash: "cash", expenses: "expenses", financials: "financials",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
-  users: "users", settings: "settings", environment: "__admin_only", system: "__admin_only",
+  users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
 };
 const NAV_GROUPS = [
   { id: "salesgrp", label: "Sales & Customers", icon: Receipt, items: [
@@ -4828,7 +4828,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
   const [tab, setTab] = useState("dashboard");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
-  const isAdmin = role === "Admin" || accountRole === "admin" || accountRole === "owner" || hasRight(rights, "admin") || hasRight(rights, "owner");
+  const isAdmin = accountRole === "admin" || accountRole === "owner";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
   const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
@@ -8781,6 +8781,27 @@ function UsersTab({ data, update, isAdmin }) {
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
   const visibleEmployees = activeEmployees(data);
+  useEffect(() => {
+    let cancelled = false;
+    authGet("/api/auth/users", { session: true }).then((result) => {
+      if (cancelled || !Array.isArray(result?.users)) return;
+      update((current) => {
+        const employees = Array.isArray(current.employees) ? current.employees : [];
+        const byId = new Map(employees.map((employee) => [String(employee.id), employee]));
+        let changed = false;
+        for (const cloudUser of result.users) {
+          const previous = byId.get(String(cloudUser.id));
+          const merged = previous ? { ...previous, ...cloudUser, synced: true } : { ...cloudUser, synced: true };
+          if (!previous || JSON.stringify(previous) !== JSON.stringify(merged)) changed = true;
+          byId.set(String(cloudUser.id), merged);
+        }
+        return changed ? { ...current, employees: Array.from(byId.values()) } : current;
+      });
+    }).catch((error) => {
+      if (!cancelled) setErr("Could not refresh cloud users: " + credentialMessage(error));
+    });
+    return () => { cancelled = true; };
+  }, []);
   const isBranchWideRole = ["Supervisor", "Manager"].includes(f.role);
   const activeTerminalForBranch = (branchId) => terminals.find((terminal) => (
     String(terminal.branchId || "") === String(branchId || "")
@@ -8851,8 +8872,9 @@ function UsersTab({ data, update, isAdmin }) {
     }
     setUserBusy(true);
     try {
-      await saveCloudCredential(emp, secret);
-      update((d) => ({ ...d, employees: [...d.employees, emp] }));
+      const result = await saveCloudCredential(emp, secret);
+      const savedEmployee = result?.user ? { ...emp, ...result.user, synced: true } : emp;
+      update((d) => ({ ...d, employees: [...d.employees.filter((employee) => employee.id !== savedEmployee.id), savedEmployee] }));
       reset();
     } catch (error) {
       setErr(credentialMessage(error));

@@ -2,7 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
-import { requireAdminOrSupervisor, requireDevice } from "../auth.js";
+import { requireAdminOrSupervisor, requireDevice, requireOwnerOrAdmin } from "../auth.js";
 import { ensureEnvironmentSchema, getActiveEnvironmentMode, sameEnvironment } from "../environment.js";
 import { signDeviceToken, verifyDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendPasswordResetEmail, sendVerificationCode, validTarget } from "../verification.js";
@@ -655,7 +655,7 @@ router.post("/device", async (req, res) => {
   res.json({ deviceId, token, environment });
 });
 
-router.post("/terminal-activations", requireAdminOrSupervisor, async (req, res) => {
+router.post("/terminal-activations", requireOwnerOrAdmin, async (req, res) => {
   await ensureAuthSchema();
   await ensureEnvironmentSchema();
   const environment = await getActiveEnvironmentMode();
@@ -752,7 +752,7 @@ router.post("/terminals/activate", async (req, res) => {
   }
 });
 
-router.get("/terminals", requireAdminOrSupervisor, async (_req, res) => {
+router.get("/terminals", requireOwnerOrAdmin, async (_req, res) => {
   await ensureAuthSchema();
   const result = await q(
     isMySql
@@ -771,7 +771,7 @@ router.get("/terminals", requireAdminOrSupervisor, async (_req, res) => {
   res.json({ terminals: result.rows.map((row) => ({ ...row, status: terminalStatus(row.status) })) });
 });
 
-router.post("/terminals/:uuid", requireAdminOrSupervisor, async (req, res) => {
+router.post("/terminals/:uuid", requireOwnerOrAdmin, async (req, res) => {
   await ensureAuthSchema();
   const uuid = String(req.params.uuid || "").trim();
   const action = String(req.body?.action || "update").toLowerCase();
@@ -1015,6 +1015,85 @@ router.post("/verify-email", async (req, res) => {
 
 router.post("/register-owner", ownerRegistrationDisabled);
 
+function credentialToUserRecord(row, { deleted = false } = {}) {
+  const account = publicAccount(row);
+  const rights = Array.isArray(account.rights)
+    ? account.rights
+    : Array.isArray(account.rights?.rights)
+      ? account.rights.rights
+      : [];
+  return {
+    id: account.id,
+    name: account.name,
+    role: account.role,
+    email: row.email || "",
+    phone: row.phone || "",
+    branchId: account.branchId || null,
+    rights,
+    status: deleted ? "deleted" : (account.status || "active"),
+    synced: true,
+    updatedAt: Date.now(),
+  };
+}
+
+async function persistUserRecord(row, { deleted = false } = {}) {
+  if (!row || row.kind === "admin") return null;
+  const timestamp = Date.now();
+  const payload = { ...credentialToUserRecord(row, { deleted }), updatedAt: timestamp };
+  const params = [row.id, row.branch_id ?? row.branchId ?? null, timestamp, deleted, JSON.stringify(payload)];
+  if (isMySql) {
+    await q(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1, 'user', $2, NULL, $3, $3, $4, $5)
+       ON DUPLICATE KEY UPDATE
+         branch_id = VALUES(branch_id),
+         device_id = NULL,
+         updated_at = VALUES(updated_at),
+         server_ts = VALUES(server_ts),
+         deleted = VALUES(deleted),
+         payload = VALUES(payload)`,
+      params
+    );
+  } else {
+    await q(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1, 'user', $2, NULL, $3, $3, $4, $5)
+       ON CONFLICT (type, id) DO UPDATE SET
+         branch_id = EXCLUDED.branch_id,
+         device_id = NULL,
+         updated_at = EXCLUDED.updated_at,
+         server_ts = EXCLUDED.server_ts,
+         deleted = EXCLUDED.deleted,
+         payload = EXCLUDED.payload`,
+      params
+    );
+  }
+  return payload;
+}
+
+router.get("/users", requireAdminOrSupervisor, async (_req, res) => {
+  await ensureAuthSchema();
+  try {
+    const result = await q(
+      `SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified, updated_at
+         FROM credentials
+        WHERE status = 'active'
+          AND kind <> 'admin'
+        ORDER BY name ASC`,
+      []
+    );
+    const existing = await q("SELECT id FROM records WHERE type = 'user' AND deleted = false", []);
+    const recordedIds = new Set(existing.rows.map((row) => String(row.id)));
+    for (const row of result.rows) {
+      if (!recordedIds.has(String(row.id))) await persistUserRecord(row);
+    }
+    res.json({ users: result.rows.map((row) => credentialToUserRecord(row)) });
+  } catch (error) {
+    console.error("list users failed:", error);
+    res.status(500).json({ error: "list_users_failed" });
+  }
+});
+
 router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   await ensureAuthSchema();
   const { id, name, role, email, phone, password, pin, branchId, rights = [] } = req.body || {};
@@ -1083,7 +1162,8 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
     }
     await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [credentialId]);
     const result = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [credentialId]);
-    res.json({ ok: true, account: publicAccount(result.rows[0]) });
+    const user = await persistUserRecord(result.rows[0]);
+    res.json({ ok: true, account: publicAccount(result.rows[0]), user });
   } catch (error) {
     if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
     console.error("upsert user credential failed:", error);
@@ -1096,6 +1176,7 @@ router.post("/users/:id/delete", requireAdminOrSupervisor, async (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id || id === "admin") return res.status(400).json({ error: "invalid_user_id" });
   try {
+    const existing = await q("SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1", [id]);
     await q(
       `UPDATE credentials
           SET status = 'deleted',
@@ -1104,6 +1185,7 @@ router.post("/users/:id/delete", requireAdminOrSupervisor, async (req, res) => {
       [id]
     );
     await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [id]);
+    if (existing.rows[0]) await persistUserRecord({ ...existing.rows[0], status: "deleted" }, { deleted: true });
     await audit("user_deleted", req, id, { byUser: req.account?.id || null });
     res.json({ ok: true });
   } catch (error) {

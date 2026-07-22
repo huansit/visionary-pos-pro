@@ -30,6 +30,7 @@ after(async () => {
 
 const state = {
   adminSessionToken: null,
+  supervisorSessionToken: null,
   tokenA: null,
   tokenB: null,
   tokenC: null,
@@ -192,6 +193,12 @@ test("1ab. supervisors and managers support all-branch or selected-branch access
   assert.equal(supervisor.body.account.role, "Supervisor");
   assert.equal(supervisor.body.account.branchId, null);
 
+  const supervisorLogin = await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "supervisor.all@example.com", password: "Supervisor@123" })
+    .expect(200);
+  state.supervisorSessionToken = supervisorLogin.body.sessionToken;
+
   const manager = await withAdminSession(request(app)
     .post("/api/auth/users")
     .send({
@@ -206,6 +213,23 @@ test("1ab. supervisors and managers support all-branch or selected-branch access
     .expect(200);
   assert.equal(manager.body.account.role, "Manager");
   assert.equal(manager.body.account.branchId, "b_cpt");
+});
+
+test("1ac. supervisors cannot view or manage cashier terminals", async () => {
+  assert.ok(state.supervisorSessionToken);
+
+  await request(app)
+    .get("/api/auth/terminals")
+    .set("X-Session-Token", state.supervisorSessionToken)
+    .expect(403)
+    .expect({ error: "insufficient_role" });
+
+  await request(app)
+    .post("/api/auth/terminal-activations")
+    .set("X-Session-Token", state.supervisorSessionToken)
+    .send({ branchId: "b_sip", terminalName: "Unauthorized Supervisor Till" })
+    .expect(403)
+    .expect({ error: "insufficient_role" });
 });
 
 test("1b. activates a desktop terminal and authenticates sync with terminal headers", async () => {
@@ -1304,7 +1328,18 @@ test("10. user credentials created on one device work for login on another devic
     .expect((res) => {
       assert.equal(res.body.ok, true);
       assert.equal(res.body.account.id, cashierId);
+      assert.equal(res.body.user.id, cashierId);
+      assert.equal(res.body.user.name, "Cloud Cashier");
+      assert.equal(res.body.user.branchId, "b_sip");
+      assert.equal(res.body.user.pin, undefined);
+      assert.equal(res.body.user.password, undefined);
     });
+
+  const cashierRecord = await pool.query("SELECT payload, deleted FROM records WHERE type = 'user' AND id = $1", [cashierId]);
+  assert.equal(cashierRecord.rows[0].deleted, false);
+  assert.equal(cashierRecord.rows[0].payload.name, "Cloud Cashier");
+  assert.equal(cashierRecord.rows[0].payload.pin, undefined);
+  assert.equal(cashierRecord.rows[0].payload.password, undefined);
 
   await request(app)
     .post("/api/auth/login")
@@ -1341,6 +1376,14 @@ test("10. user credentials created on one device work for login on another devic
     .expect((res) => {
       assert.equal(res.body.ok, true);
       assert.equal(res.body.account.id, managerId);
+    });
+
+  await withAdminSession(request(app).get("/api/auth/users"))
+    .expect(200)
+    .expect((res) => {
+      assert.ok(res.body.users.some((user) => user.id === cashierId));
+      assert.ok(res.body.users.some((user) => user.id === managerId));
+      assert.ok(!res.body.users.some((user) => user.id === "admin"));
     });
 
   await request(app)
@@ -1493,6 +1536,10 @@ test("12. deleted users are inactive immediately and cannot log in again", async
     .post("/api/auth/users/delete-me-cashier/delete")
     .send({}))
     .expect(200);
+
+  const deletedRecord = await pool.query("SELECT payload, deleted FROM records WHERE type = 'user' AND id = $1", ["delete-me-cashier"]);
+  assert.equal(deletedRecord.rows[0].deleted, true);
+  assert.equal(deletedRecord.rows[0].payload.status, "deleted");
 
   await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: "delete-me-cashier", pin: "8899", branchId: "b_sip" })

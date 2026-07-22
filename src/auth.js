@@ -159,6 +159,7 @@ export function requireRoles(roles = MANAGEMENT_ROLES) {
 }
 
 export const requireAdminOrSupervisor = requireRoles(MANAGEMENT_ROLES);
+export const requireOwnerOrAdmin = requireRoles(new Set(["owner", "admin"]));
 
 // Require a valid device bearer token on protected routes.
 // Sets req.deviceId for downstream handlers.
