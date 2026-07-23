@@ -98,9 +98,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Fixed missing Cape Town product names in the normal cashier catalogue.",
-  "Merged duplicate branch catalogue rows by SKU while preserving the best name, price, and stock values.",
-  "Repaired stale cached catalogue entries automatically after synchronization.",
+  "The normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.",
+  "Cape Town product names remain attached when global catalogue and branch pricing records are merged.",
+  "Browse and search now use the same synchronized product set.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

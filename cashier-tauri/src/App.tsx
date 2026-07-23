@@ -483,11 +483,11 @@ export default function App() {
     const scoped = selectedCategory === "All Products"
       ? products
       : products.filter((product) => (product.category || "Uncategorised") === selectedCategory);
-    if (!q) return scoped.slice(0, 80);
+    if (!q) return scoped;
     return scoped.filter((product) => {
       const haystack = [product.name, product.sku, product.barcode, product.category, ...(product.barcodes || [])].join(" ").toLowerCase();
       return haystack.includes(q);
-    }).slice(0, 80);
+    });
   }, [products, query, selectedCategory]);
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);

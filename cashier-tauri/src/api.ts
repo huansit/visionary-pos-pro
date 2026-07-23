@@ -382,6 +382,17 @@ function isMeaningfulProductName(value?: string) {
   return Boolean(name && name.toLowerCase() !== "unnamed product");
 }
 
+function productNameScore(product: Product) {
+  const name = String(product.name || "").trim();
+  if (!isMeaningfulProductName(name)) return 0;
+  const normalizedName = name.toLowerCase();
+  const identifiers = [product.sku, product.barcode, ...(product.barcodes || [])]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (identifiers.includes(normalizedName)) return 1;
+  return 20 + Math.min(name.length, 60);
+}
+
 function mergeProductGroup(rows: Product[]): Product | null {
   const preferred = rows.reduce<Product | undefined>((current, row) => preferProductRow(current, row), undefined);
   if (!preferred) return null;
@@ -396,6 +407,9 @@ function mergeProductGroup(rows: Product[]): Product | null {
     return score(b) - score(a) || Number(b.serverTs || 0) - Number(a.serverTs || 0);
   });
   const details = detailRows[0] || preferred;
+  const nameSource = [...rows].sort((a, b) =>
+    productNameScore(b) - productNameScore(a) || Number(b.serverTs || 0) - Number(a.serverTs || 0)
+  )[0] || details;
   const barcodes: string[] = [
     ...new Set(
       rows
@@ -406,7 +420,7 @@ function mergeProductGroup(rows: Product[]): Product | null {
   ];
   return {
     ...preferred,
-    name: isMeaningfulProductName(preferred.name) ? preferred.name : details.name,
+    name: nameSource.name,
     sku: preferred.sku || details.sku,
     size: preferred.size || details.size,
     barcode: preferred.barcode || details.barcode || barcodes[0] || "",
@@ -508,7 +522,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
 
   const branchRecords = new Map<string, any>();
   const productRecords = new Map<string, any>();
-  const productDeduped = new Map<string, Product>();
+  const productGroups = new Map<string, Product[]>();
   const productIdsByKey = new Map<string, string[]>();
   const baseStockByKey = new Map<string, number>();
   const invoiceRecords = new Map<string, Invoice>();
@@ -638,7 +652,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     const key = productDedupeKey(product);
     productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
     baseStockByKey.set(key, Math.max(baseStockByKey.get(key) || 0, product.stockQty));
-    productDeduped.set(key, preferProductRow(productDeduped.get(key), product));
+    productGroups.set(key, [...(productGroups.get(key) || []), product]);
   }
 
   const invoices = Array.from(invoiceRecords.values())
@@ -660,11 +674,15 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     .filter((invoice) => invoice.branchId === terminal.branchId)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
 
-  const fallbackProducts = dedupeCatalogProducts(Array.from(productDeduped.entries())
-    .map(([key, product]) => ({
-      ...product,
-      stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
-    })));
+  const fallbackProducts = dedupeCatalogProducts(Array.from(productGroups.entries())
+    .flatMap(([key, rows]) => {
+      const product = mergeProductGroup(rows);
+      if (!product) return [];
+      return [{
+        ...product,
+        stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
+      }];
+    }));
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
 
