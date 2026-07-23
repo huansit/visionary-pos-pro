@@ -1181,6 +1181,69 @@ test("6f. Cape Town catalog restores a missing name without discarding the newer
   }
 });
 
+test("6g. cashier catalog deduplicates repeated imports by SKU across catalog ids", async () => {
+  const cptTerminal = await activateTestTerminal("Cape Town Duplicate SKU Till", "b_cpt");
+  const olderComplete = {
+    id: "prod-cpt-duplicate-complete",
+    type: "product",
+    updatedAt: 7800,
+    payload: {
+      name: "Cape Town Canonical Product",
+      sku: "CPT-DUP-001",
+      barcode: "CPT-DUP-001",
+      barcodeCatalogId: "catalog-cpt-old",
+      category: "Spirits",
+      image: "https://example.test/cape-town-canonical.png",
+      priceCents: 210000,
+    },
+  };
+  const newerSparse = {
+    id: "prod-cpt-duplicate-priced",
+    type: "product",
+    branchId: "b_cpt",
+    updatedAt: 7900,
+    payload: {
+      sku: "CPT-DUP-001",
+      barcode: "CPT-DUP-001",
+      barcodeCatalogId: "catalog-cpt-new",
+      branchPrices: { b_cpt: { priceCents: 255000 } },
+    },
+  };
+
+  try {
+    // Simulate legacy catalogue data created before global SKU uniqueness was enforced.
+    await pool.query("DROP INDEX IF EXISTS records_product_sku_unique_idx");
+    for (const product of [olderComplete, newerSparse]) {
+      await pool.query(
+        `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+         VALUES ($1, 'product', $2, NULL, $3, $3, false, $4)`,
+        [product.id, product.branchId || null, product.updatedAt, product.payload]
+      );
+    }
+
+    const response = await withTerminalAuth(request(app).get("/api/sync/catalog"), cptTerminal)
+      .expect(200);
+    const matches = response.body.products.filter((item) => item.sku === newerSparse.payload.sku);
+    assert.equal(matches.length, 1, JSON.stringify(matches));
+    assert.equal(matches[0].id, newerSparse.id, "the newest branch record must remain authoritative");
+    assert.equal(matches[0].name, olderComplete.payload.name, JSON.stringify(matches[0]));
+    assert.equal(matches[0].priceCents, 255000, JSON.stringify(matches[0]));
+  } finally {
+    await pool.query(
+      "DELETE FROM records WHERE type = 'product' AND id = ANY($1::text[])",
+      [[olderComplete.id, newerSparse.id]]
+    );
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS records_product_sku_unique_idx
+       ON records (lower((payload->>'sku')))
+       WHERE type = 'product'
+         AND deleted = false
+         AND payload->>'sku' IS NOT NULL
+         AND payload->>'sku' <> ''`
+    );
+  }
+});
+
 test("7. barcode catalog resolves by branch and reports unavailable branch products", async () => {
   await request(app)
     .post("/api/barcodes/products")

@@ -331,7 +331,7 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
   return {
     id: String(payload.id || source?.id || (sku ? `product_${sku}` : uid("product"))),
     branchId: String(payload.branchId || payload.branch_id || branchId),
-    name: String(payload.name || "Unnamed product"),
+    name: String(payload.name || payload.productName || payload.product_name || payload.title || "Unnamed product"),
     sku,
     size: String(payload.size || payload.unit || ""),
     barcode,
@@ -352,11 +352,13 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
 }
 
 function productDedupeKey(product: Product) {
+  const sku = String(product.sku || "").trim().toLowerCase();
+  if (sku) return `sku:${sku}`;
   const catalogId = product.barcodeCatalogId || "";
-  if (catalogId) return `${product.branchId}|catalog:${catalogId}`;
-  const code = product.sku || product.barcode || product.barcodes?.[0] || "";
+  if (catalogId) return `catalog:${catalogId}`;
+  const code = product.barcode || product.barcodes?.[0] || "";
   const size = product.size || "";
-  return `${product.branchId}|${code ? "code:" + code.toLowerCase() : "name:" + product.name.toLowerCase() + "|" + size.toLowerCase()}`;
+  return code ? `code:${code.toLowerCase()}` : `name:${product.name.toLowerCase()}|${size.toLowerCase()}`;
 }
 
 function preferProductRow(current: Product | undefined, candidate: Product) {
@@ -373,6 +375,63 @@ function preferProductRow(current: Product | undefined, candidate: Product) {
   const candidateScore = score(candidate);
   if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
   return String(candidate.id || "").localeCompare(String(current.id || "")) >= 0 ? candidate : current;
+}
+
+function isMeaningfulProductName(value?: string) {
+  const name = String(value || "").trim();
+  return Boolean(name && name.toLowerCase() !== "unnamed product");
+}
+
+function mergeProductGroup(rows: Product[]): Product | null {
+  const preferred = rows.reduce<Product | undefined>((current, row) => preferProductRow(current, row), undefined);
+  if (!preferred) return null;
+  const detailRows = [...rows].sort((a, b) => {
+    const score = (product: Product) =>
+      (isMeaningfulProductName(product.name) ? 32 : 0) +
+      (product.sku ? 16 : 0) +
+      (product.barcode ? 8 : 0) +
+      (product.category && product.category !== "Uncategorised" ? 4 : 0) +
+      (product.image ? 2 : 0) +
+      (product.size ? 1 : 0);
+    return score(b) - score(a) || Number(b.serverTs || 0) - Number(a.serverTs || 0);
+  });
+  const details = detailRows[0] || preferred;
+  const barcodes: string[] = [
+    ...new Set(
+      rows
+        .flatMap((row) => [row.barcode, ...(row.barcodes || [])])
+        .map((barcode) => String(barcode || "").trim())
+        .filter((barcode) => Boolean(barcode))
+    )
+  ];
+  return {
+    ...preferred,
+    name: isMeaningfulProductName(preferred.name) ? preferred.name : details.name,
+    sku: preferred.sku || details.sku,
+    size: preferred.size || details.size,
+    barcode: preferred.barcode || details.barcode || barcodes[0] || "",
+    barcodes,
+    barcodeCatalogId: preferred.barcodeCatalogId || details.barcodeCatalogId,
+    category: preferred.category && preferred.category !== "Uncategorised" ? preferred.category : details.category,
+    categoryId: preferred.categoryId || details.categoryId,
+    image: preferred.image || details.image
+  } satisfies Product;
+}
+
+export function dedupeCatalogProducts(products: Product[]): Product[] {
+  const groups = new Map<string, Product[]>();
+  for (const product of products || []) {
+    const key = productDedupeKey(product);
+    groups.set(key, [...(groups.get(key) || []), product]);
+  }
+  const merged: Product[] = [];
+  for (const rows of groups.values()) {
+    const product = mergeProductGroup(rows);
+    if (product) merged.push(product);
+  }
+  return merged.sort(
+    (a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || ""))
+  );
 }
 
 export async function activateTerminal(activationCode: string, terminalName: string): Promise<TerminalCredentials> {
@@ -428,9 +487,9 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     });
     writeResetEpoch(terminal, catalog.resetEpoch);
     if (Array.isArray(catalog.products)) {
-      serverCatalogProducts = catalog.products
-        .map((product) => normalizeProductForBranch(product, terminal.branchId))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      serverCatalogProducts = dedupeCatalogProducts(
+        catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
+      );
     }
   } catch (error) {
     console.warn("[visionpos] normalized catalog unavailable; using sync stream fallback", error);
@@ -578,7 +637,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
     const key = productDedupeKey(product);
     productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
-    baseStockByKey.set(key, (baseStockByKey.get(key) || 0) + product.stockQty);
+    baseStockByKey.set(key, Math.max(baseStockByKey.get(key) || 0, product.stockQty));
     productDeduped.set(key, preferProductRow(productDeduped.get(key), product));
   }
 
@@ -601,16 +660,13 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
     .filter((invoice) => invoice.branchId === terminal.branchId)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
 
-  const fallbackProducts = Array.from(productDeduped.entries())
+  const fallbackProducts = dedupeCatalogProducts(Array.from(productDeduped.entries())
     .map(([key, product]) => ({
       ...product,
       stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    })));
 
-  const products = (serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts).sort(
-    (a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || ""))
-  );
+  const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
 
   return { branches, invoices, products };
 }

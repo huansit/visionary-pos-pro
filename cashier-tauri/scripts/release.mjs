@@ -98,8 +98,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Compact cashier panels sized for smaller terminal displays.",
-  "Cashiers can submit invoice void requests for supervisor or administrator approval.",
+  "Fixed missing Cape Town product names in the normal cashier catalogue.",
+  "Merged duplicate branch catalogue rows by SKU while preserving the best name, price, and stock values.",
+  "Repaired stale cached catalogue entries automatically after synchronization.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

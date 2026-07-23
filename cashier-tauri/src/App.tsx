@@ -39,6 +39,7 @@ import {
   APP_VERSION,
   activateTerminal,
   connectSyncStream,
+  dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
   logout,
@@ -229,7 +230,7 @@ function printReceipt(receipt: Receipt) {
 
 function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
   const savedAt = Date.now();
-  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products, invoices, savedAt }));
+  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products: dedupeCatalogProducts(products), invoices, savedAt }));
   return savedAt;
 }
 
@@ -238,7 +239,10 @@ function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Inv
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
     if (!raw) return { branches: [], products: [], invoices: [] };
     const parsed = JSON.parse(raw);
-    return { branches: parsed.branches || [], products: parsed.products || [], invoices: parsed.invoices || [], savedAt: parsed.savedAt };
+    const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
+    const repaired = { branches: parsed.branches || [], products, invoices: parsed.invoices || [], savedAt: parsed.savedAt };
+    localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
+    return repaired;
   } catch {
     return { branches: [], products: [], invoices: [] };
   }

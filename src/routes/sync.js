@@ -136,10 +136,10 @@ function productDisplayName(payload = {}) {
 
 function productCatalogKey(row) {
   const payload = row.payload || {};
-  const catalogId = normalizeCode(payload.barcodeCatalogId || payload.barcode_catalog_id);
-  if (catalogId) return `catalog:${catalogId}`;
   const sku = normalizeCode(payload.sku);
   if (sku) return `sku:${sku}`;
+  const catalogId = normalizeCode(payload.barcodeCatalogId || payload.barcode_catalog_id);
+  if (catalogId) return `catalog:${catalogId}`;
   const barcode = normalizeCode(payload.barcode || (Array.isArray(payload.barcodes) ? payload.barcodes[0] : ""));
   if (barcode) return `barcode:${barcode}`;
   return `name:${normalizeCode(productDisplayName(payload))}:${normalizeCode(payload.size || payload.unit)}`;
