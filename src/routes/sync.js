@@ -126,6 +126,14 @@ function normalizeCode(value) {
   return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
 }
 
+function productDisplayName(payload = {}) {
+  for (const value of [payload.name, payload.productName, payload.product_name, payload.title]) {
+    const name = String(value || "").trim();
+    if (name) return name;
+  }
+  return "";
+}
+
 function productCatalogKey(row) {
   const payload = row.payload || {};
   const catalogId = normalizeCode(payload.barcodeCatalogId || payload.barcode_catalog_id);
@@ -134,7 +142,7 @@ function productCatalogKey(row) {
   if (sku) return `sku:${sku}`;
   const barcode = normalizeCode(payload.barcode || (Array.isArray(payload.barcodes) ? payload.barcodes[0] : ""));
   if (barcode) return `barcode:${barcode}`;
-  return `name:${normalizeCode(payload.name)}:${normalizeCode(payload.size || payload.unit)}`;
+  return `name:${normalizeCode(productDisplayName(payload))}:${normalizeCode(payload.size || payload.unit)}`;
 }
 
 const PRODUCT_PRICE_CENT_FIELDS = ["priceCents", "sellingPriceCents", "selling_price_cents", "sellPriceCents"];
@@ -325,7 +333,7 @@ function productCompletenessScore(row) {
     (centsFromPayload(payload, ["costCents", "costPriceCents", "cost_price_cents", "buyingPriceCents"], ["costPrice", "cost_price", "buyingPrice", "buying_price", "cost"]) > 0 ? 8 : 0) +
     (payload.image || payload.imageUrl || payload.image_url || payload.photo ? 4 : 0) +
     (payload.barcode || (Array.isArray(payload.barcodes) && payload.barcodes.length) ? 2 : 0) +
-    (payload.name ? 1 : 0)
+    (productDisplayName(payload) ? 1 : 0)
   );
 }
 
@@ -338,6 +346,39 @@ export function preferCatalogRecord(current, candidate) {
   const candidateScore = productCompletenessScore(candidate);
   if (candidateScore !== currentScore) return candidateScore > currentScore ? candidate : current;
   return String(candidate.id || "").localeCompare(String(current.id || "")) >= 0 ? candidate : current;
+}
+
+function hydrateCatalogRecord(preferred, siblingRows = []) {
+  if (!preferred) return preferred;
+  const preferredName = productDisplayName(preferred.payload || {});
+  if (preferredName) {
+    if (preferred.payload?.name === preferredName) return preferred;
+    return { ...preferred, payload: { ...(preferred.payload || {}), name: preferredName } };
+  }
+
+  let nameSource = null;
+  for (const row of siblingRows) {
+    if (!productDisplayName(row.payload || {})) continue;
+    if (!nameSource) {
+      nameSource = row;
+      continue;
+    }
+    const rowScore = productCompletenessScore(row);
+    const sourceScore = productCompletenessScore(nameSource);
+    const rowTs = Number(row.serverTs || row.updatedAt || 0);
+    const sourceTs = Number(nameSource.serverTs || nameSource.updatedAt || 0);
+    if (
+      rowScore > sourceScore ||
+      (rowScore === sourceScore && rowTs > sourceTs) ||
+      (rowScore === sourceScore && rowTs === sourceTs && String(row.id || "").localeCompare(String(nameSource.id || "")) > 0)
+    ) {
+      nameSource = row;
+    }
+  }
+
+  const fallbackName = productDisplayName(nameSource?.payload || {});
+  if (!fallbackName) return preferred;
+  return { ...preferred, payload: { ...(preferred.payload || {}), name: fallbackName } };
 }
 
 function buildProductAliasMap(rows = []) {
@@ -416,7 +457,7 @@ function normalizeProduct(row, branchId, stockQty, overlay = {}) {
   return {
     id: String(row.id),
     branchId,
-    name: payload.name || "Unnamed product",
+    name: productDisplayName(payload) || "Unnamed product",
     sku,
     size: payload.size || payload.unit || "",
     barcode,
@@ -472,6 +513,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
     );
 
     const byKey = new Map();
+    const rowsByKey = new Map();
     for (const row of records.rows) {
       if (row.deleted) continue;
       // Product records are the shared catalogue. Legacy imports may still
@@ -479,10 +521,12 @@ router.get("/catalog", requireDevice, async (req, res) => {
       // and stock movement events below. Filtering here hides valid catalogue
       // rows from terminals in the other branch.
       const key = productCatalogKey(row);
+      if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+      rowsByKey.get(key).push(row);
       byKey.set(key, preferCatalogRecord(byKey.get(key), row));
     }
 
-    const canonicalRows = [...byKey.values()];
+    const canonicalRows = [...byKey.entries()].map(([key, row]) => hydrateCatalogRecord(row, rowsByKey.get(key)));
     const productIndexes = buildCanonicalProductIndexes(records.rows, canonicalRows, productAliases);
     const overlaysByProduct = new Map();
     for (const row of overlayRows.rows || []) {
