@@ -98,8 +98,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Native Tauri auto-update package.",
-  "Download, verification, install, and restart are handled inside the app."
+  "Compact cashier panels sized for smaller terminal displays.",
+  "Cashiers can submit invoice void requests for supervisor or administrator approval.",
+  "Native in-app updater package with automatic signature verification and restart."
 ];
 
 fs.mkdirSync(outDir, { recursive: true });

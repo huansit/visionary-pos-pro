@@ -1,12 +1,13 @@
 {
-  "version": "2.0.37",
+  "version": "2.0.38",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.37_x64-setup.exe",
-  "size": 3146881,
-  "sha512": "737726AEDEE3BDE0840C2916937D55D7A5FADA963E2AFC76D78679796A2B239FB53FA0893DB2D890E7D5D5EF92D93D7229C789D1D8AD32EC1B80FDFC01B07EAA",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.38_x64-setup.exe",
+  "size": 3148050,
+  "sha512": "C61D42925D67DBBA8C54401C8ED35E33C9667DB31F34454D2C21A103AD3DF980FC21F7B12259324BA4345CB21A53E3A7C0CACC89E66DA6BB6B4A3039B3201C7A",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.37",
-    "Native Tauri auto-update package.",
-    "Download, verification, install, and restart are handled inside the app."
+    "VISIONPOS Cashier 2.0.38",
+    "Compact cashier panels sized for smaller terminal displays.",
+    "Cashiers can submit invoice void requests for supervisor or administrator approval.",
+    "Native in-app updater package with automatic signature verification and restart."
   ]
 }
