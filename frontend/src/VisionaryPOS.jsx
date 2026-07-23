@@ -4027,7 +4027,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     (catFilter === "All" || (p.category || "Other") === catFilter) &&
     (qNorm === "" || p.name.toLowerCase().includes(qNorm) || p.sku.toLowerCase().includes(qNorm) || productMatchesBarcode(p, q) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))));
 
-  const mine = data.invoices.filter((i) => i.cashierId === employee.id);
+  const mine = operationalInvoices(data).filter((i) => i.cashierId === employee.id);
   const myDebts = mine.filter((i) => invIsDebt(i));
   const myOpen = mine.filter((i) => !i.carriedOver && invOutstanding(i) > 0);
   const openOnly = myOpen;
@@ -4827,14 +4827,15 @@ function InsightsTab({ data, online }) {
   const f = (c) => fmt(c, cur);
   const local = (question) => {
     const Q = question.toLowerCase();
+    const activeInvoices = operationalInvoices(data);
     if (Q.includes("low-stock") || Q.includes("reorder")) { const l = reorderList(data); return l.length ? "Items at or below reorder level:\n" + l.slice(0, 12).map((p) => "• " + p.name + " — " + onHand(data, p.id) + " left (reorder " + (p.reorderLevel ?? data.settings.reorderLevel) + ")").join("\n") : "All products are above their reorder level."; }
     if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) { const by = {}; data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) by[p.id] = (by[p.id] || 0) + (-m.qty); } }); const rows = Object.entries(by).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { p, qty, rev: qty * (p ? p.priceCents : 0) }; }).filter((r) => r.p); const byRev = Q.includes("fast") ? rows.sort((a, b) => b.qty - a.qty) : rows.sort((a, b) => b.rev - a.rev); return byRev.length ? "Top products:\n" + byRev.slice(0, 5).map((r, i) => (i + 1) + ". " + r.p.name + " — " + r.qty + " sold · " + f(r.rev)).join("\n") : "No cleared sales recorded yet."; }
-    if (Q.includes("outstanding debts per cashier") || Q.includes("debts per cashier")) { const by = {}; data.invoices.filter((i) => invIsDebt(i)).forEach((i) => { const o = invOutstanding(i); if (o > 0) by[i.cashier] = (by[i.cashier] || 0) + o; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]); return rows.length ? "Overdue debts by cashier:\n" + rows.map(([n, v]) => "• " + n + " — " + f(v)).join("\n") : "No overdue cashier debts."; }
-    if (Q.includes("invoices cleared per cashier") || Q.includes("cashier performance")) { const by = {}; data.invoices.forEach((i) => { const k = i.cashier || "—"; by[k] = by[k] || { n: 0, sales: 0, owed: 0 }; by[k].n++; by[k].sales += i.totalCents; by[k].owed += invOutstanding(i); }); const rows = Object.entries(by).sort((a, b) => b[1].sales - a[1].sales); return rows.length ? "Cashier summary:\n" + rows.map(([n, v]) => "• " + n + " — " + v.n + " invoices · " + f(v.sales) + " sold · " + f(v.owed) + " owed").join("\n") : "No invoices yet."; }
-    if (Q.includes("average invoice")) { const inv = data.invoices; const tot = inv.reduce((s, i) => s + i.totalCents, 0); return inv.length ? "Average invoice value: " + f(Math.round(tot / inv.length)) + " across " + inv.length + " invoices." : "No invoices yet."; }
-    if (Q.includes("daily sales") || Q.includes("sales trend")) { const days = []; for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const st = d.getTime(); const tot = data.invoices.filter((x) => x.ts >= st && x.ts < st + 864e5).reduce((s, x) => s + x.totalCents, 0); days.push([d.toLocaleDateString(undefined, { weekday: "short" }), tot]); } return "Sales, last 7 days:\n" + days.map(([l, v]) => "• " + l + " — " + f(v)).join("\n"); }
-    if (Q.includes("overdue") || Q.includes("credit recovery")) { const carried = data.invoices.filter((i) => i.carriedOver); const pend = carried.filter((i) => invIsDebt(i)); const rec = carried.filter((i) => invOutstanding(i) <= 0); const rate = carried.length ? Math.round(rec.length / carried.length * 100) : 0; return carried.length ? "Carried-over invoices: " + carried.length + "\n• Overdue debts: " + pend.length + " · " + f(pend.reduce((s, i) => s + invOutstanding(i), 0)) + "\n• Recovered: " + rec.length + " (" + rate + "% recovery rate)" : "No carried-over invoices yet."; }
-    if (Q.includes("top customers")) { const by = {}; data.invoices.forEach((i) => { const k = i.customerName || "Walk-in"; by[k] = (by[k] || 0) + i.totalCents; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5); return rows.length ? "Top customers by spend:\n" + rows.map(([n, v], i) => (i + 1) + ". " + n + " — " + f(v)).join("\n") : "No invoices yet."; }
+    if (Q.includes("outstanding debts per cashier") || Q.includes("debts per cashier")) { const by = {}; activeInvoices.filter((i) => invIsDebt(i)).forEach((i) => { const o = invOutstanding(i); if (o > 0) by[i.cashier] = (by[i.cashier] || 0) + o; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]); return rows.length ? "Overdue debts by cashier:\n" + rows.map(([n, v]) => "• " + n + " — " + f(v)).join("\n") : "No overdue cashier debts."; }
+    if (Q.includes("invoices cleared per cashier") || Q.includes("cashier performance")) { const by = {}; activeInvoices.forEach((i) => { const k = i.cashier || "—"; by[k] = by[k] || { n: 0, sales: 0, owed: 0 }; by[k].n++; by[k].sales += i.totalCents; by[k].owed += invOutstanding(i); }); const rows = Object.entries(by).sort((a, b) => b[1].sales - a[1].sales); return rows.length ? "Cashier summary:\n" + rows.map(([n, v]) => "• " + n + " — " + v.n + " invoices · " + f(v.sales) + " sold · " + f(v.owed) + " owed").join("\n") : "No invoices yet."; }
+    if (Q.includes("average invoice")) { const inv = activeInvoices; const tot = inv.reduce((s, i) => s + i.totalCents, 0); return inv.length ? "Average invoice value: " + f(Math.round(tot / inv.length)) + " across " + inv.length + " invoices." : "No invoices yet."; }
+    if (Q.includes("daily sales") || Q.includes("sales trend")) { const days = []; for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const st = d.getTime(); const tot = activeInvoices.filter((x) => x.ts >= st && x.ts < st + 864e5).reduce((s, x) => s + x.totalCents, 0); days.push([d.toLocaleDateString(undefined, { weekday: "short" }), tot]); } return "Sales, last 7 days:\n" + days.map(([l, v]) => "• " + l + " — " + f(v)).join("\n"); }
+    if (Q.includes("overdue") || Q.includes("credit recovery")) { const carried = activeInvoices.filter((i) => i.carriedOver); const pend = carried.filter((i) => invIsDebt(i)); const rec = carried.filter((i) => invOutstanding(i) <= 0); const rate = carried.length ? Math.round(rec.length / carried.length * 100) : 0; return carried.length ? "Carried-over invoices: " + carried.length + "\n• Overdue debts: " + pend.length + " · " + f(pend.reduce((s, i) => s + invOutstanding(i), 0)) + "\n• Recovered: " + rec.length + " (" + rate + "% recovery rate)" : "No carried-over invoices yet."; }
+    if (Q.includes("top customers")) { const by = {}; activeInvoices.forEach((i) => { const k = i.customerName || "Walk-in"; by[k] = (by[k] || 0) + i.totalCents; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 5); return rows.length ? "Top customers by spend:\n" + rows.map(([n, v], i) => (i + 1) + ". " + n + " — " + f(v)).join("\n") : "No invoices yet."; }
     if (Q.includes("end-of-day") || Q.includes("end of day")) { const e = (data.endOfDays || []).slice(-1)[0]; return e ? "Last end-of-day close:\n• " + e.date + " · " + (e.branchId ? (data.branches.find((b) => b.id === e.branchId)?.name || "") : "") + "\n• Total: " + f(e.totalCents ?? e.totalSalesCents ?? 0) : "No end-of-day closings saved yet."; }
     if (Q.includes("offline transactions") || Q.includes("sync")) { const p = countPending(data); const err = data?._sync?.error; return (online ? "Online. " : "Offline. ") + (err ? "Last sync error: " + err + ". " : "") + (p ? p + " change(s) are queued locally and not yet synced." : "Everything is synced — nothing queued."); }
     if (Q.includes("discrepanc")) return "Stock discrepancies are flagged during inventory counts (Stock module). No automatic variance is recorded outside a count.";
@@ -4887,8 +4888,8 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
   // If the active tab is not permitted (e.g. after a rights change), fall back to the dashboard.
   useEffect(() => { if (!canAccess(tab)) setTab("dashboard"); }, [tab, rights, isAdmin]); // eslint-disable-line
   const cur = data.settings.currency;
-  const todayRevenue = data.payments.filter((p) => isToday(p.ts) && p.status === "captured").reduce((s, p) => s + p.amountCents, 0);
-  const txns = data.invoices.filter((i) => isToday(i.ts)).length;
+  const todayRevenue = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p))).reduce((s, p) => s + p.amountCents, 0);
+  const txns = operationalInvoices(data).filter((i) => isToday(i.ts)).length;
   const reorders = reorderList(data, branch.id).length;
   const pendingExpenseCount = (data.expenses || []).filter((e) => e.status === "pending").length;
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
@@ -4967,8 +4968,8 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
-  const invoices = data.invoices;
-  const activeInvoices = operationalInvoices(data);
+  const invoices = operationalInvoices(data);
+  const activeInvoices = invoices;
   const open = activeInvoices.filter((i) => invOutstanding(i) > 0);
   const overdue = activeInvoices.filter((i) => invIsDebt(i));
   const balanceDue = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
@@ -5129,7 +5130,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const businessDate = d.businessDate || d.date || todayStr();
   const periodStartedAt = Number(d.periodStartedAt ?? branchLastEndDay(data, d.branchId));
   const periodInvoices = live
-    ? data.invoices.filter((invoice) => invoice.branchId === d.branchId && invoice.ts > periodStartedAt)
+    ? operationalInvoices(data).filter((invoice) => invoice.branchId === d.branchId && invoice.ts > periodStartedAt)
     : [];
   const periodLastInvoiceAt = live
     ? periodInvoices.reduce((latest, invoice) => Math.max(latest, Number(invoice.ts || 0)), 0)
@@ -5193,12 +5194,13 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       const current = reconcileInvoicePayments(dd);
       if ((current.endOfDays || []).some((entry) => entry.id === closeId)) return current;
       const since = branchLastEndDay(current, d.branchId);
-      const eligibleInvoices = current.invoices.filter((i) => i.branchId === d.branchId && i.ts > since && i.ts <= ts);
+      const eligibleInvoices = operationalInvoices(current).filter((i) => i.branchId === d.branchId && i.ts > since && i.ts <= ts);
       if (eligibleInvoices.length === 0) return current;
       return { ...current,
         endOfDays: [record, ...(current.endOfDays || [])],
         invoices: current.invoices.map((i) => {
           if (i.branchId !== d.branchId || i.ts <= since || i.ts > ts) return i;
+          if (invoiceIsVoided(current, i)) return i;
           if (invOutstanding(i) > 0) return { ...i, carriedOver: true, carriedOverAt: ts, closedDayId: closeId, synced: false };
           return { ...i, archived: true, archivedAt: ts, closedDayId: closeId, activeForCashier: false, synced: false };
         }),
@@ -5727,7 +5729,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const stock = onHand(data, id); // total on hand across all branches
     const sixtyAgo = Date.now() - 60 * 864e5;
     const recentMoves = data.stockMovements.filter((m) => m.productId === id && m.ts >= sixtyAgo);
-    const pendInv = data.invoices.filter((i) => invOutstanding(i) > 0 && (i.items || []).some((it) => it.name === p.name));
+    const pendInv = operationalInvoices(data).filter((i) => invOutstanding(i) > 0 && (i.items || []).some((it) => it.name === p.name));
     const openPO = data.purchases.filter((po) => po.productId === id && po.status !== "received");
     const parts = [];
     if (stock > 0) parts.push(stock + " unit(s) still in stock");
@@ -7235,7 +7237,7 @@ function CustomersTab({ data, branch }) {
       if (isVisibleAtBranch(rawCustomer)) ensureCustomer(identity);
     });
 
-    (data.invoices || []).filter(isVisibleAtBranch).forEach((invoice) => {
+    operationalInvoices(data).filter(isVisibleAtBranch).forEach((invoice) => {
       const source = customerSource(invoice);
       const rawCustomerId = String(source.customerId ?? source.customer_id ?? source.customer?.id ?? "").trim();
       const identity = customerIdentity(source, customerById.get(rawCustomerId));
@@ -7265,7 +7267,7 @@ function CustomersTab({ data, branch }) {
     return [...grouped.values()]
       .map((customer) => ({ ...customer, invoices: customer.invoices.sort((a, b) => b.ts - a.ts) }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [data.customers, data.invoices, branch?.id]);
+  }, [data.customers, data.invoices, data.invoiceVoidRequests, data.invoiceVoidDecisions, branch?.id]);
   const selectedCustomer = customers.find((customer) => customer.groupKey === selectedCustomerKey) || null;
   useEffect(() => {
     if (!selectedCustomer) return undefined;
@@ -7337,7 +7339,7 @@ function BranchesTab({ data, update }) {
     let units = 0, value = 0;
     branchProductsUnique(data, b.id).forEach((p) => { const oh = Math.max(0, productOnHand(data, p, b.id)); units += oh; value += oh * p.costCents; });
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
-    const recInvs = data.invoices.filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
+    const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
     const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
     const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
@@ -7629,10 +7631,10 @@ function CashTab({ data, update, branch }) {
   const invoiceById = Object.fromEntries((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const matchesBranch = (branchId) => branchFilter === "all" || branchId === branchFilter;
   const paymentBranchId = (payment) => payment.branchId || invoiceById[paymentInvoiceId(payment)]?.branchId;
-  const todayPays = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)));
+  const todayPays = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)) && !invoiceIsVoided(data, paymentInvoiceId(p)));
   const sumM = (re) => todayPays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + p.amountCents, 0);
   const mpesa = sumM(/mpesa|m-?pesa|mobile/i), card = sumM(/card/i), cash = sumM(/cash/i);
-  const todayInv = data.invoices.filter((i) => isToday(i.ts) && matchesBranch(i.branchId));
+  const todayInv = operationalInvoices(data).filter((i) => isToday(i.ts) && matchesBranch(i.branchId));
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const outstanding = todayInv.reduce((s, i) => s + invOutstanding(i), 0);
   const expToday = data.expenses.filter((e) => (!e.status || e.status === "approved") && isToday(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + e.amountCents, 0);
@@ -7922,13 +7924,14 @@ const ASK_EXAMPLES = [
 function aiDigest(data) {
   const cur = data.settings.currency; const k = (c) => Math.round(c / 100);
   const startToday = new Date().setHours(0, 0, 0, 0); const startYest = startToday - 864e5; const start7 = Date.now() - 7 * 864e5;
+  const activeInvoices = operationalInvoices(data);
   const prod = (id) => data.products.find((p) => p.id === id);
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const saleMv = (pred) => data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && pred(m));
   const branches = data.branches.map((b) => {
-    const it = data.invoices.filter((i) => i.branchId === b.id && i.ts >= startToday);
-    const iy = data.invoices.filter((i) => i.branchId === b.id && i.ts >= startYest && i.ts < startToday);
-    const i7 = data.invoices.filter((i) => i.branchId === b.id && i.ts >= start7);
+    const it = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= startToday);
+    const iy = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= startYest && i.ts < startToday);
+    const i7 = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= start7);
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
     const recognizedSalesToday = it.filter((i) => invRecognized(i, data.settings)).reduce((s, i) => s + i.totalCents, 0);
     const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveRecognized(data, m));
@@ -7937,11 +7940,11 @@ function aiDigest(data) {
   });
   const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveRecognized(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
   const topProducts = Object.entries(byProd).map(([id, u]) => { const p = prod(id); return p ? { product: p.name, sku: p.sku, units: u, revenueKES: k(u * p.priceCents) } : null; }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
-  const payT = {}, pay7 = {}; data.payments.filter((p) => p.status === "captured").forEach((p) => { if (p.ts >= startToday) payT[p.method] = (payT[p.method] || 0) + p.amountCents; if (p.ts >= start7) pay7[p.method] = (pay7[p.method] || 0) + p.amountCents; });
+  const payT = {}, pay7 = {}; data.payments.filter((p) => p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p))).forEach((p) => { if (p.ts >= startToday) payT[p.method] = (payT[p.method] || 0) + p.amountCents; if (p.ts >= start7) pay7[p.method] = (pay7[p.method] || 0) + p.amountCents; });
   const lowStock = []; data.branches.forEach((b) => { reorderList(data, b.id).forEach((p) => { lowStock.push({ branch: b.name, product: p.name, sku: p.sku, onHand: onHand(data, p.id, b.id), reorderLevel: p.reorderLevel ?? data.settings.reorderLevel }); }); });
-  const cBy = {}; data.invoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
+  const cBy = {}; activeInvoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
   const cashiers = Object.entries(cBy).map(([name, v]) => ({ cashier: name, transactions: v.transactions, salesKES: k(v.sales), avgBasketKES: v.transactions ? k(v.sales / v.transactions) : 0 }));
-  const debt = {}; data.invoices.filter((i) => invIsDebt(i)).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
+  const debt = {}; activeInvoices.filter((i) => invIsDebt(i)).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
   const expT = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
   const shrink = data.stockMovements.filter((m) => m.ts >= startToday && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); return { branch: bname(m.branchId), product: p ? p.name : "?", unitsLost: Math.abs(m.qty) }; });
   const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
@@ -8227,12 +8230,13 @@ function ReportsTab({ data, initialTab }) {
   const bId = rb === "all" ? undefined : rb;
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const prod = (id) => data.products.find((p) => p.id === id);
+  const activeInvoices = operationalInvoices(data);
 
-  const invs = data.invoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
+  const invs = activeInvoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
   const recInvs = invs.filter((i) => invRecognized(i, data.settings)); // counted in P&L only after payment and end-of-day
   const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
-  const pays = data.payments.filter((p) => p.status === "captured" && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
+  const pays = data.payments.filter((p) => p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p)) && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
   const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
@@ -8265,12 +8269,12 @@ function ReportsTab({ data, initialTab }) {
   const trendRows = Object.entries(trend).sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-10);
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
-  const openInv = data.invoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
+  const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
   const debtByCashier = {}; openInv.filter((i) => invIsDebt(i)).forEach((i) => { debtByCashier[i.cashier] = (debtByCashier[i.cashier] || 0) + invOutstanding(i); });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
   // credit recovery — unpaid carried-over invoices become debts only after overdue.
-  const carried = data.invoices.filter((i) => i.carriedOver && inBranch(i.branchId));
+  const carried = activeInvoices.filter((i) => i.carriedOver && inBranch(i.branchId));
   const recoveredList = carried.filter((i) => invOutstanding(i) <= 0);
   const pendingList = carried.filter((i) => invIsDebt(i));
   const partialCount = carried.filter((i) => i.paidCents > 0 && invIsDebt(i)).length;
@@ -8669,8 +8673,11 @@ function DocumentsTab({ data }) {
     });
   } else if (type === "sales") {
     eyebrow = "Sales"; title = "Sales Invoice Reports";
-    docs = data.invoices.filter((i) => inRange(i.ts)).map((i) => ({ id: i.id, label: i.number, meta: i.customerName + " · " + i.cashier, date: i.date, ts: i.ts, amountCents: i.totalCents,
-      detail: [["Invoice", i.number], ["Customer", i.customerName], ["Cashier", i.cashier], ["Branch", bname(i.branchId)], ["Total", fmt(i.totalCents, cur)], ["Paid", fmt(i.paidCents, cur)], ["Outstanding", fmt(invOutstanding(i), cur)], ["Status", invStatus(i)], ["Date", i.date]] }));
+    docs = data.invoices.filter((i) => inRange(i.ts)).map((i) => {
+      const voided = invoiceIsVoided(data, i);
+      return { id: i.id, label: i.number, meta: i.customerName + " · " + i.cashier, date: i.date, ts: i.ts, amountCents: i.totalCents,
+        detail: [["Invoice", i.number], ["Customer", i.customerName], ["Cashier", i.cashier], ["Branch", bname(i.branchId)], ["Total", fmt(i.totalCents, cur)], ["Paid", fmt(i.paidCents, cur)], ["Outstanding", fmt(voided ? 0 : invOutstanding(i), cur)], ["Status", voided ? "VOIDED" : invStatus(i)], ["Date", i.date]] };
+    });
   } else if (type === "inventory") {
     eyebrow = "Inventory"; title = "Inventory Count Reports";
     const groups = {};
@@ -9127,7 +9134,7 @@ function UsersTab({ data, update, isAdmin }) {
   };
   const remove = (id) => {
     const emp = data.employees.find((e) => e.id === id); if (!emp) return;
-    const pendInv = data.invoices.filter((i) => i.cashierId === id && invOutstanding(i) > 0);
+    const pendInv = operationalInvoices(data).filter((i) => i.cashierId === id && invOutstanding(i) > 0);
     if (pendInv.length) { setDelMsg(emp.name + " can't be deleted — " + pendInv.length + " pending invoice(s) are still outstanding under this user. Clear them first."); return; }
     setDelMsg("");
     update((d) => ({ ...d, employees: d.employees.map((e) => e.id === id ? { ...e, status: "deleted", synced: false, updatedAt: now() } : e) }));
