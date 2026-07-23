@@ -1141,16 +1141,23 @@ test("6f. Cape Town catalog restores a missing name without discarding the newer
       branchPrices: { b_cpt: { priceCents: 245000 } },
     },
   };
+  const deletedOnly = {
+    id: "prod-cpt-deleted-only",
+    type: "product",
+    updatedAt: 7650,
+    payload: {
+      name: "Deleted Cape Town Product",
+      sku: "CPT-DELETED-001",
+      barcode: "CPT-DELETED-001",
+    },
+  };
 
-  // Recreate a legacy pre-constraint duplicate. The normal push path now
-  // deduplicates same-SKU products before they can reach this state.
-  await pool.query("DROP INDEX records_product_sku_unique_idx");
   try {
-    for (const product of [olderComplete, newerSparse]) {
+    for (const [product, deleted] of [[olderComplete, true], [newerSparse, false], [deletedOnly, true]]) {
       await pool.query(
         `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
-         VALUES ($1, 'product', $2, NULL, $3, $3, false, $4)`,
-        [product.id, product.branchId || null, product.updatedAt, product.payload]
+         VALUES ($1, 'product', $2, NULL, $3, $3, $4, $5)`,
+        [product.id, product.branchId || null, product.updatedAt, deleted, product.payload]
       );
     }
 
@@ -1161,18 +1168,15 @@ test("6f. Cape Town catalog restores a missing name without discarding the newer
     assert.equal(synced.id, newerSparse.id, "the newer product record must remain authoritative");
     assert.equal(synced.name, olderComplete.payload.name, JSON.stringify(synced));
     assert.equal(synced.priceCents, 245000, JSON.stringify(synced));
+    assert.equal(
+      response.body.products.some((item) => item.sku === deletedOnly.payload.sku),
+      false,
+      "a product with no active row must stay deleted"
+    );
   } finally {
     await pool.query(
       "DELETE FROM records WHERE type = 'product' AND id = ANY($1::text[])",
-      [[olderComplete.id, newerSparse.id]]
-    );
-    await pool.query(
-      `CREATE UNIQUE INDEX records_product_sku_unique_idx
-       ON records (lower((payload->>'sku')))
-       WHERE type = 'product'
-         AND deleted = false
-         AND payload->>'sku' IS NOT NULL
-         AND payload->>'sku' <> ''`
+      [[olderComplete.id, newerSparse.id, deletedOnly.id]]
     );
   }
 });

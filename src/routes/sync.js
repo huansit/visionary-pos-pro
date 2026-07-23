@@ -515,14 +515,18 @@ router.get("/catalog", requireDevice, async (req, res) => {
     const byKey = new Map();
     const rowsByKey = new Map();
     for (const row of records.rows) {
+      // Keep historical duplicates available as metadata sources. Product
+      // cleanup tombstones superseded rows, and an older row can be the only
+      // one that still carries the display name. Deleted rows never enter
+      // byKey, so this cannot resurrect a deleted catalogue item.
+      const key = productCatalogKey(row);
+      if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+      rowsByKey.get(key).push(row);
       if (row.deleted) continue;
       // Product records are the shared catalogue. Legacy imports may still
       // carry branch_id, but branch scoping belongs to branchProduct overlays
       // and stock movement events below. Filtering here hides valid catalogue
       // rows from terminals in the other branch.
-      const key = productCatalogKey(row);
-      if (!rowsByKey.has(key)) rowsByKey.set(key, []);
-      rowsByKey.get(key).push(row);
       byKey.set(key, preferCatalogRecord(byKey.get(key), row));
     }
 
