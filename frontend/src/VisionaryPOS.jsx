@@ -501,6 +501,8 @@ const SEED = () => {
     orders: [],
     payments: [],
     invoices: [],
+    invoiceVoidRequests: [],
+    invoiceVoidDecisions: [],
     purchases: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
@@ -531,6 +533,8 @@ const CLEAN_SETUP = () => {
     orders: [],
     payments: [],
     invoices: [],
+    invoiceVoidRequests: [],
+    invoiceVoidDecisions: [],
     purchases: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
@@ -721,6 +725,8 @@ function normalizeLoadedData(data) {
     orders: Array.isArray(data.orders) ? data.orders : [],
     payments: Array.isArray(data.payments) ? data.payments : [],
     invoices: Array.isArray(data.invoices) ? data.invoices : [],
+    invoiceVoidRequests: Array.isArray(data.invoiceVoidRequests) ? data.invoiceVoidRequests : [],
+    invoiceVoidDecisions: Array.isArray(data.invoiceVoidDecisions) ? data.invoiceVoidDecisions : [],
     purchases: Array.isArray(data.purchases) ? data.purchases : [],
     expenses: Array.isArray(data.expenses) ? data.expenses : [],
     expenseCategories: Array.isArray(data.expenseCategories) ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES,
@@ -904,6 +910,8 @@ function playScanSound(kind = "success") {
 
 const SYNC_APPEND = new Map([
   ["invoices", "invoice"],
+  ["invoiceVoidRequests", "invoiceVoidRequest"],
+  ["invoiceVoidDecisions", "invoiceVoidDecision"],
   ["payments", "payment"],
   ["stockMovements", "stockMovement"],
   ["borrowings", "borrowing"],
@@ -1940,6 +1948,7 @@ function saleMoveInvoice(data, move) {
 }
 function saleMoveRecognized(data, move) {
   const inv = saleMoveInvoice(data, move);
+  if (inv && invoiceIsVoided(data, inv)) return false;
   return inv ? invRecognized(inv, data.settings) : move.ts <= lastEndFor(data.settings, move.branchId);
 }
 // Identifier validation (format only — no network verification in the offline prototype).
@@ -1950,6 +1959,28 @@ function invStatus(inv) {
   if (invOutstanding(inv) <= 0) return "paid";
   if (invIsDebt(inv)) return "debt";
   return inv.paidCents > 0 ? "partial" : "open";
+}
+function latestInvoiceVoidRequest(data, invoiceId) {
+  return [...(data?.invoiceVoidRequests || [])]
+    .filter((entry) => entry.invoiceId === invoiceId)
+    .sort((a, b) => Number(b.requestedAt || b.ts || 0) - Number(a.requestedAt || a.ts || 0))[0] || null;
+}
+function latestInvoiceVoidDecision(data, invoiceId, requestId = "") {
+  return [...(data?.invoiceVoidDecisions || [])]
+    .filter((entry) => entry.invoiceId === invoiceId && (!requestId || entry.requestId === requestId))
+    .sort((a, b) => Number(b.decidedAt || b.ts || 0) - Number(a.decidedAt || a.ts || 0))[0] || null;
+}
+function invoiceVoidState(data, invoiceId) {
+  const request = latestInvoiceVoidRequest(data, invoiceId);
+  const decision = latestInvoiceVoidDecision(data, invoiceId, request?.id);
+  return { request, decision, status: decision?.decision || (request ? "pending" : "none") };
+}
+function invoiceIsVoided(data, invoiceOrId) {
+  const invoiceId = typeof invoiceOrId === "string" ? invoiceOrId : invoiceOrId?.id;
+  return Boolean(invoiceId && invoiceVoidState(data, invoiceId).status === "approved");
+}
+function operationalInvoices(data) {
+  return (data?.invoices || []).filter((invoice) => !invoiceIsVoided(data, invoice));
 }
 const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
 // Combined date + time stamp for documents (invoices, purchases, expenses, stock moves, etc.)
@@ -1965,12 +1996,14 @@ function countPending(data) {
   const u = (a) => (a || []).filter((x) => x && x.synced === false).length;
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
-    + u(data.cashMovements) + u(data.borrowings) + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
+    + u(data.invoiceVoidRequests) + u(data.invoiceVoidDecisions) + u(data.cashMovements) + u(data.borrowings)
+    + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
   return { ...data, orders: m(data.orders), payments: m(data.payments), stockMovements: m(data.stockMovements),
-    products: m(data.products), employees: m(data.employees), invoices: m(data.invoices), customers: m(data.customers),
+    products: m(data.products), employees: m(data.employees), invoices: m(data.invoices),
+    invoiceVoidRequests: m(data.invoiceVoidRequests), invoiceVoidDecisions: m(data.invoiceVoidDecisions), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
     countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
@@ -2823,6 +2856,14 @@ const css = `
 .settlement-box{border:1px solid var(--border-soft);border-radius:15px;background:var(--surface);padding:14px;margin:14px 0}
 .settlement-box .wtab{justify-content:center}
 .payamount{display:grid;grid-template-columns:1fr auto;gap:10px;margin:12px 0}
+.void-review-box{border:1px solid rgba(217,153,35,.38);border-radius:15px;background:rgba(217,153,35,.08);padding:14px;margin:14px 0}
+.void-review-meta,.void-decision{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.void-review-meta{font-size:12px;color:var(--muted-2);margin-bottom:10px}
+.void-review-box .notice{margin:0 0 10px}
+.void-decision{margin:14px 0;align-items:flex-start;flex-direction:column}
+.void-decision.approved{border-color:rgba(41,158,105,.34);background:rgba(41,158,105,.08)}
+.void-decision.rejected{border-color:rgba(194,58,86,.34);background:rgba(194,58,86,.08)}
+.void-decision span{font-size:12px;color:var(--muted-2)}
 @media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
@@ -4927,16 +4968,22 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const invoices = data.invoices;
-  const open = invoices.filter((i) => invOutstanding(i) > 0);
-  const overdue = invoices.filter((i) => invIsDebt(i));
-  const balanceDue = invoices.reduce((s, i) => s + invOutstanding(i), 0);
-  const totalInvoiced = invoices.reduce((s, i) => s + i.totalCents, 0);
+  const activeInvoices = operationalInvoices(data);
+  const open = activeInvoices.filter((i) => invOutstanding(i) > 0);
+  const overdue = activeInvoices.filter((i) => invIsDebt(i));
+  const balanceDue = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const totalInvoiced = activeInvoices.reduce((s, i) => s + i.totalCents, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
-  const sinceEndDay = invoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
+  const sinceEndDay = activeInvoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
   const needle = query.trim().toLowerCase();
   const filtered = invoices
-    .filter((i) => filter === "all" || (filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0))
+    .filter((i) => {
+      const voidStatus = invoiceVoidState(data, i.id).status;
+      if (filter === "all") return true;
+      if (voidStatus === "approved") return false;
+      return filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0;
+    })
     .filter((i) => {
       if (!needle) return true;
       return [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, i.cashier]
@@ -4985,7 +5032,7 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
           <thead><tr><th>Customer</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
-          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} onOpen={() => setDetail(inv)} />)}</tbody>
+          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
 
@@ -5050,10 +5097,12 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   let d;
   if (doc) { d = doc; } else {
     const since = branchLastEndDay(data, bId);
-    const inv = data.invoices.filter((i) => i.branchId === bId && i.ts > since);
+    const inv = operationalInvoices(data).filter((i) => i.branchId === bId && i.ts > since);
     const paidInv = inv.filter((i) => invOutstanding(i) <= 0);
     const openInv = inv.filter((i) => invOutstanding(i) > 0);
-    const moves = data.stockMovements.filter((m) => m.branchId === bId && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts > since);
+    const moves = data.stockMovements.filter((m) => m.branchId === bId
+      && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts > since
+      && !invoiceIsVoided(data, saleMoveInvoice(data, m)));
     const invIds = new Set(inv.map((i) => i.id));
     const pays = data.payments.filter((p) => p.status === "captured" && p.ts > since && invIds.has(p.orderId));
     const payBy = (mm) => pays.filter((p) => (p.method || "").toLowerCase().includes(mm)).reduce((s, p) => s + p.amountCents, 0);
@@ -5262,11 +5311,18 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     </div>
   );
 }
-function InvoiceRow({ inv, cur, onOpen }) {
+function InvoiceRow({ inv, cur, voidInfo, onOpen }) {
   const status = invStatus(inv);
   const out = invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const ageClass = invIsDebt(inv) ? "debt" : age > 0 ? "overdue" : "open";
+  const voidStatus = voidInfo?.status || "none";
+  const displayStatus = voidStatus === "approved" ? "voided"
+    : voidStatus === "pending" ? "void pending"
+      : voidStatus === "rejected" ? "void rejected" : status;
+  const displayClass = voidStatus === "approved" ? "debt"
+    : voidStatus === "pending" ? "overdue"
+      : voidStatus === "rejected" ? "open" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
       <td><div className="nm">{inv.customerName || "Walk-in"}</div><div className="mt2">{inv.cashier || "Unknown cashier"}</div></td>
@@ -5274,7 +5330,7 @@ function InvoiceRow({ inv, cur, onOpen }) {
       <td>{dt(inv.ts)}</td>
       <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
       <td className="amt">{fmt(out, cur)}</td>
-      <td><span className={"ist " + status}>{status}</span></td>
+      <td><span className={"ist " + displayClass}>{displayStatus}</span></td>
     </tr>
   );
 }
@@ -5290,13 +5346,21 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   useEffect(() => { setAmount(moneyInputValue(out)); }, [live.id, out]);
   const paymentCents = clampPaymentCents(amount, out);
   const isFullPayment = out > 0 && paymentCents === out;
+  const voidInfo = invoiceVoidState(data, live.id);
+  const voidPending = voidInfo.status === "pending";
+  const voidApproved = voidInfo.status === "approved";
+  const [decisionReason, setDecisionReason] = useState("");
+  const [voidError, setVoidError] = useState("");
+  const actorName = typeof user === "string"
+    ? user
+    : (user?.name || user?.displayName || user?.email || "Supervisor");
   const items = data.stockMovements.filter((m) => m.reason === "Sale " + live.number).map((m, i) => {
     const p = data.products.find((x) => x.id === m.productId);
     return { key: i, name: p ? p.name : "Item", qty: -m.qty, price: p ? priceFor(data, p) : 0 };
   });
   const pays = data.payments.filter((p) => p.orderId === live.id || p.invoiceId === live.id);
   const recordPayment = () => {
-    if (paymentCents <= 0 || out <= 0) return;
+    if (voidPending || voidApproved || paymentCents <= 0 || out <= 0) return;
     const ts = now();
     update((d) => ({ ...d,
       invoices: d.invoices.map((x) => {
@@ -5331,6 +5395,25 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     }));
     setAmount("");
   };
+  const decideVoid = (decision) => {
+    if (!voidInfo.request || voidInfo.status !== "pending") return;
+    const reason = decisionReason.trim();
+    if (decision === "rejected" && !reason) {
+      setVoidError("Enter a reason before rejecting the void request.");
+      return;
+    }
+    const ts = now();
+    const entry = {
+      id: uid("void-decision"), invoiceId: live.id, requestId: voidInfo.request.id,
+      branchId: live.branchId, decision, reason, decidedBy: actorName,
+      decidedByName: actorName, decidedAt: ts, ts, synced: false,
+    };
+    update((d) => ({
+      ...d,
+      invoiceVoidDecisions: [entry, ...(d.invoiceVoidDecisions || [])],
+    }));
+    setVoidError("");
+  };
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
     <div className="scrim" onClick={onClose}>
@@ -5358,7 +5441,36 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <div><span>Paid so far</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
           <div className="due"><span>Balance due</span><b>{fmt(out, cur)}</b></div>
         </div>
-        {out > 0 ? (
+        {voidPending ? (
+          <div className="void-review-box">
+            <div className="section-title" style={{ marginTop: 0 }}><AlertCircle /> Void approval required</div>
+            <div className="void-review-meta">
+              <span>Requested by <b>{voidInfo.request.requestedByName || voidInfo.request.cashierName || "Cashier"}</b></span>
+              <span>{dt(voidInfo.request.requestedAt || voidInfo.request.ts)}</span>
+            </div>
+            <div className="notice">Reason: {voidInfo.request.reason || "No reason supplied"}</div>
+            <textarea className="input" style={{ minHeight: 66, paddingTop: 10, resize: "vertical" }}
+              placeholder="Decision note (required when rejecting)" value={decisionReason}
+              onChange={(e) => { setDecisionReason(e.target.value); setVoidError(""); }} />
+            {voidError ? <div className="formerr">{voidError}</div> : null}
+            <div className="grid2">
+              <button className="btn btn-ghost" onClick={() => decideVoid("rejected")}><X /> Reject request</button>
+              <button className="btn btn-primary" onClick={() => decideVoid("approved")}><Check /> Approve void</button>
+            </div>
+            <div className="mt2">Approval voids the invoice and restores its item quantities. It does not create a payment.</div>
+          </div>
+        ) : voidApproved ? (
+          <div className="notice void-decision approved">
+            <b>Invoice voided</b>
+            <span>Approved by {voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"} on {dt(voidInfo.decision?.decidedAt || voidInfo.decision?.ts)}</span>
+          </div>
+        ) : voidInfo.status === "rejected" ? (
+          <div className="notice void-decision rejected">
+            <b>Void request rejected</b>
+            <span>{voidInfo.decision?.reason || "No decision note supplied."}</span>
+          </div>
+        ) : null}
+        {!voidPending && !voidApproved && out > 0 ? (
           <div className="settlement-box">
             <div className="section-title" style={{ marginTop: 0 }}>Record payment</div>
             <div className="grid3">
@@ -5374,9 +5486,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               <Check /> {isFullPayment ? "Settle full balance" : "Record " + fmt(paymentCents, cur) + " payment"}
             </button>
           </div>
-        ) : (
+        ) : !voidPending && !voidApproved ? (
           <div className="notice">This invoice is fully paid and cleared from the open list.</div>
-        )}
+        ) : null}
         {live.note && <div className="notice" style={{ marginTop: 10 }}>Sale note: {live.note}</div>}
         {pays.length > 0 && (<><div className="sideh" style={{ margin: "16px 0 8px" }}>Payments</div>
           <div className="list">{pays.map((p) => (<div className="row" key={p.id}><div className="meta"><div className="nm" style={{ textTransform: "capitalize" }}>{p.method}</div><div className="mt2">{new Date(p.ts).toLocaleString()} by {p.recordedBy || p.settledBy || user}</div></div><span className="pill plain">{fmt(p.amountCents, cur)}</span></div>))}</div></>)}
@@ -5396,14 +5508,15 @@ function DashboardTab({ data, update, branch, online }) {
   const [detail, setDetail] = useState(null);
   const [summary, setSummary] = useState(""); const [sumLoading, setSumLoading] = useState(false);
 
-  const todayInv = data.invoices.filter((i) => isToday(i.ts));
+  const activeInvoices = operationalInvoices(data);
+  const todayInv = activeInvoices.filter((i) => isToday(i.ts));
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
   const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
   const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts) && saleMoveRecognized(data, m))
     .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * p.costCents : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
-  const creditTotal = data.invoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const creditTotal = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
   const fastReorders = (() => {
     const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
@@ -5421,7 +5534,7 @@ function DashboardTab({ data, update, branch, online }) {
 
   const days = [];
   for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const start = d.getTime(); const end = start + 864e5;
-    days.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2), total: data.invoices.filter((inv) => inv.ts >= start && inv.ts < end).reduce((s, inv) => s + inv.totalCents, 0) }); }
+    days.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2), total: activeInvoices.filter((inv) => inv.ts >= start && inv.ts < end).reduce((s, inv) => s + inv.totalCents, 0) }); }
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
   const since7 = Date.now() - 7 * 864e5; const catRev = {};
@@ -5429,7 +5542,7 @@ function DashboardTab({ data, update, branch, online }) {
   const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
-  const openInv = data.invoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
+  const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
 
   const localSummary = () => {
     const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;

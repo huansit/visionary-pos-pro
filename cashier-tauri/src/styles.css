@@ -2134,6 +2134,404 @@ body {
   overflow: hidden;
 }
 
+/* Compact secondary panels on shorter cashier terminals. The workstation has
+   its own responsive rules; these only affect content opened in a drawer. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .app-drawer {
+    width: clamp(300px, 31vw, 320px);
+  }
+}
+
+@media (max-height: 820px) {
+  .drawer-close {
+    top: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .app-drawer.left .drawer-close {
+    right: 8px;
+  }
+
+  .app-drawer.right .drawer-close {
+    left: 8px;
+  }
+
+  .app-drawer .debts-center-panel {
+    gap: 6px;
+    padding: 9px;
+    border-radius: 0;
+  }
+
+  .app-drawer .debts-center-header {
+    gap: 3px;
+    padding-right: 40px;
+    padding-bottom: 5px;
+  }
+
+  .app-drawer .debts-center-header h2 {
+    font-size: 15px;
+  }
+
+  .app-drawer .debts-center-header p {
+    margin-top: 1px;
+    font-size: 10px;
+  }
+
+  .app-drawer .debts-total {
+    margin-top: 0;
+  }
+
+  .app-drawer .debts-total span {
+    font-size: 8px;
+  }
+
+  .app-drawer .debts-total b {
+    font-size: 13px;
+  }
+
+  .app-drawer .debts-search {
+    height: 34px;
+    gap: 7px;
+    padding: 0 9px;
+    border-radius: 9px;
+  }
+
+  .app-drawer .debts-search input {
+    font-size: 11px;
+  }
+
+  .app-drawer .debts-controls {
+    gap: 5px;
+  }
+
+  .app-drawer .debts-filter-chips {
+    gap: 4px;
+  }
+
+  .app-drawer .debts-filter-chips button,
+  .app-drawer .debts-sort {
+    padding: 5px 8px;
+    font-size: 9px;
+  }
+
+  .app-drawer .customer-debt-summary {
+    padding: 6px;
+  }
+
+  .app-drawer .customer-debt-heading {
+    margin-bottom: 4px;
+    font-size: 10px;
+  }
+
+  .app-drawer .customer-debt-grid {
+    gap: 4px;
+  }
+
+  .app-drawer .customer-debt-grid button {
+    padding: 5px 6px;
+  }
+
+  .app-drawer .debts-list {
+    gap: 4px;
+    padding-right: 2px;
+  }
+
+  .app-drawer .debts-row {
+    grid-template-columns: 24px minmax(0, 1fr) auto auto auto;
+    gap: 5px;
+    padding: 5px 6px;
+    border-radius: 9px;
+  }
+
+  .app-drawer .debts-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 9px;
+  }
+
+  .app-drawer .debts-main {
+    gap: 1px;
+  }
+
+  .app-drawer .debts-main b {
+    font-size: 10.5px;
+  }
+
+  .app-drawer .debts-main small {
+    font-size: 8.5px;
+  }
+
+  .app-drawer .debts-age {
+    padding: 3px 5px;
+    font-size: 8px;
+  }
+
+  .app-drawer .debts-row strong {
+    min-width: 48px;
+    font-size: 10px;
+  }
+
+  .app-drawer .debts-row svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .app-drawer .debts-empty {
+    min-height: 100px;
+  }
+
+  .app-drawer .debts-footer-note {
+    padding-top: 5px;
+    font-size: 9px;
+  }
+
+  .app-drawer .expense-sheet {
+    overflow-y: auto;
+  }
+
+  .app-drawer .expense-sheet-head {
+    gap: 8px;
+    padding: 7px 10px;
+  }
+
+  .app-drawer .expense-head-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+
+  .app-drawer .expense-sheet-head h2 {
+    font-size: 16px;
+  }
+
+  .app-drawer .expense-sheet-head p {
+    margin-top: 1px;
+    font-size: 9.5px;
+  }
+
+  .app-drawer .expense-amount-panel {
+    gap: 2px 7px;
+    padding: 6px 10px;
+  }
+
+  .app-drawer .expense-amount-panel strong {
+    font-size: 20px;
+  }
+
+  .app-drawer .expense-source-toggle button {
+    min-width: 55px;
+    min-height: 26px;
+    padding: 0 7px;
+    font-size: 9px;
+  }
+
+  .app-drawer .expense-section,
+  .app-drawer .expense-note-block {
+    padding: 6px 10px 0;
+  }
+
+  .app-drawer .expense-section-title {
+    margin-bottom: 4px;
+    font-size: 9px;
+  }
+
+  .app-drawer .expense-category-chips {
+    gap: 4px;
+  }
+
+  .app-drawer .expense-category-chips button {
+    min-height: 28px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  .app-drawer .expense-note-block {
+    gap: 3px;
+  }
+
+  .app-drawer .expense-note-block textarea {
+    min-height: 36px;
+    max-height: 40px;
+    padding: 6px 8px;
+    font-size: 10px;
+  }
+
+  .app-drawer .expense-keypad {
+    gap: 4px;
+    padding: 6px 10px 0;
+  }
+
+  .app-drawer .expense-keypad button {
+    min-height: 30px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+
+  .app-drawer .expense-warning,
+  .app-drawer .expense-error {
+    margin: 5px 10px 0;
+    padding: 6px 8px;
+    font-size: 9.5px;
+    line-height: 1.2;
+  }
+
+  .app-drawer .expense-primary {
+    width: calc(100% - 20px);
+    min-height: 36px;
+    margin: 6px 10px 0;
+    font-size: 12px;
+  }
+
+  .app-drawer .expense-footer-copy {
+    margin: 4px 10px 7px;
+    font-size: 9.5px;
+    line-height: 1.2;
+  }
+
+  .app-drawer .invoice-slide {
+    gap: 7px;
+    padding: 9px;
+  }
+
+  .app-drawer .invoice-slide-header {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding-right: 38px;
+  }
+
+  .app-drawer .invoice-slide-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+    font-size: 14px;
+  }
+
+  .app-drawer .invoice-slide-kicker {
+    font-size: 8px;
+  }
+
+  .app-drawer .invoice-slide-header h2 {
+    margin: 2px 0 1px;
+    font-size: 14px;
+  }
+
+  .app-drawer .invoice-slide-header p {
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-status-pill {
+    padding: 4px 6px;
+    font-size: 8px;
+  }
+
+  .app-drawer .invoice-slide-meta {
+    gap: 4px;
+  }
+
+  .app-drawer .invoice-slide-meta div {
+    padding: 6px;
+    border-radius: 9px;
+  }
+
+  .app-drawer .invoice-slide-meta span,
+  .app-drawer .invoice-balance-block span {
+    font-size: 8px;
+  }
+
+  .app-drawer .invoice-slide-meta b {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-slide h3 {
+    margin: 5px 0 3px;
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-slide-items {
+    gap: 4px;
+  }
+
+  .app-drawer .invoice-slide-item,
+  .app-drawer .invoice-slide-empty {
+    padding: 6px;
+    border-radius: 9px;
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-slide-item div {
+    gap: 1px;
+  }
+
+  .app-drawer .invoice-balance-block {
+    gap: 4px;
+    padding: 7px;
+    border-radius: 10px;
+  }
+
+  .app-drawer .invoice-balance-block b {
+    font-size: 11px;
+  }
+
+  .app-drawer .invoice-balance-block .balance-due {
+    margin-top: 1px;
+    padding-top: 5px;
+  }
+
+  .app-drawer .invoice-balance-block .balance-due b {
+    font-size: 16px;
+  }
+
+  .app-drawer .invoice-lock-notice {
+    gap: 6px;
+    padding: 7px;
+    border-radius: 10px;
+    font-size: 9px;
+    line-height: 1.25;
+  }
+
+  .app-drawer .invoice-open-note {
+    padding: 7px;
+    border-radius: 10px;
+  }
+
+  .app-drawer .invoice-open-note-head {
+    margin-bottom: 4px;
+  }
+
+  .app-drawer .invoice-open-note-head span,
+  .app-drawer .invoice-open-note-head em {
+    font-size: 8px;
+  }
+
+  .app-drawer .invoice-open-note textarea {
+    min-height: 42px;
+    padding: 6px 7px;
+    border-radius: 8px;
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-save-note {
+    min-height: 30px;
+    margin-top: 4px;
+    border-radius: 8px;
+    font-size: 9px;
+  }
+
+  .app-drawer .invoice-slide-actions {
+    gap: 5px;
+    padding-top: 5px;
+  }
+
+  .app-drawer .invoice-slide-actions button {
+    min-height: 34px;
+    border-radius: 9px;
+    font-size: 10px;
+  }
+}
+
 .premium-auth {
   min-height: 100dvh;
   grid-template-columns: minmax(420px, 1.08fr) minmax(390px, .92fr);
@@ -5425,6 +5823,108 @@ body {
   cursor: not-allowed;
 }
 
+.invoice-void-request {
+  border: 1px solid rgba(248, 113, 113, .34);
+  border-radius: 14px;
+  padding: 11px;
+  background: rgba(127, 29, 29, .12);
+  color: #cbd5e1;
+}
+
+.invoice-void-request.pending {
+  border-color: rgba(251, 191, 36, .42);
+  background: rgba(120, 53, 15, .15);
+}
+
+.invoice-void-request.approved {
+  border-color: rgba(74, 222, 128, .38);
+  background: rgba(20, 83, 45, .16);
+}
+
+.invoice-void-request-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.invoice-void-request-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #fecaca;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .12em;
+}
+
+.invoice-void-request-head em {
+  color: #fbbf24;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.invoice-void-request.approved .invoice-void-request-head em {
+  color: #86efac;
+}
+
+.invoice-void-request p,
+.invoice-void-request small {
+  display: block;
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.invoice-void-request textarea {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 7px;
+  border: 1px solid rgba(248, 113, 113, .32);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, .72);
+  color: #f8fafc;
+  resize: vertical;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.invoice-void-request textarea:focus {
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, .12);
+}
+
+.invoice-void-request button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 8px;
+  border: 1px solid rgba(248, 113, 113, .4);
+  border-radius: 10px;
+  background: rgba(220, 38, 38, .18);
+  color: #fee2e2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.invoice-void-request button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+}
+
+.invoice-void-request small {
+  margin-top: 6px;
+  color: #fca5a5;
+}
+
 .invoice-slide-actions {
   margin-top: auto;
   padding-top: 14px;
@@ -6977,5 +7477,46 @@ body {
 
   .workstation .hint {
     font-size: 8px;
+  }
+}
+
+/* Keep secondary workflows compact on 1024x768 cashier terminals. This block
+   stays last so the shared drawer defaults cannot restore the desktop width. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .drawer-layer .app-drawer {
+    width: clamp(300px, 31vw, 320px);
+    max-width: 320px;
+  }
+}
+
+@media (max-height: 820px) {
+  .drawer-layer .app-drawer {
+    overflow: hidden;
+  }
+
+  .drawer-layer .app-drawer > .expense-sheet,
+  .drawer-layer .app-drawer > .debts-center-panel,
+  .drawer-layer .app-drawer > .invoice-slide {
+    max-height: 100%;
+  }
+
+  .drawer-layer .app-drawer > .expense-sheet {
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .drawer-layer .app-drawer > .debts-center-panel {
+    overflow: hidden;
+  }
+
+  .drawer-layer .app-drawer > .invoice-slide {
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .drawer-layer .app-drawer .debts-list {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
 }

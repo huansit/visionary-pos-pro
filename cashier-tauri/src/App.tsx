@@ -46,6 +46,7 @@ import {
   pullCatalog,
   pushCheckout,
   pushExpense,
+  requestInvoiceVoid,
   resolveBarcode,
   isTerminalRegistrationError,
   verifyCashierPin
@@ -425,14 +426,14 @@ export default function App() {
     if (!account?.id) return [];
     return invoices.filter((invoice) => !invoice.cashierId || invoice.cashierId === account.id);
   }, [account?.id, invoices]);
-  const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [myInvoices]);
-  const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver), [myInvoices]);
+  const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [myInvoices]);
+  const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [myInvoices]);
   const todayInvoices = useMemo(() => myInvoices.filter((invoice) => isToday(invoice.ts)), [myInvoices]);
   const activeTodayInvoices = useMemo(
     () => todayInvoices.filter((invoice) => !dayClosedAt || Number(invoice.ts || 0) > dayClosedAt),
     [dayClosedAt, todayInvoices]
   );
-  const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver), [activeTodayInvoices]);
+  const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [activeTodayInvoices]);
   const paidTodayCount = activeTodayInvoices.filter((invoice) => outstanding(invoice) <= 0).length;
   const pendingTodayCount = activeTodayInvoices.filter(isPendingInvoice).length;
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
@@ -1333,6 +1334,22 @@ export default function App() {
             setStatus(`Open note saved for ${invoice.number}.`);
             void refreshCatalog(terminal, { silent: true });
           }}
+          onRequestVoid={async (invoice, reason) => {
+            if (!terminal || !account) return;
+            await requestInvoiceVoid(terminal, account, invoice, reason);
+            const pendingInvoice = {
+              ...invoice,
+              voidRequestStatus: "pending" as const,
+              voidReason: reason
+            };
+            setInvoices((current) => current.map((item) => item.id === invoice.id ? pendingInvoice : item));
+            setInvoiceDetail((current) => current && current.invoice.id === invoice.id ? {
+              ...current,
+              invoice: pendingInvoice
+            } : current);
+            setStatus(`Void request sent for ${invoice.number}. Awaiting supervisor approval.`);
+            void refreshCatalog(terminal, { silent: true });
+          }}
           onClose={() => {
             setInvoiceDetail(null);
             focusSearch();
@@ -1388,6 +1405,7 @@ function InvoiceDetailSlideOver({
   branchName,
   onReprint,
   onSaveNote,
+  onRequestVoid,
   onClose
 }: {
   invoice: Invoice;
@@ -1396,6 +1414,7 @@ function InvoiceDetailSlideOver({
   branchName: string;
   onReprint: (invoice: Invoice) => void;
   onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
+  onRequestVoid: (invoice: Invoice, reason: string) => Promise<void>;
   onClose: () => void;
 }) {
   const items = invoice.items || [];
@@ -1405,11 +1424,27 @@ function InvoiceDetailSlideOver({
   const balanceCents = outstanding(invoice);
   const [openNote, setOpenNote] = useState(invoice.note || "");
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [voidReason, setVoidReason] = useState("");
+  const [voidStatus, setVoidStatus] = useState<"idle" | "sending" | "error">("idle");
 
   useEffect(() => {
     setOpenNote(invoice.note || "");
     setNoteStatus("idle");
+    setVoidReason("");
+    setVoidStatus("idle");
   }, [invoice.id, invoice.note]);
+
+  async function submitVoidRequest() {
+    const reason = voidReason.trim();
+    if (reason.length < 3 || voidStatus === "sending") return;
+    setVoidStatus("sending");
+    try {
+      await onRequestVoid(invoice, reason);
+      setVoidStatus("idle");
+    } catch {
+      setVoidStatus("error");
+    }
+  }
 
   async function saveOpenNote() {
     const nextNote = openNote.trim();
@@ -1489,6 +1524,40 @@ function InvoiceDetailSlideOver({
           >
             <Check size={16} />Save note
           </button>
+        </div>
+
+        <div className={`invoice-void-request ${invoice.voidRequestStatus || "idle"}`}>
+          <div className="invoice-void-request-head">
+            <span><ShieldCheck size={16} />VOID INVOICE</span>
+            {invoice.voidRequestStatus === "pending" && <em>Awaiting supervisor</em>}
+            {invoice.voidRequestStatus === "approved" && <em>Approved</em>}
+            {invoice.voidRequestStatus === "rejected" && <em>Rejected</em>}
+          </div>
+          {invoice.voidRequestStatus === "pending" ? (
+            <p>Your request is pending approval. The invoice and stock remain unchanged until a supervisor approves it.</p>
+          ) : invoice.voidRequestStatus === "approved" ? (
+            <p>This invoice was voided with supervisor authorization.</p>
+          ) : (
+            <>
+              {invoice.voidRequestStatus === "rejected" && (
+                <p className="invoice-void-rejected">The previous request was rejected{invoice.voidDecisionReason ? `: ${invoice.voidDecisionReason}` : "."}</p>
+              )}
+              <textarea
+                value={voidReason}
+                onChange={(event) => {
+                  setVoidReason(event.target.value);
+                  if (voidStatus === "error") setVoidStatus("idle");
+                }}
+                placeholder="Reason for void request"
+                rows={2}
+              />
+              {voidStatus === "error" && <small>Could not send the request. Check the connection and try again.</small>}
+              <button type="button" disabled={voidReason.trim().length < 3 || voidStatus === "sending"} onClick={() => { void submitVoidRequest(); }}>
+                <Send size={16} />{voidStatus === "sending" ? "Sending..." : "Request supervisor void"}
+              </button>
+            </>
+          )}
+          {invoice.voidReason && <small>Reason: {invoice.voidReason}</small>}
         </div>
 
         <footer className="invoice-slide-actions">

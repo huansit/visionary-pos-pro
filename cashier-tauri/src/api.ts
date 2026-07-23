@@ -454,6 +454,8 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const baseStockByKey = new Map<string, number>();
   const invoiceRecords = new Map<string, Invoice>();
   const invoiceNotes = new Map<string, { note: string; ts: number }>();
+  const invoiceVoidRequests = new Map<string, { id: string; reason: string; ts: number }>();
+  const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
 
@@ -515,6 +517,34 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         }
       }
     }
+    if (item.type === "invoiceVoidRequest") {
+      const payload = item.payload || {};
+      const invoiceId = String(payload.invoiceId || "");
+      if (invoiceId) {
+        const ts = Number(payload.requestedAt || payload.ts || item.serverTs || item.clientTs || 0);
+        const previous = invoiceVoidRequests.get(invoiceId);
+        if (!previous || ts >= previous.ts) {
+          invoiceVoidRequests.set(invoiceId, { id: item.id, reason: String(payload.reason || ""), ts });
+        }
+      }
+    }
+    if (item.type === "invoiceVoidDecision") {
+      const payload = item.payload || {};
+      const invoiceId = String(payload.invoiceId || "");
+      const decision = String(payload.decision || "").toLowerCase();
+      if (invoiceId && (decision === "approved" || decision === "rejected")) {
+        const ts = Number(payload.decidedAt || payload.ts || item.serverTs || item.clientTs || 0);
+        const previous = invoiceVoidDecisions.get(invoiceId);
+        if (!previous || ts >= previous.ts) {
+          invoiceVoidDecisions.set(invoiceId, {
+            requestId: String(payload.requestId || ""),
+            decision,
+            reason: String(payload.reason || payload.decisionReason || ""),
+            ts
+          });
+        }
+      }
+    }
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
@@ -555,10 +585,17 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const invoices = Array.from(invoiceRecords.values())
     .map((invoice) => {
       const notePatch = invoiceNotes.get(invoice.id);
+      const voidRequest = invoiceVoidRequests.get(invoice.id);
+      const voidDecision = invoiceVoidDecisions.get(invoice.id);
+      const voidRequestStatus: Invoice["voidRequestStatus"] = voidDecision?.decision || (voidRequest ? "pending" : undefined);
       return {
         ...invoice,
         note: notePatch ? notePatch.note : invoice.note,
-        paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0)
+        paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0),
+        voidRequestId: voidRequest?.id,
+        voidReason: voidRequest?.reason,
+        voidRequestStatus,
+        voidDecisionReason: voidDecision?.reason
       };
     })
     .filter((invoice) => invoice.branchId === terminal.branchId)
@@ -728,6 +765,33 @@ export async function pushCashSessionEvent(
           ts
         }
       }];
+  const result = await pushSyncEvents(terminal, events);
+  assertSyncAccepted(result, events);
+}
+
+export async function requestInvoiceVoid(
+  terminal: TerminalCredentials,
+  account: Account,
+  invoice: Invoice,
+  reason: string
+): Promise<void> {
+  const ts = Date.now();
+  const events = [{
+    id: uid("void-request"),
+    type: "invoiceVoidRequest",
+    branchId: terminal.branchId,
+    clientTs: ts,
+    payload: {
+      invoiceId: invoice.id,
+      receiptNo: invoice.number,
+      reason: reason.trim(),
+      branchId: terminal.branchId,
+      cashierId: account.id,
+      cashierName: account.name,
+      ts
+    }
+  }];
+
   const result = await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
 }

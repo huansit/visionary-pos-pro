@@ -54,6 +54,10 @@ export type Invoice = {
   paidCents: number;
   carriedOver?: boolean;
   status?: string;
+  voidRequestStatus?: "pending" | "approved" | "rejected";
+  voidRequestId?: string;
+  voidReason?: string;
+  voidDecisionReason?: string;
   ts?: number;
   items?: Array<{ productId?: string; name: string; qty: number; priceCents: number }>;
 };

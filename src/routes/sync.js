@@ -532,6 +532,8 @@ const EVENT_TYPES = new Set([
   "invoice",
   "payment",
   "invoiceNote",
+  "invoiceVoidRequest",
+  "invoiceVoidDecision",
   "stockMovement",
   "borrowing",
   "endOfDay",
@@ -580,7 +582,14 @@ const RECORD_TYPE_ALIASES = new Map([
 ]);
 
 const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession", "branchProduct"]);
-const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set(["borrowing", "cashMovement", "endOfDay", "payment", "purchase"]);
+const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
+  "borrowing",
+  "cashMovement",
+  "endOfDay",
+  "payment",
+  "purchase",
+  "invoiceVoidDecision",
+]);
 const AUTH_SYNC_RECORD_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
 
 function normalizeType(type) {
@@ -654,6 +663,155 @@ async function validateStockCountSessionWrite(client, ev) {
     }
   }
   return { ok: true };
+}
+
+function syncEventError(code) {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+}
+
+async function existingEvent(client, id) {
+  const result = await client.query("SELECT id, server_ts, type, branch_id, payload FROM events WHERE id = $1 LIMIT 1", [id]);
+  return result.rows[0] || null;
+}
+
+async function invoiceVoidState(client, invoiceId) {
+  const result = await client.query(
+    `SELECT id, type, branch_id, server_ts, payload
+       FROM events
+      WHERE type IN ('invoiceVoidRequest', 'invoiceVoidDecision')
+      ORDER BY server_ts ASC, id ASC`
+  );
+  const requests = result.rows.filter((row) => row.type === "invoiceVoidRequest" && row.payload?.invoiceId === invoiceId);
+  const decisions = result.rows.filter((row) => row.type === "invoiceVoidDecision" && row.payload?.invoiceId === invoiceId);
+  const decidedRequestIds = new Set(decisions.map((row) => row.payload?.requestId).filter(Boolean));
+  return {
+    requests,
+    decisions,
+    pending: requests.find((row) => !decidedRequestIds.has(row.id)) || null,
+    approved: decisions.find((row) => String(row.payload?.decision || "").toLowerCase() === "approved") || null,
+  };
+}
+
+async function invoicePaymentTotal(client, invoiceId) {
+  const result = await client.query("SELECT payload FROM events WHERE type = 'payment'");
+  return result.rows.reduce((total, row) => {
+    if (row.payload?.invoiceId !== invoiceId && row.payload?.orderId !== invoiceId) return total;
+    return total + centsFromPayload(row.payload, ["amountCents", "paidCents"], ["amount", "paid"], 0);
+  }, 0);
+}
+
+async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
+  const duplicate = await existingEvent(client, ev.id);
+  if (duplicate) {
+    if (duplicate.type !== type) throw syncEventError("event_id_conflict");
+    return { id: duplicate.id, ts: duplicate.server_ts };
+  }
+
+  const payload = { ...(ev.payload || {}) };
+  const invoiceId = String(payload.invoiceId || "").trim();
+  if (!invoiceId) throw syncEventError("invoice_id_required");
+  const invoiceResult = await client.query(
+    "SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1",
+    [invoiceId]
+  );
+  const invoice = invoiceResult.rows[0];
+  if (!invoice) throw syncEventError("invoice_not_found");
+  const invoiceBranchId = invoice.branch_id || invoice.payload?.branchId || null;
+  const submittedBranchId = ev.branchId || payload.branchId || null;
+  if (submittedBranchId && invoiceBranchId && submittedBranchId !== invoiceBranchId) {
+    throw syncEventError("invoice_branch_mismatch");
+  }
+
+  const state = await invoiceVoidState(client, invoiceId);
+  if (state.approved) throw syncEventError("invoice_already_voided");
+
+  if (type === "invoiceVoidRequest") {
+    const reason = String(payload.reason || "").trim();
+    if (reason.length < 3) throw syncEventError("void_reason_required");
+    if (state.pending) throw syncEventError("void_request_already_pending");
+    const totalCents = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
+    const paidCents = Math.max(
+      centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0),
+      await invoicePaymentTotal(client, invoiceId)
+    );
+    if (totalCents > 0 && paidCents >= totalCents) throw syncEventError("paid_invoice_requires_refund");
+    const requestEvent = {
+      ...ev,
+      branchId: invoiceBranchId,
+      payload: {
+        ...payload,
+        invoiceId,
+        branchId: invoiceBranchId,
+        reason,
+        status: "pending",
+        requestedBy: req.account?.id || req.deviceId || "unknown",
+        requestedByName: req.account?.name || payload.requestedByName || payload.cashierName || "Cashier",
+        requestedByRole: syncRole(req.account) || (req.terminalUuid ? "cashier" : "unknown"),
+        requestedAt: Date.now(),
+      },
+    };
+    const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
+    return { id: requestEvent.id, ts: acceptedTs };
+  }
+
+  const requestId = String(payload.requestId || "").trim();
+  const decision = String(payload.decision || "").trim().toLowerCase();
+  if (!requestId) throw syncEventError("void_request_id_required");
+  if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) throw syncEventError("supervisor_authorization_required");
+  if (!["approved", "rejected"].includes(decision)) throw syncEventError("void_decision_invalid");
+  const request = state.requests.find((row) => row.id === requestId);
+  if (!request) throw syncEventError("void_request_not_found");
+  if (!state.pending || state.pending.id !== requestId) throw syncEventError("void_request_already_decided");
+
+  const decisionEvent = {
+    ...ev,
+    branchId: invoiceBranchId,
+    payload: {
+      ...payload,
+      invoiceId,
+      requestId,
+      branchId: invoiceBranchId,
+      decision,
+      decidedBy: req.account.id,
+      decidedByName: req.account.name || req.account.email || "Supervisor",
+      decidedByRole: syncRole(req.account),
+      decidedAt: Date.now(),
+    },
+  };
+  const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
+
+  if (decision === "approved") {
+    const items = Array.isArray(invoice.payload?.items) ? invoice.payload.items : [];
+    for (const [index, item] of items.entries()) {
+      const productId = String(item?.productId || "").trim();
+      const qty = Number(item?.qty || 0);
+      if (!productId || !Number.isFinite(qty) || qty <= 0) continue;
+      await insertAppendOnlyEvent(
+        client,
+        {
+          id: `void-stock:${invoiceId}:${index}`,
+          branchId: invoiceBranchId,
+          clientTs: Date.now(),
+          payload: {
+            productId,
+            branchId: invoiceBranchId,
+            qty,
+            reason: `Void ${invoice.payload?.number || invoiceId}`,
+            invoiceId,
+            voidRequestId: requestId,
+            source: "invoice_void",
+            ts: Date.now(),
+          },
+        },
+        "stockMovement",
+        deviceId,
+        ts + index + 1
+      );
+    }
+  }
+  return { id: decisionEvent.id, ts: acceptedTs };
 }
 
 router.post("/push", requireSyncWrite, async (req, res) => {
@@ -731,7 +889,18 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         let acceptedId = null;
         let acceptedTs = null;
 
-        if (isAppendOnlyEvent) {
+        if (type === "invoiceVoidRequest" || type === "invoiceVoidDecision") {
+          const result = await processInvoiceVoidEvent(
+            client,
+            guardedEvent,
+            type,
+            req,
+            recordDeviceId,
+            nextServerTs()
+          );
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+        } else if (isAppendOnlyEvent) {
           const eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
@@ -781,7 +950,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           type,
           reason: eventError?.message || "event_failed",
         });
-        rejected.push({ id: ev.id, type, reason: "event_failed" });
+        rejected.push({ id: ev.id, type, reason: eventError?.code || eventError?.message || "event_failed" });
       }
     }
 

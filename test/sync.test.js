@@ -459,6 +459,75 @@ test("4. pushing the same event again is idempotent with no duplicate", async ()
     .expect((res) => {
       const pulled = res.body.events.filter((event) => event.id === "inv-001");
       assert.equal(pulled.length, 1);
+  });
+});
+
+test("4a. cashier invoice void requests require management approval and sync to terminals", async () => {
+  const voidRequest = {
+    id: "void-request-inv-001",
+    type: "invoiceVoidRequest",
+    branchId: "b_sip",
+    clientTs: 1100,
+    payload: {
+      invoiceId: state.invoice.id,
+      reason: "Customer cancelled the order",
+      cashierName: "Test Cashier",
+    },
+  };
+  const voidDecision = {
+    id: "void-decision-inv-001",
+    type: "invoiceVoidDecision",
+    branchId: "b_sip",
+    clientTs: 1200,
+    payload: {
+      invoiceId: state.invoice.id,
+      requestId: voidRequest.id,
+      decision: "approved",
+      note: "Cancellation verified",
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [voidRequest] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, [voidRequest.id]);
+      assert.equal(res.body.rejected.length, 0);
+    });
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [voidDecision] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.id, voidDecision.id);
+      assert.equal(res.body.rejected[0]?.reason, "supervisor_authorization_required");
+    });
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [voidDecision] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, [voidDecision.id]);
+      assert.equal(res.body.rejected.length, 0);
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const requestEvent = res.body.events.find((event) => event.id === voidRequest.id);
+      const decisionEvent = res.body.events.find((event) => event.id === voidDecision.id);
+      assert.equal(requestEvent?.payload?.status, "pending");
+      assert.equal(requestEvent?.payload?.reason, voidRequest.payload.reason);
+      assert.equal(decisionEvent?.payload?.decision, "approved");
+      assert.equal(decisionEvent?.payload?.requestId, voidRequest.id);
+      assert.equal(decisionEvent?.payload?.decidedBy, "admin-owner");
     });
 });
 
