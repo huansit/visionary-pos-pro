@@ -7560,3 +7560,70 @@ body {
     color: #111827 !important;
   }
 }
+
+/* Stable catalogue cards. Legacy compact rules used several competing grid
+   definitions, which could clip the first rows when a category contained many
+   products. Keep identity text in normal flow and block sales in React rather
+   than relying on native disabled-button rendering. */
+.workstation .product-grid {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.workstation .product-card,
+.workstation .product-card.is-blocked {
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  height: auto;
+  min-height: 104px;
+  opacity: 1 !important;
+  overflow: hidden;
+}
+
+.workstation .product-card.is-blocked {
+  cursor: not-allowed;
+  background: #f8fafc;
+}
+
+.workstation .product-card .product-name,
+.workstation .product-card.is-blocked .product-name {
+  display: block !important;
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto !important;
+  min-height: 1.15em;
+  margin: 0;
+  color: #111827 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  font-weight: 900;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workstation .product-card .product-price,
+.workstation .product-card .product-sku,
+.workstation .product-card .product-stock-row {
+  flex: 0 0 auto;
+}
+
+.workstation .product-card .product-action {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
+@media (min-width: 901px) and (max-width: 1180px) {
+  .workstation .product-grid {
+    grid-auto-rows: 104px !important;
+  }
+
+  .workstation .product-card,
+  .workstation .product-card.is-blocked {
+    min-height: 104px !important;
+    height: 104px;
+  }
+}

@@ -1,11 +1,11 @@
 {
-  "version": "2.0.41",
+  "version": "2.0.42",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.41_x64-setup.exe",
-  "size": 3149285,
-  "sha512": "B5567D71E4F5D7B6F04B98C3597D8CC8DBA4F11389AF0CB36BA0701144F2C87B037C5AE4D43B437C62926486EC9FF051B53C6D1C4B781B003B315B31A7A2F97C",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.42_x64-setup.exe",
+  "size": 3148082,
+  "sha512": "8C396DDEAB6F02C586694FB6CBA9E4B6830378943F7323828C8B79F12984CDD8B12C25401EFEB3CD2211C0968BA078A92EA1EBAEC01088BE86A9E968AACF61ED",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.41",
+    "VISIONPOS Cashier 2.0.42",
     "The normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.",
     "Cape Town product names remain attached when global catalogue and branch pricing records are merged.",
     "Browse and search now use the same synchronized product set.",

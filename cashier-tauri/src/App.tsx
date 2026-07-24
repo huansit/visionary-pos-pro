@@ -1179,7 +1179,12 @@ export default function App() {
                   || String(product.sku || product.barcode || "").trim()
                   || "Unnamed product";
                 return (
-                  <button className="product-card" key={product.id} disabled={Boolean(blocked)} onClick={() => addToCart(product)}>
+                  <button
+                    className={"product-card" + (blocked ? " is-blocked" : "")}
+                    key={product.id}
+                    aria-disabled={Boolean(blocked)}
+                    onClick={() => addToCart(product)}
+                  >
                     <span className="product-name" title={productName}>{productName}</span>
                     <b className="product-price">{money(product.priceCents)}</b>
                     <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>

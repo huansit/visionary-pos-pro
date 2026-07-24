@@ -1,11 +1,11 @@
 {
-  "version": "2.0.41",
-  "notes": "VISIONPOS Cashier 2.0.41\nThe normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.\nCape Town product names remain attached when global catalogue and branch pricing records are merged.\nBrowse and search now use the same synchronized product set.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-24T20:27:37.281Z",
+  "version": "2.0.42",
+  "notes": "VISIONPOS Cashier 2.0.42\nThe normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.\nCape Town product names remain attached when global catalogue and branch pricing records are merged.\nBrowse and search now use the same synchronized product set.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-24T21:22:06.014Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmJZQis1cktwOVdzL0F0a0dweWJtWmoyUG9GenhzMURnWkpWVG54OW5YMExVYXQ2OXBrNjJ0RjE1UktDYVZiclFBMnVkdm5JOTFTRDZxRzVYUTV3ZlFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTI0ODU3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjQxX3g2NC1zZXR1cC5leGUKVUJMSkhBaElUaXBIQjNTT1NvbXU1cElCZ1VMcmk1bU92OXM3d2tEcTNVdjVkZDc0VUw2amg4Y3E2bER2M1NTWElJbDJsV1dqQ1hGaXdJUEk4WjJjQmc9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.41_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmNqeTlCcWdhQ0VkNnA5QXN6RVA0ejJQeTIwYXM4YmtHT0dZVmtqQkZuVWdXOHM4TzRxZ2k2TWdnSE4rR3lwenJXZ3F4MFFKVHkwazN5UzBlZjJTYWdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0OTI4MTI1CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjQyX3g2NC1zZXR1cC5leGUKQ0dYeU9iaEZGU3lCOTJTTFR3aTg2OWNMQ0VxNTlBUWEvbk5HUXduU2RlUVlsVHI3L2ErUnZlanRFUTJ6OTQyRFJpNW9tRHB2MTc3ZlFUL3ZKS0ZMQVE9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.42_x64-setup.exe"
     }
   }
 }
