@@ -1,13 +1,14 @@
 {
-  "version": "2.0.38",
+  "version": "2.0.40",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.38_x64-setup.exe",
-  "size": 3148050,
-  "sha512": "C61D42925D67DBBA8C54401C8ED35E33C9667DB31F34454D2C21A103AD3DF980FC21F7B12259324BA4345CB21A53E3A7C0CACC89E66DA6BB6B4A3039B3201C7A",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.40_x64-setup.exe",
+  "size": 3151107,
+  "sha512": "DAE5CBA159106FBCE632ED6F1DE86BBD432F6427D45E1122F8809C2CD7B84A2883D6E032DFDC9CF34A5B583878C42535BC95D00414D51BF0724E71757E7F0698",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.38",
-    "Compact cashier panels sized for smaller terminal displays.",
-    "Cashiers can submit invoice void requests for supervisor or administrator approval.",
+    "VISIONPOS Cashier 2.0.40",
+    "The normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.",
+    "Cape Town product names remain attached when global catalogue and branch pricing records are merged.",
+    "Browse and search now use the same synchronized product set.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

@@ -1,11 +1,11 @@
 {
-  "version": "2.0.38",
-  "notes": "VISIONPOS Cashier 2.0.38\nCompact cashier panels sized for smaller terminal displays.\nCashiers can submit invoice void requests for supervisor or administrator approval.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-23T06:16:57.944Z",
+  "version": "2.0.40",
+  "notes": "VISIONPOS Cashier 2.0.40\nThe normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.\nCape Town product names remain attached when global catalogue and branch pricing records are merged.\nBrowse and search now use the same synchronized product set.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-23T21:49:14.143Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmRkb1N5QnlvNlRha0JrYVpHWEJ1UCtQRGlGL2g4YjhwNWhCZUVNWTF0WmVoSXZ6c2RUck1LUS9JZGwyVHpFeTA3bU9oT1FIZjF3S3BMck1BS3ZsY0FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0Nzg3NDE3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjM4X3g2NC1zZXR1cC5leGUKTENJUzJ0KzNOY1JoazUxL0hQRWFrQm1EMWxlZjRjaUpwUGcrYnY4ZEt1Z3dEai85dVVjd3pQZHJpTklLdVVSc01zUTlNZXhjZnFuVGZEWFYvekllQWc9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.38_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdllXMlhmZWZJcW1JTmRzL011N1ljczZNeVJyWHVyUGxwdGcxZk5iTmFKdGM1VGlOVHZuQzFXYXdIQ21GTWJuYzhLMnJsY2JyaXNhc0p1S2plbW9PNmdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0ODQzMzU0CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjQwX3g2NC1zZXR1cC5leGUKcWh0cGpFRWFJLzcvQ2xleDJmNERTNE1DQ1g3NE5odG5NY01YaXZXUEloWjhrLzY1SVZjbHdUSkFCSHNYVlIzWmJkVUczdS8rZHhCdnRTZThsODhhQ1E9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.40_x64-setup.exe"
     }
   }
 }

@@ -9,6 +9,7 @@ const tauriConfigPath = path.join(tauriDir, "tauri.conf.json");
 const keyPath = path.join(tauriDir, "gen", "visionpos-updater.key");
 const nsisDir = path.join(tauriDir, "target", "release", "bundle", "nsis");
 const outDir = path.join(root, "release-out");
+const frontendDownloadsDir = path.resolve(root, "..", "frontend", "public", "downloads");
 const downloadsBaseUrl = process.env.VISIONPOS_DOWNLOADS_BASE_URL || "https://visionarypos.cloud/downloads";
 const platform = "windows-x86_64";
 
@@ -145,9 +146,32 @@ if (generatedLatest.version !== version) {
   fail(`Generated latest.json has stale version ${generatedLatest.version}; expected ${version}.`);
 }
 
+// Keep the web download bundle synchronized with the signed Tauri release.
+// Vite copies this directory to production, so stale files here would otherwise
+// overwrite the current updater manifest during every admin frontend deploy.
+fs.mkdirSync(frontendDownloadsDir, { recursive: true });
+const frontendReleaseFiles = [
+  [versionedInstallerPath, path.join(frontendDownloadsDir, versionedInstallerName)],
+  [stableInstallerPath, path.join(frontendDownloadsDir, "VISIONPOS-Cashier-Setup.exe")],
+  [latestJsonPath, path.join(frontendDownloadsDir, "latest.json")],
+  [compatibilityJsonPath, path.join(frontendDownloadsDir, "release.json")]
+];
+for (const [source, destination] of frontendReleaseFiles) {
+  fs.copyFileSync(source, destination);
+}
+
+const frontendLatest = readJson(path.join(frontendDownloadsDir, "latest.json"));
+if (frontendLatest.version !== version) {
+  fail(`Frontend latest.json has stale version ${frontendLatest.version}; expected ${version}.`);
+}
+
 console.log("\nRelease files ready to upload:");
 console.log(`- ${versionedInstallerPath} -> ${installerUrl}`);
 console.log(`- ${stableInstallerPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/VISIONPOS-Cashier-Setup.exe`);
 console.log(`- ${latestJsonPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/latest.json`);
 console.log(`- ${compatibilityJsonPath} -> ${downloadsBaseUrl.replace(/\/$/, "")}/release.json`);
+console.log("\nFrontend download assets synchronized:");
+for (const [, destination] of frontendReleaseFiles) {
+  console.log(`- ${destination}`);
+}
 console.log("\nKeep publishing release.json only during the 2.0.17 transition window; new app builds use latest.json only.");
