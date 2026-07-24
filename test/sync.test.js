@@ -1831,3 +1831,69 @@ test("15. sync stream notifies clients after a committed push", async () => {
     server.close();
   }
 });
+
+test("16. operational reset rejects stale terminal writes and exposes the new epoch", async () => {
+  const terminal = await activateTestTerminal("Reset Epoch Till", "b_sip");
+  const resetEpoch = `reset-${Date.now()}`;
+  const staleEventId = `stale-reset-expense-${Date.now()}`;
+  const freshEventId = `fresh-reset-expense-${Date.now()}`;
+  const now = Date.now();
+
+  try {
+    await pool.query(
+      `INSERT INTO records
+        (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1, 'systemReset', NULL, NULL, $2, $2, false, $3::jsonb)
+       ON CONFLICT (type, id) DO UPDATE SET
+         branch_id = NULL,
+         device_id = NULL,
+         updated_at = EXCLUDED.updated_at,
+         server_ts = EXCLUDED.server_ts,
+         deleted = false,
+         payload = EXCLUDED.payload`,
+      ["operational-reset", now, JSON.stringify({ resetEpoch })]
+    );
+
+    const stale = await withTerminalAuth(request(app).post("/api/sync/push"), terminal)
+      .send({
+        events: [{
+          id: staleEventId,
+          type: "expense",
+          branchId: "b_sip",
+          clientTs: now,
+          payload: { branchId: "b_sip", amountCents: 100, category: "Other" },
+        }],
+      })
+      .expect(409);
+
+    assert.equal(stale.body.error, "operational_reset_required");
+    assert.equal(stale.body.resetEpoch, resetEpoch);
+    const rejectedWrite = await pool.query("SELECT id FROM records WHERE id = $1", [staleEventId]);
+    assert.equal(rejectedWrite.rowCount, 0);
+
+    const accepted = await withTerminalAuth(request(app).post("/api/sync/push"), terminal)
+      .send({
+        resetEpoch,
+        events: [{
+          id: freshEventId,
+          type: "expense",
+          branchId: "b_sip",
+          clientTs: now + 1,
+          payload: { branchId: "b_sip", amountCents: 100, category: "Other" },
+        }],
+      })
+      .expect(200);
+
+    assert.deepEqual(accepted.body.accepted, [freshEventId]);
+    assert.equal(accepted.body.resetEpoch, resetEpoch);
+    const acceptedWrite = await pool.query("SELECT id FROM records WHERE id = $1", [freshEventId]);
+    assert.equal(acceptedWrite.rowCount, 1);
+
+    const pull = await withTerminalAuth(request(app).get("/api/sync/pull"), terminal).expect(200);
+    assert.equal(pull.body.resetEpoch, resetEpoch);
+  } finally {
+    await pool.query("DELETE FROM records WHERE id = $1", [staleEventId]);
+    await pool.query("DELETE FROM records WHERE id = $1", [freshEventId]);
+    await pool.query("DELETE FROM records WHERE type = 'systemReset' AND id = 'operational-reset'");
+  }
+});
