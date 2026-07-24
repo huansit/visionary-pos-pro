@@ -1175,9 +1175,12 @@ export default function App() {
               {filteredProducts.map((product) => {
                 const reservedQty = cart[product.id]?.qty || 0;
                 const blocked = productSaleBlockReason(product, reservedQty);
+                const productName = String(product.name || "").trim()
+                  || String(product.sku || product.barcode || "").trim()
+                  || "Unnamed product";
                 return (
                   <button className="product-card" key={product.id} disabled={Boolean(blocked)} onClick={() => addToCart(product)}>
-                    <span className="product-name">{product.name}</span>
+                    <span className="product-name" title={productName}>{productName}</span>
                     <b className="product-price">{money(product.priceCents)}</b>
                     <span className="product-sku">SKU {product.sku || product.barcode || "No code"}</span>
                     <span className={"product-stock-row " + productStatusClass(product, reservedQty)}>

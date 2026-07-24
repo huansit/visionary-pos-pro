@@ -7520,3 +7520,43 @@ body {
     scrollbar-width: thin;
   }
 }
+
+/* Product identity must remain visible at Windows DPI-scaled terminal widths.
+   Keep this final so older compact-layout overrides cannot collapse the name. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .workstation .product-card {
+    grid-template-rows: minmax(12px, auto) auto minmax(10px, auto) minmax(12px, auto) 20px;
+    grid-auto-rows: min-content;
+    min-height: 92px;
+    overflow: hidden;
+  }
+
+  .workstation .product-name,
+  .workstation .product-sku {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100%;
+    height: auto !important;
+    min-height: 10px;
+    opacity: 1 !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workstation .product-name {
+    color: #111827 !important;
+    font-size: 10px;
+    font-weight: 900;
+  }
+
+  .workstation .product-sku,
+  .workstation .product-card:disabled .product-sku {
+    color: #64748b !important;
+  }
+
+  .workstation .product-card:disabled .product-name {
+    color: #111827 !important;
+  }
+}
