@@ -195,11 +195,12 @@ export function deriveCashierState(source: CashierStateSource): CashierState {
     ? invoices.filter((invoice) => !invoice.cashierId || invoice.cashierId === source.account?.id)
     : invoices;
 
-  const todaysInvoices = visibleInvoices.filter((invoice) => isToday(invoiceTs(invoice)));
+  const activeInvoices = visibleInvoices.filter((invoice) => invoice.voidRequestStatus !== "approved");
+  const todaysInvoices = activeInvoices.filter((invoice) => isToday(invoiceTs(invoice)));
   const openInvoicesToday = todaysInvoices
     .filter((invoice) => invoiceOutstanding(invoice) > 0 && !invoice.carriedOver)
     .map(toInvoiceSummary);
-  const debts = visibleInvoices
+  const debts = activeInvoices
     .filter((invoice) => invoiceOutstanding(invoice) > 0 && invoice.carriedOver)
     .map(toDebt);
 

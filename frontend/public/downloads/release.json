@@ -1,14 +1,14 @@
 {
-  "version": "2.0.42",
+  "version": "2.0.43",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.42_x64-setup.exe",
-  "size": 3148082,
-  "sha512": "8C396DDEAB6F02C586694FB6CBA9E4B6830378943F7323828C8B79F12984CDD8B12C25401EFEB3CD2211C0968BA078A92EA1EBAEC01088BE86A9E968AACF61ED",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.43_x64-setup.exe",
+  "size": 3150605,
+  "sha512": "7C7B33A23C0B9EE0633FAD8761959D3CCA97B1221DEA489D3EC964EEDFB506B913B4782D6FDE71E55C0D53B5C8CAE090823BD022872B77EF1B88A84E6CBB1B01",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.42",
-    "The normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.",
-    "Cape Town product names remain attached when global catalogue and branch pricing records are merged.",
-    "Browse and search now use the same synchronized product set.",
+    "VISIONPOS Cashier 2.0.43",
+    "Approved voided invoices are excluded from Sales Today totals and Paid, Open, and Pending counts.",
+    "Pending and rejected void requests remain visible until a supervisor or administrator approves the void.",
+    "Open invoices and carried debts use the same approved-void filtering as cashier sales summaries.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

@@ -99,9 +99,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "The normal product catalogue now displays the complete branch catalogue instead of stopping after 80 products.",
-  "Cape Town product names remain attached when global catalogue and branch pricing records are merged.",
-  "Browse and search now use the same synchronized product set.",
+  "Approved voided invoices are excluded from Sales Today totals and Paid, Open, and Pending counts.",
+  "Pending and rejected void requests remain visible until a supervisor or administrator approves the void.",
+  "Open invoices and carried debts use the same approved-void filtering as cashier sales summaries.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

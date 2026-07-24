@@ -434,7 +434,10 @@ export default function App() {
   const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [myInvoices]);
   const todayInvoices = useMemo(() => myInvoices.filter((invoice) => isToday(invoice.ts)), [myInvoices]);
   const activeTodayInvoices = useMemo(
-    () => todayInvoices.filter((invoice) => !dayClosedAt || Number(invoice.ts || 0) > dayClosedAt),
+    () => todayInvoices.filter((invoice) => (
+      invoice.voidRequestStatus !== "approved"
+      && (!dayClosedAt || Number(invoice.ts || 0) > dayClosedAt)
+    )),
     [dayClosedAt, todayInvoices]
   );
   const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [activeTodayInvoices]);
