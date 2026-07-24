@@ -8218,8 +8218,33 @@ function ReportsTab({ data, initialTab }) {
   const [toD, setToD] = useState(todayStr());
   const [vel, setVel] = useState("all");
   const [prodSel, setProdSel] = useState(null);
+  const [productSearch, setProductSearch] = useState("");
+  const [productScannerOn, setProductScannerOn] = useState(false);
+  const productSearchRef = useRef(null);
   const [reorderWeeks, setReorderWeeks] = useState(2); // weeks of demand to cover in the reorder forecast
   const [printPreview, setPrintPreview] = useState(null);
+
+  const reportProducts = useMemo(
+    () => rb === "all" ? dedupeProductsByCode(data.products) : branchProductsUnique(data, rb),
+    [data.products, data.stockMovements, rb]
+  );
+
+  useBarcodeScanner({
+    enabled: sub === "products" && productScannerOn && !prodSel,
+    mode: "reports",
+    onScan: (value) => {
+      const needle = normalizeBarcode(value).toLowerCase();
+      const match = reportProducts.find((product) =>
+        [product.sku, product.barcode, ...barcodeCatalogIdsForProduct(product)]
+          .some((candidate) => normalizeBarcode(candidate).toLowerCase() === needle)
+      );
+      if (match) setProdSel(match.id);
+      else {
+        setProductSearch(value);
+        productSearchRef.current?.focus();
+      }
+    },
+  });
 
   const dayStart = (s) => new Date(s + "T00:00:00").getTime();
   const dayEnd = (s) => new Date(s + "T23:59:59.999").getTime();
@@ -8414,21 +8439,82 @@ function ReportsTab({ data, initialTab }) {
       )}
 
       {sub === "products" && (() => {
-        const soldQty = {}; saleMoves.forEach((mv) => { soldQty[mv.productId] = (soldQty[mv.productId] || 0) + (-mv.qty); });
-        const withSales = data.products.map((p) => ({ p, qty: soldQty[p.id] || 0 })).filter((x) => x.qty > 0).sort((a, b) => b.qty - a.qty);
+        const productsById = new Map((data.products || []).map((product) => [product.id, product]));
+        const productAliases = new Map();
+        (data.products || []).forEach((product) => {
+          const key = productDedupeKey(product);
+          [product.id, product.sku, product.barcode, product.name, ...barcodeCatalogIdsForProduct(product)]
+            .filter(Boolean)
+            .forEach((value) => productAliases.set(String(value).trim().toLowerCase(), key));
+        });
+        const productKeyForValue = (value) => productAliases.get(String(value || "").trim().toLowerCase()) || "";
+        const productKeyForId = (productId) => {
+          const product = productsById.get(productId);
+          return product ? productDedupeKey(product) : productKeyForValue(productId) || (productId ? "product:" + productId : "");
+        };
+        const movementSoldQty = {};
+        saleMoves.forEach((mv) => {
+          const key = productKeyForId(mv.productId);
+          if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) + Math.max(0, -Number(mv.qty || 0));
+        });
+        const invoiceSoldQty = {};
+        invs.forEach((invoice) => (invoice.items || []).forEach((item) => {
+          const key = productKeyForValue(item.productId)
+            || productKeyForValue(item.sku)
+            || productKeyForValue(item.barcode)
+            || productKeyForValue(item.name || item.productName);
+          const qty = Math.max(0, Number(item.qty ?? item.quantity ?? 0));
+          if (key && qty > 0) invoiceSoldQty[key] = (invoiceSoldQty[key] || 0) + qty;
+        }));
+        const lossQtyByProd = {};
+        lossMoves.forEach((mv) => {
+          const key = productKeyForId(mv.productId);
+          lossQtyByProd[key] = (lossQtyByProd[key] || 0) + Math.abs(Number(mv.qty || 0));
+        });
+        const qtyFor = (product) => {
+          const key = productDedupeKey(product);
+          return Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0);
+        };
+        const lossFor = (product) => lossQtyByProd[productDedupeKey(product)] || 0;
+        const withSales = reportProducts.map((p) => ({ p, qty: qtyFor(p) })).filter((x) => x.qty > 0).sort((a, b) => b.qty - a.qty);
         const n = withSales.length; const fastCut = Math.ceil(n / 3), medCut = Math.ceil(2 * n / 3);
-        const rankOf = {}; withSales.forEach((x, i) => { rankOf[x.p.id] = i; });
-        const classOf = (pid) => { const q = soldQty[pid] || 0; if (q <= 0) return "none"; const r = rankOf[pid]; if (r < fastCut) return "fast"; if (r < medCut) return "medium"; return "slow"; };
+        const rankOf = {}; withSales.forEach((x, i) => { rankOf[productDedupeKey(x.p)] = i; });
+        const classOf = (product) => { const q = qtyFor(product); if (q <= 0) return "none"; const r = rankOf[productDedupeKey(product)]; if (r < fastCut) return "fast"; if (r < medCut) return "medium"; return "slow"; };
         const VLABEL = { fast: "Fast", medium: "Medium", slow: "Slow", none: "No sales" };
         const VCOLOR = { fast: "var(--ok)", medium: "var(--warn)", slow: "var(--danger)", none: "var(--muted-2)" };
-        const counts = { fast: 0, medium: 0, slow: 0, none: 0 }; data.products.forEach((p) => counts[classOf(p.id)]++);
-        const lossQtyByProd = {}; lossMoves.forEach((mv) => { lossQtyByProd[mv.productId] = (lossQtyByProd[mv.productId] || 0) + Math.abs(mv.qty); });
+        const counts = { fast: 0, medium: 0, slow: 0, none: 0 }; reportProducts.forEach((p) => counts[classOf(p)]++);
+        const searchNeedle = productSearch.trim().toLowerCase();
+        const matchesSearch = (product) => !searchNeedle || [
+          product.name,
+          product.sku,
+          product.barcode,
+          product.category,
+          product.size,
+          ...barcodeCatalogIdsForProduct(product),
+        ].some((value) => String(value || "").toLowerCase().includes(searchNeedle));
+        const visibleProducts = reportProducts
+          .filter((product) => (vel === "all" || classOf(product) === vel) && matchesSearch(product))
+          .sort((a, b) => qtyFor(b) - qtyFor(a) || String(a.name || "").localeCompare(String(b.name || "")));
+        const openExactProduct = () => {
+          const needle = normalizeBarcode(productSearch).toLowerCase();
+          if (!needle) return;
+          const exact = reportProducts.find((product) =>
+            [product.sku, product.barcode, ...barcodeCatalogIdsForProduct(product)]
+              .some((value) => normalizeBarcode(value).toLowerCase() === needle)
+          );
+          if (exact) setProdSel(exact.id);
+        };
         if (prodSel) {
-          const p = data.products.find((x) => x.id === prodSel); if (!p) { setProdSel(null); return null; }
-          const moves = data.stockMovements.filter((mv) => mv.productId === prodSel && inBranch(mv.branchId)).sort((a, b) => a.ts - b.ts);
+          const p = reportProducts.find((x) => x.id === prodSel) || data.products.find((x) => x.id === prodSel); if (!p) return null;
+          const equivalentIds = new Set(duplicateProductIds(data, p, rb === "all" ? null : rb));
+          equivalentIds.add(p.id);
+          const moves = data.stockMovements.filter((mv) => equivalentIds.has(mv.productId) && inBranch(mv.branchId)).sort((a, b) => a.ts - b.ts);
           let bal = 0; const ledger = moves.map((mv) => { bal += mv.qty; return { ...mv, bal }; }).reverse();
-          const soldUnits = soldQty[prodSel] || 0; const rev = soldUnits * p.priceCents; const cost = soldUnits * p.costCents; const cls = classOf(prodSel);
-          const lossUnits = lossQtyByProd[prodSel] || 0; const lossVal = lossUnits * p.costCents; const gp = rev - cost; const net = gp - lossVal;
+          const priceCents = rb === "all" ? Number(p.priceCents || 0) : branchProductPriceCents(p, rb);
+          const costCents = rb === "all" ? Number(p.costCents || 0) : branchProductCostCents(p, rb);
+          const soldUnits = qtyFor(p); const rev = soldUnits * priceCents; const cost = soldUnits * costCents; const cls = classOf(p);
+          const lossUnits = lossFor(p); const lossVal = lossUnits * costCents; const gp = rev - cost; const net = gp - lossVal;
+          const stockOnHand = rb === "all" ? productOnHand(data, p, null) : productOnHand(data, p, rb);
           return (
             <div>
               <button className="btn xs btn-ghost" onClick={() => setProdSel(null)} style={{ marginBottom: 12 }}><ArrowLeft /> All products</button>
@@ -8436,10 +8522,10 @@ function ReportsTab({ data, initialTab }) {
                 <div className="page-h" style={{ marginBottom: 6 }}><div><div className="title" style={{ fontSize: 18 }}>{p.name}</div><div className="sub">{p.sku} · {p.size} · {p.category}</div></div>
                   <span className="ist" style={{ background: "var(--surface-2)", color: VCOLOR[cls] }}>{VLABEL[cls]} mover</span></div>
                 <div className="stats">
-                  <Stat l="On hand" v={onHand(data, prodSel, bId)} />
+                  <Stat l="On hand" v={stockOnHand} />
                   <Stat l="Units sold" v={soldUnits} sub2={period === "all" ? "all time" : period === "custom" ? "custom range" : period} />
                   <Stat l="Units lost" v={lossUnits} warn={lossUnits > 0} />
-                  <Stat l="Stock value" v={fmt(onHand(data, prodSel, bId) * p.costCents, cur)} />
+                  <Stat l="Stock value" v={fmt(stockOnHand * costCents, cur)} />
                 </div>
               </div>
               <div className="panel" style={{ marginBottom: 14 }}>
@@ -8447,7 +8533,7 @@ function ReportsTab({ data, initialTab }) {
                 {[["Revenue", rev], ["Cost of goods sold", -cost], ["Gross profit", gp], ["Loss & damage", -lossVal]].map(([l, v]) => (
                   <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
                 <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: net < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(net, cur)}</span></div>
-                <div className="sub" style={{ marginTop: 8 }}>Margin {rev > 0 ? Math.round(gp / rev * 100) : 0}% · cost {fmt(p.costCents, cur)} · price {fmt(p.priceCents, cur)}</div>
+                <div className="sub" style={{ marginTop: 8 }}>Margin {rev > 0 ? Math.round(gp / rev * 100) : 0}% · cost {fmt(costCents, cur)} · price {fmt(priceCents, cur)}</div>
               </div>
               <div className="section-title" style={{ margin: "4px 0 8px" }}>Stock movement history{rb === "all" ? "" : " · " + bname(rb)}</div>
               {ledger.length === 0 ? <div className="notice">No movements recorded for this product.</div> : (
@@ -8460,19 +8546,63 @@ function ReportsTab({ data, initialTab }) {
         }
         return (
           <>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, marginBottom: 12 }}>
+              <div className="possearch" style={{ height: 44 }}>
+                <Search size={18} />
+                <input
+                  ref={productSearchRef}
+                  value={productSearch}
+                  onChange={(event) => setProductSearch(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") openExactProduct(); }}
+                  placeholder="Search product name, SKU, or barcode..."
+                  aria-label="Search product reports"
+                />
+                {productSearch ? (
+                  <button
+                    type="button"
+                    className="btn xs btn-ghost"
+                    onClick={() => { setProductSearch(""); productSearchRef.current?.focus(); }}
+                    aria-label="Clear product search"
+                  >
+                    <X size={16} />
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className={"btn sm " + (productScannerOn ? "primary" : "btn-ghost")}
+                onClick={() => {
+                  setProductScannerOn((current) => !current);
+                  setTimeout(() => productSearchRef.current?.focus(), 0);
+                }}
+                aria-pressed={productScannerOn}
+                title="Use a barcode scanner to open a product report"
+              >
+                <Barcode size={17} /> {productScannerOn ? "Scanner on" : "Scanner"}
+              </button>
+            </div>
             <div className="cfilter" style={{ marginBottom: 12 }}>
-              {[["all", "All (" + data.products.length + ")"], ["fast", "Fast (" + counts.fast + ")"], ["medium", "Medium (" + counts.medium + ")"], ["slow", "Slow (" + counts.slow + ")"], ["none", "No sales (" + counts.none + ")"]].map(([k, l]) => (
+              {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + counts.fast + ")"], ["medium", "Medium (" + counts.medium + ")"], ["slow", "Slow (" + counts.slow + ")"], ["none", "No sales (" + counts.none + ")"]].map(([k, l]) => (
                 <button key={k} className={"seg" + (vel === k ? " on" : "")} onClick={() => setVel(k)}>{l}</button>))}
             </div>
             <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
-              <tbody>{data.products.filter((p) => vel === "all" || classOf(p.id) === vel).sort((a, b) => (soldQty[b.id] || 0) - (soldQty[a.id] || 0)).map((p) => { const q = soldQty[p.id] || 0; const rev = q * p.priceCents; const net = rev - q * p.costCents - (lossQtyByProd[p.id] || 0) * p.costCents; const marg = p.priceCents > 0 ? Math.round((p.priceCents - p.costCents) / p.priceCents * 100) : 0; const cls = classOf(p.id);
+              <tbody>{visibleProducts.map((p) => {
+                const priceCents = rb === "all" ? Number(p.priceCents || 0) : branchProductPriceCents(p, rb);
+                const costCents = rb === "all" ? Number(p.costCents || 0) : branchProductCostCents(p, rb);
+                const q = qtyFor(p);
+                const rev = q * priceCents;
+                const net = rev - q * costCents - lossFor(p) * costCents;
+                const marg = priceCents > 0 ? Math.round((priceCents - costCents) / priceCents * 100) : 0;
+                const cls = classOf(p);
+                const stockOnHand = rb === "all" ? productOnHand(data, p, null) : productOnHand(data, p, rb);
                 return (<tr key={p.id} style={{ cursor: "pointer" }} onClick={() => setProdSel(p.id)}>
                   <td><div className="nm">{p.name}</div><div className="mt2">{p.sku} · {p.category}</div></td>
                   <td style={{ fontWeight: 700 }}>{q}</td><td className="amt">{fmt(rev, cur)}</td>
                   <td className="amt" style={{ color: net < 0 ? "var(--danger)" : "var(--text)" }}>{fmt(net, cur)}</td>
-                  <td>{marg}%</td><td>{onHand(data, p.id, bId)}</td>
-                  <td><span className="ist" style={{ background: "var(--surface-2)", color: VCOLOR[cls] }}>{VLABEL[cls]}</span></td></tr>); })}
-                {data.products.length === 0 && <tr><td colSpan="7"><div className="notice">No products.</div></td></tr>}</tbody></table></div>
+                  <td>{marg}%</td><td>{stockOnHand}</td>
+                  <td><span className="ist" style={{ background: "var(--surface-2)", color: VCOLOR[cls] }}>{VLABEL[cls]}</span></td></tr>);
+              })}
+                {visibleProducts.length === 0 && <tr><td colSpan="7"><div className="notice">No products match this search and movement filter.</div></td></tr>}</tbody></table></div>
             <div className="sub" style={{ marginTop: 8 }}>Movement class is based on units sold in the selected period (top third = Fast, middle = Medium, rest = Slow). Tap any product for its full stock-movement ledger.</div>
           </>
         );
