@@ -5220,6 +5220,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
+  const [bulkSettlementOpen, setBulkSettlementOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const invoices = operationalInvoices(data);
@@ -5249,6 +5250,13 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const sinceEndDay = activeInvoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
+  const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
+    const voidStatus = invoiceVoidState(data, invoice.id).status;
+    return invOutstanding(invoice) > 0
+      && !invIsDebt(invoice)
+      && voidStatus !== "approved"
+      && voidStatus !== "pending";
+  });
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
   const cashierNames = Array.from(new Set(invoices.map(invoiceCashierName)))
     .filter(Boolean)
@@ -5292,12 +5300,22 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   return (
     <div>
       <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
-        right={<button
-          className="btn sm btn-primary"
-          disabled={sinceEndDay.length === 0}
-          title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
-          onClick={() => setEod({ mode: "live" })}
-        ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>} />
+        right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            className="btn sm btn-ghost"
+            disabled={currentDayOpenInvoices.length === 0}
+            title={currentDayOpenInvoices.length === 0
+              ? `There are no unpaid current-day invoices for ${branch.name}.`
+              : `Settle ${currentDayOpenInvoices.length} current-day invoice(s) for ${branch.name}`}
+            onClick={() => setBulkSettlementOpen(true)}
+          ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark invoices paid"}</button>
+          <button
+            className="btn sm btn-primary"
+            disabled={sinceEndDay.length === 0}
+            title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
+            onClick={() => setEod({ mode: "live" })}
+          ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>
+        </div>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
         <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
@@ -5370,8 +5388,218 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
+      {bulkSettlementOpen && <BulkSettleDayModal
+        invoices={currentDayOpenInvoices}
+        branch={branch}
+        update={update}
+        cur={cur}
+        user={user}
+        onClose={() => setBulkSettlementOpen(false)}
+      />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
+    </div>
+  );
+}
+
+function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
+  const [selectedIds, setSelectedIds] = useState(() => new Set(invoices.map((invoice) => invoice.id)));
+  const selectedInvoices = invoices.filter((invoice) => selectedIds.has(invoice.id));
+  const totalCents = selectedInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const [cashAmount, setCashAmount] = useState(() => moneyInputValue(invoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
+  const [mpesaAmount, setMpesaAmount] = useState("0");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const cashCents = clampPaymentCents(cashAmount, totalCents);
+  const mpesaCents = clampPaymentCents(mpesaAmount, totalCents);
+  const allocationMatches = cashCents + mpesaCents === totalCents;
+  const actorName = typeof user === "string"
+    ? user
+    : (user?.name || user?.displayName || user?.email || "Supervisor");
+
+  const replaceSelection = (nextIds) => {
+    const nextTotal = invoices
+      .filter((invoice) => nextIds.has(invoice.id))
+      .reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+    setSelectedIds(nextIds);
+    setCashAmount(moneyInputValue(nextTotal));
+    setMpesaAmount("0");
+    setError("");
+  };
+  const toggleInvoice = (invoiceId) => {
+    const nextIds = new Set(selectedIds);
+    if (nextIds.has(invoiceId)) nextIds.delete(invoiceId);
+    else nextIds.add(invoiceId);
+    replaceSelection(nextIds);
+  };
+  const toggleAll = () => {
+    replaceSelection(selectedIds.size === invoices.length
+      ? new Set()
+      : new Set(invoices.map((invoice) => invoice.id)));
+  };
+
+  const balanceFromCash = (value) => {
+    const nextCash = clampPaymentCents(value, totalCents);
+    setCashAmount(moneyInputValue(nextCash));
+    setMpesaAmount(moneyInputValue(totalCents - nextCash));
+    setError("");
+  };
+  const balanceFromMpesa = (value) => {
+    const nextMpesa = clampPaymentCents(value, totalCents);
+    setMpesaAmount(moneyInputValue(nextMpesa));
+    setCashAmount(moneyInputValue(totalCents - nextMpesa));
+    setError("");
+  };
+
+  const settleInvoices = () => {
+    if (submittingRef.current || selectedInvoices.length === 0 || totalCents <= 0) return;
+    if (!allocationMatches) {
+      setError(`Cash and M-Pesa must total exactly ${fmt(totalCents, cur)}.`);
+      return;
+    }
+
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError("");
+    const ts = now();
+    const batchId = uid("day-settlement");
+    let cashRemaining = cashCents;
+    let mpesaRemaining = mpesaCents;
+    const invoiceIds = new Set(selectedInvoices.map((invoice) => invoice.id));
+    const paymentRecords = [];
+    const invoiceMethods = new Map();
+
+    selectedInvoices.forEach((invoice) => {
+      let due = invOutstanding(invoice);
+      const methods = [];
+      const cashPart = Math.min(due, cashRemaining);
+      if (cashPart > 0) {
+        paymentRecords.push({
+          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
+          method: "cash", amountCents: cashPart, status: "captured", recordedBy: user,
+          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
+        });
+        methods.push("Cash");
+        cashRemaining -= cashPart;
+        due -= cashPart;
+      }
+      const mpesaPart = Math.min(due, mpesaRemaining);
+      if (mpesaPart > 0) {
+        paymentRecords.push({
+          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
+          method: "m-pesa", amountCents: mpesaPart, status: "captured", recordedBy: user,
+          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
+        });
+        methods.push("M-Pesa");
+        mpesaRemaining -= mpesaPart;
+        due -= mpesaPart;
+      }
+      invoiceMethods.set(invoice.id, methods.join(" + "));
+    });
+
+    const allocatedCents = paymentRecords.reduce((sum, payment) => sum + payment.amountCents, 0);
+    if (cashRemaining !== 0 || mpesaRemaining !== 0 || allocatedCents !== totalCents) {
+      submittingRef.current = false;
+      setSubmitting(false);
+      setError("The payment allocation could not be applied exactly. Review the amounts and retry.");
+      return;
+    }
+
+    update((data) => ({
+      ...data,
+      invoices: data.invoices.map((invoice) => invoiceIds.has(invoice.id) ? {
+        ...invoice,
+        paidCents: Number(invoice.totalCents || 0),
+        carriedOver: false,
+        method: invoiceMethods.get(invoice.id) || invoice.method,
+        lastSettledBy: user,
+        lastSettledAt: ts,
+        settledBy: user,
+        settledByName: actorName,
+        settledAt: ts,
+        status: "paid",
+        synced: false,
+        bulkSettlementId: batchId,
+      } : invoice),
+      payments: [...(data.payments || []), ...paymentRecords],
+    }));
+    onClose();
+  };
+
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="modal settlement-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <div className="sub" style={{ margin: 0 }}>Supervisor bulk settlement</div>
+            <div className="title" style={{ fontSize: 20 }}>Mark all day invoices paid</div>
+          </div>
+          <button className="iconbtn" onClick={onClose} aria-label="Close"><X /></button>
+        </div>
+
+        <div className="notice">
+          Select the paid invoices for {branch.name}. The selected balance is <b>{fmt(totalCents, cur)}</b>.
+          Carried-over debts and void requests are excluded.
+        </div>
+
+        <div className="tablewrap" style={{ marginTop: 14, maxHeight: 230, overflowY: "auto" }}>
+          <table className="tbl">
+            <thead><tr>
+              <th style={{ width: 44 }}><input type="checkbox" aria-label="Select all invoices"
+                checked={invoices.length > 0 && selectedIds.size === invoices.length}
+                onChange={toggleAll} /></th>
+              <th>Customer</th><th>Receipt</th><th>Cashier</th><th className="amt">Balance</th>
+            </tr></thead>
+            <tbody>{invoices.map((invoice) => (
+              <tr key={invoice.id} className="clickable" onClick={() => toggleInvoice(invoice.id)}>
+                <td><input type="checkbox" aria-label={`Select ${invoice.number || invoice.receiptNo}`}
+                  checked={selectedIds.has(invoice.id)}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={() => toggleInvoice(invoice.id)} /></td>
+                <td>{invoice.customerName || "Walk-in"}</td>
+                <td className="innum">{invoice.number || invoice.receiptNo}</td>
+                <td>{invoiceCashierName(invoice)}</td>
+                <td className="amt">{fmt(invOutstanding(invoice), cur)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+
+        {selectedInvoices.length === 0 ? <div className="formerr" style={{ marginTop: 10 }}>Select at least one invoice to settle.</div> : null}
+
+        <div className="grid2" style={{ marginTop: 14 }}>
+          <div>
+            <label className="label">Cash paid</label>
+            <input className="input" inputMode="decimal" value={cashAmount}
+              onChange={(event) => balanceFromCash(event.target.value.replace(/[^\d.]/g, ""))} />
+          </div>
+          <div>
+            <label className="label">M-Pesa paid</label>
+            <input className="input" inputMode="decimal" value={mpesaAmount}
+              onChange={(event) => balanceFromMpesa(event.target.value.replace(/[^\d.]/g, ""))} />
+          </div>
+        </div>
+
+        <div className="settlement-totals" style={{ marginTop: 14 }}>
+          <div><span>Cash</span><b>{fmt(cashCents, cur)}</b></div>
+          <div><span>M-Pesa</span><b>{fmt(mpesaCents, cur)}</b></div>
+          <div className="due"><span>Allocation total</span><b>{fmt(cashCents + mpesaCents, cur)}</b></div>
+        </div>
+
+        <div className="alert" style={{ marginTop: 14 }}>
+          This records captured payments against every included invoice and marks them paid. The supervisor, time, method, and batch remain in the audit trail.
+        </div>
+        {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
+
+        <div className="grid2" style={{ marginTop: 16 }}>
+          <button className="btn btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="btn btn-primary" onClick={settleInvoices}
+            disabled={submitting || selectedInvoices.length === 0 || totalCents <= 0 || !allocationMatches}>
+            <Check /> {submitting ? "Recording..." : `Mark ${selectedInvoices.length} paid`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
