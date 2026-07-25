@@ -7657,6 +7657,9 @@ function BorrowingTab({ data, update }) {
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [transferScannerOn, setTransferScannerOn] = useState(false);
+  const [transferScanMessage, setTransferScanMessage] = useState("");
+  const transferSearchRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -7664,7 +7667,45 @@ function BorrowingTab({ data, update }) {
   // available accounts for quantities already added to the pending list for this product at this source
   const pendingQty = (pid) => lines.filter((l) => l.productId === pid).reduce((s, l) => s + l.qty, 0);
   const available = product ? productOnHand(data, product, fromB) - pendingQty(product.id) : 0;
-  const matches = q.trim() === "" ? [] : sortProductsAZ(branchProductsUnique(data, fromB).filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).slice(0, 6);
+  const sourceProducts = branchProductsUnique(data, fromB);
+  const matches = q.trim() === "" ? [] : sortProductsAZ(sourceProducts.filter((p) =>
+    p.name.toLowerCase().includes(q.toLowerCase())
+    || p.sku.toLowerCase().includes(q.toLowerCase())
+    || productMatchesBarcode(p, q)
+    || productMatchesCatalog(p, findBarcodeCatalogEntry(data, q))
+  )).slice(0, 6);
+
+  const selectScannedTransferProduct = (value) => {
+    const barcode = normalizeBarcode(value);
+    if (!barcode) return false;
+    const direct = findProductByBarcode(data, barcode, fromB);
+    const directKey = direct ? productDedupeKey(direct) : "";
+    const catalogEntry = findBarcodeCatalogEntry(data, barcode);
+    const match = sourceProducts.find((candidate) =>
+      (directKey && productDedupeKey(candidate) === directKey)
+      || productMatchesBarcode(candidate, barcode)
+      || productMatchesCatalog(candidate, catalogEntry)
+    );
+    if (!match) {
+      setProductId("");
+      setQ(barcode);
+      setTransferScanMessage("Barcode not found at " + bn(fromB) + ": " + barcode + ".");
+      appendBarcodeScanLog({ barcode, status: "transfer:not_found", branchId: fromB });
+      return false;
+    }
+    setProductId(match.id);
+    setQ("");
+    setErr("");
+    setTransferScanMessage("Selected " + match.name + " from " + bn(fromB) + ".");
+    appendBarcodeScanLog({ barcode, status: "transfer:found", productId: match.id, branchId: fromB });
+    return true;
+  };
+
+  useBarcodeScanner({
+    enabled: transferScannerOn,
+    mode: "stock-transfer",
+    onScan: selectScannedTransferProduct,
+  });
 
   const addLine = () => {
     setErr("");
@@ -7781,13 +7822,37 @@ function BorrowingTab({ data, update }) {
       <div className="addpanel">
         <div className="grid2">
           <div><label className="label">From branch</label>
-            <select className="select" value={fromB} onChange={(e) => { setFromB(e.target.value); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <select className="select" value={fromB} onChange={(e) => { setFromB(e.target.value); setProductId(""); setQ(""); setTransferScanMessage(""); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
           <div><label className="label">To branch</label>
             <select className="select" value={toB} onChange={(e) => { setToB(e.target.value); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         </div>
         <div className="field"><label className="label">Product search</label>
-          <input className="input" placeholder="Search product name or SKU" value={product ? product.name + " · " + product.sku : q}
-            onChange={(e) => { setProductId(""); setQ(e.target.value); setErr(""); }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input ref={transferSearchRef} className="input" placeholder="Search name, SKU, or scan barcode" value={product ? product.name + " · " + product.sku : q}
+              onChange={(e) => { setProductId(""); setQ(e.target.value); setTransferScanMessage(""); setErr(""); }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== "Tab") return;
+                const value = event.currentTarget.value;
+                if (!isValidBarcode(normalizeBarcode(value))) return;
+                event.preventDefault();
+                selectScannedTransferProduct(value);
+              }} />
+            <button
+              type="button"
+              className={"btn sm " + (transferScannerOn ? "primary" : "btn-ghost")}
+              onClick={() => {
+                const next = !transferScannerOn;
+                setTransferScannerOn(next);
+                setTransferScanMessage(next ? "Scanner ready for " + bn(fromB) + "." : "Scanner off.");
+                if (next) window.setTimeout(() => transferSearchRef.current?.focus(), 0);
+              }}
+              aria-pressed={transferScannerOn}
+              title="Scan a product barcode for this stock transfer"
+            >
+              <Barcode size={17} /> {transferScannerOn ? "Scanner on" : "Scanner"}
+            </button>
+          </div>
+          {transferScanMessage ? <div className="sub" role="status" style={{ marginTop: 6, color: transferScannerOn ? "var(--ok)" : "var(--muted)" }}>{transferScanMessage}</div> : null}
           {!productId && matches.length > 0 && (
             <div className="searchres">{matches.map((p) => (
               <button key={p.id} className="sres" onClick={() => { setProductId(p.id); setQ(""); }}>
@@ -8580,6 +8645,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const [prodSel, setProdSel] = useState(null);
   const [productSearch, setProductSearch] = useState("");
   const [pnlProductSearch, setPnlProductSearch] = useState("");
+  const [scannedPnlProductKey, setScannedPnlProductKey] = useState("");
   const [productScannerOn, setProductScannerOn] = useState(false);
   const [productScanMessage, setProductScanMessage] = useState("");
   const productSearchRef = useRef(null);
@@ -8612,14 +8678,19 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (!barcode) return false;
     const match = findReportProductByCode(barcode);
     if (match) {
-      if (sub === "pnl") setPnlProductSearch(barcode);
-      else setProductSearch(barcode);
+      if (sub === "pnl") {
+        setScannedPnlProductKey(productDedupeKey(match));
+        setPnlProductSearch(match.sku || match.name || barcode);
+      } else setProductSearch(barcode);
       setProductScanMessage("Scanned " + match.name + ".");
       if (sub === "products") setProdSel(match.id);
       appendBarcodeScanLog({ barcode, status: "reports:found", productId: match.id });
       return true;
     }
-    if (sub === "pnl") setPnlProductSearch(barcode);
+    if (sub === "pnl") {
+      setScannedPnlProductKey("");
+      setPnlProductSearch(barcode);
+    }
     else setProductSearch(barcode);
     setProductScanMessage("Barcode not found: " + barcode + ".");
     appendBarcodeScanLog({ barcode, status: "reports:not_found" });
@@ -8846,8 +8917,28 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     })
     .filter((row) => row.qty > 0 || row.revenue !== 0 || row.cogs !== 0 || row.lossValue !== 0)
     .sort((a, b) => b.revenue - a.revenue || String(a.name).localeCompare(String(b.name)));
+  const scannedPnlProduct = scannedPnlProductKey
+    ? reportProductByKey.get(scannedPnlProductKey) || null
+    : null;
+  const productPnlRowsForDisplay = scannedPnlProduct
+    && !productPnlRows.some((row) => row.key === scannedPnlProductKey)
+    ? [...productPnlRows, {
+        key: scannedPnlProductKey,
+        product: scannedPnlProduct,
+        name: scannedPnlProduct.name || "Product",
+        sku: scannedPnlProduct.sku || "",
+        category: scannedPnlProduct.category || "",
+        qty: 0,
+        revenue: 0,
+        cogs: 0,
+        lossValue: 0,
+        grossProductProfit: 0,
+        productProfit: 0,
+        margin: 0,
+      }]
+    : productPnlRows;
   const pnlProductSearchNeedle = pnlProductSearch.trim().toLowerCase();
-  const visibleProductPnlRows = productPnlRows.filter((row) => !pnlProductSearchNeedle || [
+  const visibleProductPnlRows = productPnlRowsForDisplay.filter((row) => !pnlProductSearchNeedle || [
     row.name,
     row.sku,
     row.category,
@@ -9226,7 +9317,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                 <input
                   ref={pnlProductSearchRef}
                   value={pnlProductSearch}
-                  onChange={(event) => setPnlProductSearch(event.target.value)}
+                  onChange={(event) => {
+                    setScannedPnlProductKey("");
+                    setPnlProductSearch(event.target.value);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== "Tab") return;
                     const value = event.currentTarget.value;
@@ -9238,7 +9332,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   aria-label="Search product profit and loss"
                 />
                 {pnlProductSearch ? (
-                  <button type="button" className="btn xs btn-ghost" onClick={() => { setPnlProductSearch(""); pnlProductSearchRef.current?.focus(); }} aria-label="Clear product profit search">
+                  <button type="button" className="btn xs btn-ghost" onClick={() => { setScannedPnlProductKey(""); setPnlProductSearch(""); pnlProductSearchRef.current?.focus(); }} aria-label="Clear product profit search">
                     <X size={16} />
                   </button>
                 ) : null}
