@@ -1768,15 +1768,97 @@ function branchInventoryCostCents(data, product, branchId) {
   if (equivalentCost) return equivalentCost;
 
   const equivalentIds = new Set(equivalentProducts.map((candidate) => candidate.id));
+  const normalizedSku = normalizeBarcode(product.sku).toLowerCase();
+  const normalizedName = String(product.name || "").trim().toLowerCase();
+  const matchesProductRecord = (record) => {
+    if (!record) return false;
+    if (equivalentIds.has(record.productId || record.id)) return true;
+    const recordSku = normalizeBarcode(record.sku || record.productSku).toLowerCase();
+    if (normalizedSku && recordSku && recordSku === normalizedSku) return true;
+    const recordName = String(record.productName || record.name || "").trim().toLowerCase();
+    return !!(normalizedName && recordName && recordName === normalizedName);
+  };
   const latestCostedReceipt = (data.stockMovements || [])
     .filter((movement) => movement.branchId === branchId
-      && equivalentIds.has(movement.productId)
+      && matchesProductRecord(movement)
       && Number(movement.qty || 0) > 0
       && Number(movement.costCents || 0) > 0)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
-  return latestCostedReceipt
-    ? Math.max(0, Math.round(Number(latestCostedReceipt.costCents) || 0))
-    : directCost;
+  if (latestCostedReceipt) {
+    return Math.max(0, Math.round(Number(latestCostedReceipt.costCents) || 0));
+  }
+
+  const latestReceivedPurchase = (data.purchases || [])
+    .filter((purchase) => purchase.branchId === branchId
+      && matchesProductRecord(purchase)
+      && String(purchase.status || "").toLowerCase() === "received"
+      && Number(purchase.costCents || 0) > 0)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+  if (latestReceivedPurchase) {
+    return Math.max(0, Math.round(Number(latestReceivedPurchase.costCents) || 0));
+  }
+
+  const latestInboundTransfer = (data.borrowings || [])
+    .filter((transfer) => transfer.toBranchId === branchId)
+    .flatMap((transfer) => {
+      const items = Array.isArray(transfer.items) && transfer.items.length
+        ? transfer.items
+        : [{
+          productId: transfer.productId,
+          sku: transfer.sku,
+          costCents: transfer.costCents,
+        }];
+      return items
+        .filter(matchesProductRecord)
+        .map((item) => ({ ...item, ts: transfer.ts, fromBranchId: transfer.fromBranchId }));
+    })
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+  if (Number(latestInboundTransfer?.costCents || 0) > 0) {
+    return Math.max(0, Math.round(Number(latestInboundTransfer.costCents) || 0));
+  }
+
+  const inboundMovement = (data.stockMovements || [])
+    .filter((movement) => movement.branchId === branchId
+      && matchesProductRecord(movement)
+      && Number(movement.qty || 0) > 0
+      && /^transfer from /i.test(String(movement.reason || "")))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+  const movementSourceName = String(inboundMovement?.reason || "")
+    .replace(/^transfer from /i, "")
+    .split(" (")[0]
+    .trim()
+    .toLowerCase();
+  const movementSourceBranchId = (data.branches || [])
+    .find((candidate) => String(candidate.name || "").trim().toLowerCase() === movementSourceName)?.id;
+  const sourceBranchId = latestInboundTransfer?.fromBranchId || movementSourceBranchId;
+  if (sourceBranchId) {
+    const sourceMappedCost = equivalentProducts
+      .map((candidate) => branchProductCostCents(candidate, sourceBranchId))
+      .find((cost) => cost > 0);
+    if (sourceMappedCost) return sourceMappedCost;
+
+    const sourceReceipt = (data.stockMovements || [])
+      .filter((movement) => movement.branchId === sourceBranchId
+        && matchesProductRecord(movement)
+        && Number(movement.qty || 0) > 0
+        && Number(movement.costCents || 0) > 0)
+      .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+    if (sourceReceipt) {
+      return Math.max(0, Math.round(Number(sourceReceipt.costCents) || 0));
+    }
+
+    const sourcePurchase = (data.purchases || [])
+      .filter((purchase) => purchase.branchId === sourceBranchId
+        && matchesProductRecord(purchase)
+        && String(purchase.status || "").toLowerCase() === "received"
+        && Number(purchase.costCents || 0) > 0)
+      .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+    if (sourcePurchase) {
+      return Math.max(0, Math.round(Number(sourcePurchase.costCents) || 0));
+    }
+  }
+
+  return Math.max(0, Math.round(Number(product.costCents) || 0));
 }
 function productStockValuation(data, product, branchId) {
   const branchIds = branchId ? [branchId] : (data?.branches || []).map((branch) => branch.id);
@@ -8859,7 +8941,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   ].some((value) => String(value || "").toLowerCase().includes(productSearchNeedle));
   const allProductReportRows = reportProducts.map((p) => {
     const priceCents = productBranchAverageCents(data, p, bId, branchProductPriceCents);
-    const costCents = productBranchAverageCents(data, p, bId, branchProductCostCents);
+    const costCents = productBranchAverageCents(data, p, bId, (item, id) => branchInventoryCostCents(data, item, id));
     const qty = qtyFor(p);
     const revenue = qty * priceCents;
     const cost = qty * costCents;
@@ -9251,7 +9333,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
           const moves = data.stockMovements.filter((mv) => equivalentIds.has(mv.productId) && inBranch(mv.branchId)).sort((a, b) => a.ts - b.ts);
           let bal = 0; const ledger = moves.map((mv) => { bal += mv.qty; return { ...mv, bal }; }).reverse();
           const priceCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductPriceCents);
-          const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductCostCents);
+          const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, (item, id) => branchInventoryCostCents(data, item, id));
           const soldUnits = qtyFor(p); const rev = soldUnits * priceCents; const cost = soldUnits * costCents; const cls = classOf(p);
           const lossUnits = lossFor(p); const lossVal = lossUnits * costCents; const gp = rev - cost; const net = gp - lossVal;
           const stockValuation = productStockValuation(data, p, rb === "all" ? undefined : rb);
