@@ -5242,8 +5242,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     const issuedTs = invoiceIssuedTs(invoice);
     return issuedTs >= totalRangeStartTs && issuedTs <= totalRangeEndTs;
   });
-  const open = activeInvoices.filter((i) => invOutstanding(i) > 0);
-  const overdue = activeInvoices.filter((i) => invIsDebt(i));
+  const outstanding = activeInvoices.filter((i) => invOutstanding(i) > 0);
+  const open = outstanding.filter((i) => !invIsDebt(i));
+  const overdue = outstanding.filter((i) => invIsDebt(i));
   const balanceDue = totalInvoicedInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
@@ -5259,7 +5260,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       if (filter === "all") return true;
       if (voidStatus === "approved") return false;
       if (filter === "overdue") return invIsDebt(i);
-      return filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0;
+      return filter === "open"
+        ? invOutstanding(i) > 0 && !invIsDebt(i)
+        : invOutstanding(i) <= 0;
     })
     .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
     .filter((i) => {
@@ -5277,7 +5280,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const filteredBalanceDue = filtered.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
 
   // cashier debts = overdue carried-over invoices, grouped by cashier.
-  const debts = open.filter((i) => invIsDebt(i));
+  const debts = overdue;
   const byCashier = {};
   debts.forEach((i) => {
     const cashier = invoiceCashierName(i);
