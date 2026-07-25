@@ -1484,7 +1484,8 @@ function reconcileInvoicePayments(data) {
     invoices: (data?.invoices || []).map((inv) => {
       const total = Number(inv.totalCents) || 0;
       const paid = Math.min(total, Math.max(Number(inv.paidCents) || 0, totals[inv.id] || 0));
-      return { ...inv, paidCents: paid, carriedOver: paid >= total ? false : inv.carriedOver };
+      const reconciled = { ...inv, paidCents: paid };
+      return { ...reconciled, carriedOver: invoiceWasCarriedOver(data, reconciled) };
     }),
   };
 }
@@ -2022,6 +2023,15 @@ function branchLastEndDay(data, branchId) {
     .reduce((latest, entry) => Math.max(latest, Number(entry.closedAt || entry.ts || 0)), 0);
   return Math.max(mapped, recorded);
 }
+function invoiceWasCarriedOver(data, inv) {
+  if (!inv) return false;
+  if (inv.carriedOver === true || Number(inv.carriedOverAt || 0) > 0) return true;
+  if (inv.archived === true) return false;
+  if (inv.closedDayId) return true;
+  if (invOutstanding(inv) <= 0) return false;
+  const invoiceTs = Number(inv.ts || inv.issuedAt || 0);
+  return invoiceTs > 0 && branchLastEndDay(data, inv.branchId) >= invoiceTs;
+}
 // P&L recognition is intentionally conservative: an invoice must be cleared and its
 // business day must have been closed. Open invoices stay out of profit/margin.
 function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.ts <= lastEndFor(settings, inv.branchId); }
@@ -2046,7 +2056,7 @@ function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").repla
 function normPhone(v) { return (v || "").replace(/[\s-]/g, ""); }
 function invStatus(inv) {
   if (invOutstanding(inv) <= 0) return "paid";
-  if (invIsDebt(inv)) return "debt";
+  if (invIsDebt(inv)) return "overdue";
   return inv.paidCents > 0 ? "partial" : "open";
 }
 function latestInvoiceVoidRequest(data, invoiceId) {
@@ -2069,7 +2079,9 @@ function invoiceIsVoided(data, invoiceOrId) {
   return Boolean(invoiceId && invoiceVoidState(data, invoiceId).status === "approved");
 }
 function operationalInvoices(data) {
-  return (data?.invoices || []).filter((invoice) => !invoiceIsVoided(data, invoice));
+  return (data?.invoices || [])
+    .filter((invoice) => !invoiceIsVoided(data, invoice))
+    .map((invoice) => ({ ...invoice, carriedOver: invoiceWasCarriedOver(data, invoice) }));
 }
 const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
 // Combined date + time stamp for documents (invoices, purchases, expenses, stock moves, etc.)
@@ -2929,8 +2941,10 @@ const css = `
 .paycell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .paycell select{height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 6px}
 .paycell input{width:90px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 8px;font-family:var(--font-mono)}
-.settlebar{display:grid;grid-template-columns:auto minmax(260px,1fr) 180px;gap:10px;align-items:center;margin:14px 0}
+.settlebar{display:grid;grid-template-columns:auto minmax(240px,1fr) minmax(170px,210px) 150px;gap:10px;align-items:center;margin:14px 0}
 .settlebar .seg{display:flex;gap:7px;flex-wrap:wrap}
+.settlement-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.settlement-heading .settlement-scope{font-weight:750;margin-left:auto;text-align:right}
 .settlesearch{position:relative}
 .settlesearch svg{position:absolute;left:13px;top:50%;transform:translateY(-50%);width:17px;height:17px;color:var(--muted-2);z-index:1}
 .settlesearch .input{padding-left:40px}
@@ -2953,7 +2967,8 @@ const css = `
 .void-decision.approved{border-color:rgba(41,158,105,.34);background:rgba(41,158,105,.08)}
 .void-decision.rejected{border-color:rgba(194,58,86,.34);background:rgba(194,58,86,.08)}
 .void-decision span{font-size:12px;color:var(--muted-2)}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
+@media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -5071,6 +5086,7 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const cur = data.settings.currency;
   const [filter, setFilter] = useState("open"), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
+  const [cashierFilter, setCashierFilter] = useState("all");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -5083,6 +5099,9 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const sinceEndDay = activeInvoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
+  const cashierNames = Array.from(new Set(invoices.map(invoiceCashierName)))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
   const needle = query.trim().toLowerCase();
   const filtered = invoices
     .filter((i) => {
@@ -5091,17 +5110,22 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
       if (voidStatus === "approved") return false;
       return filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0;
     })
+    .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
     .filter((i) => {
       if (!needle) return true;
       return [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, i.cashier]
         .some((value) => String(value || "").toLowerCase().includes(needle));
     })
     .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
+  const filteredBalanceDue = filtered.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
 
   // cashier debts = overdue carried-over invoices, grouped by cashier.
   const debts = open.filter((i) => invIsDebt(i));
   const byCashier = {};
-  debts.forEach((i) => { byCashier[i.cashier] = (byCashier[i.cashier] || 0) + invOutstanding(i); });
+  debts.forEach((i) => {
+    const cashier = invoiceCashierName(i);
+    byCashier[cashier] = (byCashier[cashier] || 0) + invOutstanding(i);
+  });
   const debtRows = Object.entries(byCashier);
   const closes = (data.endOfDays || []).filter((e) => e.branchId === branch.id);
 
@@ -5123,7 +5147,12 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
       {sinceEndDay.length === 0 ? <div className="notice">No new invoice sales since the last End of Day close.</div>
         : <div className="notice">{sinceEndDay.length} invoice(s) issued since the last End of Day close.</div>}
 
-      <div className="section-title lead">Supervisor invoice settlement <span style={{ float: "right", fontWeight: 750 }}>{fmt(balanceDue, cur)}</span></div>
+      <div className="section-title lead settlement-heading">
+        Supervisor invoice settlement
+        <span className="settlement-scope">
+          {cashierFilter === "all" ? "All cashiers" : cashierFilter} · {filtered.length} invoice(s) · {fmt(filteredBalanceDue, cur)} due
+        </span>
+      </div>
       <div className="settlebar">
         <div className="seg">
           {[["open", "Open"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
@@ -5131,6 +5160,10 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
           ))}
         </div>
         <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+        <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} title="Filter invoices by cashier">
+          <option value="all">All cashiers</option>
+          {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
         <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} title="Sort invoices">
           <option value="oldest">Oldest first</option>
           <option value="newest">Newest first</option>
@@ -5149,7 +5182,7 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
           {debtRows.length === 0 ? <div className="notice">No carried-over cashier debts.</div> : (
             <div className="list mini">{debtRows.map(([name, amt]) => (
               <div className="row" key={name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{name.charAt(0)}</div>
-                <div className="meta"><div className="nm">{name}</div><div className="mt2">{debts.filter((i) => i.cashier === name).length} unpaid invoice(s)</div></div>
+                <div className="meta"><div className="nm">{name}</div><div className="mt2">{debts.filter((i) => invoiceCashierName(i) === name).length} overdue invoice(s)</div></div>
                 <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(amt, cur)} owed</span></div>))}</div>
           )}
         </div>
@@ -5488,7 +5521,7 @@ function InvoiceRow({ inv, cur, voidInfo, onOpen }) {
       : voidStatus === "rejected" ? "open" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
-      <td><div className="nm">{inv.customerName || "Walk-in"}</div><div className="mt2">{inv.cashier || "Unknown cashier"}</div></td>
+      <td><div className="nm">{inv.customerName || "Walk-in"}</div><div className="mt2">{invoiceCashierName(inv)}</div></td>
       <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
       <td>{dt(inv.ts)}</td>
       <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
@@ -8115,7 +8148,11 @@ function aiDigest(data) {
   const lowStock = []; data.branches.forEach((b) => { reorderList(data, b.id).forEach((p) => { lowStock.push({ branch: b.name, product: p.name, sku: p.sku, onHand: onHand(data, p.id, b.id), reorderLevel: p.reorderLevel ?? data.settings.reorderLevel }); }); });
   const cBy = {}; activeInvoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
   const cashiers = Object.entries(cBy).map(([name, v]) => ({ cashier: name, transactions: v.transactions, salesKES: k(v.sales), avgBasketKES: v.transactions ? k(v.sales / v.transactions) : 0 }));
-  const debt = {}; activeInvoices.filter((i) => invIsDebt(i)).forEach((i) => { debt[i.cashier] = (debt[i.cashier] || 0) + invOutstanding(i); });
+  const debt = {};
+  activeInvoices.filter((i) => invIsDebt(i)).forEach((i) => {
+    const cashier = invoiceCashierName(i);
+    debt[cashier] = (debt[cashier] || 0) + invOutstanding(i);
+  });
   const expT = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
   const shrink = data.stockMovements.filter((m) => m.ts >= startToday && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); return { branch: bname(m.branchId), product: p ? p.name : "?", unitsLost: Math.abs(m.qty) }; });
   const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
@@ -8480,7 +8517,11 @@ function ReportsTab({ data, initialTab }) {
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
   const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
-  const debtByCashier = {}; openInv.filter((i) => invIsDebt(i)).forEach((i) => { debtByCashier[i.cashier] = (debtByCashier[i.cashier] || 0) + invOutstanding(i); });
+  const debtByCashier = {};
+  openInv.filter((i) => invIsDebt(i)).forEach((i) => {
+    const cashier = invoiceCashierName(i);
+    debtByCashier[cashier] = (debtByCashier[cashier] || 0) + invOutstanding(i);
+  });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
   // credit recovery — unpaid carried-over invoices become debts only after overdue.
@@ -8508,9 +8549,9 @@ function ReportsTab({ data, initialTab }) {
       const rws = branchProductsUnique(data, bId).map((p) => { const wk = duplicateProductIds(data, p, bId).reduce((s, id) => s + (sbp[id] || 0), 0) / wkObs; if (wk <= 0) return null; const oh = productOnHand(data, p, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel; const cover = oh / wk; const need = Math.max(0, Math.ceil(wk * reorderWeeks - oh)); return { p, oh, lvl, wk, cover, need }; }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
       return { name: "reorder-forecast", headers: ["Product", "SKU", "On hand", "Weekly demand", "Weeks of cover", "Reorder level", "Suggested order (" + reorderWeeks + "wk cover)"], rows: rws.map((r) => [r.p.name, r.p.sku, r.oh, r.wk.toFixed(2), r.cover.toFixed(1), r.lvl, r.need]) };
     }
-    if (sub === "cashier") return { name: "cashier-credit", headers: ["Cashier", "Owed"], rows: Object.entries(debtByCashier).map(([n, v]) => [n, m(v)]) };
-    if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, i.cashier, i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
-    if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, i.cashier, i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
+    if (sub === "cashier") return { name: "cashier-credit", headers: ["Cashier", "Overdue invoices", "Owed"], rows: Object.entries(debtByCashier).map(([n, v]) => [n, openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length, m(v)]) };
+    if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
+    if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "Qty", "Date", "Status"], rows: transfers.map((t) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), t.productName, t.qty, new Date(t.ts).toLocaleString(), t.status || "completed"]) };
     return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales", m(grossSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared", m(cleared)]] };
@@ -8862,7 +8903,7 @@ function ReportsTab({ data, initialTab }) {
         Object.keys(debtByCashier).length === 0 ? <div className="notice">No overdue cashier debts.</div> : (
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
-            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => i.cashier === n && invIsDebt(i)).length} overdue invoice(s)</div></div>
+            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} overdue invoice(s)</div></div>
             <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span></div>))}</div>)
       )}
 
