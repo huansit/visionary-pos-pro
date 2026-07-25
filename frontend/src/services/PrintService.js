@@ -16,7 +16,10 @@ function reportHtml(report) {
   <meta charset="utf-8" />
   <title>${String(report?.title || "Report").replace(/[<>&]/g, "")}</title>
   <style>${printCss}</style>
-  <style>@page{size:A4 ${orientation};margin:12mm}</style>
+  <style>
+    @page{size:A4 ${orientation};margin:12mm}
+    html,body{margin:0;background:#fff;color:#111827}
+  </style>
 </head>
 <body>
   <div id="print-root">${markup}</div>
@@ -39,14 +42,59 @@ export function previewReport(reportComponent) {
 }
 
 export function printReport(reportComponent) {
-  const win = openPrintWindow(reportComponent);
-  const run = () => {
-    try {
-      win.focus();
-      win.print();
-    } catch (_) {}
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "1px";
+  frame.style.height = "1px";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  frame.style.pointerEvents = "none";
+  document.body.appendChild(frame);
+
+  const printDocument = frame.contentDocument;
+  const printWindow = frame.contentWindow;
+  if (!printDocument || !printWindow) {
+    frame.remove();
+    throw new Error("print_frame_unavailable");
+  }
+
+  let printed = false;
+  let cleanupTimer;
+  const cleanup = () => {
+    window.clearTimeout(cleanupTimer);
+    window.setTimeout(() => frame.remove(), 250);
   };
-  window.setTimeout(run, 350);
+  const run = async () => {
+    if (printed) return;
+    printed = true;
+    const images = Array.from(printDocument.images || []);
+    await Promise.all(images.map((image) => image.complete
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", resolve, { once: true });
+        })));
+    if (printDocument.fonts?.ready) await printDocument.fonts.ready.catch(() => {});
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      try {
+        printWindow.addEventListener("afterprint", cleanup, { once: true });
+        printWindow.focus();
+        printWindow.print();
+      } catch (_) {
+        cleanup();
+      }
+    }));
+  };
+
+  frame.addEventListener("load", run, { once: true });
+  printDocument.open();
+  printDocument.write(reportHtml(reportComponent));
+  printDocument.close();
+  cleanupTimer = window.setTimeout(cleanup, 60000);
+  window.setTimeout(run, 750);
 }
 
 export function exportPDF(reportComponent) {
