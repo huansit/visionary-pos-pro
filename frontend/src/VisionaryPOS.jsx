@@ -1753,6 +1753,31 @@ function branchProductCostCents(product, branchId) {
   const mapped = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"]);
   return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.costCents) || 0));
 }
+function productStockValuation(data, product, branchId) {
+  const branchIds = branchId ? [branchId] : (data?.branches || []).map((branch) => branch.id);
+  if (!branchIds.length) {
+    const quantity = Math.max(0, productOnHand(data, product, undefined));
+    return {
+      quantity,
+      costValue: quantity * Math.max(0, Math.round(Number(product?.costCents) || 0)),
+      retailValue: quantity * Math.max(0, Math.round(Number(product?.priceCents) || 0)),
+    };
+  }
+  return branchIds.reduce((totals, id) => {
+    const quantity = Math.max(0, productOnHand(data, product, id));
+    totals.quantity += quantity;
+    totals.costValue += quantity * branchProductCostCents(product, id);
+    totals.retailValue += quantity * branchProductPriceCents(product, id);
+    return totals;
+  }, { quantity: 0, costValue: 0, retailValue: 0 });
+}
+function productBranchAverageCents(data, product, branchId, valueForBranch) {
+  if (branchId) return valueForBranch(product, branchId);
+  const values = (data?.branches || [])
+    .map((branch) => valueForBranch(product, branch.id))
+    .filter((value) => Number(value) > 0);
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+}
 function withBranchMappedCents(product, branchId, mapField, valueField, cents) {
   if (!product || !branchId) return product;
   return {
@@ -1853,7 +1878,7 @@ function stockCountRows(data, session) {
       liveQty,
       varianceQty: countedQty === null ? null : countedQty - expectedQty,
       commitDelta: finalQty === null ? 0 : finalQty - liveQty,
-      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * (product?.costCents || 0),
+      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * branchProductCostCents(product, session.branchId),
     };
   }).filter((row) => row.product);
 }
@@ -4050,7 +4075,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
   const belowCostLines = lines.filter((l) => {
     const p = data.products.find((x) => x.id === l.productId);
-    return p && l.priceCents < p.costCents;
+    return p && l.priceCents < branchProductCostCents(p, branch.id);
   });
   const saleBlocked = belowCostLines.length > 0;
   const notifyScan = (message, kind = "success") => {
@@ -4829,7 +4854,24 @@ function InsightsTab({ data, online }) {
     const Q = question.toLowerCase();
     const activeInvoices = operationalInvoices(data);
     if (Q.includes("low-stock") || Q.includes("reorder")) { const l = reorderList(data); return l.length ? "Items at or below reorder level:\n" + l.slice(0, 12).map((p) => "• " + p.name + " — " + onHand(data, p.id) + " left (reorder " + (p.reorderLevel ?? data.settings.reorderLevel) + ")").join("\n") : "All products are above their reorder level."; }
-    if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) { const by = {}; data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) by[p.id] = (by[p.id] || 0) + (-m.qty); } }); const rows = Object.entries(by).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { p, qty, rev: qty * (p ? p.priceCents : 0) }; }).filter((r) => r.p); const byRev = Q.includes("fast") ? rows.sort((a, b) => b.qty - a.qty) : rows.sort((a, b) => b.rev - a.rev); return byRev.length ? "Top products:\n" + byRev.slice(0, 5).map((r, i) => (i + 1) + ". " + r.p.name + " — " + r.qty + " sold · " + f(r.rev)).join("\n") : "No cleared sales recorded yet."; }
+    if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) {
+      const by = {};
+      data.stockMovements.forEach((movement) => {
+        if (typeof movement.reason !== "string" || !movement.reason.startsWith("Sale") || !saleMoveRecognized(data, movement)) return;
+        const product = data.products.find((item) => item.id === movement.productId);
+        if (!product) return;
+        const key = `${product.id}:${movement.branchId || ""}`;
+        const row = by[key] || { product, branchId: movement.branchId, qty: 0 };
+        row.qty += -movement.qty;
+        by[key] = row;
+      });
+      const rows = Object.values(by).map((row) => ({
+        ...row,
+        rev: row.qty * branchProductPriceCents(row.product, row.branchId),
+      }));
+      const byRev = Q.includes("fast") ? rows.sort((a, b) => b.qty - a.qty) : rows.sort((a, b) => b.rev - a.rev);
+      return byRev.length ? "Top products:\n" + byRev.slice(0, 5).map((row, index) => (index + 1) + ". " + row.product.name + " — " + row.qty + " sold · " + f(row.rev)).join("\n") : "No cleared sales recorded yet.";
+    }
     if (Q.includes("outstanding debts per cashier") || Q.includes("debts per cashier")) { const by = {}; activeInvoices.filter((i) => invIsDebt(i)).forEach((i) => { const o = invOutstanding(i); if (o > 0) by[i.cashier] = (by[i.cashier] || 0) + o; }); const rows = Object.entries(by).sort((a, b) => b[1] - a[1]); return rows.length ? "Overdue debts by cashier:\n" + rows.map(([n, v]) => "• " + n + " — " + f(v)).join("\n") : "No overdue cashier debts."; }
     if (Q.includes("invoices cleared per cashier") || Q.includes("cashier performance")) { const by = {}; activeInvoices.forEach((i) => { const k = i.cashier || "—"; by[k] = by[k] || { n: 0, sales: 0, owed: 0 }; by[k].n++; by[k].sales += i.totalCents; by[k].owed += invOutstanding(i); }); const rows = Object.entries(by).sort((a, b) => b[1].sales - a[1].sales); return rows.length ? "Cashier summary:\n" + rows.map(([n, v]) => "• " + n + " — " + v.n + " invoices · " + f(v.sales) + " sold · " + f(v.owed) + " owed").join("\n") : "No invoices yet."; }
     if (Q.includes("average invoice")) { const inv = activeInvoices; const tot = inv.reduce((s, i) => s + i.totalCents, 0); return inv.length ? "Average invoice value: " + f(Math.round(tot / inv.length)) + " across " + inv.length + " invoices." : "No invoices yet."; }
@@ -5111,7 +5153,11 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     const invoiceC = inv.reduce((s, i) => s + invOutstanding(i), 0);
     const expenseC = (data.expenses || []).filter((e) => e.branchId === bId && e.ts > since && isApprovedExpense(e)).reduce((s, e) => s + e.amountCents, 0);
     const byProd = {}; moves.forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
-    const lines = Object.entries(byProd).map(([id, qty]) => { const p = data.products.find((x) => x.id === id); return { name: p ? p.name : "Product", qty, priceCents: p ? p.priceCents : 0, totalCents: qty * (p ? p.priceCents : 0) }; }).sort((a, b) => b.totalCents - a.totalCents);
+    const lines = Object.entries(byProd).map(([id, qty]) => {
+      const product = data.products.find((item) => item.id === id);
+      const priceCents = product ? branchProductPriceCents(product, bId) : 0;
+      return { name: product ? product.name : "Product", qty, priceCents, totalCents: qty * priceCents };
+    }).sort((a, b) => b.totalCents - a.totalCents);
     const cBy = {}; inv.forEach((i) => { const c = cBy[i.cashier] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[i.cashier] = c; });
     const now0 = new Date();
     d = {
@@ -5516,7 +5562,7 @@ function DashboardTab({ data, update, branch, online }) {
   const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
   const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
   const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts) && saleMoveRecognized(data, m))
-    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * p.costCents : 0); }, 0);
+    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchProductCostCents(p, m.branchId) : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
   const creditTotal = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
@@ -6488,7 +6534,7 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     system: row.expectedQty,
     counted: row.countedQty,
     variance: row.varianceQty,
-    costCents: row.product.costCents || 0,
+    costCents: branchProductCostCents(row.product, session.branchId),
     kind: "session",
   }));
   return {
@@ -6496,7 +6542,7 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     branchId: session.branchId,
     code: session.code,
     ts: session.committedAt || now(),
-    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: row.product.costCents || 0, kind: "session" })),
+    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: branchProductCostCents(row.product, session.branchId), kind: "session" })),
     discrepancies,
     varianceUnits: rows.reduce((s, row) => s + (row.varianceQty || 0), 0),
     varianceCost: rows.reduce((s, row) => s + row.valueImpact, 0),
@@ -6505,8 +6551,8 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     shortCost: discrepancies.filter((l) => l.variance < 0).reduce((s, l) => s + Math.abs(l.variance * l.costCents), 0),
     overCost: discrepancies.filter((l) => l.variance > 0).reduce((s, l) => s + l.variance * l.costCents, 0),
     invUnits: rows.reduce((s, row) => s + (row.finalQty || 0), 0),
-    invCost: rows.reduce((s, row) => s + (row.finalQty || 0) * (row.product.costCents || 0), 0),
-    invRetail: rows.reduce((s, row) => s + (row.finalQty || 0) * (row.product.priceCents || 0), 0),
+    invCost: rows.reduce((s, row) => s + (row.finalQty || 0) * branchProductCostCents(row.product, session.branchId), 0),
+    invRetail: rows.reduce((s, row) => s + (row.finalQty || 0) * branchProductPriceCents(row.product, session.branchId), 0),
     applied: movements.length,
     amendments: 0,
     store: data.settings.store,
@@ -6605,14 +6651,14 @@ function StockTabLegacy({ data, update, branch }) {
       if (already && !amending[p.id]) return;
       const system = productOnHand(data, p, bId); const variance = counted - system;
       const kind = already ? "amendment" : "count";
-      lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: p.costCents, kind });
+      lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: branchProductCostCents(p, bId), kind });
       if (variance !== 0) movements.push({ id: uid("mv"), productId: p.id, branchId: bId, qty: variance, mode: "count", reason: kind === "amendment" ? "Count amendment" : "Inventory count", ts, synced: false });
       logs.push({ id: uid("cl"), productId: p.id, branchId: bId, qty: counted, mode: "count", system, counted, variance, kind, ts, synced: false });
     });
     if (lines.length === 0) return;
     const countedMap = {}; lines.forEach((l) => { countedMap[l.id] = l.counted; });
     let invUnits = 0, invCost = 0, invRetail = 0;
-    uniqueProducts.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : productOnHand(data, p, bId); invUnits += qv; invCost += qv * p.costCents; invRetail += qv * p.priceCents; });
+    uniqueProducts.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : productOnHand(data, p, bId); invUnits += qv; invCost += qv * branchProductCostCents(p, bId); invRetail += qv * branchProductPriceCents(p, bId); });
     update((d) => ({ ...d, stockMovements: movements.length ? [...d.stockMovements, ...movements] : d.stockMovements, countLog: [...(d.countLog || []), ...logs] }));
     const discrepancies = lines.filter((l) => l.variance !== 0);
     setReport({ branchName: bname, branchId: bId, ts, lines, discrepancies,
@@ -6671,7 +6717,7 @@ function StockTabLegacy({ data, update, branch }) {
       <div className="tablewrap tblscroll" style={{ marginTop: 18 }}><table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Change</th><th>Value</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>{list.map((p) => {
           const oh = productOnHand(data, p, bId); const low = oh <= (p.reorderLevel ?? data.settings.reorderLevel);
-          const value = oh * p.costCents;
+          const value = oh * branchProductCostCents(p, bId);
           const prevCount = lastCount(p.id); const locked = !!prevCount && !amending[p.id];
           const isCounted = counts[p.id] !== undefined && counts[p.id] !== "";
           const counted = isCounted && !Number.isNaN(parseInt(counts[p.id], 10)) ? parseInt(counts[p.id], 10) : oh;
@@ -6739,7 +6785,7 @@ function StockTabLegacy({ data, update, branch }) {
                   <div><label className="label">Reason</label><select className="select" value={lf.reason} onChange={(e) => setLf({ ...lf, reason: e.target.value })}>{LOSS_REASONS.map((r) => <option key={r}>{r}</option>)}</select></div>
                 </div>
                 <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={lf.note} onChange={(e) => setLf({ ...lf, note: e.target.value })} placeholder="e.g. broken in transit, shoplifting incident" /></div>
-                {parseInt(lf.qty, 10) > 0 && <div className="cust-meta" style={{ marginTop: 8 }}>Removes {Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId)))} unit(s) · cost impact {fmt(Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId))) * lossProd.costCents, cur)}</div>}
+                {parseInt(lf.qty, 10) > 0 && <div className="cust-meta" style={{ marginTop: 8 }}>Removes {Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId)))} unit(s) · cost impact {fmt(Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId))) * branchProductCostCents(lossProd, bId), cur)}</div>}
                 <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={!(parseInt(lf.qty, 10) > 0)} onClick={recordLoss}><Check /> Record write-off</button>
               </>
             )}
@@ -6749,7 +6795,7 @@ function StockTabLegacy({ data, update, branch }) {
                 <div className="list" style={{ maxHeight: 220, overflow: "auto" }}>{lossList.slice(0, 30).map((m) => { const p = data.products.find((x) => x.id === m.productId); return (
                   <div className="row" key={m.id}><div className="avatar"><TrendingDown style={{ width: 16, height: 16 }} /></div>
                     <div className="meta"><div className="nm">{Math.abs(m.qty)}× {p ? p.name : m.productId}</div><div className="mt2">{m.reason.replace("Loss/Damage · ", "")} · {dt(m.ts)}</div></div>
-                    <span className="pill plain">{fmt(Math.abs(m.qty) * (p ? p.costCents : 0), cur)}</span></div>); })}</div>
+                    <span className="pill plain">{fmt(Math.abs(m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0), cur)}</span></div>); })}</div>
               </>
             )}
           </div>
@@ -7337,12 +7383,16 @@ function BranchesTab({ data, update }) {
   const prod = (id) => data.products.find((p) => p.id === id);
   const stats = (b) => {
     let units = 0, value = 0;
-    branchProductsUnique(data, b.id).forEach((p) => { const oh = Math.max(0, productOnHand(data, p, b.id)); units += oh; value += oh * p.costCents; });
+    branchProductsUnique(data, b.id).forEach((p) => {
+      const valuation = productStockValuation(data, p, b.id);
+      units += valuation.quantity;
+      value += valuation.costValue;
+    });
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
     const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
     const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
-    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
+    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, b.id) : 0); }, 0);
     const expenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
     const grossProfit = grossSales - cogs;
     const netProfit = grossProfit - expenses;
@@ -7935,11 +7985,17 @@ function aiDigest(data) {
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
     const recognizedSalesToday = it.filter((i) => invRecognized(i, data.settings)).reduce((s, i) => s + i.totalCents, 0);
     const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveRecognized(data, m));
-    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
+    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0); }, 0);
     return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(recognizedSalesToday - cogs), marginPct: recognizedSalesToday > 0 ? Math.round((recognizedSalesToday - cogs) / recognizedSalesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
   });
   const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveRecognized(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
-  const topProducts = Object.entries(byProd).map(([id, u]) => { const p = prod(id); return p ? { product: p.name, sku: p.sku, units: u, revenueKES: k(u * p.priceCents) } : null; }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
+  const topProducts = Object.entries(byProd).map(([id, u]) => {
+    const p = prod(id);
+    if (!p) return null;
+    const revenue = saleMv((m) => m.productId === id && m.ts >= startToday && saleMoveRecognized(data, m))
+      .reduce((sum, movement) => sum + (-movement.qty) * branchProductPriceCents(p, movement.branchId), 0);
+    return { product: p.name, sku: p.sku, units: u, revenueKES: k(revenue) };
+  }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
   const payT = {}, pay7 = {}; data.payments.filter((p) => p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p))).forEach((p) => { if (p.ts >= startToday) payT[p.method] = (payT[p.method] || 0) + p.amountCents; if (p.ts >= start7) pay7[p.method] = (pay7[p.method] || 0) + p.amountCents; });
   const lowStock = []; data.branches.forEach((b) => { reorderList(data, b.id).forEach((p) => { lowStock.push({ branch: b.name, product: p.name, sku: p.sku, onHand: onHand(data, p.id, b.id), reorderLevel: p.reorderLevel ?? data.settings.reorderLevel }); }); });
   const cBy = {}; activeInvoices.filter((i) => i.ts >= startToday).forEach((i) => { const c = cBy[i.cashier] || { transactions: 0, sales: 0 }; c.transactions++; c.sales += i.totalCents; cBy[i.cashier] = c; });
@@ -8265,11 +8321,11 @@ function ReportsTab({ data, initialTab }) {
   const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
-  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * ((p && p.costCents) || 0); }, 0);
-  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * ((p && p.costCents) || 0); });
+  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0); }, 0);
+  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0); });
 
   const itemsSold = saleMoves.reduce((s, m) => s + (-m.qty), 0);
-  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * ((p && p.costCents) || 0); }, 0);
+  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0); }, 0);
   const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
   const grossProfit = grossSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
@@ -8277,17 +8333,31 @@ function ReportsTab({ data, initialTab }) {
   const margin = grossSales > 0 ? Math.round((grossProfit / grossSales) * 100) : 0;
   const cleared = pays.reduce((s, p) => s + p.amountCents, 0);
   const pending = countPending(data);
+  const inventoryValue = reportProducts.reduce(
+    (sum, product) => sum + productStockValuation(data, product, bId).costValue,
+    0
+  );
 
   const payMix = {}; pays.forEach((p) => { payMix[p.method] = (payMix[p.method] || 0) + p.amountCents; });
   const payRows = Object.entries(payMix).sort((a, b) => b[1] - a[1]);
   const payMax = Math.max(1, ...payRows.map(([, v]) => v));
 
-  const byProd = {}; saleMoves.forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
-  const productRows = Object.entries(byProd).map(([id, qty]) => {
-    const p = prod(id); if (!p) return null;
-    const revenue = qty * p.priceCents, cost = qty * p.costCents;
-    return { p, qty, revenue, cost, profit: revenue - cost, marg: revenue > 0 ? Math.round((revenue - cost) / revenue * 100) : 0 };
-  }).filter(Boolean).sort((a, b) => b.revenue - a.revenue);
+  const byProd = {};
+  saleMoves.forEach((movement) => {
+    const p = prod(movement.productId);
+    if (!p) return;
+    const qty = -movement.qty;
+    const row = byProd[movement.productId] || { p, qty: 0, revenue: 0, cost: 0 };
+    row.qty += qty;
+    row.revenue += qty * branchProductPriceCents(p, movement.branchId);
+    row.cost += qty * branchProductCostCents(p, movement.branchId);
+    byProd[movement.productId] = row;
+  });
+  const productRows = Object.values(byProd).map((row) => ({
+    ...row,
+    profit: row.revenue - row.cost,
+    marg: row.revenue > 0 ? Math.round((row.revenue - row.cost) / row.revenue * 100) : 0,
+  })).sort((a, b) => b.revenue - a.revenue);
   const topMax = Math.max(1, ...productRows.map((r) => r.qty));
 
   const trend = {}; recInvs.forEach((i) => { trend[i.date] = (trend[i.date] || 0) + i.totalCents; });
@@ -8311,10 +8381,10 @@ function ReportsTab({ data, initialTab }) {
   // export builder for the active sub-report
   const buildExport = () => {
     const m = (c) => (c / 100);
-    if (sub === "products") return { name: "product-report", headers: ["Product", "SKU", "Units", "Revenue", "COGS", "Loss value", "Net profit", "Margin %"], rows: productRows.map((r) => { const lv = lossMoves.filter((mv) => mv.productId === r.p.id).reduce((s, mv) => s + Math.abs(mv.qty) * r.p.costCents, 0); return [r.p.name, r.p.sku, r.qty, m(r.revenue), m(r.cost), m(lv), m(r.profit - lv), r.marg]; }) };
+    if (sub === "products") return { name: "product-report", headers: ["Product", "SKU", "Units", "Revenue", "COGS", "Loss value", "Net profit", "Margin %"], rows: productRows.map((r) => { const lv = lossMoves.filter((mv) => mv.productId === r.p.id).reduce((s, mv) => s + Math.abs(mv.qty) * branchProductCostCents(r.p, mv.branchId), 0); return [r.p.name, r.p.sku, r.qty, m(r.revenue), m(r.cost), m(lv), m(r.profit - lv), r.marg]; }) };
     if (sub === "pnl") return { name: "profit-loss", headers: ["Line", "Amount"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)]] };
-    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * ((p && p.costCents) || 0))]; }) };
-    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: branchProductsUnique(data, bId).map((p) => { const oh = productOnHand(data, p, bId); return [p.name, p.sku, oh, m(oh * p.costCents), m(oh * p.priceCents)]; }) };
+    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0))]; }) };
+    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: branchProductsUnique(data, bId).map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
       const fm = data.stockMovements.filter((m2) => typeof m2.reason === "string" && m2.reason.startsWith("Sale") && m2.ts >= lbStart && inBranch(m2.branchId));
@@ -8328,7 +8398,7 @@ function ReportsTab({ data, initialTab }) {
     if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, i.cashier, i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "Qty", "Date", "Status"], rows: transfers.map((t) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), t.productName, t.qty, new Date(t.ts).toLocaleString(), t.status || "completed"]) };
-    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared", m(cleared)]] };
+    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales", m(grossSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
   const activeBranchName = rb === "all" ? "All branches" : bname(rb);
@@ -8416,6 +8486,7 @@ function ReportsTab({ data, initialTab }) {
         <>
           <div className="stats">
             <Stat l="Gross Sales" v={fmt(grossSales, cur)} />
+            <Stat l="Inventory Value" v={fmt(inventoryValue, cur)} sub2={activeBranchName} />
             <Stat l="Net Profit" v={fmt(netProfit, cur)} warn={netProfit < 0} />
             <Stat l="Cost of Goods" v={fmt(cogs, cur)} />
             <Stat l="Average Margin" v={margin + "%"} />
@@ -8510,11 +8581,12 @@ function ReportsTab({ data, initialTab }) {
           equivalentIds.add(p.id);
           const moves = data.stockMovements.filter((mv) => equivalentIds.has(mv.productId) && inBranch(mv.branchId)).sort((a, b) => a.ts - b.ts);
           let bal = 0; const ledger = moves.map((mv) => { bal += mv.qty; return { ...mv, bal }; }).reverse();
-          const priceCents = rb === "all" ? Number(p.priceCents || 0) : branchProductPriceCents(p, rb);
-          const costCents = rb === "all" ? Number(p.costCents || 0) : branchProductCostCents(p, rb);
+          const priceCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductPriceCents);
+          const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductCostCents);
           const soldUnits = qtyFor(p); const rev = soldUnits * priceCents; const cost = soldUnits * costCents; const cls = classOf(p);
           const lossUnits = lossFor(p); const lossVal = lossUnits * costCents; const gp = rev - cost; const net = gp - lossVal;
-          const stockOnHand = rb === "all" ? productOnHand(data, p, null) : productOnHand(data, p, rb);
+          const stockValuation = productStockValuation(data, p, rb === "all" ? undefined : rb);
+          const stockOnHand = stockValuation.quantity;
           return (
             <div>
               <button className="btn xs btn-ghost" onClick={() => setProdSel(null)} style={{ marginBottom: 12 }}><ArrowLeft /> All products</button>
@@ -8525,7 +8597,7 @@ function ReportsTab({ data, initialTab }) {
                   <Stat l="On hand" v={stockOnHand} />
                   <Stat l="Units sold" v={soldUnits} sub2={period === "all" ? "all time" : period === "custom" ? "custom range" : period} />
                   <Stat l="Units lost" v={lossUnits} warn={lossUnits > 0} />
-                  <Stat l="Stock value" v={fmt(stockOnHand * costCents, cur)} />
+                  <Stat l="Stock value" v={fmt(stockValuation.costValue, cur)} />
                 </div>
               </div>
               <div className="panel" style={{ marginBottom: 14 }}>
@@ -8587,8 +8659,8 @@ function ReportsTab({ data, initialTab }) {
             </div>
             <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
               <tbody>{visibleProducts.map((p) => {
-                const priceCents = rb === "all" ? Number(p.priceCents || 0) : branchProductPriceCents(p, rb);
-                const costCents = rb === "all" ? Number(p.costCents || 0) : branchProductCostCents(p, rb);
+                const priceCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductPriceCents);
+                const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductCostCents);
                 const q = qtyFor(p);
                 const rev = q * priceCents;
                 const net = rev - q * costCents - lossFor(p) * costCents;
@@ -8617,14 +8689,14 @@ function ReportsTab({ data, initialTab }) {
       )}
 
       {sub === "inventory" && (() => {
-        const rows = branchProductsUnique(data, bId).map((p) => ({ p, oh: productOnHand(data, p, bId) }));
-        const costVal = rows.reduce((s, r) => s + r.oh * r.p.costCents, 0);
-        const retailVal = rows.reduce((s, r) => s + r.oh * r.p.priceCents, 0);
-        const units = rows.reduce((s, r) => s + r.oh, 0);
+        const rows = branchProductsUnique(data, bId).map((p) => ({ p, ...productStockValuation(data, p, bId) }));
+        const costVal = rows.reduce((s, r) => s + r.costValue, 0);
+        const retailVal = rows.reduce((s, r) => s + r.retailValue, 0);
+        const units = rows.reduce((s, r) => s + r.quantity, 0);
         return (<>
           <div className="stats"><Stat l="Units on hand" v={units} /><Stat l="Stock value (cost)" v={fmt(costVal, cur)} /><Stat l="Stock value (retail)" v={fmt(retailVal, cur)} /><Stat l="Potential margin" v={fmt(retailVal - costVal, cur)} /></div>
           <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>SKU</th><th>On hand</th><th>Cost value</th><th>Retail value</th></tr></thead>
-            <tbody>{rows.map((r) => (<tr key={r.p.id}><td>{r.p.name}</td><td>{r.p.sku}</td><td>{r.oh}</td><td className="amt">{fmt(r.oh * r.p.costCents, cur)}</td><td className="amt">{fmt(r.oh * r.p.priceCents, cur)}</td></tr>))}</tbody></table></div>
+            <tbody>{rows.map((r) => (<tr key={r.p.id}><td>{r.p.name}</td><td>{r.p.sku}</td><td>{r.quantity}</td><td className="amt">{fmt(r.costValue, cur)}</td><td className="amt">{fmt(r.retailValue, cur)}</td></tr>))}</tbody></table></div>
         </>);
       })()}
 
@@ -8647,7 +8719,7 @@ function ReportsTab({ data, initialTab }) {
           return { p, oh, lvl, wk, cover, need };
         }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
         const totalUnits = rows.reduce((s, r) => s + r.need, 0);
-        const totalCost = rows.reduce((s, r) => s + r.need * r.p.costCents, 0);
+        const totalCost = rows.reduce((s, r) => s + r.need * productBranchAverageCents(data, r.p, bId, branchProductCostCents), 0);
         return (<>
           <div className="cfilter" style={{ marginBottom: 12 }}>
             <span className="cfilthint" style={{ marginRight: 8 }}>Cover demand for</span>
@@ -8739,7 +8811,7 @@ function ReportsTab({ data, initialTab }) {
                   <td><div className="nm">{p ? p.name : mv.productId}</div><div className="mt2">{p ? p.sku : ""}</div></td>
                   <td style={{ fontWeight: 700, color: "var(--danger)" }}>−{Math.abs(mv.qty)}</td>
                   <td>{mv.reason.replace("Loss/Damage · ", "")}</td>
-                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * (p ? p.costCents : 0), cur)}</td></tr>); })}</tbody></table></div>)}
+                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0), cur)}</td></tr>); })}</tbody></table></div>)}
         </>
       )}
 
@@ -8814,7 +8886,7 @@ function DocumentsTab({ data }) {
     (data.countLog || []).filter((c) => inRange(c.ts)).forEach((c) => { const k = c.branchId + "|" + c.ts; (groups[k] = groups[k] || []).push(c); });
     docs = Object.entries(groups).map(([key, entries]) => {
       const ts = entries[0].ts; const branchId = entries[0].branchId;
-      const lines = entries.map((c) => { const p = prod(c.productId); return { id: c.id, name: p ? p.name : c.productId, sku: p ? p.sku : "", system: c.system, counted: c.counted, variance: c.variance, costCents: p ? p.costCents : 0, kind: c.kind }; });
+      const lines = entries.map((c) => { const p = prod(c.productId); return { id: c.id, name: p ? p.name : c.productId, sku: p ? p.sku : "", system: c.system, counted: c.counted, variance: c.variance, costCents: p ? branchProductCostCents(p, branchId) : 0, kind: c.kind }; });
       const discrepancies = lines.filter((l) => l.variance !== 0);
       const rep = { store: data.settings.store, branchName: bname(branchId), branchId, ts, lines, discrepancies,
         varianceUnits: lines.reduce((s, l) => s + l.variance, 0), varianceCost: lines.reduce((s, l) => s + l.variance * l.costCents, 0),
@@ -8831,7 +8903,7 @@ function DocumentsTab({ data }) {
     });
   } else if (type === "loss") {
     eyebrow = "Shrinkage"; title = "Loss & Damage Reports";
-    docs = data.stockMovements.filter((m) => inRange(m.ts) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? p.costCents : 0);
+    docs = data.stockMovements.filter((m) => inRange(m.ts) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchProductCostCents(p, m.branchId) : 0);
       return { id: m.id, label: p ? p.name : "Product", meta: bname(m.branchId) + " · " + Math.abs(m.qty) + " units lost", date: dt(m.ts), ts: m.ts, amountCents: Math.abs(val),
         detail: [["Product", p ? p.name : ""], ["SKU", p ? p.sku : ""], ["Branch", bname(m.branchId)], ["Units lost", Math.abs(m.qty)], ["Cost value", fmt(Math.abs(val), cur)], ["Source", m.reason], ["When", new Date(m.ts).toLocaleString()]] }; });
   } else if (type === "transfers") {
