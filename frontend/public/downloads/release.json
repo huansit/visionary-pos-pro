@@ -1,14 +1,15 @@
 {
-  "version": "2.0.43",
+  "version": "2.0.44",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.43_x64-setup.exe",
-  "size": 3150605,
-  "sha512": "7C7B33A23C0B9EE0633FAD8761959D3CCA97B1221DEA489D3EC964EEDFB506B913B4782D6FDE71E55C0D53B5C8CAE090823BD022872B77EF1B88A84E6CBB1B01",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.44_x64-setup.exe",
+  "size": 3152487,
+  "sha512": "C931AB4364882486F3527FB74EC9D3FF463BDFC9ABF3C0E74BF6F276456B5B777B904914C9895E82E62E72856D618C993D0EC6E9077D1EFCDE37ACAD96A88EE8",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.43",
-    "Approved voided invoices are excluded from Sales Today totals and Paid, Open, and Pending counts.",
-    "Pending and rejected void requests remain visible until a supervisor or administrator approves the void.",
-    "Open invoices and carried debts use the same approved-void filtering as cashier sales summaries.",
+    "VISIONPOS Cashier 2.0.44",
+    "End-of-day closing now resets the cashier's current-day sales totals and persists after refresh or restart.",
+    "Outstanding invoices from the closed business day now move into carried-over debts for the correct branch.",
+    "Same-day open invoices no longer block a customer from making another sale.",
+    "Only carried-over debt from a completed end-of-day close blocks further customer sales.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

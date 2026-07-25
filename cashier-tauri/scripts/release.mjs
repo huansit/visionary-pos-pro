@@ -99,9 +99,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Approved voided invoices are excluded from Sales Today totals and Paid, Open, and Pending counts.",
-  "Pending and rejected void requests remain visible until a supervisor or administrator approves the void.",
-  "Open invoices and carried debts use the same approved-void filtering as cashier sales summaries.",
+  "End-of-day closing now resets the cashier's current-day sales totals and persists after refresh or restart.",
+  "Outstanding invoices from the closed business day now move into carried-over debts for the correct branch.",
+  "Same-day open invoices no longer block a customer from making another sale.",
+  "Only carried-over debt from a completed end-of-day close blocks further customer sales.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 
