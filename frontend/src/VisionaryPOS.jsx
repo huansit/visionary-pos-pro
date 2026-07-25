@@ -8580,6 +8580,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const [prodSel, setProdSel] = useState(null);
   const [productSearch, setProductSearch] = useState("");
   const [productScannerOn, setProductScannerOn] = useState(false);
+  const [productScanMessage, setProductScanMessage] = useState("");
   const productSearchRef = useRef(null);
   const [reorderWeeks, setReorderWeeks] = useState(2); // weeks of demand to cover in the reorder forecast
   const [printPreview, setPrintPreview] = useState(null);
@@ -8598,10 +8599,13 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         [product.sku, product.barcode, ...barcodeCatalogIdsForProduct(product)]
           .some((candidate) => normalizeBarcode(candidate).toLowerCase() === needle)
       );
-      if (match) setProdSel(match.id);
+      if (match) {
+        setProductScanMessage("Scanned " + match.name);
+        setProdSel(match.id);
+      }
       else {
         setProductSearch(value);
-        productSearchRef.current?.focus();
+        setProductScanMessage("Barcode not matched. Showing search results for " + value + ".");
       }
     },
   });
@@ -8622,7 +8626,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
   const pays = data.payments.filter((p) => p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p)) && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
-  const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts));
+  const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts) && inBranch(e.branchId));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
   const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0); }, 0);
@@ -8646,22 +8650,99 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const payRows = Object.entries(payMix).sort((a, b) => b[1] - a[1]);
   const payMax = Math.max(1, ...payRows.map(([, v]) => v));
 
-  const byProd = {};
-  saleMoves.forEach((movement) => {
-    const p = prod(movement.productId);
-    if (!p) return;
-    const qty = -movement.qty;
-    const row = byProd[movement.productId] || { p, qty: 0, revenue: 0, cost: 0 };
-    row.qty += qty;
-    row.revenue += qty * branchProductPriceCents(p, movement.branchId);
-    row.cost += qty * branchProductCostCents(p, movement.branchId);
-    byProd[movement.productId] = row;
+  // Build product analytics once so the visible table, preview, print, PDF and
+  // downloads cannot drift onto different product/sales datasets.
+  const productsById = new Map((data.products || []).map((product) => [product.id, product]));
+  const productAliases = new Map();
+  (data.products || []).forEach((product) => {
+    const key = productDedupeKey(product);
+    [product.id, product.sku, product.barcode, product.name, ...barcodeCatalogIdsForProduct(product)]
+      .filter(Boolean)
+      .forEach((value) => productAliases.set(String(value).trim().toLowerCase(), key));
   });
-  const productRows = Object.values(byProd).map((row) => ({
-    ...row,
-    profit: row.revenue - row.cost,
-    marg: row.revenue > 0 ? Math.round((row.revenue - row.cost) / row.revenue * 100) : 0,
-  })).sort((a, b) => b.revenue - a.revenue);
+  const productKeyForValue = (value) => productAliases.get(String(value || "").trim().toLowerCase()) || "";
+  const productKeyForId = (productId) => {
+    const product = productsById.get(productId);
+    return product ? productDedupeKey(product) : productKeyForValue(productId) || (productId ? "product:" + productId : "");
+  };
+  const movementSoldQty = {};
+  saleMoves.forEach((movement) => {
+    const key = productKeyForId(movement.productId);
+    if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) + Math.max(0, -Number(movement.qty || 0));
+  });
+  const invoiceSoldQty = {};
+  invs.forEach((invoice) => (invoice.items || []).forEach((item) => {
+    const key = productKeyForValue(item.productId)
+      || productKeyForValue(item.sku)
+      || productKeyForValue(item.barcode)
+      || productKeyForValue(item.name || item.productName);
+    const qty = Math.max(0, Number(item.qty ?? item.quantity ?? 0));
+    if (key && qty > 0) invoiceSoldQty[key] = (invoiceSoldQty[key] || 0) + qty;
+  }));
+  const lossQtyByProd = {};
+  lossMoves.forEach((movement) => {
+    const key = productKeyForId(movement.productId);
+    if (key) lossQtyByProd[key] = (lossQtyByProd[key] || 0) + Math.abs(Number(movement.qty || 0));
+  });
+  const qtyFor = (product) => {
+    const key = productDedupeKey(product);
+    return Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0);
+  };
+  const lossFor = (product) => lossQtyByProd[productDedupeKey(product)] || 0;
+  const productsWithSales = reportProducts
+    .map((p) => ({ p, qty: qtyFor(p) }))
+    .filter((entry) => entry.qty > 0)
+    .sort((a, b) => b.qty - a.qty);
+  const fastCut = Math.ceil(productsWithSales.length / 3);
+  const mediumCut = Math.ceil(2 * productsWithSales.length / 3);
+  const productRank = {};
+  productsWithSales.forEach((entry, index) => { productRank[productDedupeKey(entry.p)] = index; });
+  const classOf = (product) => {
+    if (qtyFor(product) <= 0) return "none";
+    const rank = productRank[productDedupeKey(product)];
+    if (rank < fastCut) return "fast";
+    if (rank < mediumCut) return "medium";
+    return "slow";
+  };
+  const VLABEL = { fast: "Fast", medium: "Medium", slow: "Slow", none: "No sales" };
+  const VCOLOR = { fast: "var(--ok)", medium: "var(--warn)", slow: "var(--danger)", none: "var(--muted-2)" };
+  const movementCounts = { fast: 0, medium: 0, slow: 0, none: 0 };
+  reportProducts.forEach((product) => { movementCounts[classOf(product)] += 1; });
+  const productSearchNeedle = productSearch.trim().toLowerCase();
+  const matchesProductSearch = (product) => !productSearchNeedle || [
+    product.name,
+    product.sku,
+    product.barcode,
+    product.category,
+    product.size,
+    ...barcodeCatalogIdsForProduct(product),
+  ].some((value) => String(value || "").toLowerCase().includes(productSearchNeedle));
+  const allProductReportRows = reportProducts.map((p) => {
+    const priceCents = productBranchAverageCents(data, p, bId, branchProductPriceCents);
+    const costCents = productBranchAverageCents(data, p, bId, branchProductCostCents);
+    const qty = qtyFor(p);
+    const revenue = qty * priceCents;
+    const cost = qty * costCents;
+    const lossValue = lossFor(p) * costCents;
+    const profit = revenue - cost;
+    const netProfit = profit - lossValue;
+    return {
+      p,
+      qty,
+      revenue,
+      cost,
+      lossValue,
+      profit,
+      netProfit,
+      marg: priceCents > 0 ? Math.round((priceCents - costCents) / priceCents * 100) : 0,
+      stockOnHand: productOnHand(data, p, bId || null),
+      movement: classOf(p),
+    };
+  });
+  const productRows = allProductReportRows.filter((row) => row.qty > 0).sort((a, b) => b.revenue - a.revenue);
+  const visibleProductRows = allProductReportRows
+    .filter((row) => (vel === "all" || row.movement === vel) && matchesProductSearch(row.p))
+    .sort((a, b) => b.qty - a.qty || String(a.p.name || "").localeCompare(String(b.p.name || "")));
   const topMax = Math.max(1, ...productRows.map((r) => r.qty));
 
   const trend = {}; recInvs.forEach((i) => { trend[i.date] = (trend[i.date] || 0) + i.totalCents; });
@@ -8689,10 +8770,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   // export builder for the active sub-report
   const buildExport = () => {
     const m = (c) => (c / 100);
-    if (sub === "products") return { name: "product-report", headers: ["Product", "SKU", "Units", "Revenue", "COGS", "Loss value", "Net profit", "Margin %"], rows: productRows.map((r) => { const lv = lossMoves.filter((mv) => mv.productId === r.p.id).reduce((s, mv) => s + Math.abs(mv.qty) * branchProductCostCents(r.p, mv.branchId), 0); return [r.p.name, r.p.sku, r.qty, m(r.revenue), m(r.cost), m(lv), m(r.profit - lv), r.marg]; }) };
+    if (sub === "products") return {
+      name: "product-report",
+      headers: ["Product", "SKU", "Category", "Units sold", "Revenue", "Profit", "Margin %", "On hand", "Movement"],
+      rows: visibleProductRows.map((r) => [r.p.name, r.p.sku, r.p.category || "", r.qty, m(r.revenue), m(r.netProfit), r.marg, r.stockOnHand, VLABEL[r.movement]]),
+    };
     if (sub === "pnl") return { name: "profit-loss", headers: ["Line", "Amount"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)]] };
     if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0))]; }) };
-    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: branchProductsUnique(data, bId).map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
+    if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: reportProducts.map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
       const fm = data.stockMovements.filter((m2) => typeof m2.reason === "string" && m2.reason.startsWith("Sale") && m2.ts >= lbStart && inBranch(m2.branchId));
@@ -8719,12 +8804,80 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       inventory: "Inventory Report",
       reorder: "Reorder Forecast",
       cashier: "Cashier Report",
-      unpaid: "Customer Statement",
+      unpaid: "Unpaid Invoices Report",
       credit: "Credit Recovery Report",
       expenses: "Expense Report",
       loss: "Loss & Damage Report",
       transfers: "Stock Transfer Report",
     };
+    const totals = (() => {
+      if (sub === "products") return [
+        { label: "Products shown", value: visibleProductRows.length },
+        { label: "Units sold", value: visibleProductRows.reduce((sum, row) => sum + row.qty, 0) },
+        { label: "Revenue", value: fmt(visibleProductRows.reduce((sum, row) => sum + row.revenue, 0), cur) },
+        { label: "Net profit", value: fmt(visibleProductRows.reduce((sum, row) => sum + row.netProfit, 0), cur) },
+      ];
+      if (sub === "pnl") return [
+        { label: "Gross Sales", value: fmt(grossSales, cur) },
+        { label: "Gross Profit", value: fmt(grossProfit, cur) },
+        { label: "Net Profit", value: fmt(netProfit, cur) },
+        { label: "Margin", value: margin + "%" },
+      ];
+      if (sub === "inventory") return [
+        { label: "Products", value: t.rows.length },
+        { label: "Units on hand", value: t.rows.reduce((sum, row) => sum + Number(row[2] || 0), 0) },
+        { label: "Cost value", value: fmt(Math.round(t.rows.reduce((sum, row) => sum + Number(row[3] || 0), 0) * 100), cur) },
+        { label: "Retail value", value: fmt(Math.round(t.rows.reduce((sum, row) => sum + Number(row[4] || 0), 0) * 100), cur) },
+      ];
+      if (sub === "reorder") return [
+        { label: "Products to reorder", value: t.rows.length },
+        { label: "Suggested units", value: t.rows.reduce((sum, row) => sum + Number(row[6] || 0), 0) },
+      ];
+      if (sub === "cashier") return [
+        { label: "Cashiers", value: t.rows.length },
+        { label: "Overdue invoices", value: t.rows.reduce((sum, row) => sum + Number(row[1] || 0), 0) },
+        { label: "Amount owed", value: fmt(Math.round(t.rows.reduce((sum, row) => sum + Number(row[2] || 0), 0) * 100), cur) },
+      ];
+      if (sub === "unpaid") return [
+        { label: "Unpaid invoices", value: openInv.length },
+        { label: "Outstanding", value: fmt(openInv.reduce((sum, invoice) => sum + invOutstanding(invoice), 0), cur) },
+      ];
+      if (sub === "credit") return [
+        { label: "Recovered", value: recoveredList.length },
+        { label: "Overdue", value: pendingList.length },
+        { label: "Outstanding", value: fmt(pendingTotal, cur) },
+        { label: "Partial", value: partialCount },
+      ];
+      if (sub === "expenses") return [
+        { label: "Expense records", value: periodExp.length },
+        { label: "Total expenses", value: fmt(expTotal, cur) },
+      ];
+      if (sub === "loss") return [
+        { label: "Loss records", value: lossMoves.length },
+        { label: "Units lost", value: lossMoves.reduce((sum, movement) => sum + Math.abs(Number(movement.qty || 0)), 0) },
+        { label: "Loss value", value: fmt(lossTotal, cur) },
+      ];
+      if (sub === "transfers") return [
+        { label: "Transfers", value: transfers.length },
+        { label: "Units transferred", value: transfers.reduce((sum, transfer) => sum + Number(transfer.qty || 0), 0) },
+      ];
+      return [
+        { label: "Gross Sales", value: fmt(grossSales, cur) },
+        { label: "Gross Profit", value: fmt(grossProfit, cur) },
+        { label: "Net Profit", value: fmt(netProfit, cur) },
+        { label: "Transactions", value: recInvs.length },
+      ];
+    })();
+    const filters = [
+      { label: "Report", value: RSUBS.find(([k]) => k === sub)?.[1] || sub },
+      { label: "Branch", value: activeBranchName },
+      { label: "Period", value: periodLabel },
+    ];
+    if (sub === "products") {
+      filters.push({ label: "Movement", value: vel === "all" ? "All" : VLABEL[vel] });
+      if (productSearch.trim()) filters.push({ label: "Product search", value: productSearch.trim() });
+    }
+    if (sub === "reorder") filters.push({ label: "Target cover", value: reorderWeeks + " week(s)" });
     return buildReportDocument({
       title: titleMap[sub] || "VISIONPOS Report",
       companyName: data.settings.store || "VISIONPOS",
@@ -8733,19 +8886,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       branchName: activeBranchName,
       generatedBy: "Current user",
       dateRange: periodLabel,
-      filters: [
-        { label: "Report", value: RSUBS.find(([k]) => k === sub)?.[1] || sub },
-        { label: "Branch", value: activeBranchName },
-        { label: "Period", value: periodLabel },
-      ],
+      filters,
       headers: t.headers,
       rows: t.rows,
-      totals: [
-        { label: "Gross Sales", value: fmt(grossSales, cur) },
-        { label: "Gross Profit", value: fmt(grossProfit, cur) },
-        { label: "Net Profit", value: fmt(netProfit, cur) },
-        { label: "Transactions", value: recInvs.length },
-      ],
+      totals,
       orientation: t.headers.length > 6 ? "landscape" : "portrait",
     });
   };
@@ -8818,62 +8962,6 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       )}
 
       {sub === "products" && (() => {
-        const productsById = new Map((data.products || []).map((product) => [product.id, product]));
-        const productAliases = new Map();
-        (data.products || []).forEach((product) => {
-          const key = productDedupeKey(product);
-          [product.id, product.sku, product.barcode, product.name, ...barcodeCatalogIdsForProduct(product)]
-            .filter(Boolean)
-            .forEach((value) => productAliases.set(String(value).trim().toLowerCase(), key));
-        });
-        const productKeyForValue = (value) => productAliases.get(String(value || "").trim().toLowerCase()) || "";
-        const productKeyForId = (productId) => {
-          const product = productsById.get(productId);
-          return product ? productDedupeKey(product) : productKeyForValue(productId) || (productId ? "product:" + productId : "");
-        };
-        const movementSoldQty = {};
-        saleMoves.forEach((mv) => {
-          const key = productKeyForId(mv.productId);
-          if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) + Math.max(0, -Number(mv.qty || 0));
-        });
-        const invoiceSoldQty = {};
-        invs.forEach((invoice) => (invoice.items || []).forEach((item) => {
-          const key = productKeyForValue(item.productId)
-            || productKeyForValue(item.sku)
-            || productKeyForValue(item.barcode)
-            || productKeyForValue(item.name || item.productName);
-          const qty = Math.max(0, Number(item.qty ?? item.quantity ?? 0));
-          if (key && qty > 0) invoiceSoldQty[key] = (invoiceSoldQty[key] || 0) + qty;
-        }));
-        const lossQtyByProd = {};
-        lossMoves.forEach((mv) => {
-          const key = productKeyForId(mv.productId);
-          lossQtyByProd[key] = (lossQtyByProd[key] || 0) + Math.abs(Number(mv.qty || 0));
-        });
-        const qtyFor = (product) => {
-          const key = productDedupeKey(product);
-          return Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0);
-        };
-        const lossFor = (product) => lossQtyByProd[productDedupeKey(product)] || 0;
-        const withSales = reportProducts.map((p) => ({ p, qty: qtyFor(p) })).filter((x) => x.qty > 0).sort((a, b) => b.qty - a.qty);
-        const n = withSales.length; const fastCut = Math.ceil(n / 3), medCut = Math.ceil(2 * n / 3);
-        const rankOf = {}; withSales.forEach((x, i) => { rankOf[productDedupeKey(x.p)] = i; });
-        const classOf = (product) => { const q = qtyFor(product); if (q <= 0) return "none"; const r = rankOf[productDedupeKey(product)]; if (r < fastCut) return "fast"; if (r < medCut) return "medium"; return "slow"; };
-        const VLABEL = { fast: "Fast", medium: "Medium", slow: "Slow", none: "No sales" };
-        const VCOLOR = { fast: "var(--ok)", medium: "var(--warn)", slow: "var(--danger)", none: "var(--muted-2)" };
-        const counts = { fast: 0, medium: 0, slow: 0, none: 0 }; reportProducts.forEach((p) => counts[classOf(p)]++);
-        const searchNeedle = productSearch.trim().toLowerCase();
-        const matchesSearch = (product) => !searchNeedle || [
-          product.name,
-          product.sku,
-          product.barcode,
-          product.category,
-          product.size,
-          ...barcodeCatalogIdsForProduct(product),
-        ].some((value) => String(value || "").toLowerCase().includes(searchNeedle));
-        const visibleProducts = reportProducts
-          .filter((product) => (vel === "all" || classOf(product) === vel) && matchesSearch(product))
-          .sort((a, b) => qtyFor(b) - qtyFor(a) || String(a.name || "").localeCompare(String(b.name || "")));
         const openExactProduct = () => {
           const needle = normalizeBarcode(productSearch).toLowerCase();
           if (!needle) return;
@@ -8933,6 +9021,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   ref={productSearchRef}
                   value={productSearch}
                   onChange={(event) => setProductSearch(event.target.value)}
+                  onFocus={() => {
+                    if (productScannerOn) {
+                      setProductScannerOn(false);
+                      setProductScanMessage("Scanner paused for manual search.");
+                    }
+                  }}
                   onKeyDown={(event) => { if (event.key === "Enter") openExactProduct(); }}
                   placeholder="Search product name, SKU, or barcode..."
                   aria-label="Search product reports"
@@ -8952,8 +9046,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                 type="button"
                 className={"btn sm " + (productScannerOn ? "primary" : "btn-ghost")}
                 onClick={() => {
-                  setProductScannerOn((current) => !current);
-                  setTimeout(() => productSearchRef.current?.focus(), 0);
+                  const next = !productScannerOn;
+                  setProductScannerOn(next);
+                  setProductScanMessage(next ? "Scanner ready. Scan a product barcode." : "Scanner off.");
+                  if (next) productSearchRef.current?.blur();
                 }}
                 aria-pressed={productScannerOn}
                 title="Use a barcode scanner to open a product report"
@@ -8961,20 +9057,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                 <Barcode size={17} /> {productScannerOn ? "Scanner on" : "Scanner"}
               </button>
             </div>
+            {productScanMessage ? <div className="sub" role="status" style={{ margin: "-4px 0 10px", color: productScannerOn ? "var(--ok)" : "var(--muted)" }}>{productScanMessage}</div> : null}
             <div className="cfilter" style={{ marginBottom: 12 }}>
-              {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + counts.fast + ")"], ["medium", "Medium (" + counts.medium + ")"], ["slow", "Slow (" + counts.slow + ")"], ["none", "No sales (" + counts.none + ")"]].map(([k, l]) => (
+              {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + movementCounts.fast + ")"], ["medium", "Medium (" + movementCounts.medium + ")"], ["slow", "Slow (" + movementCounts.slow + ")"], ["none", "No sales (" + movementCounts.none + ")"]].map(([k, l]) => (
                 <button key={k} className={"seg" + (vel === k ? " on" : "")} onClick={() => setVel(k)}>{l}</button>))}
             </div>
             <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
-              <tbody>{visibleProducts.map((p) => {
-                const priceCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductPriceCents);
-                const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductCostCents);
-                const q = qtyFor(p);
-                const rev = q * priceCents;
-                const net = rev - q * costCents - lossFor(p) * costCents;
-                const marg = priceCents > 0 ? Math.round((priceCents - costCents) / priceCents * 100) : 0;
-                const cls = classOf(p);
-                const stockOnHand = rb === "all" ? productOnHand(data, p, null) : productOnHand(data, p, rb);
+              <tbody>{visibleProductRows.map((row) => {
+                const { p, qty: q, revenue: rev, netProfit: net, marg, stockOnHand, movement: cls } = row;
                 return (<tr key={p.id} style={{ cursor: "pointer" }} onClick={() => setProdSel(p.id)}>
                   <td><div className="nm">{p.name}</div><div className="mt2">{p.sku} · {p.category}</div></td>
                   <td style={{ fontWeight: 700 }}>{q}</td><td className="amt">{fmt(rev, cur)}</td>
@@ -8982,7 +9072,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   <td>{marg}%</td><td>{stockOnHand}</td>
                   <td><span className="ist" style={{ background: "var(--surface-2)", color: VCOLOR[cls] }}>{VLABEL[cls]}</span></td></tr>);
               })}
-                {visibleProducts.length === 0 && <tr><td colSpan="7"><div className="notice">No products match this search and movement filter.</div></td></tr>}</tbody></table></div>
+                {visibleProductRows.length === 0 && <tr><td colSpan="7"><div className="notice">No products match this search and movement filter.</div></td></tr>}</tbody></table></div>
             <div className="sub" style={{ marginTop: 8 }}>Movement class is based on units sold in the selected period (top third = Fast, middle = Medium, rest = Slow). Tap any product for its full stock-movement ledger.</div>
           </>
         );
