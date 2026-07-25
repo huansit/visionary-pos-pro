@@ -7657,6 +7657,7 @@ function BorrowingTab({ data, update }) {
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const product = data.products.find((p) => p.id === productId);
@@ -7678,6 +7679,56 @@ function BorrowingTab({ data, update }) {
     setQty(""); setProductId(""); setQ("");
   };
   const removeLine = (pid) => setLines((ls) => ls.filter((l) => l.productId !== pid));
+
+  const transferItems = (transfer) => Array.isArray(transfer?.items) && transfer.items.length
+    ? transfer.items
+    : [{ productId: transfer?.productId, productName: transfer?.productName, qty: transfer?.qty }];
+  const transferNeedsCostRepair = (transfer) => transferItems(transfer).some((item) => !(Number(item.costCents) > 0));
+  const repairPreview = repairTransfer ? transferItems(repairTransfer).map((item) => {
+    const currentProduct = data.products.find((p) => p.id === item.productId);
+    return {
+      ...item,
+      productName: item.productName || currentProduct?.name || "Unknown product",
+      sourceCostCents: currentProduct ? branchProductCostCents(currentProduct, repairTransfer.fromBranchId) : 0,
+    };
+  }) : [];
+  const repairBlocked = repairPreview.some((item) => !(item.sourceCostCents > 0));
+  const applyLegacyCostRepair = () => {
+    if (!repairTransfer || repairBlocked) return;
+    const repairedAt = now();
+    update((d) => {
+      let products = [...d.products];
+      const repairedItems = transferItems(repairTransfer).map((item) => {
+        const productIndex = products.findIndex((p) => p.id === item.productId);
+        const currentProduct = productIndex >= 0 ? products[productIndex] : null;
+        const sourceCostCents = currentProduct ? branchProductCostCents(currentProduct, repairTransfer.fromBranchId) : 0;
+        if (currentProduct && sourceCostCents > 0 && branchProductCostCents(currentProduct, repairTransfer.toBranchId) <= 0) {
+          products[productIndex] = withBranchProductCost(currentProduct, repairTransfer.toBranchId, sourceCostCents);
+        }
+        const costCents = Number(item.costCents) > 0 ? Number(item.costCents) : sourceCostCents;
+        return { ...item, costCents, valueCents: Math.max(0, Number(item.qty) || 0) * costCents };
+      });
+      const repairedValue = repairedItems.reduce((sum, item) => sum + (Number(item.valueCents) || 0), 0);
+      return {
+        ...d,
+        products,
+        borrowings: d.borrowings.map((transfer) => transfer.id === repairTransfer.id ? {
+          ...transfer,
+          items: repairedItems,
+          valueCents: repairedValue,
+          costRepairedAt: repairedAt,
+          synced: false,
+        } : transfer),
+        auditLogs: [...(d.auditLogs || []), {
+          id: uid("audit"), action: "legacy_transfer_cost_repaired",
+          transferId: repairTransfer.id, transferNumber: repairTransfer.number,
+          fromBranchId: repairTransfer.fromBranchId, toBranchId: repairTransfer.toBranchId,
+          valueCents: repairedValue, ts: repairedAt,
+        }],
+      };
+    });
+    setRepairTransfer(null);
+  };
 
   const saveAll = () => {
     setErr("");
@@ -7772,15 +7823,39 @@ function BorrowingTab({ data, update }) {
       </div>
 
       <div className="section-title">Recent transfers</div>
-      <div className="list">{data.borrowings.map((t) => { const items = t.items || [{ productName: t.productName, qty: t.qty }];
+      <div className="list">{data.borrowings.map((t) => { const items = transferItems(t);
         return (
         <div className="row" key={t.id}>
           <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
             <div className="mt2">{bn(t.fromBranchId)} → {bn(t.toBranchId)} · {items.length === 1 ? items[0].productName + " × " + items[0].qty : items.length + " products · " + items.reduce((s, i) => s + i.qty, 0) + " units"}{t.note ? " · " + t.note : ""}</div></div>
+          {transferNeedsCostRepair(t) && <button className="btn xs btn-ghost" onClick={() => setRepairTransfer(t)}><Wrench /> Repair cost</button>}
           <span className="ist paid">{t.status || "completed"}</span>
           <span className="pill plain">{dt(t.ts)}</span>
         </div>); })}
         {data.borrowings.length === 0 && <div className="notice">No transfers yet.</div>}</div>
+
+      {repairTransfer && (
+        <div className="scrim" onClick={() => setRepairTransfer(null)}>
+          <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div><div className="sub" style={{ margin: 0 }}>Legacy transfer</div><div className="title" style={{ fontSize: 19 }}>Repair purchase cost</div></div>
+              <button className="iconbtn" onClick={() => setRepairTransfer(null)}><X /></button>
+            </div>
+            <div className="notice" style={{ marginTop: 8 }}>This copies the current purchase cost from {bn(repairTransfer.fromBranchId)} to missing cost fields in {bn(repairTransfer.toBranchId)}. Stock quantities and selling prices will not change.</div>
+            <div className="list" style={{ marginTop: 12 }}>{repairPreview.map((item, index) => (
+              <div className="row" key={item.productId || index}>
+                <div className="meta"><div className="nm">{item.productName}</div><div className="mt2">{item.qty || 0} unit(s)</div></div>
+                <span className="pill plain" style={{ color: item.sourceCostCents > 0 ? "var(--text)" : "var(--danger)" }}>{item.sourceCostCents > 0 ? fmt(item.sourceCostCents, data.settings.currency) : "Missing source cost"}</span>
+              </div>
+            ))}</div>
+            {repairBlocked && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />Receive or correct the source purchase cost before repairing this transfer.</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button className="btn btn-ghost" onClick={() => setRepairTransfer(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={repairBlocked} onClick={applyLegacyCostRepair}><Wrench /> Apply purchase cost</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
