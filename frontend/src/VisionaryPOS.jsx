@@ -2943,6 +2943,11 @@ const css = `
 .paycell input{width:90px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 8px;font-family:var(--font-mono)}
 .settlebar{display:grid;grid-template-columns:auto minmax(240px,1fr) minmax(170px,210px) 150px;gap:10px;align-items:center;margin:14px 0}
 .settlebar .seg{display:flex;gap:7px;flex-wrap:wrap}
+.settledates{grid-column:1 / -1;display:flex;justify-content:flex-end;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.settledates label{display:grid;gap:4px;min-width:155px}
+.settledates label span{font-size:10.5px;font-weight:750;color:var(--muted-2);text-transform:uppercase;letter-spacing:.04em}
+.settledates .input{height:38px;padding:0 10px}
+.settledates .btn{height:38px}
 .settlement-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .settlement-heading .settlement-scope{font-weight:750;margin-left:auto;text-align:right}
 .settlesearch{position:relative}
@@ -2968,7 +2973,7 @@ const css = `
 .void-decision.rejected{border-color:rgba(194,58,86,.34);background:rgba(194,58,86,.08)}
 .void-decision span{font-size:12px;color:var(--muted-2)}
 @media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -4993,6 +4998,7 @@ function InsightsTab({ data, online }) {
 }
 function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
+  const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
@@ -5013,14 +5019,18 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
   const txns = operationalInvoices(data).filter((i) => isToday(i.ts)).length;
   const reorders = reorderList(data, branch.id).length;
   const pendingExpenseCount = (data.expenses || []).filter((e) => e.status === "pending").length;
+  const openCashierCreditInvoices = (cashier) => {
+    setInvoiceFocus({ cashier, filter: "overdue", key: Date.now() });
+    setTab("invoices");
+  };
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
-    <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => setTab(item.id)}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
+    <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => { if (item.id === "invoices") setInvoiceFocus(null); setTab(item.id); }}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
   const render = () => {
     if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} />;
     switch (tab) {
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} />;
       case "ai": return <AIManagerTab data={data} />;
-      case "invoices": return <InvoicesTab data={data} update={update} branch={branch} user={user} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
+      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
@@ -5030,10 +5040,10 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
-      case "financials": return <ReportsTab key="financials" data={data} initialTab="pnl" />;
+      case "financials": return <ReportsTab key="financials" data={data} initialTab="pnl" onOpenCashierCredit={openCashierCreditInvoices} />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
-      case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" />;
+      case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
@@ -5083,10 +5093,12 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 }
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
-function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
+function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test" }) {
   const cur = data.settings.currency;
-  const [filter, setFilter] = useState("open"), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
-  const [cashierFilter, setCashierFilter] = useState("all");
+  const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
+  const [cashierFilter, setCashierFilter] = useState(initialCashier);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -5103,14 +5115,30 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const needle = query.trim().toLowerCase();
+  const dateFromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
+  const dateToTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+  const invoiceIssuedTs = (invoice) => {
+    const value = invoice.ts ?? invoice.issuedAt ?? invoice.createdAt;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
   const filtered = invoices
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
       if (filter === "all") return true;
       if (voidStatus === "approved") return false;
+      if (filter === "overdue") return invIsDebt(i);
       return filter === "open" ? invOutstanding(i) > 0 : invOutstanding(i) <= 0;
     })
     .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
+    .filter((i) => {
+      const issuedTs = invoiceIssuedTs(i);
+      if (dateFromTs !== null && issuedTs < dateFromTs) return false;
+      if (dateToTs !== null && issuedTs > dateToTs) return false;
+      return true;
+    })
     .filter((i) => {
       if (!needle) return true;
       return [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, i.cashier]
@@ -5155,7 +5183,7 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
       </div>
       <div className="settlebar">
         <div className="seg">
-          {[["open", "Open"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
+          {[["open", "Open"], ["overdue", "Overdue"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
             <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
           ))}
         </div>
@@ -5168,6 +5196,17 @@ function InvoicesTab({ data, update, branch, user, environmentMode = "test" }) {
           <option value="oldest">Oldest first</option>
           <option value="newest">Newest first</option>
         </select>
+        <div className="settledates">
+          <label>
+            <span>From date</span>
+            <input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} />
+          </label>
+          <label>
+            <span>To date</span>
+            <input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
+          </label>
+          {(dateFrom || dateTo) ? <button className="btn sm" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
+        </div>
       </div>
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
@@ -8417,7 +8456,7 @@ function exportDiscrepancy(report, cur, kind) {
   } else downloadFile(stamp + ".json", JSON.stringify({ branch: report.branchName, at: new Date(report.ts).toISOString(), discrepancies: report.discrepancies.length, amendments: report.amendments, lines: lines.map((l) => ({ product: l.name, sku: l.sku, system: l.system, counted: l.counted, variance: l.variance, type: l.kind || "count" })) }, null, 2), "application/json");
 }
 
-function ReportsTab({ data, initialTab }) {
+function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const cur = data.settings.currency;
   const [period, setPeriod] = useState("today");
   const [rb, setRb] = useState("all");
@@ -8904,13 +8943,15 @@ function ReportsTab({ data, initialTab }) {
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
             <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} overdue invoice(s)</div></div>
-            <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span></div>))}</div>)
+            <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span>
+            {onOpenCashierCredit ? <button className="btn sm" onClick={() => onOpenCashierCredit(n)}>View invoices <ChevronRight /></button> : null}
+          </div>))}</div>)
       )}
 
       {sub === "unpaid" && (
         openInv.length === 0 ? <div className="notice">No unpaid invoices.</div> : (
           <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Invoice</th><th>Cashier</th><th>Customer</th><th>Date</th><th>Outstanding</th><th>Status</th></tr></thead>
-            <tbody>{openInv.map((i) => (<tr key={i.id}><td className="innum">{i.number.slice(-12)}</td><td>{i.cashier}</td><td>{i.customerName}</td><td>{dt(i.ts)}</td><td className="amt">{fmt(invOutstanding(i), cur)}</td><td><span className={"ist " + invStatus(i)}>{invStatus(i)}</span></td></tr>))}</tbody></table></div>)
+            <tbody>{openInv.map((i) => (<tr key={i.id}><td className="innum">{i.number.slice(-12)}</td><td>{invoiceCashierName(i)}</td><td>{i.customerName}</td><td>{dt(i.ts)}</td><td className="amt">{fmt(invOutstanding(i), cur)}</td><td><span className={"ist " + invStatus(i)}>{invStatus(i)}</span></td></tr>))}</tbody></table></div>)
       )}
 
       {sub === "credit" && (
