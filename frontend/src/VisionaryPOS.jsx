@@ -1754,6 +1754,30 @@ function branchProductCostCents(product, branchId) {
   const mapped = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"]);
   return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.costCents) || 0));
 }
+function branchInventoryCostCents(data, product, branchId) {
+  const directCost = branchProductCostCents(product, branchId);
+  if (directCost > 0 || !data || !product || !branchId) return directCost;
+
+  const productKey = productDedupeKey(product);
+  const equivalentProducts = (data.products || [])
+    .filter((candidate) => productDedupeKey(candidate) === productKey)
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  const equivalentCost = equivalentProducts
+    .map((candidate) => branchProductCostCents(candidate, branchId))
+    .find((cost) => cost > 0);
+  if (equivalentCost) return equivalentCost;
+
+  const equivalentIds = new Set(equivalentProducts.map((candidate) => candidate.id));
+  const latestCostedReceipt = (data.stockMovements || [])
+    .filter((movement) => movement.branchId === branchId
+      && equivalentIds.has(movement.productId)
+      && Number(movement.qty || 0) > 0
+      && Number(movement.costCents || 0) > 0)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
+  return latestCostedReceipt
+    ? Math.max(0, Math.round(Number(latestCostedReceipt.costCents) || 0))
+    : directCost;
+}
 function productStockValuation(data, product, branchId) {
   const branchIds = branchId ? [branchId] : (data?.branches || []).map((branch) => branch.id);
   if (!branchIds.length) {
@@ -1767,7 +1791,7 @@ function productStockValuation(data, product, branchId) {
   return branchIds.reduce((totals, id) => {
     const quantity = Math.max(0, productOnHand(data, product, id));
     totals.quantity += quantity;
-    totals.costValue += quantity * branchProductCostCents(product, id);
+    totals.costValue += quantity * branchInventoryCostCents(data, product, id);
     totals.retailValue += quantity * branchProductPriceCents(product, id);
     return totals;
   }, { quantity: 0, costValue: 0, retailValue: 0 });
@@ -1796,6 +1820,13 @@ function withBranchProductPrice(product, branchId, cents) {
 }
 function withBranchProductCost(product, branchId, cents) {
   return withBranchMappedCents(product, branchId, "branchCosts", "costCents", cents);
+}
+function withBranchProductCostForKey(products, product, branchId, cents) {
+  if (!product) return products;
+  const productKey = productDedupeKey(product);
+  return products.map((candidate) => productDedupeKey(candidate) === productKey
+    ? withBranchProductCost(candidate, branchId, cents)
+    : candidate);
 }
 function priceFor(data, p, branchId) { return branchProductPriceCents(p, branchId); }
 function reorderList(data, branchId) { return branchProductsUnique(data, branchId).filter((p) => productOnHand(data, p, branchId) <= (p.reorderLevel ?? data.settings.reorderLevel)); }
@@ -1879,7 +1910,7 @@ function stockCountRows(data, session) {
       liveQty,
       varianceQty: countedQty === null ? null : countedQty - expectedQty,
       commitDelta: finalQty === null ? 0 : finalQty - liveQty,
-      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * branchProductCostCents(product, session.branchId),
+      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * branchInventoryCostCents(data, product, session.branchId),
     };
   }).filter((row) => row.product);
 }
@@ -4166,7 +4197,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
   const belowCostLines = lines.filter((l) => {
     const p = data.products.find((x) => x.id === l.productId);
-    return p && l.priceCents < branchProductCostCents(p, branch.id);
+    return p && l.priceCents < branchInventoryCostCents(data, p, branch.id);
   });
   const saleBlocked = belowCostLines.length > 0;
   const notifyScan = (message, kind = "success") => {
@@ -5757,7 +5788,7 @@ function DashboardTab({ data, update, branch, online }) {
   const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
   const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
   const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts) && saleMoveRecognized(data, m))
-    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchProductCostCents(p, m.branchId) : 0); }, 0);
+    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
   const creditTotal = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
@@ -6069,12 +6100,12 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   };
   const exportCSV = () => {
     const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
-    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, branchProductCostCents(p, branch.id) / 100, branchProductPriceCents(p, branch.id) / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
+    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, branchInventoryCostCents(data, p, branch.id) / 100, branchProductPriceCents(p, branch.id) / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
     downloadFile("visionary-products.csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
   };
-  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: branchProductCostCents(p, branch.id), priceCents: branchProductPriceCents(p, branch.id), onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
+  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: branchInventoryCostCents(data, p, branch.id), priceCents: branchProductPriceCents(p, branch.id), onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
   const emailSummary = () => {
-    const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * branchProductCostCents(p, branch.id), 0);
+    const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * branchInventoryCostCents(data, p, branch.id), 0);
     const subject = encodeURIComponent("Product catalog · " + branch.name);
     const body = encodeURIComponent("Products: " + visibleBranchProducts.length + "\nStock value (" + branch.name + "): " + fmt(totalVal, cur) + "\nGenerated: " + new Date().toLocaleString());
     try { window.open("mailto:?subject=" + subject + "&body=" + body, "_blank"); } catch (_) {}
@@ -6213,7 +6244,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                 {list.map((p) => {
                   const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
-                  const branchCost = branchProductCostCents(p, branch.id);
+                  const branchCost = branchInventoryCostCents(data, p, branch.id);
                   const branchPrice = branchProductPriceCents(p, branch.id);
                   const marg = branchPrice > 0 ? Math.round((branchPrice - branchCost) / branchPrice * 100) : 0;
                   if (editId === p.id) return (
@@ -6287,11 +6318,11 @@ function StockTab({ data, update, branch }) {
   const countedRows = rows.filter((row) => row.countedQty !== null);
   const totalProducts = uniqueProducts.length;
   const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
-  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchProductCostCents(p, bId), 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchInventoryCostCents(data, p, bId), 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
   const lossValue = lossList.reduce((s, m) => {
     const product = data.products.find((p) => p.id === m.productId);
-    return s + Math.abs(m.qty) * (product ? branchProductCostCents(product, bId) : 0);
+    return s + Math.abs(m.qty) * (product ? branchInventoryCostCents(data, product, bId) : 0);
   }, 0);
   const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
@@ -6729,7 +6760,7 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     system: row.expectedQty,
     counted: row.countedQty,
     variance: row.varianceQty,
-    costCents: branchProductCostCents(row.product, session.branchId),
+    costCents: branchInventoryCostCents(data, row.product, session.branchId),
     kind: "session",
   }));
   return {
@@ -6737,7 +6768,7 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     branchId: session.branchId,
     code: session.code,
     ts: session.committedAt || now(),
-    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: branchProductCostCents(row.product, session.branchId), kind: "session" })),
+    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: branchInventoryCostCents(data, row.product, session.branchId), kind: "session" })),
     discrepancies,
     varianceUnits: rows.reduce((s, row) => s + (row.varianceQty || 0), 0),
     varianceCost: rows.reduce((s, row) => s + row.valueImpact, 0),
@@ -6746,7 +6777,7 @@ function buildStockCountReport(session, rows, movements, data, branchName) {
     shortCost: discrepancies.filter((l) => l.variance < 0).reduce((s, l) => s + Math.abs(l.variance * l.costCents), 0),
     overCost: discrepancies.filter((l) => l.variance > 0).reduce((s, l) => s + l.variance * l.costCents, 0),
     invUnits: rows.reduce((s, row) => s + (row.finalQty || 0), 0),
-    invCost: rows.reduce((s, row) => s + (row.finalQty || 0) * branchProductCostCents(row.product, session.branchId), 0),
+    invCost: rows.reduce((s, row) => s + (row.finalQty || 0) * branchInventoryCostCents(data, row.product, session.branchId), 0),
     invRetail: rows.reduce((s, row) => s + (row.finalQty || 0) * branchProductPriceCents(row.product, session.branchId), 0),
     applied: movements.length,
     amendments: 0,
@@ -6786,11 +6817,11 @@ function StockTabLegacy({ data, update, branch }) {
 
   const totalProducts = uniqueProducts.length;
   const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
-  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchProductCostCents(p, bId), 0);
+  const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchInventoryCostCents(data, p, bId), 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
   const lossValue = lossList.reduce((s, m) => {
     const product = data.products.find((p) => p.id === m.productId);
-    return s + Math.abs(m.qty) * (product ? branchProductCostCents(product, bId) : 0);
+    return s + Math.abs(m.qty) * (product ? branchInventoryCostCents(data, product, bId) : 0);
   }, 0);
   const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
@@ -6846,14 +6877,14 @@ function StockTabLegacy({ data, update, branch }) {
       if (already && !amending[p.id]) return;
       const system = productOnHand(data, p, bId); const variance = counted - system;
       const kind = already ? "amendment" : "count";
-      lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: branchProductCostCents(p, bId), kind });
+      lines.push({ id: p.id, name: p.name, sku: p.sku, system, counted, variance, costCents: branchInventoryCostCents(data, p, bId), kind });
       if (variance !== 0) movements.push({ id: uid("mv"), productId: p.id, branchId: bId, qty: variance, mode: "count", reason: kind === "amendment" ? "Count amendment" : "Inventory count", ts, synced: false });
       logs.push({ id: uid("cl"), productId: p.id, branchId: bId, qty: counted, mode: "count", system, counted, variance, kind, ts, synced: false });
     });
     if (lines.length === 0) return;
     const countedMap = {}; lines.forEach((l) => { countedMap[l.id] = l.counted; });
     let invUnits = 0, invCost = 0, invRetail = 0;
-    uniqueProducts.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : productOnHand(data, p, bId); invUnits += qv; invCost += qv * branchProductCostCents(p, bId); invRetail += qv * branchProductPriceCents(p, bId); });
+    uniqueProducts.forEach((p) => { const qv = countedMap[p.id] !== undefined ? countedMap[p.id] : productOnHand(data, p, bId); invUnits += qv; invCost += qv * branchInventoryCostCents(data, p, bId); invRetail += qv * branchProductPriceCents(p, bId); });
     update((d) => ({ ...d, stockMovements: movements.length ? [...d.stockMovements, ...movements] : d.stockMovements, countLog: [...(d.countLog || []), ...logs] }));
     const discrepancies = lines.filter((l) => l.variance !== 0);
     setReport({ branchName: bname, branchId: bId, ts, lines, discrepancies,
@@ -6912,7 +6943,7 @@ function StockTabLegacy({ data, update, branch }) {
       <div className="tablewrap tblscroll" style={{ marginTop: 18 }}><table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Change</th><th>Value</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>{list.map((p) => {
           const oh = productOnHand(data, p, bId); const low = oh <= (p.reorderLevel ?? data.settings.reorderLevel);
-          const value = oh * branchProductCostCents(p, bId);
+          const value = oh * branchInventoryCostCents(data, p, bId);
           const prevCount = lastCount(p.id); const locked = !!prevCount && !amending[p.id];
           const isCounted = counts[p.id] !== undefined && counts[p.id] !== "";
           const counted = isCounted && !Number.isNaN(parseInt(counts[p.id], 10)) ? parseInt(counts[p.id], 10) : oh;
@@ -6980,7 +7011,7 @@ function StockTabLegacy({ data, update, branch }) {
                   <div><label className="label">Reason</label><select className="select" value={lf.reason} onChange={(e) => setLf({ ...lf, reason: e.target.value })}>{LOSS_REASONS.map((r) => <option key={r}>{r}</option>)}</select></div>
                 </div>
                 <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={lf.note} onChange={(e) => setLf({ ...lf, note: e.target.value })} placeholder="e.g. broken in transit, shoplifting incident" /></div>
-                {parseInt(lf.qty, 10) > 0 && <div className="cust-meta" style={{ marginTop: 8 }}>Removes {Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId)))} unit(s) · cost impact {fmt(Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId))) * branchProductCostCents(lossProd, bId), cur)}</div>}
+                {parseInt(lf.qty, 10) > 0 && <div className="cust-meta" style={{ marginTop: 8 }}>Removes {Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId)))} unit(s) · cost impact {fmt(Math.min(parseInt(lf.qty, 10), Math.max(0, onHand(data, lossProd.id, bId))) * branchInventoryCostCents(data, lossProd, bId), cur)}</div>}
                 <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={!(parseInt(lf.qty, 10) > 0)} onClick={recordLoss}><Check /> Record write-off</button>
               </>
             )}
@@ -6990,7 +7021,7 @@ function StockTabLegacy({ data, update, branch }) {
                 <div className="list" style={{ maxHeight: 220, overflow: "auto" }}>{lossList.slice(0, 30).map((m) => { const p = data.products.find((x) => x.id === m.productId); return (
                   <div className="row" key={m.id}><div className="avatar"><TrendingDown style={{ width: 16, height: 16 }} /></div>
                     <div className="meta"><div className="nm">{Math.abs(m.qty)}× {p ? p.name : m.productId}</div><div className="mt2">{m.reason.replace("Loss/Damage · ", "")} · {dt(m.ts)}</div></div>
-                    <span className="pill plain">{fmt(Math.abs(m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0), cur)}</span></div>); })}</div>
+                    <span className="pill plain">{fmt(Math.abs(m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0), cur)}</span></div>); })}</div>
               </>
             )}
           </div>
@@ -7067,11 +7098,11 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
       const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
-      const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchProductCostCents(cur, lbr) : cost, qty, cost);
+      const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchInventoryCostCents(d, cur, lbr) : cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
-        products: d.products.map((p) => p.id === f.productId ? withBranchProductCost(p, lbr, newCost) : p),
+        stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, costCents: cost, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
     setF({ ...f, qty: "", cost: "" }); setAdding(false); };
@@ -7102,12 +7133,12 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
         purchases.push({ id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false });
         if (l.received) {
           const idx = products.findIndex((p) => p.id === l.productId);
-          const curCost = idx >= 0 ? branchProductCostCents(products[idx], lbr) : l.costCents;
+          const curCost = idx >= 0 ? branchInventoryCostCents({ ...d, products }, products[idx], lbr) : l.costCents;
           const oh = getOH(l.productId, lbr);
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
-          if (idx >= 0) products[idx] = withBranchProductCost(products[idx], lbr, newCost);
+          if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, reason: "Purchase " + l.supplierName, ts, synced: false });
+          movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
       return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
@@ -7117,11 +7148,11 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const receive = (po) => update((d) => {
     const cur = d.products.find((p) => p.id === po.productId);
     const targetBranchId = po.branchId || branch.id;
-    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchProductCostCents(cur, targetBranchId) : po.costCents, po.qty, po.costCents);
+    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchInventoryCostCents(d, cur, targetBranchId) : po.costCents, po.qty, po.costCents);
     return { ...d,
       purchases: d.purchases.map((x) => x.id === po.id ? { ...x, status: "received", synced: false } : x),
-      products: d.products.map((p) => p.id === po.productId ? withBranchProductCost(p, targetBranchId, newCost) : p),
-      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
+      products: withBranchProductCostForKey(d.products, cur, targetBranchId, newCost),
+      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, costCents: po.costCents, reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
     };
   });
   const remove = (id) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
@@ -7133,7 +7164,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
   const suggestQty = (p, bid) => { const oh = productOnHand(data, p, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
   const buildLines = (bid) => reorderList(data, bid).map((p) => {
     const qs = quotesFor(p.id); const r = qs[0] || null;
-    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : branchProductCostCents(p, bid), hasQuote: !!r, quotes: qs };
+    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : branchInventoryCostCents(data, p, bid), hasQuote: !!r, quotes: qs };
   });
   const localNote = (lines) => { const named = lines.filter((l) => l.hasQuote).length; const total = lines.reduce((s, l) => s + l.qty * l.costCents, 0); return named + " of " + lines.length + " item(s) have supplier quotes — each matched to its cheapest supplier. Estimated order value " + fmt(total, cur) + (named < lines.length ? ". Items without quotes need a supplier chosen manually." : "."); };
   const prepare = async (bid) => {
@@ -7196,7 +7227,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
             const prodSel = data.products.find((p) => p.id === f.productId); const projQty = parseInt(f.qty, 10) || 0; const projCost = Math.round(parseFloat(f.cost) * 100) || 0;
             if (!f.received || !prodSel || projQty <= 0 || projCost <= 0) return null;
             const pricingBranchId = f.branchId || branch.id;
-            const currentCost = branchProductCostCents(prodSel, pricingBranchId);
+            const currentCost = branchInventoryCostCents(data, prodSel, pricingBranchId);
             const sellingPrice = branchProductPriceCents(prodSel, pricingBranchId);
             const avg = wacCost(onHand(data, f.productId, pricingBranchId), currentCost, projQty, projCost);
             const m = sellingPrice > 0 ? Math.round((sellingPrice - avg) / sellingPrice * 100) : 0;
@@ -7587,7 +7618,7 @@ function BranchesTab({ data, update }) {
     const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
     const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
-    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, b.id) : 0); }, 0);
+    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, b.id) : 0); }, 0);
     const expenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
     const grossProfit = grossSales - cogs;
     const netProfit = grossProfit - expenses;
@@ -7721,7 +7752,7 @@ function BorrowingTab({ data, update }) {
     const n = parseInt(qty, 10);
     if (!n || n <= 0) return setErr("Enter a quantity greater than zero.");
     if (n > available) return setErr("Insufficient stock at " + bn(fromB) + " — only " + available + " available (after items already added).");
-    const sourceCostCents = branchProductCostCents(product, fromB);
+    const sourceCostCents = branchInventoryCostCents(data, product, fromB);
     if (sourceCostCents <= 0) return setErr("This product has no purchase cost at " + bn(fromB) + ". Receive or correct its purchase before transferring it.");
     setLines((ls) => { const i = ls.findIndex((l) => l.productId === product.id); if (i >= 0) { const cp = ls.slice(); cp[i] = { ...cp[i], qty: cp[i].qty + n, costCents: sourceCostCents }; return cp; } return [...ls, { productId: product.id, productName: product.name, sku: product.sku, qty: n, costCents: sourceCostCents }]; });
     setQty(""); setProductId(""); setQ("");
@@ -7737,7 +7768,7 @@ function BorrowingTab({ data, update }) {
     return {
       ...item,
       productName: item.productName || currentProduct?.name || "Unknown product",
-      sourceCostCents: currentProduct ? branchProductCostCents(currentProduct, repairTransfer.fromBranchId) : 0,
+      sourceCostCents: currentProduct ? branchInventoryCostCents(data, currentProduct, repairTransfer.fromBranchId) : 0,
     };
   }) : [];
   const repairBlocked = repairPreview.some((item) => !(item.sourceCostCents > 0));
@@ -7749,9 +7780,16 @@ function BorrowingTab({ data, update }) {
       const repairedItems = transferItems(repairTransfer).map((item) => {
         const productIndex = products.findIndex((p) => p.id === item.productId);
         const currentProduct = productIndex >= 0 ? products[productIndex] : null;
-        const sourceCostCents = currentProduct ? branchProductCostCents(currentProduct, repairTransfer.fromBranchId) : 0;
-        if (currentProduct && sourceCostCents > 0 && branchProductCostCents(currentProduct, repairTransfer.toBranchId) <= 0) {
-          products[productIndex] = withBranchProductCost(currentProduct, repairTransfer.toBranchId, sourceCostCents);
+        const workingData = { ...d, products };
+        const sourceCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, repairTransfer.fromBranchId) : 0;
+        const destinationCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, repairTransfer.toBranchId) : 0;
+        if (currentProduct && sourceCostCents > 0) {
+          products = withBranchProductCostForKey(
+            products,
+            currentProduct,
+            repairTransfer.toBranchId,
+            destinationCostCents || sourceCostCents
+          );
         }
         const costCents = Number(item.costCents) > 0 ? Number(item.costCents) : sourceCostCents;
         return { ...item, costCents, valueCents: Math.max(0, Number(item.qty) || 0) * costCents };
@@ -7789,15 +7827,16 @@ function BorrowingTab({ data, update }) {
       const transferItems = lines.map((l) => {
         const productIndex = products.findIndex((p) => p.id === l.productId);
         const currentProduct = productIndex >= 0 ? products[productIndex] : null;
-        const sourceCostCents = currentProduct ? branchProductCostCents(currentProduct, fromB) : Math.max(0, Number(l.costCents) || 0);
-        const destinationQty = currentProduct ? Math.max(0, productOnHand(d, currentProduct, toB)) : Math.max(0, onHand(d, l.productId, toB));
-        const destinationCostCents = currentProduct ? branchProductCostCents(currentProduct, toB) : 0;
+        const workingData = { ...d, products };
+        const sourceCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, fromB) : Math.max(0, Number(l.costCents) || 0);
+        const destinationQty = currentProduct ? Math.max(0, productOnHand(workingData, currentProduct, toB)) : Math.max(0, onHand(workingData, l.productId, toB));
+        const destinationCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, toB) : 0;
         const destinationMovingAverageCents = sourceCostCents > 0
           ? wacCost(destinationQty, destinationCostCents || sourceCostCents, l.qty, sourceCostCents)
           : destinationCostCents;
 
         if (currentProduct && sourceCostCents > 0) {
-          products[productIndex] = withBranchProductCost(currentProduct, toB, destinationMovingAverageCents);
+          products = withBranchProductCostForKey(products, currentProduct, toB, destinationMovingAverageCents);
         }
 
         movements.push({ id: uid("mv"), productId: l.productId, branchId: fromB, qty: -l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer to " + bn(toB) + " (" + number + ")", ts, synced: false });
@@ -7975,7 +8014,7 @@ function PricingTab({ data, update, branch }) {
     const raw = draftFor(p).trim();
     const price = Math.round((parseFloat(raw) || 0) * 100);
     if (!price || price <= 0) return setPriceErr("Enter a valid selling price for " + p.name + ".");
-    const cost = branchProductCostCents(p, bId);
+    const cost = branchInventoryCostCents(data, p, bId);
     if (price < cost) return setPriceErr("Selling price for " + p.name + " cannot be below cost.");
     setPriceErr("");
     setPriceDrafts((drafts) => {
@@ -8003,7 +8042,7 @@ function PricingTab({ data, update, branch }) {
       </div>
       <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
         <tbody>{list.map((p) => {
-          const price = branchProductPriceCents(p, bId); const cost = branchProductCostCents(p, bId);
+          const price = branchProductPriceCents(p, bId); const cost = branchInventoryCostCents(data, p, bId);
           const margin = price > 0 ? Math.round((price - cost) / price * 100) : null;
           const markup = cost > 0 ? Math.round((price - cost) / cost * 100) : null;
           return (<tr key={p.id}>
@@ -8357,7 +8396,7 @@ function aiDigest(data) {
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
     const recognizedSalesToday = it.filter((i) => invRecognized(i, data.settings)).reduce((s, i) => s + i.totalCents, 0);
     const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveRecognized(data, m));
-    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0); }, 0);
+    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
     return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(recognizedSalesToday - cogs), marginPct: recognizedSalesToday > 0 ? Math.round((recognizedSalesToday - cogs) / recognizedSalesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
   });
   const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveRecognized(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
@@ -8729,11 +8768,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts) && inBranch(e.branchId));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
-  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0); }, 0);
-  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0); });
+  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); }, 0);
+  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); });
 
   const itemsSold = saleMoves.reduce((s, m) => s + (-m.qty), 0);
-  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchProductCostCents(p, m.branchId) : 0); }, 0);
+  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
   const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
   const grossProfit = grossSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
@@ -8887,7 +8926,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       category: product?.category || "",
     });
     row.cogs += Math.max(0, -Number(movement.qty || 0))
-      * (product ? branchProductCostCents(product, movement.branchId) : 0);
+      * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
   });
   lossMoves.forEach((movement) => {
     const product = productsById.get(movement.productId) || prod(movement.productId);
@@ -8898,7 +8937,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       category: product?.category || "",
     });
     row.lossValue += Math.abs(Number(movement.qty || 0))
-      * (product ? branchProductCostCents(product, movement.branchId) : 0);
+      * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
   });
 
   // Preserve reconciliation even for legacy invoices whose item lines were
@@ -9015,7 +9054,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       headers: ["Product", "SKU", "Category", "Units sold", "Sales", "COGS", "Loss & damage", "Gross profit", "Product profit", "Gross margin %"],
       rows: visibleProductPnlRows.map((row) => [row.name, row.sku, row.category, row.qty, m(row.revenue), m(row.cogs), m(row.lossValue), m(row.grossProductProfit), m(row.productProfit), row.margin]),
     };
-    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0))]; }) };
+    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0))]; }) };
     if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: reportProducts.map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
@@ -9525,7 +9564,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   <td><div className="nm">{p ? p.name : mv.productId}</div><div className="mt2">{p ? p.sku : ""}</div></td>
                   <td style={{ fontWeight: 700, color: "var(--danger)" }}>−{Math.abs(mv.qty)}</td>
                   <td>{mv.reason.replace("Loss/Damage · ", "")}</td>
-                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0), cur)}</td></tr>); })}</tbody></table></div>)}
+                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0), cur)}</td></tr>); })}</tbody></table></div>)}
         </>
       )}
 
@@ -9600,7 +9639,7 @@ function DocumentsTab({ data }) {
     (data.countLog || []).filter((c) => inRange(c.ts)).forEach((c) => { const k = c.branchId + "|" + c.ts; (groups[k] = groups[k] || []).push(c); });
     docs = Object.entries(groups).map(([key, entries]) => {
       const ts = entries[0].ts; const branchId = entries[0].branchId;
-      const lines = entries.map((c) => { const p = prod(c.productId); return { id: c.id, name: p ? p.name : c.productId, sku: p ? p.sku : "", system: c.system, counted: c.counted, variance: c.variance, costCents: p ? branchProductCostCents(p, branchId) : 0, kind: c.kind }; });
+      const lines = entries.map((c) => { const p = prod(c.productId); return { id: c.id, name: p ? p.name : c.productId, sku: p ? p.sku : "", system: c.system, counted: c.counted, variance: c.variance, costCents: p ? branchInventoryCostCents(data, p, branchId) : 0, kind: c.kind }; });
       const discrepancies = lines.filter((l) => l.variance !== 0);
       const rep = { store: data.settings.store, branchName: bname(branchId), branchId, ts, lines, discrepancies,
         varianceUnits: lines.reduce((s, l) => s + l.variance, 0), varianceCost: lines.reduce((s, l) => s + l.variance * l.costCents, 0),
@@ -9617,7 +9656,7 @@ function DocumentsTab({ data }) {
     });
   } else if (type === "loss") {
     eyebrow = "Shrinkage"; title = "Loss & Damage Reports";
-    docs = data.stockMovements.filter((m) => inRange(m.ts) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchProductCostCents(p, m.branchId) : 0);
+    docs = data.stockMovements.filter((m) => inRange(m.ts) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchInventoryCostCents(data, p, m.branchId) : 0);
       return { id: m.id, label: p ? p.name : "Product", meta: bname(m.branchId) + " · " + Math.abs(m.qty) + " units lost", date: dt(m.ts), ts: m.ts, amountCents: Math.abs(val),
         detail: [["Product", p ? p.name : ""], ["SKU", p ? p.sku : ""], ["Branch", bname(m.branchId)], ["Units lost", Math.abs(m.qty)], ["Cost value", fmt(Math.abs(val), cur)], ["Source", m.reason], ["When", new Date(m.ts).toLocaleString()]] }; });
   } else if (type === "transfers") {
