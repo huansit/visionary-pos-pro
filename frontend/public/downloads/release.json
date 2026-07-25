@@ -1,15 +1,15 @@
 {
-  "version": "2.0.44",
+  "version": "2.0.45",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.44_x64-setup.exe",
-  "size": 3152487,
-  "sha512": "C931AB4364882486F3527FB74EC9D3FF463BDFC9ABF3C0E74BF6F276456B5B777B904914C9895E82E62E72856D618C993D0EC6E9077D1EFCDE37ACAD96A88EE8",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.45_x64-setup.exe",
+  "size": 3149613,
+  "sha512": "E759214BF9674A9DBBF5382BC23DDB8797435969578E9AC32A09663546B3F13FAEE0C00350BAA1AD598E65BAD9C5D53C31224CD8975B7D0DA314A4287F240E6C",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.44",
-    "End-of-day closing now resets the cashier's current-day sales totals and persists after refresh or restart.",
-    "Outstanding invoices from the closed business day now move into carried-over debts for the correct branch.",
-    "Same-day open invoices no longer block a customer from making another sale.",
-    "Only carried-over debt from a completed end-of-day close blocks further customer sales.",
+    "VISIONPOS Cashier 2.0.45",
+    "Invoices now receive a canonical branch-specific sequential number from the VisionPOS server.",
+    "SIPCITY and Cape Town maintain independent invoice sequences for clear branch auditing.",
+    "Retrying a synchronized checkout preserves the original invoice number and cannot create a second number.",
+    "Printed receipts, cashier history, admin records, and stock movements now use the same invoice number.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }
