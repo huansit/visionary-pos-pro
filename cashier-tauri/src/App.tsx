@@ -228,23 +228,36 @@ function printReceipt(receipt: Receipt) {
   doc.close();
 }
 
-function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[]) {
+function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[], dayClosedAt: number | null) {
   const savedAt = Date.now();
-  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({ branches, products: dedupeCatalogProducts(products), invoices, savedAt }));
+  localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({
+    branches,
+    products: dedupeCatalogProducts(products),
+    invoices,
+    dayClosedAt,
+    savedAt
+  }));
   return savedAt;
 }
 
-function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; savedAt?: number } {
+function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; dayClosedAt: number | null; savedAt?: number } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [], invoices: [] };
+    if (!raw) return { branches: [], products: [], invoices: [], dayClosedAt: null };
     const parsed = JSON.parse(raw);
     const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
-    const repaired = { branches: parsed.branches || [], products, invoices: parsed.invoices || [], savedAt: parsed.savedAt };
+    const parsedClose = Number(parsed.dayClosedAt || 0);
+    const repaired = {
+      branches: parsed.branches || [],
+      products,
+      invoices: parsed.invoices || [],
+      dayClosedAt: Number.isFinite(parsedClose) && parsedClose > 0 ? parsedClose : null,
+      savedAt: parsed.savedAt
+    };
     localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
     return repaired;
   } catch {
-    return { branches: [], products: [], invoices: [] };
+    return { branches: [], products: [], invoices: [], dayClosedAt: null };
   }
 }
 
@@ -430,15 +443,20 @@ export default function App() {
     if (!account?.id) return [];
     return invoices.filter((invoice) => !invoice.cashierId || invoice.cashierId === account.id);
   }, [account?.id, invoices]);
-  const openInvoices = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [myInvoices]);
-  const carriedDebts = useMemo(() => myInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [myInvoices]);
-  const todayInvoices = useMemo(() => myInvoices.filter((invoice) => isToday(invoice.ts)), [myInvoices]);
+  const businessDayInvoices = useMemo(() => myInvoices.map((invoice) => {
+    const invoiceTs = Number(invoice.ts || 0);
+    return dayClosedAt && invoiceTs > 0 && invoiceTs <= dayClosedAt && outstanding(invoice) > 0
+      ? { ...invoice, carriedOver: true }
+      : invoice;
+  }), [dayClosedAt, myInvoices]);
+  const openInvoices = useMemo(() => businessDayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [businessDayInvoices]);
+  const carriedDebts = useMemo(() => businessDayInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [businessDayInvoices]);
   const activeTodayInvoices = useMemo(
-    () => todayInvoices.filter((invoice) => (
+    () => businessDayInvoices.filter((invoice) => (
       invoice.voidRequestStatus !== "approved"
-      && (!dayClosedAt || Number(invoice.ts || 0) > dayClosedAt)
+      && (dayClosedAt ? Number(invoice.ts || 0) > dayClosedAt : isToday(invoice.ts))
     )),
-    [dayClosedAt, todayInvoices]
+    [businessDayInvoices, dayClosedAt]
   );
   const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [activeTodayInvoices]);
   const paidTodayCount = activeTodayInvoices.filter((invoice) => outstanding(invoice) <= 0).length;
@@ -451,11 +469,11 @@ export default function App() {
   const customerDebtInvoices = useMemo(() => {
     const customerKey = normalize(customerName);
     if (customerKey.length < 2) return [];
-    return [...openInvoices, ...carriedDebts].filter((invoice) => {
+    return carriedDebts.filter((invoice) => {
       const invoiceCustomer = normalize(invoice.customerName || "");
       return invoiceCustomer === customerKey;
     });
-  }, [carriedDebts, customerName, openInvoices]);
+  }, [carriedDebts, customerName]);
   const customerOutstandingDebt = customerDebtInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const creditLocked = customerOutstandingDebt > 0;
   const canCompleteSale = cartLines.length > 0
@@ -501,6 +519,7 @@ export default function App() {
       setBranches(cached.branches);
       setProducts(cached.products);
       setInvoices(cached.invoices);
+      setDayClosedAt(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
       if (stored) {
         setTerminal(stored);
@@ -719,7 +738,8 @@ export default function App() {
           setBranches(pulled.branches);
           setProducts(pulled.products);
           setInvoices(pulled.invoices);
-          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices));
+          setDayClosedAt(pulled.dayClosedAt);
+          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices, pulled.dayClosedAt));
           setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
           setError("");
         } catch (err) {
@@ -884,9 +904,8 @@ export default function App() {
     setDayClosedAt(ts);
     setDayCloseNoticeAt(ts);
     setInvoices((current) => current
-      .filter((invoice) => !(isToday(invoice.ts) && outstanding(invoice) <= 0))
       .map((invoice) => (
-        isToday(invoice.ts) && outstanding(invoice) > 0
+        Number(invoice.ts || 0) <= ts && outstanding(invoice) > 0
           ? { ...invoice, carriedOver: true }
           : invoice
       )));

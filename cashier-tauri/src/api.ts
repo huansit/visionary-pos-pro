@@ -488,7 +488,12 @@ export async function logout(sessionToken: string): Promise<void> {
   }).catch(() => undefined);
 }
 
-export async function pullCatalog(terminal: TerminalCredentials): Promise<{ branches: Branch[]; products: Product[]; invoices: Invoice[] }> {
+export async function pullCatalog(terminal: TerminalCredentials): Promise<{
+  branches: Branch[];
+  products: Product[];
+  invoices: Invoice[];
+  dayClosedAt: number | null;
+}> {
   let cursor = 0;
   let hasMore = true;
   const events: Array<any> = [];
@@ -531,6 +536,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
+  let dayClosedAt: number | null = null;
 
   for (const item of events) {
     if (item.type === "branch") {
@@ -578,6 +584,23 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
       const invoiceId = payload.invoiceId || payload.orderId;
       const amount = centsFromPayload(payload, ["amountCents", "amount_cents"], moneyToCentsFromPayload(payload, ["amount"]));
       if (invoiceId) paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + amount);
+    }
+    if (item.type === "endOfDay") {
+      const payload = item.payload || {};
+      const branchId = String(payload.branchId || item.branchId || "");
+      if (branchId === terminal.branchId) {
+        const closedAt = Number(
+          payload.periodEndedAt
+          || payload.closedAt
+          || payload.ts
+          || item.clientTs
+          || item.serverTs
+          || 0
+        );
+        if (Number.isFinite(closedAt) && closedAt > 0) {
+          dayClosedAt = Math.max(dayClosedAt || 0, closedAt);
+        }
+      }
     }
     if (item.type === "invoiceNote") {
       const payload = item.payload || {};
@@ -661,7 +684,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
       const voidRequest = invoiceVoidRequests.get(invoice.id);
       const voidDecision = invoiceVoidDecisions.get(invoice.id);
       const voidRequestStatus: Invoice["voidRequestStatus"] = voidDecision?.decision || (voidRequest ? "pending" : undefined);
-      return {
+      const hydratedInvoice = {
         ...invoice,
         note: notePatch ? notePatch.note : invoice.note,
         paidCents: Math.max(invoice.paidCents, paidByInvoice.get(invoice.id) || 0),
@@ -670,6 +693,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
         voidRequestStatus,
         voidDecisionReason: voidDecision?.reason
       };
+      const balance = Math.max(0, hydratedInvoice.totalCents - hydratedInvoice.paidCents);
+      const invoiceTs = Number(hydratedInvoice.ts || 0);
+      return dayClosedAt && invoiceTs > 0 && invoiceTs <= dayClosedAt && balance > 0
+        ? { ...hydratedInvoice, carriedOver: true }
+        : hydratedInvoice;
     })
     .filter((invoice) => invoice.branchId === terminal.branchId)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
@@ -686,7 +714,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{ bran
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
 
-  return { branches, invoices, products };
+  return { branches, invoices, products, dayClosedAt };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {
