@@ -8579,6 +8579,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const [vel, setVel] = useState("all");
   const [prodSel, setProdSel] = useState(null);
   const [productSearch, setProductSearch] = useState("");
+  const [pnlProductSearch, setPnlProductSearch] = useState("");
   const [productScannerOn, setProductScannerOn] = useState(false);
   const [productScanMessage, setProductScanMessage] = useState("");
   const productSearchRef = useRef(null);
@@ -8671,6 +8672,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   // Build product analytics once so the visible table, preview, print, PDF and
   // downloads cannot drift onto different product/sales datasets.
   const productsById = new Map((data.products || []).map((product) => [product.id, product]));
+  const reportProductByKey = new Map(reportProducts.map((product) => [productDedupeKey(product), product]));
   const productAliases = new Map();
   (data.products || []).forEach((product) => {
     const key = productDedupeKey(product);
@@ -8757,6 +8759,104 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       movement: classOf(p),
     };
   });
+
+  // Product P&L is built from the same recognized invoices and sale movements
+  // as the summary above. This keeps every product row reconcilable to the
+  // headline sales, COGS and loss figures for the selected branch and period.
+  const productPnl = new Map();
+  const ensureProductPnlRow = (key, fallback = {}) => {
+    const stableKey = key || `unmapped:${String(fallback.name || "sale").trim().toLowerCase()}`;
+    if (!productPnl.has(stableKey)) {
+      const product = reportProductByKey.get(stableKey)
+        || productsById.get(fallback.productId)
+        || null;
+      productPnl.set(stableKey, {
+        key: stableKey,
+        product,
+        name: product?.name || fallback.name || "Unallocated invoice sales",
+        sku: product?.sku || fallback.sku || "",
+        category: product?.category || fallback.category || "",
+        qty: 0,
+        revenue: 0,
+        cogs: 0,
+        lossValue: 0,
+      });
+    }
+    return productPnl.get(stableKey);
+  };
+  const productKeyForLine = (line) => productKeyForValue(line?.productId)
+    || productKeyForValue(line?.sku)
+    || productKeyForValue(line?.barcode)
+    || productKeyForValue(line?.name || line?.productName)
+    || `unmapped:${String(line?.name || line?.productName || line?.productId || "sale").trim().toLowerCase()}`;
+
+  recInvs.forEach((invoice) => {
+    invoiceSoldLines(data, invoice, invoice.branchId).forEach((line) => {
+      const row = ensureProductPnlRow(productKeyForLine(line), line);
+      row.qty += Math.max(0, Number(line.qty || 0));
+      row.revenue += Math.max(0, Math.round(Number(line.totalCents || 0)));
+    });
+  });
+  saleMoves.forEach((movement) => {
+    const product = productsById.get(movement.productId) || prod(movement.productId);
+    const row = ensureProductPnlRow(productKeyForId(movement.productId), {
+      productId: movement.productId,
+      name: product?.name || "Product",
+      sku: product?.sku || "",
+      category: product?.category || "",
+    });
+    row.cogs += Math.max(0, -Number(movement.qty || 0))
+      * (product ? branchProductCostCents(product, movement.branchId) : 0);
+  });
+  lossMoves.forEach((movement) => {
+    const product = productsById.get(movement.productId) || prod(movement.productId);
+    const row = ensureProductPnlRow(productKeyForId(movement.productId), {
+      productId: movement.productId,
+      name: product?.name || "Product",
+      sku: product?.sku || "",
+      category: product?.category || "",
+    });
+    row.lossValue += Math.abs(Number(movement.qty || 0))
+      * (product ? branchProductCostCents(product, movement.branchId) : 0);
+  });
+
+  // Preserve reconciliation even for legacy invoices whose item lines were
+  // incomplete. The adjustment remains visible instead of silently vanishing.
+  const allocatedProductRevenue = Array.from(productPnl.values()).reduce((sum, row) => sum + row.revenue, 0);
+  const unallocatedRevenue = grossSales - allocatedProductRevenue;
+  if (unallocatedRevenue !== 0) {
+    ensureProductPnlRow("unallocated:invoice-adjustment", {
+      name: "Unallocated invoice adjustment",
+    }).revenue += unallocatedRevenue;
+  }
+
+  const productPnlRows = Array.from(productPnl.values())
+    .map((row) => {
+      const grossProductProfit = row.revenue - row.cogs;
+      const productProfit = grossProductProfit - row.lossValue;
+      return {
+        ...row,
+        grossProductProfit,
+        productProfit,
+        margin: row.revenue > 0 ? Math.round((grossProductProfit / row.revenue) * 100) : 0,
+      };
+    })
+    .filter((row) => row.qty > 0 || row.revenue !== 0 || row.cogs !== 0 || row.lossValue !== 0)
+    .sort((a, b) => b.revenue - a.revenue || String(a.name).localeCompare(String(b.name)));
+  const pnlProductSearchNeedle = pnlProductSearch.trim().toLowerCase();
+  const visibleProductPnlRows = productPnlRows.filter((row) => !pnlProductSearchNeedle || [
+    row.name,
+    row.sku,
+    row.category,
+  ].some((value) => String(value || "").toLowerCase().includes(pnlProductSearchNeedle)));
+  const visibleProductPnlTotals = visibleProductPnlRows.reduce((totals, row) => ({
+    qty: totals.qty + row.qty,
+    revenue: totals.revenue + row.revenue,
+    cogs: totals.cogs + row.cogs,
+    lossValue: totals.lossValue + row.lossValue,
+    grossProductProfit: totals.grossProductProfit + row.grossProductProfit,
+    productProfit: totals.productProfit + row.productProfit,
+  }), { qty: 0, revenue: 0, cogs: 0, lossValue: 0, grossProductProfit: 0, productProfit: 0 });
   const productRows = allProductReportRows.filter((row) => row.qty > 0).sort((a, b) => b.revenue - a.revenue);
   const visibleProductRows = allProductReportRows
     .filter((row) => (vel === "all" || row.movement === vel) && matchesProductSearch(row.p))
@@ -8793,7 +8893,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       headers: ["Product", "SKU", "Category", "Units sold", "Revenue", "Profit", "Margin %", "On hand", "Movement"],
       rows: visibleProductRows.map((r) => [r.p.name, r.p.sku, r.p.category || "", r.qty, m(r.revenue), m(r.netProfit), r.marg, r.stockOnHand, VLABEL[r.movement]]),
     };
-    if (sub === "pnl") return { name: "profit-loss", headers: ["Line", "Amount"], rows: [["Gross sales", m(grossSales)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)]] };
+    if (sub === "pnl") return {
+      name: "profit-loss-by-product",
+      headers: ["Product", "SKU", "Category", "Units sold", "Sales", "COGS", "Loss & damage", "Gross profit", "Product profit", "Gross margin %"],
+      rows: visibleProductPnlRows.map((row) => [row.name, row.sku, row.category, row.qty, m(row.revenue), m(row.cogs), m(row.lossValue), m(row.grossProductProfit), m(row.productProfit), row.margin]),
+    };
     if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchProductCostCents(p, mv.branchId) : 0))]; }) };
     if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: reportProducts.map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
@@ -8818,7 +8922,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     const titleMap = {
       overview: "Daily Sales Report",
       products: "Product Sales Report",
-      pnl: "Profit Report",
+      pnl: "Product Profit & Loss Report",
       inventory: "Inventory Report",
       reorder: "Reorder Forecast",
       cashier: "Cashier Report",
@@ -8836,10 +8940,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         { label: "Net profit", value: fmt(visibleProductRows.reduce((sum, row) => sum + row.netProfit, 0), cur) },
       ];
       if (sub === "pnl") return [
-        { label: "Gross Sales", value: fmt(grossSales, cur) },
-        { label: "Gross Profit", value: fmt(grossProfit, cur) },
-        { label: "Net Profit", value: fmt(netProfit, cur) },
-        { label: "Margin", value: margin + "%" },
+        { label: "Product sales", value: fmt(visibleProductPnlTotals.revenue, cur) },
+        { label: "Product COGS", value: fmt(visibleProductPnlTotals.cogs, cur) },
+        { label: "Gross product profit", value: fmt(visibleProductPnlTotals.grossProductProfit, cur) },
+        { label: "Product profit", value: fmt(visibleProductPnlTotals.productProfit, cur) },
       ];
       if (sub === "inventory") return [
         { label: "Products", value: t.rows.length },
@@ -8895,6 +8999,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       filters.push({ label: "Movement", value: vel === "all" ? "All" : VLABEL[vel] });
       if (productSearch.trim()) filters.push({ label: "Product search", value: productSearch.trim() });
     }
+    if (sub === "pnl" && pnlProductSearch.trim()) filters.push({ label: "Product search", value: pnlProductSearch.trim() });
     if (sub === "reorder") filters.push({ label: "Target cover", value: reorderWeeks + " week(s)" });
     return buildReportDocument({
       title: titleMap[sub] || "VISIONPOS Report",
@@ -9095,11 +9200,65 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       })()}
 
       {sub === "pnl" && (
-        <div className="panel"><div className="section-title" style={{ marginTop: 0 }}>Profit &amp; Loss · {period === "all" ? "all time" : period}</div>
-          {[["Gross sales", grossSales], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
-            <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
-          <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
-          <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} transactions · {itemsSold} units</div></div>
+        <>
+          <div className="panel"><div className="section-title" style={{ marginTop: 0 }}>Profit &amp; Loss · {period === "all" ? "all time" : period}</div>
+            {[["Gross sales", grossSales], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
+              <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
+            <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
+            <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} transactions · {itemsSold} units</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end", justifyContent: "space-between", margin: "18px 0 10px", flexWrap: "wrap" }}>
+            <div>
+              <div className="section-title" style={{ margin: 0 }}>Profit &amp; loss by product</div>
+              <div className="sub">Sales and cost are assigned per product. Shared operating expenses remain in the summary above.</div>
+            </div>
+            <div className="searchbox" style={{ width: "min(100%, 360px)" }}>
+              <Search size={18} />
+              <input
+                value={pnlProductSearch}
+                onChange={(event) => setPnlProductSearch(event.target.value)}
+                placeholder="Search product, SKU, or category..."
+                aria-label="Search product profit and loss"
+              />
+              {pnlProductSearch ? (
+                <button type="button" className="btn xs btn-ghost" onClick={() => setPnlProductSearch("")} aria-label="Clear product profit search">
+                  <X size={16} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr>
+            <th>Product</th><th>Units sold</th><th>Sales</th><th>COGS</th><th>Loss / damage</th><th>Gross profit</th><th>Product profit</th><th>Margin</th>
+          </tr></thead>
+            <tbody>{visibleProductPnlRows.map((row) => (
+              <tr key={row.key}>
+                <td><div className="nm">{row.name}</div><div className="mt2">{[row.sku, row.category].filter(Boolean).join(" · ") || "Unmapped sale"}</div></td>
+                <td style={{ fontWeight: 700 }}>{row.qty}</td>
+                <td className="amt">{fmt(row.revenue, cur)}</td>
+                <td className="amt">{fmt(row.cogs, cur)}</td>
+                <td className="amt" style={{ color: row.lossValue > 0 ? "var(--danger)" : "var(--muted)" }}>{fmt(row.lossValue, cur)}</td>
+                <td className="amt" style={{ color: row.grossProductProfit < 0 ? "var(--danger)" : "var(--text)" }}>{fmt(row.grossProductProfit, cur)}</td>
+                <td className="amt" style={{ color: row.productProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(row.productProfit, cur)}</td>
+                <td>{row.margin}%</td>
+              </tr>
+            ))}
+              {visibleProductPnlRows.length === 0 && <tr><td colSpan="8"><div className="notice">No product profit and loss records match this period, branch, and search.</div></td></tr>}
+            </tbody>
+            {visibleProductPnlRows.length > 0 && <tfoot><tr>
+              <td><strong>{pnlProductSearch ? "Shown total" : "Product total"}</strong><div className="mt2">{visibleProductPnlRows.length} product(s)</div></td>
+              <td><strong>{visibleProductPnlTotals.qty}</strong></td>
+              <td className="amt"><strong>{fmt(visibleProductPnlTotals.revenue, cur)}</strong></td>
+              <td className="amt"><strong>{fmt(visibleProductPnlTotals.cogs, cur)}</strong></td>
+              <td className="amt"><strong>{fmt(visibleProductPnlTotals.lossValue, cur)}</strong></td>
+              <td className="amt"><strong>{fmt(visibleProductPnlTotals.grossProductProfit, cur)}</strong></td>
+              <td className="amt" style={{ color: visibleProductPnlTotals.productProfit < 0 ? "var(--danger)" : "var(--ok)" }}><strong>{fmt(visibleProductPnlTotals.productProfit, cur)}</strong></td>
+              <td><strong>{visibleProductPnlTotals.revenue > 0 ? Math.round(visibleProductPnlTotals.grossProductProfit / visibleProductPnlTotals.revenue * 100) : 0}%</strong></td>
+            </tr></tfoot>}
+          </table></div>
+          <div className="sub" style={{ marginTop: 8 }}>Product profit = sales - cost of goods sold - product loss/damage. Net profit also deducts shared operating expenses shown above.</div>
+        </>
       )}
 
       {sub === "inventory" && (() => {
