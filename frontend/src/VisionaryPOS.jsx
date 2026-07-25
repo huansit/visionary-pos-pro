@@ -7657,7 +7657,7 @@ function BorrowingTab({ data, update }) {
   const [qty, setQty] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
-  const [lines, setLines] = useState([]); // [{productId, productName, sku, qty}]
+  const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const product = data.products.find((p) => p.id === productId);
   // available accounts for quantities already added to the pending list for this product at this source
@@ -7672,7 +7672,9 @@ function BorrowingTab({ data, update }) {
     const n = parseInt(qty, 10);
     if (!n || n <= 0) return setErr("Enter a quantity greater than zero.");
     if (n > available) return setErr("Insufficient stock at " + bn(fromB) + " — only " + available + " available (after items already added).");
-    setLines((ls) => { const i = ls.findIndex((l) => l.productId === product.id); if (i >= 0) { const cp = ls.slice(); cp[i] = { ...cp[i], qty: cp[i].qty + n }; return cp; } return [...ls, { productId: product.id, productName: product.name, sku: product.sku, qty: n }]; });
+    const sourceCostCents = branchProductCostCents(product, fromB);
+    if (sourceCostCents <= 0) return setErr("This product has no purchase cost at " + bn(fromB) + ". Receive or correct its purchase before transferring it.");
+    setLines((ls) => { const i = ls.findIndex((l) => l.productId === product.id); if (i >= 0) { const cp = ls.slice(); cp[i] = { ...cp[i], qty: cp[i].qty + n, costCents: sourceCostCents }; return cp; } return [...ls, { productId: product.id, productName: product.name, sku: product.sku, qty: n, costCents: sourceCostCents }]; });
     setQty(""); setProductId(""); setQ("");
   };
   const removeLine = (pid) => setLines((ls) => ls.filter((l) => l.productId !== pid));
@@ -7682,15 +7684,36 @@ function BorrowingTab({ data, update }) {
     if (fromB === toB) return setErr("Source and destination branches must be different.");
     if (lines.length === 0) return setErr("Add at least one product to the transfer.");
     const ts = now(); const number = "TRF-" + ts;
-    const tr = { id: uid("trf"), number, fromBranchId: fromB, toBranchId: toB, note: note.trim(), status: "completed", ts, synced: false,
-      items: lines.map((l) => ({ productId: l.productId, productName: l.productName, sku: l.sku, qty: l.qty })),
-      productName: lines.length === 1 ? lines[0].productName : lines.length + " products", qty: lines.reduce((s, l) => s + l.qty, 0) };
-    const movements = [];
-    lines.forEach((l) => {
-      movements.push({ id: uid("mv"), productId: l.productId, branchId: fromB, qty: -l.qty, reason: "Transfer to " + bn(toB) + " (" + number + ")", ts, synced: false });
-      movements.push({ id: uid("mv"), productId: l.productId, branchId: toB, qty: l.qty, reason: "Transfer from " + bn(fromB) + " (" + number + ")", ts, synced: false });
+    update((d) => {
+      let products = [...d.products];
+      const movements = [];
+      const transferItems = lines.map((l) => {
+        const productIndex = products.findIndex((p) => p.id === l.productId);
+        const currentProduct = productIndex >= 0 ? products[productIndex] : null;
+        const sourceCostCents = currentProduct ? branchProductCostCents(currentProduct, fromB) : Math.max(0, Number(l.costCents) || 0);
+        const destinationQty = currentProduct ? Math.max(0, productOnHand(d, currentProduct, toB)) : Math.max(0, onHand(d, l.productId, toB));
+        const destinationCostCents = currentProduct ? branchProductCostCents(currentProduct, toB) : 0;
+        const destinationMovingAverageCents = sourceCostCents > 0
+          ? wacCost(destinationQty, destinationCostCents || sourceCostCents, l.qty, sourceCostCents)
+          : destinationCostCents;
+
+        if (currentProduct && sourceCostCents > 0) {
+          products[productIndex] = withBranchProductCost(currentProduct, toB, destinationMovingAverageCents);
+        }
+
+        movements.push({ id: uid("mv"), productId: l.productId, branchId: fromB, qty: -l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer to " + bn(toB) + " (" + number + ")", ts, synced: false });
+        movements.push({ id: uid("mv"), productId: l.productId, branchId: toB, qty: l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer from " + bn(fromB) + " (" + number + ")", ts, synced: false });
+        return { productId: l.productId, productName: l.productName, sku: l.sku, qty: l.qty, costCents: sourceCostCents, valueCents: l.qty * sourceCostCents };
+      });
+      const tr = {
+        id: uid("trf"), number, fromBranchId: fromB, toBranchId: toB, note: note.trim(), status: "completed", ts, synced: false,
+        items: transferItems,
+        productName: lines.length === 1 ? lines[0].productName : lines.length + " products",
+        qty: lines.reduce((s, l) => s + l.qty, 0),
+        valueCents: transferItems.reduce((sum, item) => sum + item.valueCents, 0),
+      };
+      return { ...d, products, borrowings: [tr, ...d.borrowings], stockMovements: [...d.stockMovements, ...movements] };
     });
-    update((d) => ({ ...d, borrowings: [tr, ...d.borrowings], stockMovements: [...d.stockMovements, ...movements] }));
     setLines([]); setQty(""); setNote(""); setProductId(""); setQ("");
   };
 
@@ -7734,9 +7757,10 @@ function BorrowingTab({ data, update }) {
 
         {lines.length > 0 && (
           <div className="tablewrap" style={{ marginTop: 14 }}>
-            <table className="tbl"><thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th /></tr></thead>
+            <table className="tbl"><thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Purchase cost</th><th style={{ textAlign: "right" }}>Qty</th><th /></tr></thead>
               <tbody>{lines.map((l) => (<tr key={l.productId}>
                 <td><div className="nm">{l.productName}</div><div className="mt2">{l.sku}</div></td>
+                <td style={{ textAlign: "right", fontFamily: "var(--font-mono)" }}>{fmt(l.costCents, data.settings.currency)}</td>
                 <td style={{ textAlign: "right", fontWeight: 700 }}>{l.qty}</td>
                 <td><button className="smdel" onClick={() => removeLine(l.productId)}><Trash2 /></button></td>
               </tr>))}</tbody></table>
