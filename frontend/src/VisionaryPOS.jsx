@@ -1949,6 +1949,71 @@ function useBarcodeScanner({ enabled, mode, onScan }) {
   }, [enabled, mode]);
 }
 function invOutstanding(inv) { return Math.max(0, inv.totalCents - inv.paidCents); }
+function invoiceCashierName(invoice) {
+  return String(invoice?.cashier || invoice?.cashierName || invoice?.soldBy || "Cashier").trim() || "Cashier";
+}
+function invoiceSoldLines(data, invoice, branchId) {
+  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const invoiceTotal = Math.max(0, Math.round(Number(invoice?.totalCents || 0)));
+  const captured = items.map((item) => {
+    const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+    const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
+    const product = item?.productId ? (data.products || []).find((entry) => entry.id === item.productId) : null;
+    return {
+      productId: item?.productId || product?.id || "",
+      name: String(item?.name || item?.productName || product?.name || "Product").trim() || "Product",
+      qty,
+      priceCents,
+      totalCents: qty * priceCents,
+    };
+  }).filter((line) => line.qty > 0);
+  if (captured.length > 0) {
+    const capturedTotal = captured.reduce((sum, line) => sum + line.totalCents, 0);
+    if (capturedTotal > 0 || invoiceTotal === 0) return captured;
+    const capturedQty = captured.reduce((sum, line) => sum + line.qty, 0);
+    const unitPrice = capturedQty > 0 ? Math.floor(invoiceTotal / capturedQty) : 0;
+    let allocated = 0;
+    return captured.map((line, index) => {
+      const totalCents = index === captured.length - 1 ? Math.max(0, invoiceTotal - allocated) : unitPrice * line.qty;
+      allocated += totalCents;
+      return { ...line, priceCents: line.qty ? Math.round(totalCents / line.qty) : 0, totalCents };
+    });
+  }
+
+  // Legacy invoices may only have stock movements. Reconcile those lines to
+  // the immutable invoice total rather than today's potentially changed price.
+  const reason = `Sale ${invoice?.number || ""}`;
+  const movementLines = (data.stockMovements || []).filter((move) => move.branchId === branchId
+    && move.reason === reason && Number(move.qty || 0) < 0).map((move) => {
+    const product = (data.products || []).find((entry) => entry.id === move.productId);
+    return { productId: move.productId || "", name: product?.name || "Product", qty: Math.abs(Number(move.qty || 0)) };
+  }).filter((line) => line.qty > 0);
+  if (movementLines.length === 0) return [];
+
+  const totalQty = movementLines.reduce((sum, line) => sum + line.qty, 0);
+  const fallbackUnitPrice = totalQty > 0 ? Math.floor(invoiceTotal / totalQty) : 0;
+  let allocated = 0;
+  return movementLines.map((line, index) => {
+    const totalCents = index === movementLines.length - 1
+      ? Math.max(0, invoiceTotal - allocated)
+      : fallbackUnitPrice * line.qty;
+    allocated += totalCents;
+    return { ...line, priceCents: line.qty ? Math.round(totalCents / line.qty) : 0, totalCents };
+  });
+}
+function aggregateInvoiceSoldLines(data, invoices, branchId) {
+  const grouped = new Map();
+  (invoices || []).forEach((invoice) => {
+    invoiceSoldLines(data, invoice, branchId).forEach((line) => {
+      const key = `${line.productId || line.name}::${line.priceCents}`;
+      const current = grouped.get(key) || { ...line, qty: 0, totalCents: 0 };
+      current.qty += line.qty;
+      current.totalCents += line.totalCents;
+      grouped.set(key, current);
+    });
+  });
+  return Array.from(grouped.values()).sort((a, b) => b.totalCents - a.totalCents || a.name.localeCompare(b.name));
+}
 function lastEndFor(settings, branchId) { return (settings.lastEndDayByBranch && settings.lastEndDayByBranch[branchId]) || settings.lastEndDay || 0; }
 function branchLastEndDay(data, branchId) {
   const mapped = Number(data?.settings?.lastEndDayByBranch?.[branchId] || 0);
@@ -5113,6 +5178,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const [counted, setCounted] = useState("");
   const [note, setNote] = useState("");
   const [bId, setBId] = useState(branch.id);
+  const [cashierFilter, setCashierFilter] = useState("all");
   const [closeError, setCloseError] = useState("");
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
@@ -5138,27 +5204,31 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const terminalName = (cart) => cart.terminalName || cart.terminal_name || cart.deviceName || cart.cashierName || cart.cashier || "Unknown terminal";
 
   let d;
-  if (doc) { d = doc; } else {
+  let reportInvoices = [];
+  if (doc) {
+    d = doc;
+    if (Array.isArray(doc.invoiceSnapshots) && doc.invoiceSnapshots.length > 0) {
+      reportInvoices = doc.invoiceSnapshots;
+    } else {
+      const reportStart = Number(doc.periodStartedAt || 0);
+      const reportEnd = Number(doc.periodEndedAt || doc.closedAt || doc.ts || Number.MAX_SAFE_INTEGER);
+      reportInvoices = operationalInvoices(data).filter((invoice) => invoice.branchId === doc.branchId
+        && Number(invoice.ts || 0) > reportStart && Number(invoice.ts || 0) <= reportEnd);
+    }
+  } else {
     const since = branchLastEndDay(data, bId);
     const inv = operationalInvoices(data).filter((i) => i.branchId === bId && i.ts > since);
+    reportInvoices = inv;
     const paidInv = inv.filter((i) => invOutstanding(i) <= 0);
     const openInv = inv.filter((i) => invOutstanding(i) > 0);
-    const moves = data.stockMovements.filter((m) => m.branchId === bId
-      && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts > since
-      && !invoiceIsVoided(data, saleMoveInvoice(data, m)));
     const invIds = new Set(inv.map((i) => i.id));
     const pays = data.payments.filter((p) => p.status === "captured" && p.ts > since && invIds.has(p.orderId));
     const payBy = (mm) => pays.filter((p) => (p.method || "").toLowerCase().includes(mm)).reduce((s, p) => s + p.amountCents, 0);
     const cashC = payBy("cash"), mpesaC = payBy("pesa"), cardC = payBy("card");
     const invoiceC = inv.reduce((s, i) => s + invOutstanding(i), 0);
     const expenseC = (data.expenses || []).filter((e) => e.branchId === bId && e.ts > since && isApprovedExpense(e)).reduce((s, e) => s + e.amountCents, 0);
-    const byProd = {}; moves.forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
-    const lines = Object.entries(byProd).map(([id, qty]) => {
-      const product = data.products.find((item) => item.id === id);
-      const priceCents = product ? branchProductPriceCents(product, bId) : 0;
-      return { name: product ? product.name : "Product", qty, priceCents, totalCents: qty * priceCents };
-    }).sort((a, b) => b.totalCents - a.totalCents);
-    const cBy = {}; inv.forEach((i) => { const c = cBy[i.cashier] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[i.cashier] = c; });
+    const lines = aggregateInvoiceSoldLines(data, inv, bId);
+    const cBy = {}; inv.forEach((i) => { const cashierName = invoiceCashierName(i); const c = cBy[cashierName] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[cashierName] = c; });
     const now0 = new Date();
     d = {
       cashier: user, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: now0.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -5167,10 +5237,45 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC, expenseCents: expenseC,
       paidCount: paidInv.length, openCount: openInv.length, openDebtCents: openInv.reduce((s, i) => s + invOutstanding(i), 0),
       cashierRows: Object.entries(cBy).map(([n, v]) => ({ cashier: n, invoices: v.invoices, totalCents: v.totalCents })),
+      invoiceSnapshots: inv.map((invoice) => ({
+        id: invoice.id, number: invoice.number, cashier: invoiceCashierName(invoice), branchId: invoice.branchId,
+        ts: invoice.ts, totalCents: invoice.totalCents, paidCents: invoice.paidCents,
+        items: Array.isArray(invoice.items) ? invoice.items.map((item) => ({ ...item })) : [],
+      })),
       lines,
     };
   }
-  const dayLines = d.lines || [];
+  const cashierNames = Array.from(new Set([
+    ...reportInvoices.map(invoiceCashierName),
+    ...(d.cashierRows || []).map((row) => String(row.cashier || "").trim()).filter(Boolean),
+  ])).sort((a, b) => a.localeCompare(b));
+  const filteredInvoices = cashierFilter === "all"
+    ? reportInvoices
+    : reportInvoices.filter((invoice) => invoiceCashierName(invoice) === cashierFilter);
+  const canProjectFromInvoices = reportInvoices.length > 0;
+  const dayLines = canProjectFromInvoices
+    ? aggregateInvoiceSoldLines(data, filteredInvoices, d.branchId)
+    : (cashierFilter === "all" ? (d.lines || []) : []);
+  const visibleCashierRows = canProjectFromInvoices
+    ? Array.from(filteredInvoices.reduce((map, invoice) => {
+      const cashierName = invoiceCashierName(invoice);
+      const row = map.get(cashierName) || { cashier: cashierName, invoices: 0, totalCents: 0 };
+      row.invoices += 1;
+      row.totalCents += Number(invoice.totalCents || 0);
+      map.set(cashierName, row);
+      return map;
+    }, new Map()).values())
+    : (d.cashierRows || []).filter((row) => cashierFilter === "all" || row.cashier === cashierFilter);
+  const visibleTransactions = canProjectFromInvoices ? filteredInvoices.length : Number(d.transactions || 0);
+  const visibleSalesCents = canProjectFromInvoices
+    ? filteredInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0)
+    : Number(d.totalSalesCents || 0);
+  const visiblePaidCount = canProjectFromInvoices ? filteredInvoices.filter((invoice) => invOutstanding(invoice) <= 0).length : Number(d.paidCount || 0);
+  const visibleOpenInvoices = canProjectFromInvoices ? filteredInvoices.filter((invoice) => invOutstanding(invoice) > 0) : [];
+  const visibleOpenCount = canProjectFromInvoices ? visibleOpenInvoices.length : Number(d.openCount || 0);
+  const visibleOpenDebtCents = canProjectFromInvoices
+    ? visibleOpenInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)
+    : Number(d.openDebtCents || 0);
   const dayQty = dayLines.reduce((s, l) => s + l.qty, 0);
   const dayValue = dayLines.reduce((s, l) => s + l.totalCents, 0);
   const businessDate = d.businessDate || d.date || todayStr();
@@ -5193,23 +5298,23 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       generatedBy: user || d.cashier || "VISIONPOS",
       dateRange: d.date,
       filters: [
-        { label: "Cashier", value: d.cashier },
+        { label: "Cashier", value: cashierFilter === "all" ? "All cashiers" : cashierFilter },
         { label: "Branch", value: d.branchName },
         { label: "Closed at", value: d.time },
       ],
       headers: ["Item", "Qty", "Price Sold", "Total"],
       rows: dayLines.map((l) => [l.name, l.qty, fmt(l.priceCents, cur), fmt(l.totalCents, cur)]),
       totals: [
-        { label: "Transactions", value: d.transactions },
-        { label: "Items Sold", value: d.itemsSold },
-        { label: "Total Sales", value: fmt(d.totalSalesCents, cur) },
+        { label: "Transactions", value: visibleTransactions },
+        { label: "Items Sold", value: dayQty },
+        { label: "Total Sales", value: fmt(visibleSalesCents, cur) },
         { label: "Cash", value: fmt(d.cashCents, cur) },
         { label: "M-Pesa", value: fmt(d.mpesaCents, cur) },
         { label: "Card", value: fmt(d.cardCents, cur) },
         { label: "Invoice", value: fmt(d.invoiceCents, cur) },
         { label: "Expenses", value: fmt(d.expenseCents || 0, cur) },
-        { label: "Paid archived", value: d.paidCount || 0 },
-        { label: "Open carried over", value: (d.openCount || 0) + " · " + fmt(d.openDebtCents || 0, cur) },
+        { label: "Paid archived", value: visiblePaidCount },
+        { label: "Open carried over", value: visibleOpenCount + " · " + fmt(visibleOpenDebtCents, cur) },
       ],
     });
     printReport(report);
@@ -5252,7 +5357,6 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         }),
         settings: { ...current.settings, lastEndDayByBranch: { ...(current.settings.lastEndDayByBranch || {}), [d.branchId]: ts } } };
     });
-    printEndDay();
     onClose();
   };
 
@@ -5267,7 +5371,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
           <div className="eodcell"><div className="sl">Branch</div><div className="ev">{d.branchName}</div></div>
           <div className="eodcell"><div className="sl">Date</div><div className="ev">{d.date}</div></div>
           <div className="eodcell"><div className="sl">Time</div><div className="ev">{d.time}</div></div>
-          <div className="eodcell"><div className="sl">Total Sales</div><div className="ev">{fmt(d.totalSalesCents, cur)}</div></div>
+          <div className="eodcell"><div className="sl">Total Sales</div><div className="ev">{fmt(visibleSalesCents, cur)}</div></div>
           <div className="eodcell"><div className="sl">Cash</div><div className="ev">{fmt(d.cashCents, cur)}</div></div>
           <div className="eodcell"><div className="sl">M-Pesa</div><div className="ev">{fmt(d.mpesaCents, cur)}</div></div>
           <div className="eodcell"><div className="sl">Expenses</div><div className="ev">{fmt(d.expenseCents || 0, cur)}</div></div>
@@ -5276,12 +5380,12 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         <div className="grid2" style={{ marginTop: 14 }}>
           <div className="eodcell" style={{ borderColor: "rgba(22,163,74,.28)", background: "rgba(22,163,74,.08)" }}>
             <div className="sl">Paid — clears out</div>
-            <div className="ev">{d.paidCount || 0} invoice(s)</div>
+            <div className="ev">{visiblePaidCount} invoice(s)</div>
             <div className="mt2">Archived from active cashier views.</div>
           </div>
           <div className="eodcell" style={{ borderColor: "rgba(245,158,11,.32)", background: "rgba(245,158,11,.08)" }}>
             <div className="sl">Open — carries over</div>
-            <div className="ev">{d.openCount || 0} invoice(s) · {fmt(d.openDebtCents || 0, cur)}</div>
+            <div className="ev">{visibleOpenCount} invoice(s) · {fmt(visibleOpenDebtCents, cur)}</div>
             <div className="mt2">Moves to carried-over debt.</div>
           </div>
         </div>
@@ -5312,11 +5416,24 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
 
         {closeError && <div className="alert danger" style={{ marginTop: 14 }}>{closeError}</div>}
 
+        <div className="grid2" style={{ marginTop: 14, alignItems: "end" }}>
+          <div>
+            <label className="label">Cashier report filter</label>
+            <select className="input" value={cashierFilter} onChange={(event) => setCashierFilter(event.target.value)}>
+              <option value="all">All cashiers</option>
+              {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+          <div className="notice" style={{ margin: 0 }}>
+            {live ? "This filter changes the report only. Closing still covers every cashier in this branch." : "Filter this saved Z-report by cashier."}
+          </div>
+        </div>
+
         <div className="eodth"><span>Cashier</span><span>Invoices</span><span>Total</span></div>
-        {!(d.cashierRows || []).length ? <div className="notice">No cashier invoices in this closing period.</div> : (
-          <div className="eodrows">{(d.cashierRows || []).map((r) => (<div className="eodrow" key={r.cashier}><span>{r.cashier}</span><span>{r.invoices}</span><span className="amt">{fmt(r.totalCents, cur)}</span></div>))}</div>
+        {!visibleCashierRows.length ? <div className="notice">No cashier invoices in this closing period.</div> : (
+          <div className="eodrows">{visibleCashierRows.map((r) => (<div className="eodrow" key={r.cashier}><span>{r.cashier}</span><span>{r.invoices}</span><span className="amt">{fmt(r.totalCents, cur)}</span></div>))}</div>
         )}
-        <div className="eodtot"><span>Total Sum Of Day</span><span className="sub">{d.transactions} sales</span><span className="amt">{fmt(d.totalSalesCents, cur)}</span></div>
+        <div className="eodtot"><span>{cashierFilter === "all" ? "Total Sum Of Day" : `${cashierFilter} Total`}</span><span className="sub">{visibleTransactions} sales</span><span className="amt">{fmt(visibleSalesCents, cur)}</span></div>
 
         <div className="eodth"><span>Item</span><span>Qty</span><span>Price Sold</span><span>Total</span></div>
         {dayLines.length === 0 ? <div className="notice">No new sales since the last End of Day close.</div> : (
@@ -5338,23 +5455,22 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
           )
         )}
 
-        <div className="grid2" style={{ marginTop: 16 }}>
-          {live ? (
-            <>
-              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button
-                className="btn btn-primary"
-                disabled={activeCarts.length > 0 || batchAlreadyClosed || !hasInvoices || closing}
-                onClick={closeDay}
-              ><Check /> {closing ? "Closing..." : "Close day & print Z-report"}</button>
-            </>
-          ) : (
-            <>
-              <button className="btn btn-ghost" onClick={printEndDay}><Printer /> Print Z-report</button>
-              <button className="btn btn-ghost" onClick={onClose}>Close</button>
-            </>
-          )}
-        </div>
+        {live ? (
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+            <button className="btn btn-ghost" onClick={printEndDay} disabled={!hasInvoices}><Printer /> Print Z-report</button>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button
+              className="btn btn-primary"
+              disabled={activeCarts.length > 0 || batchAlreadyClosed || !hasInvoices || closing}
+              onClick={closeDay}
+            ><Check /> {closing ? "Closing..." : "Close day"}</button>
+          </div>
+        ) : (
+          <div className="grid2" style={{ marginTop: 16 }}>
+            <button className="btn btn-ghost" onClick={printEndDay}><Printer /> Print Z-report</button>
+            <button className="btn btn-ghost" onClick={onClose}>Close</button>
+          </div>
+        )}
       </div>
     </div>
   );
