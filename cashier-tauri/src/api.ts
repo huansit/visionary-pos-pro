@@ -25,6 +25,7 @@ type SyncPushResult = {
   accepted?: string[];
   rejected?: Array<{ id?: string; reason?: string; type?: string }>;
   resetEpoch?: string;
+  invoiceNumbers?: Record<string, string>;
 };
 
 const TERMINAL_REGISTRATION_ERRORS = new Set([
@@ -743,7 +744,7 @@ function assertSyncAccepted(
   }
 }
 
-export async function pushCheckout(terminal: TerminalCredentials, account: Account, receipt: Receipt): Promise<void> {
+export async function pushCheckout(terminal: TerminalCredentials, account: Account, receipt: Receipt): Promise<string> {
   const ts = Date.now();
   const invoiceId = uid("inv");
   const events = [
@@ -779,6 +780,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
         productId: item.productId,
         branchId: terminal.branchId,
         qty: -item.qty,
+        invoiceId,
         reason: `Sale ${receipt.number}`,
         ts
       }
@@ -787,6 +789,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
 
   const result = await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
+  return result.invoiceNumbers?.[invoiceId] || receipt.number;
 }
 
 export async function patchInvoiceNote(

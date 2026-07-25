@@ -874,6 +874,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const accepted = [];
   const serverTs = {};
   const rejected = [];
+  const invoiceNumbers = {};
   const client = await pool.connect();
   let lastIssuedTs = serverNow();
   const actorId = syncActorId(req);
@@ -949,9 +950,16 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           acceptedTs = result.ts;
           acceptedId = result.id;
         } else if (isAppendOnlyEvent) {
-          const eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
+          let eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
+          if (type === "invoice") {
+            const numberedInvoice = await assignInvoiceNumber(client, eventToStore);
+            eventToStore = numberedInvoice.event;
+            invoiceNumbers[eventToStore.id] = numberedInvoice.number;
+          } else if (type === "stockMovement") {
+            eventToStore = attachCanonicalInvoiceNumber(eventToStore, invoiceNumbers);
+          }
           acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
         } else {
@@ -1017,7 +1025,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         types: changedTypes,
       });
     }
-    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch });
+    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch, invoiceNumbers });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("push failed:", error);
@@ -1031,6 +1039,112 @@ router.post("/push", requireSyncWrite, async (req, res) => {
     return lastIssuedTs;
   }
 });
+
+function receiptBranchCode(branchId) {
+  const normalized = String(branchId || "")
+    .trim()
+    .replace(/^b[_-]?/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toUpperCase();
+  return normalized.slice(0, 8) || "BRANCH";
+}
+
+async function nextInvoiceSequence(client, branchId) {
+  if (isMySql) {
+    await client.query(
+      `INSERT IGNORE INTO invoice_sequences (branch_id, last_number, updated_at)
+       VALUES ($1, 0, NOW())`,
+      [branchId]
+    );
+    await client.query(
+      `UPDATE invoice_sequences
+          SET last_number = last_number + 1,
+              updated_at = NOW()
+        WHERE branch_id = $1`,
+      [branchId]
+    );
+    const result = await client.query(
+      "SELECT last_number AS lastNumber FROM invoice_sequences WHERE branch_id = $1",
+      [branchId]
+    );
+    return Number(result.rows[0]?.lastNumber || result.rows[0]?.last_number || 0);
+  }
+
+  // The insert establishes the branch row. The update takes a row lock, making
+  // concurrent tills consume distinct numbers within this transaction.
+  await client.query(
+    `INSERT INTO invoice_sequences (branch_id, last_number, updated_at)
+     VALUES ($1, 0, now())
+     ON CONFLICT (branch_id) DO NOTHING`,
+    [branchId]
+  );
+  const result = await client.query(
+    `UPDATE invoice_sequences
+        SET last_number = last_number + 1,
+            updated_at = now()
+      WHERE branch_id = $1
+      RETURNING last_number AS "lastNumber"`,
+    [branchId]
+  );
+  return Number(result.rows[0]?.lastNumber || 0);
+}
+
+async function assignInvoiceNumber(client, event) {
+  if (event.clientTs != null && !Number.isFinite(Number(event.clientTs))) {
+    throw new Error("invalid_invoice_client_ts");
+  }
+
+  const existing = await client.query(
+    "SELECT branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1",
+    [event.id]
+  );
+  if (existing.rows[0]) {
+    const payload = existing.rows[0].payload || {};
+    const number = String(payload.number || event.payload?.number || event.id);
+    return {
+      number,
+      event: {
+        ...event,
+        branchId: existing.rows[0].branch_id || existing.rows[0].branchId || event.branchId,
+        payload: { ...payload, number },
+      },
+    };
+  }
+
+  const branchId = String(event.branchId || event.payload?.branchId || "").trim();
+  if (!branchId) throw new Error("invoice_branch_required");
+  const sequence = await nextInvoiceSequence(client, branchId);
+  if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("invoice_sequence_failed");
+  const number = `RCP-${receiptBranchCode(branchId)}-${String(sequence).padStart(6, "0")}`;
+  const clientNumber = String(event.payload?.number || "").trim();
+  return {
+    number,
+    event: {
+      ...event,
+      branchId,
+      payload: {
+        ...(event.payload || {}),
+        ...(clientNumber && clientNumber !== number ? { clientNumber } : {}),
+        number,
+        invoiceSequence: sequence,
+      },
+    },
+  };
+}
+
+function attachCanonicalInvoiceNumber(event, invoiceNumbers) {
+  const invoiceId = String(event.payload?.invoiceId || "").trim();
+  const number = invoiceId ? invoiceNumbers[invoiceId] : "";
+  if (!number) return event;
+  return {
+    ...event,
+    payload: {
+      ...(event.payload || {}),
+      invoiceNumber: number,
+      reason: `Sale ${number}`,
+    },
+  };
+}
 
 router.get("/pull", requireSyncRead, async (req, res) => {
   const since = Number(req.query.since || 0);

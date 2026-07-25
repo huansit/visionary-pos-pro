@@ -868,13 +868,14 @@ export default function App() {
     };
     try {
       await verifyCashierPin(terminal, account, pin);
-      await pushCheckout(terminal, account, nextReceipt);
-      setReceipt(nextReceipt);
-      setLastReceipt(nextReceipt);
+      const assignedReceiptNumber = await pushCheckout(terminal, account, nextReceipt);
+      const issuedReceipt = { ...nextReceipt, number: assignedReceiptNumber };
+      setReceipt(issuedReceipt);
+      setLastReceipt(issuedReceipt);
       setCart({});
       setCustomerName("");
       setCheckoutPinOpen(false);
-      setStatus(`Open invoice ${receiptNumber} issued.`);
+      setStatus(`Open invoice ${assignedReceiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
       const message = String(err).includes("invalid_pin") ? "PIN does not match this cashier." : `Checkout failed: ${String(err)}`;

@@ -1625,6 +1625,14 @@ async function runSyncClient(currentData, options = {}) {
       }
       const body = await pushed.json();
       rejected = Array.isArray(body.rejected) ? body.rejected : [];
+      if (body.invoiceNumbers && typeof body.invoiceNumbers === "object") {
+        data = {
+          ...data,
+          invoices: (data.invoices || []).map((invoice) => body.invoiceNumbers[invoice.id]
+            ? { ...invoice, number: body.invoiceNumbers[invoice.id], synced: true }
+            : invoice),
+        };
+      }
       const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
       outbox = outbox.filter((ev) => !done.has(ev.id));
       await saveOutbox(outbox);

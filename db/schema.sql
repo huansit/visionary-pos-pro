@@ -52,6 +52,14 @@ CREATE INDEX IF NOT EXISTS events_server_ts_idx ON events (server_ts);
 CREATE INDEX IF NOT EXISTS events_type_idx ON events (type);
 CREATE INDEX IF NOT EXISTS events_branch_idx ON events (branch_id);
 
+-- Receipt numbers are allocated by the server, independently per branch.
+-- last_number is incremented in the same transaction that stores the invoice.
+CREATE TABLE IF NOT EXISTS invoice_sequences (
+  branch_id    text PRIMARY KEY,
+  last_number  bigint NOT NULL DEFAULT 0 CHECK (last_number >= 0),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS records (
   id          text NOT NULL,
   type        text NOT NULL,

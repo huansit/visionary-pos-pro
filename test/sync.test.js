@@ -40,6 +40,7 @@ const state = {
   cashierPin: null,
   managerId: null,
   managerEmail: null,
+  assignedInvoiceNumber: null,
   invoice: {
     id: "inv-001",
     type: "invoice",
@@ -400,6 +401,8 @@ test("2. pushes an invoice event from device A to /api/sync/push", async () => {
       assert.deepEqual(res.body.accepted, ["inv-001"]);
       assert.equal(res.body.rejected.length, 0);
       assert.ok(res.body.serverTs["inv-001"]);
+      assert.match(res.body.invoiceNumbers["inv-001"], /^RCP-SIP-\d{6}$/);
+      state.assignedInvoiceNumber = res.body.invoiceNumbers["inv-001"];
     });
 });
 
@@ -441,7 +444,10 @@ test("3. pulls from device B via /api/sync/pull and receives the invoice", async
       const pulled = res.body.events.filter((event) => event.id === "inv-001");
       assert.equal(pulled.length, 1);
       assert.equal(pulled[0].type, "invoice");
-      assert.deepEqual(pulled[0].payload, state.invoice.payload);
+      assert.equal(pulled[0].payload.number, state.assignedInvoiceNumber);
+      assert.equal(pulled[0].payload.invoiceSequence, 1);
+      assert.equal(pulled[0].payload.total, state.invoice.payload.total);
+      assert.equal(pulled[0].payload.lineCount, state.invoice.payload.lineCount);
     });
 });
 
@@ -450,7 +456,10 @@ test("4. pushing the same event again is idempotent with no duplicate", async ()
     .post("/api/sync/push")
     .set("Authorization", `Bearer ${state.tokenA}`)
     .send({ events: [state.invoice] })
-    .expect(200);
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.invoiceNumbers["inv-001"], state.assignedInvoiceNumber);
+    });
 
   await request(app)
     .get("/api/sync/pull?since=0")
@@ -572,8 +581,21 @@ test("5. two devices sync a complete transaction sale across invoice, payment, a
       for (const event of saleEvents) {
         assert.ok(byId.has(event.id), `${event.id} should be pulled by device B`);
         assert.equal(byId.get(event.id).type, event.type);
-        assert.deepEqual(byId.get(event.id).payload, event.payload);
       }
+      const invoice = byId.get("inv-two-device-001");
+      assert.deepEqual(invoice.payload.lines, saleEvents[0].payload.lines);
+      assert.equal(invoice.payload.totalCents, saleEvents[0].payload.totalCents);
+      assert.equal(invoice.payload.paidCents, saleEvents[0].payload.paidCents);
+      assert.equal(invoice.payload.customerId, saleEvents[0].payload.customerId);
+      assert.match(invoice.payload.number, /^RCP-SIP-\d{6}$/);
+      assert.equal(invoice.payload.invoiceSequence, 2);
+
+      assert.deepEqual(byId.get("pay-two-device-001").payload, saleEvents[1].payload);
+      assert.deepEqual(byId.get("stock-two-device-001").payload, {
+        ...saleEvents[2].payload,
+        invoiceNumber: invoice.payload.number,
+        reason: `Sale ${invoice.payload.number}`,
+      });
     });
 });
 
@@ -614,6 +636,7 @@ test("5b. Cape Town terminal invoice reaches admin sync feed", async () => {
 
   assert.deepEqual(pushed.body.accepted.sort(), saleEvents.map((event) => event.id).sort());
   assert.equal(pushed.body.rejected.length, 0);
+  assert.equal(pushed.body.invoiceNumbers["inv-cpt-terminal-001"], "RCP-CPT-000001");
 
   await request(app)
     .get("/api/sync/pull?since=0")
@@ -626,6 +649,8 @@ test("5b. Cape Town terminal invoice reaches admin sync feed", async () => {
       assert.ok(movement, "admin sync feed should include the Cape Town stock movement");
       assert.equal(invoice.branchId, "b_cpt");
       assert.equal(invoice.payload.branchId, "b_cpt");
+      assert.equal(invoice.payload.number, "RCP-CPT-000001");
+      assert.equal(invoice.payload.invoiceSequence, 1);
     });
 });
 
