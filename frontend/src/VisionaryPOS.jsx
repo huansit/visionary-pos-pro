@@ -5210,7 +5210,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th>Customer</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
           <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
@@ -5560,7 +5560,8 @@ function InvoiceRow({ inv, cur, voidInfo, onOpen }) {
       : voidStatus === "rejected" ? "open" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
-      <td><div className="nm">{inv.customerName || "Walk-in"}</div><div className="mt2">{invoiceCashierName(inv)}</div></td>
+      <td><div className="nm">{inv.customerName || "Walk-in"}</div></td>
+      <td><div className="nm">{invoiceCashierName(inv) || "Unknown cashier"}</div></td>
       <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
       <td>{dt(inv.ts)}</td>
       <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
@@ -7862,54 +7863,67 @@ function PricingTab({ data, update, branch }) {
 function CashTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [branchFilter, setBranchFilter] = useState(branch?.id || "all");
+  const [dateFrom, setDateFrom] = useState(todayStr());
+  const [dateTo, setDateTo] = useState(todayStr());
   useEffect(() => {
     if (branch?.id) setBranchFilter(branch.id);
   }, [branch?.id]);
   const invoiceById = Object.fromEntries((data.invoices || []).map((invoice) => [invoice.id, invoice]));
   const matchesBranch = (branchId) => branchFilter === "all" || branchId === branchFilter;
+  const rangeStart = new Date(`${dateFrom}T00:00:00`).getTime();
+  const rangeEnd = new Date(`${dateTo}T23:59:59.999`).getTime();
+  const inDateRange = (ts) => Number(ts || 0) >= rangeStart && Number(ts || 0) <= rangeEnd;
   const paymentBranchId = (payment) => payment.branchId || invoiceById[paymentInvoiceId(payment)]?.branchId;
-  const todayPays = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)) && !invoiceIsVoided(data, paymentInvoiceId(p)));
-  const sumM = (re) => todayPays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + p.amountCents, 0);
+  const rangePays = data.payments.filter((p) => inDateRange(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)) && !invoiceIsVoided(data, paymentInvoiceId(p)));
+  const sumM = (re) => rangePays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + p.amountCents, 0);
   const mpesa = sumM(/mpesa|m-?pesa|mobile/i), card = sumM(/card/i), cash = sumM(/cash/i);
-  const todayInv = operationalInvoices(data).filter((i) => isToday(i.ts) && matchesBranch(i.branchId));
-  const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
-  const outstanding = todayInv.reduce((s, i) => s + invOutstanding(i), 0);
-  const expToday = data.expenses.filter((e) => (!e.status || e.status === "approved") && isToday(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + e.amountCents, 0);
-  const net = todaySales - expToday;
+  const rangeInvoices = operationalInvoices(data).filter((i) => inDateRange(i.ts) && matchesBranch(i.branchId));
+  const periodSales = rangeInvoices.reduce((s, i) => s + i.totalCents, 0);
+  const outstanding = rangeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const periodExpenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && inDateRange(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + e.amountCents, 0);
+  const net = periodSales - periodExpenses;
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const tile = (cls, icon, label, value, sub) => (
     <div className={"ctile" + (cls ? " " + cls : "")}><div className="ic">{icon}</div>
       <div><div className="cl">{label}</div><div className="cv">{value}</div>{sub && <div className="cs">{sub}</div>}</div></div>
   );
-  const eods = [...(data.endOfDays || [])].filter((entry) => matchesBranch(entry.branchId)).sort((a, b) => b.ts - a.ts).slice(0, 6);
+  const eods = [...(data.endOfDays || [])].filter((entry) => matchesBranch(entry.branchId) && inDateRange(entry.ts)).sort((a, b) => b.ts - a.ts).slice(0, 6);
   const selectedBranchName = branchFilter === "all" ? "All branches" : bname(branchFilter);
+  const rangeLabel = dateFrom === dateTo
+    ? (dateFrom === todayStr() ? "Today" : new Date(`${dateFrom}T00:00:00`).toLocaleDateString())
+    : `${new Date(`${dateFrom}T00:00:00`).toLocaleDateString()} - ${new Date(`${dateTo}T00:00:00`).toLocaleDateString()}`;
   return (
     <div><PageHead
       title="Cash Management"
-      sub={"Today's money flow and closings · " + selectedBranchName}
-      right={<div style={{ minWidth: 190 }}>
-        <label className="label" htmlFor="cash-branch-filter">Branch</label>
-        <select
-          id="cash-branch-filter"
-          className="select"
-          style={{ width: "100%" }}
-          value={branchFilter}
-          onChange={(event) => setBranchFilter(event.target.value)}
-        >
-          <option value="all">All branches</option>
-          {(data.branches || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </div>}
+      sub={`${rangeLabel} money flow and closings · ${selectedBranchName}`}
     />
+      <div className="repctrl" style={{ marginBottom: 16 }}>
+        <div>
+          <label className="label" htmlFor="cash-branch-filter">Branch</label>
+          <select id="cash-branch-filter" className="select" style={{ width: 190 }} value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)}>
+            <option value="all">All branches</option>
+            {(data.branches || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label" htmlFor="cash-date-from">From</label>
+          <input id="cash-date-from" className="input" type="date" style={{ width: 160, height: 38 }} value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} />
+        </div>
+        <div>
+          <label className="label" htmlFor="cash-date-to">To</label>
+          <input id="cash-date-to" className="input" type="date" style={{ width: 160, height: 38 }} value={dateTo} min={dateFrom} max={todayStr()} onChange={(event) => setDateTo(event.target.value)} />
+        </div>
+        {(dateFrom !== todayStr() || dateTo !== todayStr()) ? <button className="btn sm" type="button" onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>Today</button> : null}
+      </div>
       <div className="cashtiles">
-        {tile("primary", <Banknote />, "Cash sales today", fmt(cash, cur), "Cash collected from sales")}
-        {tile("", <Receipt />, "Today's sales", fmt(todaySales, cur), todayInv.length + " invoice" + (todayInv.length === 1 ? "" : "s"))}
-        {tile("warn", <TrendingDown />, "Daily expenses", fmt(expToday, cur), "Approved only")}
+        {tile("primary", <Banknote />, "Cash collected", fmt(cash, cur), rangeLabel)}
+        {tile("", <Receipt />, "Invoice sales", fmt(periodSales, cur), rangeInvoices.length + " invoice" + (rangeInvoices.length === 1 ? "" : "s"))}
+        {tile("warn", <TrendingDown />, "Approved expenses", fmt(periodExpenses, cur), rangeLabel)}
         {tile(net >= 0 ? "good" : "warn", <BarChart3 />, "Net after expenses", fmt(net, cur), "Sales − expenses")}
         {tile("", <Smartphone />, "M-Pesa cleared", fmt(mpesa, cur))}
         {tile("", <CreditCard />, "Card cleared", fmt(card, cur))}
-        {tile("", <FileText />, "Outstanding today", fmt(outstanding, cur), "Unpaid invoice balance")}
-        {tile("", <ShoppingBag />, "Transactions", String(todayInv.length), "Invoices issued today")}
+        {tile("", <FileText />, "Outstanding", fmt(outstanding, cur), "Unpaid invoice balance")}
+        {tile("", <ShoppingBag />, "Transactions", String(rangeInvoices.length), "Invoices in selected dates")}
       </div>
 
       <div className="section-title" style={{ margin: "4px 0 10px" }}>Recent end-of-day closings</div>
