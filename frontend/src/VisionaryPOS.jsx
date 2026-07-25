@@ -5244,7 +5244,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   });
   const open = activeInvoices.filter((i) => invOutstanding(i) > 0);
   const overdue = activeInvoices.filter((i) => invIsDebt(i));
-  const balanceDue = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const balanceDue = totalInvoicedInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const sinceEndDay = activeInvoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
@@ -5298,7 +5298,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
         <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
-        <div className="stat"><div className="sl">Balance due</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
+        <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due today"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
         <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced today"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
       </div>
       {sinceEndDay.length === 0 ? <div className="notice">No new invoice sales since the last End of Day close.</div>
