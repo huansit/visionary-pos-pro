@@ -8590,24 +8590,42 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     [data.products, data.stockMovements, rb]
   );
 
+  const findReportProductByCode = (value) => {
+    const barcode = normalizeBarcode(value);
+    if (!barcode) return null;
+    const branchId = rb === "all" ? undefined : rb;
+    const direct = findProductByBarcode(data, barcode, branchId);
+    if (direct) {
+      const key = productDedupeKey(direct);
+      return reportProducts.find((product) => productDedupeKey(product) === key) || direct;
+    }
+    const catalogEntry = findBarcodeCatalogEntry(data, barcode);
+    return reportProducts.find((product) =>
+      productMatchesBarcode(product, barcode) || productMatchesCatalog(product, catalogEntry)
+    ) || null;
+  };
+
+  const openScannedReportProduct = (value) => {
+    const barcode = normalizeBarcode(value);
+    if (!barcode) return false;
+    const match = findReportProductByCode(barcode);
+    if (match) {
+      setProductSearch(barcode);
+      setProductScanMessage("Scanned " + match.name + ".");
+      setProdSel(match.id);
+      appendBarcodeScanLog({ barcode, status: "reports:found", productId: match.id });
+      return true;
+    }
+    setProductSearch(barcode);
+    setProductScanMessage("Barcode not found: " + barcode + ".");
+    appendBarcodeScanLog({ barcode, status: "reports:not_found" });
+    return false;
+  };
+
   useBarcodeScanner({
     enabled: sub === "products" && productScannerOn && !prodSel,
     mode: "reports",
-    onScan: (value) => {
-      const needle = normalizeBarcode(value).toLowerCase();
-      const match = reportProducts.find((product) =>
-        [product.sku, product.barcode, ...barcodeCatalogIdsForProduct(product)]
-          .some((candidate) => normalizeBarcode(candidate).toLowerCase() === needle)
-      );
-      if (match) {
-        setProductScanMessage("Scanned " + match.name);
-        setProdSel(match.id);
-      }
-      else {
-        setProductSearch(value);
-        setProductScanMessage("Barcode not matched. Showing search results for " + value + ".");
-      }
-    },
+    onScan: openScannedReportProduct,
   });
 
   const dayStart = (s) => new Date(s + "T00:00:00").getTime();
@@ -8963,13 +8981,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
       {sub === "products" && (() => {
         const openExactProduct = () => {
-          const needle = normalizeBarcode(productSearch).toLowerCase();
-          if (!needle) return;
-          const exact = reportProducts.find((product) =>
-            [product.sku, product.barcode, ...barcodeCatalogIdsForProduct(product)]
-              .some((value) => normalizeBarcode(value).toLowerCase() === needle)
-          );
-          if (exact) setProdSel(exact.id);
+          openScannedReportProduct(productSearch);
         };
         if (prodSel) {
           const p = reportProducts.find((x) => x.id === prodSel) || data.products.find((x) => x.id === prodSel); if (!p) return null;
@@ -9021,13 +9033,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   ref={productSearchRef}
                   value={productSearch}
                   onChange={(event) => setProductSearch(event.target.value)}
-                  onFocus={() => {
-                    if (productScannerOn) {
-                      setProductScannerOn(false);
-                      setProductScanMessage("Scanner paused for manual search.");
-                    }
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== "Tab") return;
+                    event.preventDefault();
+                    openExactProduct();
                   }}
-                  onKeyDown={(event) => { if (event.key === "Enter") openExactProduct(); }}
                   placeholder="Search product name, SKU, or barcode..."
                   aria-label="Search product reports"
                 />
@@ -9049,7 +9059,13 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   const next = !productScannerOn;
                   setProductScannerOn(next);
                   setProductScanMessage(next ? "Scanner ready. Scan a product barcode." : "Scanner off.");
-                  if (next) productSearchRef.current?.blur();
+                  if (next) {
+                    setProductSearch("");
+                    window.setTimeout(() => {
+                      productSearchRef.current?.focus();
+                      productSearchRef.current?.select();
+                    }, 0);
+                  }
                 }}
                 aria-pressed={productScannerOn}
                 title="Use a barcode scanner to open a product report"
