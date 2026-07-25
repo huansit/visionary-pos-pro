@@ -8583,6 +8583,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const [productScannerOn, setProductScannerOn] = useState(false);
   const [productScanMessage, setProductScanMessage] = useState("");
   const productSearchRef = useRef(null);
+  const pnlProductSearchRef = useRef(null);
   const [reorderWeeks, setReorderWeeks] = useState(2); // weeks of demand to cover in the reorder forecast
   const [printPreview, setPrintPreview] = useState(null);
 
@@ -8611,20 +8612,22 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (!barcode) return false;
     const match = findReportProductByCode(barcode);
     if (match) {
-      setProductSearch(barcode);
+      if (sub === "pnl") setPnlProductSearch(barcode);
+      else setProductSearch(barcode);
       setProductScanMessage("Scanned " + match.name + ".");
-      setProdSel(match.id);
+      if (sub === "products") setProdSel(match.id);
       appendBarcodeScanLog({ barcode, status: "reports:found", productId: match.id });
       return true;
     }
-    setProductSearch(barcode);
+    if (sub === "pnl") setPnlProductSearch(barcode);
+    else setProductSearch(barcode);
     setProductScanMessage("Barcode not found: " + barcode + ".");
     appendBarcodeScanLog({ barcode, status: "reports:not_found" });
     return false;
   };
 
   useBarcodeScanner({
-    enabled: sub === "products" && productScannerOn && !prodSel,
+    enabled: productScannerOn && ((sub === "products" && !prodSel) || sub === "pnl"),
     mode: "reports",
     onScan: openScannedReportProduct,
   });
@@ -8848,7 +8851,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     row.name,
     row.sku,
     row.category,
-  ].some((value) => String(value || "").toLowerCase().includes(pnlProductSearchNeedle)));
+  ].some((value) => String(value || "").toLowerCase().includes(pnlProductSearchNeedle))
+    || (row.product && (
+      productMatchesBarcode(row.product, pnlProductSearch)
+      || productMatchesCatalog(row.product, findBarcodeCatalogEntry(data, pnlProductSearch))
+    )));
   const visibleProductPnlTotals = visibleProductPnlRows.reduce((totals, row) => ({
     qty: totals.qty + row.qty,
     revenue: totals.revenue + row.revenue,
@@ -9213,21 +9220,46 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
               <div className="section-title" style={{ margin: 0 }}>Profit &amp; loss by product</div>
               <div className="sub">Sales and cost are assigned per product. Shared operating expenses remain in the summary above.</div>
             </div>
-            <div className="searchbox" style={{ width: "min(100%, 360px)" }}>
-              <Search size={18} />
-              <input
-                value={pnlProductSearch}
-                onChange={(event) => setPnlProductSearch(event.target.value)}
-                placeholder="Search product, SKU, or category..."
-                aria-label="Search product profit and loss"
-              />
-              {pnlProductSearch ? (
-                <button type="button" className="btn xs btn-ghost" onClick={() => setPnlProductSearch("")} aria-label="Clear product profit search">
-                  <X size={16} />
-                </button>
-              ) : null}
+            <div style={{ display: "flex", gap: 8, width: "min(100%, 500px)" }}>
+              <div className="searchbox" style={{ flex: "1 1 260px", minWidth: 0 }}>
+                <Search size={18} />
+                <input
+                  ref={pnlProductSearchRef}
+                  value={pnlProductSearch}
+                  onChange={(event) => setPnlProductSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== "Tab") return;
+                    const value = event.currentTarget.value;
+                    if (!isValidBarcode(normalizeBarcode(value))) return;
+                    event.preventDefault();
+                    openScannedReportProduct(value);
+                  }}
+                  placeholder="Search product, SKU, category, or barcode..."
+                  aria-label="Search product profit and loss"
+                />
+                {pnlProductSearch ? (
+                  <button type="button" className="btn xs btn-ghost" onClick={() => { setPnlProductSearch(""); pnlProductSearchRef.current?.focus(); }} aria-label="Clear product profit search">
+                    <X size={16} />
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className={"btn sm " + (productScannerOn ? "primary" : "btn-ghost")}
+                onClick={() => {
+                  const next = !productScannerOn;
+                  setProductScannerOn(next);
+                  setProductScanMessage(next ? "Scanner ready. Scan a product barcode." : "Scanner off.");
+                  if (next) window.setTimeout(() => pnlProductSearchRef.current?.focus(), 0);
+                }}
+                aria-pressed={productScannerOn}
+                title="Use a barcode scanner to find product profit and loss"
+              >
+                <Barcode size={17} /> {productScannerOn ? "Scanner on" : "Scanner"}
+              </button>
             </div>
           </div>
+          {productScanMessage ? <div className="sub" role="status" style={{ margin: "-4px 0 10px", color: productScannerOn ? "var(--ok)" : "var(--muted)" }}>{productScanMessage}</div> : null}
 
           <div className="tablewrap tblscroll"><table className="tbl"><thead><tr>
             <th>Product</th><th>Units sold</th><th>Sales</th><th>COGS</th><th>Loss / damage</th><th>Gross profit</th><th>Product profit</th><th>Margin</th>
