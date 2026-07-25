@@ -2025,10 +2025,9 @@ function branchLastEndDay(data, branchId) {
 // P&L recognition is intentionally conservative: an invoice must be cleared and its
 // business day must have been closed. Open invoices stay out of profit/margin.
 function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.ts <= lastEndFor(settings, inv.branchId); }
-function invIsDebt(inv, refTs = now()) {
+function invIsDebt(inv) {
   if (invOutstanding(inv) <= 0) return false;
-  if (!inv.carriedOver) return false;
-  return refTs - (inv.ts || 0) >= 86400000;
+  return Boolean(inv.carriedOver);
 }
 function saleMoveInvoice(data, move) {
   const reason = String(move?.reason || "");
@@ -8875,12 +8874,6 @@ function ReportsTab({ data, initialTab }) {
 
       {sub === "credit" && (
         <>
-          <div className="stats">
-            <Stat l="Gross Sales" v={fmt(grossSales, cur)} />
-            <Stat l="Net Profit" v={fmt(netProfit, cur)} warn={netProfit < 0} />
-            <Stat l="Cost of Goods" v={fmt(cogs, cur)} />
-            <Stat l="Average Margin" v={margin + "%"} />
-          </div>
           <div className="stats">
             <Stat l="Recovered Credits" v={recoveredList.length} sub2={fmt(recoveredTotal, cur)} />
             <Stat l="Overdue Recovery" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
