@@ -5414,8 +5414,8 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
   const [selectedIds, setSelectedIds] = useState(() => new Set(invoices.map((invoice) => invoice.id)));
   const selectedInvoices = invoices.filter((invoice) => selectedIds.has(invoice.id));
   const totalCents = selectedInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
-  const [cashAmount, setCashAmount] = useState(() => moneyInputValue(invoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
-  const [mpesaAmount, setMpesaAmount] = useState("0");
+  const [mpesaAmount, setMpesaAmount] = useState(() => moneyInputValue(invoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
+  const [cashAmount, setCashAmount] = useState("0");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -5431,8 +5431,8 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
       .filter((invoice) => nextIds.has(invoice.id))
       .reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
     setSelectedIds(nextIds);
-    setCashAmount(moneyInputValue(nextTotal));
-    setMpesaAmount("0");
+    setMpesaAmount(moneyInputValue(nextTotal));
+    setCashAmount("0");
     setError("");
   };
   const toggleInvoice = (invoiceId) => {
@@ -5481,17 +5481,6 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
     selectedInvoices.forEach((invoice) => {
       let due = invOutstanding(invoice);
       const methods = [];
-      const cashPart = Math.min(due, cashRemaining);
-      if (cashPart > 0) {
-        paymentRecords.push({
-          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
-          method: "cash", amountCents: cashPart, status: "captured", recordedBy: user,
-          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
-        });
-        methods.push("Cash");
-        cashRemaining -= cashPart;
-        due -= cashPart;
-      }
       const mpesaPart = Math.min(due, mpesaRemaining);
       if (mpesaPart > 0) {
         paymentRecords.push({
@@ -5502,6 +5491,17 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
         methods.push("M-Pesa");
         mpesaRemaining -= mpesaPart;
         due -= mpesaPart;
+      }
+      const cashPart = Math.min(due, cashRemaining);
+      if (cashPart > 0) {
+        paymentRecords.push({
+          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
+          method: "cash", amountCents: cashPart, status: "captured", recordedBy: user,
+          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
+        });
+        methods.push("Cash");
+        cashRemaining -= cashPart;
+        due -= cashPart;
       }
       invoiceMethods.set(invoice.id, methods.join(" + "));
     });
@@ -5578,20 +5578,20 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
 
         <div className="grid2" style={{ marginTop: 14 }}>
           <div>
+            <label className="label">M-Pesa paid (primary)</label>
+            <input className="input" inputMode="decimal" value={mpesaAmount}
+              onChange={(event) => balanceFromMpesa(event.target.value.replace(/[^\d.]/g, ""))} />
+          </div>
+          <div>
             <label className="label">Cash paid</label>
             <input className="input" inputMode="decimal" value={cashAmount}
               onChange={(event) => balanceFromCash(event.target.value.replace(/[^\d.]/g, ""))} />
           </div>
-          <div>
-            <label className="label">M-Pesa paid</label>
-            <input className="input" inputMode="decimal" value={mpesaAmount}
-              onChange={(event) => balanceFromMpesa(event.target.value.replace(/[^\d.]/g, ""))} />
-          </div>
         </div>
 
         <div className="settlement-totals" style={{ marginTop: 14 }}>
-          <div><span>Cash</span><b>{fmt(cashCents, cur)}</b></div>
           <div><span>M-Pesa</span><b>{fmt(mpesaCents, cur)}</b></div>
+          <div><span>Cash</span><b>{fmt(cashCents, cur)}</b></div>
           <div className="due"><span>Allocation total</span><b>{fmt(cashCents + mpesaCents, cur)}</b></div>
         </div>
 
