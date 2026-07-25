@@ -1959,10 +1959,17 @@ function invoiceSoldLines(data, invoice, branchId) {
   const captured = items.map((item) => {
     const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
     const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
-    const product = item?.productId ? (data.products || []).find((entry) => entry.id === item.productId) : null;
+    const product = (item?.productId ? (data.products || []).find((entry) => entry.id === item.productId) : null)
+      || findProductByBarcode(data, item?.barcode || item?.sku, branchId)
+      || (data.products || []).find((entry) => productVisibleInBranch(entry, data, branchId)
+        && String(entry?.name || "").trim().toLowerCase() === String(item?.name || item?.productName || "").trim().toLowerCase())
+      || null;
     return {
       productId: item?.productId || product?.id || "",
       name: String(item?.name || item?.productName || product?.name || "Product").trim() || "Product",
+      sku: String(item?.sku || product?.sku || "").trim(),
+      barcode: String(item?.barcode || product?.barcode || "").trim(),
+      category: String(item?.category || product?.category || "").trim(),
       qty,
       priceCents,
       totalCents: qty * priceCents,
@@ -8917,11 +8924,20 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     })
     .filter((row) => row.qty > 0 || row.revenue !== 0 || row.cogs !== 0 || row.lossValue !== 0)
     .sort((a, b) => b.revenue - a.revenue || String(a.name).localeCompare(String(b.name)));
+  const productPnlRowMatchesKey = (row, key) => Boolean(key) && (
+    row.key === key
+    || (row.product && productDedupeKey(row.product) === key)
+    || productKeyForValue(row.sku) === key
+    || productKeyForValue(row.barcode) === key
+    || productKeyForValue(row.name) === key
+  );
   const scannedPnlProduct = scannedPnlProductKey
-    ? reportProductByKey.get(scannedPnlProductKey) || null
+    ? reportProductByKey.get(scannedPnlProductKey)
+      || reportProducts.find((product) => productDedupeKey(product) === scannedPnlProductKey)
+      || null
     : null;
   const productPnlRowsForDisplay = scannedPnlProduct
-    && !productPnlRows.some((row) => row.key === scannedPnlProductKey)
+    && !productPnlRows.some((row) => productPnlRowMatchesKey(row, scannedPnlProductKey))
     ? [...productPnlRows, {
         key: scannedPnlProductKey,
         product: scannedPnlProduct,
@@ -8938,15 +8954,18 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       }]
     : productPnlRows;
   const pnlProductSearchNeedle = pnlProductSearch.trim().toLowerCase();
-  const visibleProductPnlRows = productPnlRowsForDisplay.filter((row) => !pnlProductSearchNeedle || [
-    row.name,
-    row.sku,
-    row.category,
-  ].some((value) => String(value || "").toLowerCase().includes(pnlProductSearchNeedle))
-    || (row.product && (
-      productMatchesBarcode(row.product, pnlProductSearch)
-      || productMatchesCatalog(row.product, findBarcodeCatalogEntry(data, pnlProductSearch))
-    )));
+  const visibleProductPnlRows = productPnlRowsForDisplay.filter((row) => {
+    if (scannedPnlProductKey) return productPnlRowMatchesKey(row, scannedPnlProductKey);
+    return !pnlProductSearchNeedle || [
+      row.name,
+      row.sku,
+      row.category,
+    ].some((value) => String(value || "").toLowerCase().includes(pnlProductSearchNeedle))
+      || (row.product && (
+        productMatchesBarcode(row.product, pnlProductSearch)
+        || productMatchesCatalog(row.product, findBarcodeCatalogEntry(data, pnlProductSearch))
+      ));
+  });
   const visibleProductPnlTotals = visibleProductPnlRows.reduce((totals, row) => ({
     qty: totals.qty + row.qty,
     revenue: totals.revenue + row.revenue,
