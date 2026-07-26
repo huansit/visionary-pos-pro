@@ -1,11 +1,11 @@
 {
-  "version": "2.0.52",
-  "notes": "VISIONPOS Cashier 2.0.52\nCheckout fingerprint capture now starts automatically when confirmation opens.\nThe checkout prompt has been simplified to show only scan status and the supervisor PIN fallback guidance.\nVisionPOS now starts the installed SecuGen WebAPI Client automatically when fingerprint authentication is needed.\nFingerprint capture now supports SecuGen's standard local WebAPI port 8000.\nMissing WebAPI Client and disconnected fingerprint reader errors are reported separately.\nCashiers can sign in with either their PIN or enrolled fingerprint.\nCheckout now requires the signed-in cashier's enrolled fingerprint.\nA branch-authorized supervisor emergency PIN can approve checkout when biometric scanning is unavailable.\nEmergency checkout approvals are rate-limited, server-verified, and recorded in the security audit log.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-26T05:17:04.170Z",
+  "version": "2.0.53",
+  "notes": "VISIONPOS Cashier 2.0.53\nCheckout fingerprint capture now starts automatically when confirmation opens.\nThe checkout prompt has been simplified to show only scan status and the supervisor PIN fallback guidance.\nVisionPOS now starts the installed SecuGen WebAPI Client automatically when fingerprint authentication is needed.\nFingerprint capture now supports SecuGen's standard local WebAPI port 8000.\nMissing WebAPI Client and disconnected fingerprint reader errors are reported separately.\nCashiers can sign in with either their PIN or enrolled fingerprint.\nCheckout now requires the signed-in cashier's enrolled fingerprint.\nA branch-authorized supervisor emergency PIN can approve checkout when biometric scanning is unavailable.\nEmergency checkout approvals are rate-limited, server-verified, and recorded in the security audit log.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-26T06:28:28.823Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmMySEtBNmJBaThmWDY2ZTduWFFFelFrNEtpZFZJaUlFNEM5eDlyR2F2SkFhRnAyeWp5U3FteTBkTlBrbDRDdTdjaWFGWW51L2xzTTk0UXArSjFvU3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDQzMDI0CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjUyX3g2NC1zZXR1cC5leGUKWFgxS2RVUXRIUVd5TWMzVk44OVFpK2ZURFlENGtwcmNSdHN1UFREYnV5WC9xcmZKWG5EREhTdlMzTmV2ZFdLWEJ5L3gxK3gwQUx0aFczcFZtM1pMQ2c9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.52_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmVDeldJaG5UQVNwaFJHNGRPaW9OMThzR2oxRkxORjRuZzZOV2xrdTBiSnROZmc2YXZUOW92RitqUElTMzFRZlo5U2lYSEJGbjA3aTlZR1hCcTl4L1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDQ3MzA4CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjUzX3g2NC1zZXR1cC5leGUKOWErVENXTTlUcSs0V1duSlcyd1NmaEhGWGwwZnVTTHBPRDMvUlRabjJXQ3JOL3htOCtYMWVKdVdRSlNzUW9kLzhhZDdFYmQxTFRNNWpOSmx5d29EQXc9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.53_x64-setup.exe"
     }
   }
 }

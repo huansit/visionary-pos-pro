@@ -1,11 +1,11 @@
 {
-  "version": "2.0.52",
+  "version": "2.0.53",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.52_x64-setup.exe",
-  "size": 3167517,
-  "sha512": "CFD19A060D2C277E6E6F4B7A8E505163ED6DBAE0FF266BCE1BFD3AB7953C7C3AC380718CD07FB19D9778875EB3CED991F33818EF3D55BB08B96B9615F33AAA48",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.53_x64-setup.exe",
+  "size": 3168059,
+  "sha512": "A84AF7296C266C9F9EC2E96A8FFD413980F2F661A986A835E882B3371108AEC4809126596D72D46E457EC84723310030DB19B960787A1F45242E302A98F7DDE5",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.52",
+    "VISIONPOS Cashier 2.0.53",
     "Checkout fingerprint capture now starts automatically when confirmation opens.",
     "The checkout prompt has been simplified to show only scan status and the supervisor PIN fallback guidance.",
     "VisionPOS now starts the installed SecuGen WebAPI Client automatically when fingerprint authentication is needed.",
