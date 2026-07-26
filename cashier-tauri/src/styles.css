@@ -7791,8 +7791,8 @@ body {
 .drawer-backdrop .app-drawer {
   position: relative;
   inset: auto;
-  width: clamp(320px, 32vw, 420px);
-  height: min(720px, calc(100dvh - var(--vp-header-h, 86px) - 24px));
+  width: clamp(380px, 36vw, 480px);
+  height: min(760px, calc(100dvh - var(--vp-header-h, 86px) - 24px));
   max-height: calc(100% - 24px);
   border: 1px solid rgba(148, 163, 184, .28);
   border-radius: 16px;
@@ -7858,13 +7858,13 @@ body {
 
 .drawer-backdrop .invoice-slide-header h2 {
   margin: 2px 0 1px;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.1;
   letter-spacing: 0;
 }
 
 .drawer-backdrop .invoice-slide-header p {
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .drawer-backdrop .invoice-status-pill {
@@ -7885,19 +7885,19 @@ body {
 
 .drawer-backdrop .invoice-slide-meta span,
 .drawer-backdrop .invoice-balance-block span {
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: .07em;
 }
 
 .drawer-backdrop .invoice-slide-meta b {
   margin-top: 2px;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.2;
 }
 
 .drawer-backdrop .invoice-slide h3 {
   margin: 4px 0 2px;
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: .08em;
 }
 
@@ -7911,7 +7911,7 @@ body {
 .drawer-backdrop .invoice-slide-empty {
   padding: 6px 8px;
   border-radius: 9px;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .drawer-backdrop .invoice-balance-block {
@@ -7929,7 +7929,7 @@ body {
 }
 
 .drawer-backdrop .invoice-balance-block b {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .drawer-backdrop .invoice-balance-block .balance-due {
@@ -7948,7 +7948,7 @@ body {
   gap: 6px;
   padding: 8px;
   border-radius: 10px;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.3;
 }
 
@@ -8274,8 +8274,8 @@ body {
   }
 
   .drawer-backdrop .app-drawer {
-    width: min(420px, calc(100vw - 16px));
-    height: min(680px, calc(100dvh - var(--vp-header-h, 86px) - 16px));
+    width: min(460px, calc(100vw - 16px));
+    height: min(720px, calc(100dvh - var(--vp-header-h, 86px) - 16px));
     max-height: calc(100% - 16px);
   }
 

@@ -926,14 +926,26 @@ export default function App() {
     });
   }
 
-  async function handleLogout(reason: "manual" | "inactivity" = "manual") {
-    await logout(sessionToken);
-    setAccount(null);
-    setSessionToken("");
+  function resetCashierSessionUi() {
     setCart({});
     setCustomerName("");
+    setReceipt(null);
+    setLastReceipt(null);
     setCheckoutFingerprintOpen(false);
-    setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
+    setExpenseOpen(false);
+    setInvoiceListMode(null);
+    setInvoiceDetail(null);
+  }
+
+  async function handleLogout(reason: "manual" | "inactivity" = "manual") {
+    try {
+      await logout(sessionToken);
+    } finally {
+      resetCashierSessionUi();
+      setAccount(null);
+      setSessionToken("");
+      setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
+    }
   }
 
   async function handleCloseApp() {
@@ -1002,6 +1014,7 @@ export default function App() {
           onLogin={async (employeeNumber, pin) => {
             setError("");
             const result = await loginCashier(terminal, employeeNumber, pin);
+            resetCashierSessionUi();
             setAccount(result.account);
             setSessionToken(result.sessionToken);
             setStatus(`Signed in as ${result.account.name}.`);
@@ -1010,6 +1023,7 @@ export default function App() {
           onFingerprintLogin={async () => {
             setError("");
             const result = await loginCashierWithFingerprint(terminal);
+            resetCashierSessionUi();
             setAccount(result.account);
             setSessionToken(result.sessionToken);
             setStatus(`Signed in as ${result.account.name}.`);
