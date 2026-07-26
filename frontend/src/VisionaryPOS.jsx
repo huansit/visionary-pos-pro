@@ -1731,6 +1731,26 @@ function fmt(cents, cur = "KES") {
   if (cur === "KES") return "KES " + Math.round(v).toLocaleString();
   return (cur || "$") + v.toFixed(2);
 }
+function fmtExact(cents, cur = "KES", maximumFractionDigits = 2) {
+  const value = (Number(cents) || 0) / 100;
+  const amount = value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits,
+  });
+  return (cur === "KES" ? "KES " : (cur || "$")) + amount;
+}
+function purchaseLineTotalCents(line) {
+  const storedTotal = Number(line?.lineTotalCents);
+  if (Number.isFinite(storedTotal) && storedTotal >= 0) return Math.round(storedTotal);
+  return Math.round(Math.max(0, Number(line?.qty) || 0) * Math.max(0, Number(line?.costCents) || 0));
+}
+function purchaseUnitCostCents(line) {
+  const quantity = Math.max(0, Number(line?.qty) || 0);
+  if (quantity > 0 && line?.lineTotalCents !== undefined && line?.lineTotalCents !== null) {
+    return purchaseLineTotalCents(line) / quantity;
+  }
+  return Math.max(0, Number(line?.costCents) || 0);
+}
 function moneyInputValue(cents) {
   const v = (Number(cents) || 0) / 100;
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
@@ -7415,14 +7435,61 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   const rec0 = recommend(initProd);
   const [adding, setAdding] = useState(false);
   const [list, setList] = useState([]); // batch of purchase lines to save at once
-  const [f, setF] = useState({ supplierId: rec0 ? rec0.supplierId : (data.suppliers[0]?.id || ""), productId: initProd, branchId: branch.id, qty: "", cost: rec0 ? String(rec0.costCents / 100) : "", received: true });
+  const [f, setF] = useState({ supplierId: rec0 ? rec0.supplierId : (data.suppliers[0]?.id || ""), productId: initProd, branchId: branch.id, qty: "", cost: rec0 ? String(rec0.costCents / 100) : "", lineTotal: "", amountMode: "unit", received: true });
   const [scannerOn, setScannerOn] = useState(true);
   const [scanCode, setScanCode] = useState("");
   const [scanMsg, setScanMsg] = useState("");
   const scanInputRef = useRef(null);
   const qtyInputRef = useRef(null);
-  const onProduct = (pid) => { const r = recommend(pid); setF((s) => ({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId, cost: r ? String(r.costCents / 100) : s.cost })); };
-  const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => ({ ...s, supplierId: sid, cost: e ? String(e.costCents / 100) : s.cost })); };
+  const cleanDecimalInput = (raw, decimals = 6) => {
+    const cleaned = String(raw ?? "").replace(/,/g, "").replace(/[^\d.]/g, "");
+    const dot = cleaned.indexOf(".");
+    if (dot < 0) return cleaned;
+    return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, "").slice(0, decimals);
+  };
+  const decimalText = (value, decimals = 6) => {
+    if (!Number.isFinite(value)) return "";
+    return value.toFixed(decimals).replace(/\.?0+$/, "");
+  };
+  const purchaseDraftAmounts = (draft) => {
+    const qty = parseInt(draft.qty, 10) || 0;
+    const enteredCost = Math.max(0, Number.parseFloat(draft.cost) || 0);
+    const enteredTotal = Math.max(0, Number.parseFloat(draft.lineTotal) || 0);
+    const lineTotalCents = draft.amountMode === "total"
+      ? Math.round(enteredTotal * 100)
+      : Math.round(qty * enteredCost * 100);
+    const unitCostCents = qty > 0 ? lineTotalCents / qty : enteredCost * 100;
+    return { qty, lineTotalCents, unitCostCents };
+  };
+  const setPurchaseQty = (raw) => setF((s) => {
+    const qty = raw.replace(/\D/g, "");
+    const quantity = parseInt(qty, 10) || 0;
+    if (s.amountMode === "total") {
+      const total = Number.parseFloat(s.lineTotal) || 0;
+      return { ...s, qty, cost: quantity > 0 ? decimalText(total / quantity) : "" };
+    }
+    const cost = Number.parseFloat(s.cost) || 0;
+    return { ...s, qty, lineTotal: quantity > 0 && cost > 0 ? decimalText(quantity * cost, 2) : "" };
+  });
+  const setPurchaseUnitCost = (raw) => setF((s) => {
+    const cost = cleanDecimalInput(raw);
+    const quantity = parseInt(s.qty, 10) || 0;
+    const numericCost = Number.parseFloat(cost) || 0;
+    return { ...s, cost, amountMode: "unit", lineTotal: quantity > 0 && numericCost > 0 ? decimalText(quantity * numericCost, 2) : "" };
+  });
+  const setPurchaseLineTotal = (raw) => setF((s) => {
+    const lineTotal = cleanDecimalInput(raw, 2);
+    const quantity = parseInt(s.qty, 10) || 0;
+    const total = Number.parseFloat(lineTotal) || 0;
+    return { ...s, lineTotal, amountMode: "total", cost: quantity > 0 && total > 0 ? decimalText(total / quantity) : "" };
+  });
+  const applyQuotedCost = (draft, costCents) => {
+    const cost = String((Number(costCents) || 0) / 100);
+    const quantity = parseInt(draft.qty, 10) || 0;
+    return { ...draft, cost, amountMode: "unit", lineTotal: quantity > 0 ? decimalText(quantity * (Number(costCents) || 0) / 100, 2) : "" };
+  };
+  const onProduct = (pid) => { const r = recommend(pid); setF((s) => applyQuotedCost({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId }, r ? r.costCents : Number.parseFloat(s.cost) * 100)); };
+  const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => e ? applyQuotedCost({ ...s, supplierId: sid }, e.costCents) : ({ ...s, supplierId: sid })); };
   const rec = recommend(f.productId);
   const qlist = quotesFor(f.productId);
   const purchaseProducts = sortProductsAZ(branchProductsUnique(data, f.branchId || branch.id));
@@ -7466,31 +7533,31 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   useEffect(() => {
     if (adding && scannerOn) focusPurchaseScan();
   }, [adding, scannerOn]);
-  const create = () => { const qty = parseInt(f.qty, 10); const cost = Math.round(parseFloat(f.cost) * 100); if (!qty || qty <= 0 || !cost) return;
+  const create = () => { const { qty, lineTotalCents, unitCostCents: cost } = purchaseDraftAmounts(f); if (!qty || qty <= 0 || lineTotalCents <= 0) return;
     const sup = data.suppliers.find((s) => s.id === f.supplierId); const prod = data.products.find((p) => p.id === f.productId);
     const lbr = f.branchId || branch.id; const ts = now(); const received = f.received;
     update((d) => {
-      const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false };
+      const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
       const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchInventoryCostCents(d, cur, lbr) : cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, costCents: cost, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
-    setF({ ...f, qty: "", cost: "" }); setAdding(false); };
+    setF({ ...f, qty: "", cost: "", lineTotal: "", amountMode: "unit" }); setAdding(false); };
   const addToList = () => {
-    const qty = parseInt(f.qty, 10); const cost = Math.round(parseFloat(f.cost) * 100);
-    if (!qty || qty <= 0 || !cost) return;
+    const { qty, lineTotalCents, unitCostCents: cost } = purchaseDraftAmounts(f);
+    if (!qty || qty <= 0 || lineTotalCents <= 0) return;
     const sup = data.suppliers.find((s) => s.id === f.supplierId); const prod = data.products.find((p) => p.id === f.productId);
     const br = data.branches.find((b) => b.id === f.branchId);
-    setList((ls) => [...ls, { key: uid("pl"), productId: f.productId, productName: prod?.name || "", supplierId: f.supplierId, supplierName: sup?.name || "", branchId: f.branchId, branchName: br?.name || "", qty, costCents: cost, received: f.received }]);
-    setF({ ...f, qty: "", cost: "" });
+    setList((ls) => [...ls, { key: uid("pl"), productId: f.productId, productName: prod?.name || "", supplierId: f.supplierId, supplierName: sup?.name || "", branchId: f.branchId, branchName: br?.name || "", qty, costCents: cost, lineTotalCents, received: f.received }]);
+    setF({ ...f, qty: "", cost: "", lineTotal: "", amountMode: "unit" });
   };
   const removeFromList = (key) => setList((ls) => ls.filter((l) => l.key !== key));
-  const listTotal = list.reduce((s, l) => s + l.qty * l.costCents, 0);
+  const listTotal = list.reduce((s, l) => s + purchaseLineTotalCents(l), 0);
   const saveAll = () => {
     if (!list.length) return; const ts = now();
     update((d) => {
@@ -7505,7 +7572,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
       };
       for (const l of list) {
         const lbr = l.branchId || branch.id;
-        purchases.push({ id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false });
+        purchases.push({ id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false });
         if (l.received) {
           const idx = products.findIndex((p) => p.id === l.productId);
           const curCost = idx >= 0 ? branchInventoryCostCents({ ...d, products }, products[idx], lbr) : l.costCents;
@@ -7513,7 +7580,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, reason: "Purchase " + l.supplierName, ts, synced: false });
+          movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
       return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
@@ -7523,11 +7590,12 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   const receive = (po) => update((d) => {
     const cur = d.products.find((p) => p.id === po.productId);
     const targetBranchId = po.branchId || branch.id;
-    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchInventoryCostCents(d, cur, targetBranchId) : po.costCents, po.qty, po.costCents);
+    const receivedUnitCost = purchaseUnitCostCents(po);
+    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchInventoryCostCents(d, cur, targetBranchId) : receivedUnitCost, po.qty, receivedUnitCost);
     return { ...d,
       purchases: d.purchases.map((x) => x.id === po.id ? { ...x, status: "received", synced: false } : x),
       products: withBranchProductCostForKey(d.products, cur, targetBranchId, newCost),
-      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, costCents: po.costCents, reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
+      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, costCents: purchaseUnitCostCents(po), valueCents: purchaseLineTotalCents(po), reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
     };
   });
   const remove = (id) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
@@ -7550,7 +7618,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   };
   const setLine = (pid, patch) => setPlan((ls) => ls.map((l) => l.productId === pid ? { ...l, ...patch } : l));
   const lineSupplier = (l, sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === l.productId); setLine(l.productId, { supplierId: sid, costCents: e ? e.costCents : l.costCents }); };
-  const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, synced: false }; };
+  const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, synced: false }; };
   const createLine = (l) => { if (!l.qty || l.qty <= 0) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(l, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((ls) => ls.filter((x) => x.productId !== l.productId)); };
   const createAll = () => { const ts = now(); const valid = plan.filter((l) => l.qty > 0); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((l) => poFromLine(l, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); };
   const receiveBatch = (items) => { const ordered = items.filter((x) => x.status !== "received"); ordered.forEach((po) => receive(po)); };
@@ -7579,7 +7647,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           {rec && (
             <div className="notice" style={{ marginTop: 12 }}>
               Recommended: <b>{rec.supplier.name}</b> at {fmt(rec.costCents, cur)}{qlist.length > 1 ? " · cheapest of " + qlist.length + " quotes" : ""}.{" "}
-              {(f.supplierId !== rec.supplierId) && <button className="linknum" onClick={() => setF({ ...f, supplierId: rec.supplierId, cost: String(rec.costCents / 100) })}>Use this supplier</button>}
+              {(f.supplierId !== rec.supplierId) && <button className="linknum" onClick={() => setF((s) => applyQuotedCost({ ...s, supplierId: rec.supplierId }, rec.costCents))}>Use this supplier</button>}
             </div>
           )}
           {qlist.length > 0 && (
@@ -7587,11 +7655,23 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
               {qlist.map((qq) => <span key={qq.id} className="ist" style={{ background: qq.supplierId === rec.supplierId ? "rgba(22,163,107,.12)" : "var(--surface-2)", color: qq.supplierId === rec.supplierId ? "var(--ok)" : "var(--muted)" }}>{qq.supplier.name}: {fmt(qq.costCents, cur)}{qq.supplierId === rec.supplierId ? " ✓" : ""}</span>)}
             </div>
           )}
-          <div className="grid2" style={{ marginTop: 12 }}>
-            <div><label className="label">Quantity</label><input ref={qtyInputRef} className="input" inputMode="numeric" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value.replace(/\D/g, "") })} placeholder="24" /></div>
-            <div><label className="label">Unit cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setF({ ...f, cost: e.target.value })} placeholder="2000" /></div></div>
+          <div className="grid3" style={{ marginTop: 12 }}>
+            <div><label className="label">Quantity</label><input ref={qtyInputRef} className="input" inputMode="numeric" value={f.qty} onChange={(e) => setPurchaseQty(e.target.value)} placeholder="24" /></div>
+            <div><label className="label">Unit cost ({cur})</label><input className="input" inputMode="decimal" value={f.cost} onChange={(e) => setPurchaseUnitCost(e.target.value)} placeholder="83.333333" /></div>
+            <div><label className="label">Item total ({cur})</label><input className="input" inputMode="decimal" value={f.lineTotal} onChange={(e) => setPurchaseLineTotal(e.target.value)} placeholder="2000.00" /></div>
+          </div>
           {(() => {
-            const prodSel = data.products.find((p) => p.id === f.productId); const projQty = parseInt(f.qty, 10) || 0; const projCost = Math.round(parseFloat(f.cost) * 100) || 0;
+            const amounts = purchaseDraftAmounts(f);
+            if (amounts.qty <= 0 || amounts.lineTotalCents <= 0) return null;
+            return (
+              <div className="notice" style={{ marginTop: 10, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <span>{amounts.qty} unit(s) at <b>{fmtExact(amounts.unitCostCents, cur, 6)}</b> each</span>
+                <span>Item total <b>{fmtExact(amounts.lineTotalCents, cur)}</b></span>
+              </div>
+            );
+          })()}
+          {(() => {
+            const prodSel = data.products.find((p) => p.id === f.productId); const { qty: projQty, unitCostCents: projCost } = purchaseDraftAmounts(f);
             if (!f.received || !prodSel || projQty <= 0 || projCost <= 0) return null;
             const pricingBranchId = f.branchId || branch.id;
             const currentCost = branchInventoryCostCents(data, prodSel, pricingBranchId);
@@ -7613,14 +7693,14 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
                   <tbody>{list.map((l) => (<tr key={l.key}>
                     <td>{l.productName}</td><td>{l.supplierName}</td><td>{l.branchName}</td>
                     <td style={{ textAlign: "right" }}>{l.qty}</td>
-                    <td style={{ textAlign: "right" }}>{fmt(l.costCents, cur)}</td>
-                    <td style={{ textAlign: "right" }}>{fmt(l.qty * l.costCents, cur)}</td>
+                    <td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(l), cur, 6)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 800 }}>{fmtExact(purchaseLineTotalCents(l), cur)}</td>
                     <td><span className="ist">{l.received ? "Receive now" : "Order"}</span></td>
                     <td><button className="smdel" onClick={() => removeFromList(l.key)}><Trash2 /></button></td>
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
-                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmt(listTotal, cur)}</b> · {list.length} item(s)</div>
+                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(listTotal, cur)}</b> · {list.length} item(s)</div>
                 <button className="btn btn-primary" onClick={saveAll}><Check /> Save all ({list.length})</button>
               </div>
             </div>
@@ -7667,7 +7747,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
         data.purchases.forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
         const rows = Object.entries(groups).map(([key, items]) => {
           const ts = Math.max(...items.map((i) => i.ts));
-          const total = items.reduce((s, i) => s + i.costCents * i.qty, 0);
+          const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
           const units = items.reduce((s, i) => s + i.qty, 0);
           const recd = items.filter((i) => i.status === "received").length;
           const suppliers = Array.from(new Set(items.map((i) => i.supplierName).filter(Boolean)));
@@ -7689,7 +7769,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
       {poView && (() => {
         const items = data.purchases.filter((po) => (po.batchId || po.id) === poView);
         if (items.length === 0) { setPoView(null); return null; }
-        const total = items.reduce((s, i) => s + i.costCents * i.qty, 0);
+        const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
         const anyOrdered = items.some((i) => i.status !== "received");
         const head = items[0];
         return (
@@ -7701,13 +7781,13 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmt(po.costCents, cur)}</td><td style={{ textAlign: "right" }}>{fmt(po.costCents * po.qty, cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + "× " + po.productName })}><Trash2 /></button></td>}
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
-                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmt(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only · only an admin can delete a purchase record.</span>}</div>
+                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only · only an admin can delete a purchase record.</span>}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive all</button>}
                   {isAdmin && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
@@ -10021,7 +10101,7 @@ function DocumentsTab({ data }) {
     data.purchases.filter((p) => inRange(p.ts) && inBranch(p.branchId)).forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
     docs = Object.entries(groups).map(([key, items]) => {
       const ts = Math.max(...items.map((i) => i.ts));
-      const total = items.reduce((s, i) => s + i.costCents * i.qty, 0);
+      const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
       const units = items.reduce((s, i) => s + i.qty, 0);
       const recd = items.filter((i) => i.status === "received").length;
       const suppliers = Array.from(new Set(items.map((i) => i.supplierName).filter(Boolean)));
@@ -10031,7 +10111,7 @@ function DocumentsTab({ data }) {
         label: (no ? no + " · " : "") + items.length + " item" + (items.length > 1 ? "s" : "") + " · " + units + " unit" + (units > 1 ? "s" : ""),
         meta: (suppliers.join(", ") || "—") + " · " + branches.join(", ") + " · " + (recd === items.length ? "received" : recd + "/" + items.length + " received"),
         date: dt(ts), ts, amountCents: total,
-        detail: [["Purchase order", no || "—"], ["Items", items.length], ["Units", units], ["Supplier(s)", suppliers.join(", ") || "—"], ["Branch(es)", branches.join(", ")], ["Received", recd + "/" + items.length], ["Total", fmt(total, cur)], ["Date", dt(ts)]] };
+        detail: [["Purchase order", no || "—"], ["Items", items.length], ["Units", units], ["Supplier(s)", suppliers.join(", ") || "—"], ["Branch(es)", branches.join(", ")], ["Received", recd + "/" + items.length], ["Total", fmtExact(total, cur)], ["Date", dt(ts)]] };
     });
   } else if (type === "sales") {
     eyebrow = "Sales"; title = "Sales Invoice Reports";
@@ -10158,7 +10238,7 @@ function DocumentsTab({ data }) {
       {poView && (() => {
         const items = poView.poItems || [];
         const head = items[0] || {};
-        const total = items.reduce((s, i) => s + i.costCents * i.qty, 0);
+        const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
         return (
           <div className="scrim" onClick={() => setPoView(null)}>
             <div className="modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
@@ -10168,21 +10248,21 @@ function DocumentsTab({ data }) {
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th></tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{bname(po.branchId)}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmt(po.costCents, cur)}</td><td style={{ textAlign: "right" }}>{fmt(po.costCents * po.qty, cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : <span className="ist">ordered</span>}</td>
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
-                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmt(total, cur)}</b> · {items.length} line(s)</div>
+                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s)</div>
                 <div className="expbtns" style={{ flexWrap: "wrap" }}>
-                  <button className="btn xs btn-primary" onClick={() => { const headers = ["Product", "Supplier", "Branch", "Qty", "Unit cost", "Line total", "Status"]; const rows = items.map((po) => [po.productName, po.supplierName, bname(po.branchId), po.qty, po.costCents / 100, (po.costCents * po.qty) / 100, po.status]); downloadFile("visionary-PO-" + (head.batchNo || poView) + ".csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv"); }}><FileText /> Download</button>
+                  <button className="btn xs btn-primary" onClick={() => { const headers = ["Product", "Supplier", "Branch", "Qty", "Unit cost", "Line total", "Status"]; const rows = items.map((po) => [po.productName, po.supplierName, bname(po.branchId), po.qty, purchaseUnitCostCents(po) / 100, purchaseLineTotalCents(po) / 100, po.status]); downloadFile("visionary-PO-" + (head.batchNo || poView) + ".csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv"); }}><FileText /> Download</button>
                   <button className="btn xs btn-ghost" onClick={() => {
                     const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-                    const rws = items.map((po) => "<tr><td>" + esc(po.productName) + "</td><td>" + esc(po.supplierName) + "</td><td>" + esc(bname(po.branchId)) + "</td><td class='r'>" + po.qty + "</td><td class='r'>" + fmt(po.costCents, cur) + "</td><td class='r'>" + fmt(po.costCents * po.qty, cur) + "</td><td>" + po.status + "</td></tr>").join("");
-                    const html = "<html><head><title>" + esc(head.batchNo || "Purchase order") + "</title><style>body{font-family:system-ui,Arial,sans-serif;padding:28px;color:#111}h1{font-size:17px;margin:0 0 2px}h2{font-size:12px;color:#666;font-weight:400;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e5e5e5;padding:6px 8px;text-align:left}td.r,th.r{text-align:right}</style></head><body><h1>Purchase Order " + esc(head.batchNo || "") + "</h1><h2>" + esc(dt(head.ts)) + " · Total " + esc(fmt(total, cur)) + "</h2><table><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th class='r'>Qty</th><th class='r'>Unit</th><th class='r'>Total</th><th>Status</th></tr></thead><tbody>" + rws + "</tbody></table></body></html>";
+                    const rws = items.map((po) => "<tr><td>" + esc(po.productName) + "</td><td>" + esc(po.supplierName) + "</td><td>" + esc(bname(po.branchId)) + "</td><td class='r'>" + po.qty + "</td><td class='r'>" + fmtExact(purchaseUnitCostCents(po), cur, 6) + "</td><td class='r'>" + fmtExact(purchaseLineTotalCents(po), cur) + "</td><td>" + po.status + "</td></tr>").join("");
+                    const html = "<html><head><title>" + esc(head.batchNo || "Purchase order") + "</title><style>body{font-family:system-ui,Arial,sans-serif;padding:28px;color:#111}h1{font-size:17px;margin:0 0 2px}h2{font-size:12px;color:#666;font-weight:400;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e5e5e5;padding:6px 8px;text-align:left}td.r,th.r{text-align:right}</style></head><body><h1>Purchase Order " + esc(head.batchNo || "") + "</h1><h2>" + esc(dt(head.ts)) + " · Total " + esc(fmtExact(total, cur)) + "</h2><table><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th class='r'>Qty</th><th class='r'>Unit</th><th class='r'>Total</th><th>Status</th></tr></thead><tbody>" + rws + "</tbody></table></body></html>";
                     try { const fr = document.createElement("iframe"); fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;"; document.body.appendChild(fr); const dd = fr.contentWindow.document; dd.open(); dd.write(html); dd.close(); setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (_) { window.print(); } setTimeout(() => fr.remove(), 1000); }, 250); } catch (_) { window.print(); }
                   }}><Printer /> Print</button>
-                  <button className="btn xs btn-ghost" onClick={() => openMail("Purchase Order " + (head.batchNo || ""), "Purchase Order " + (head.batchNo || "") + " · " + dt(head.ts) + "\n\n" + items.map((po) => po.qty + "× " + po.productName + " (" + po.supplierName + ") — " + fmt(po.costCents * po.qty, cur)).join("\n") + "\n\nTotal: " + fmt(total, cur))}>Email</button>
+                  <button className="btn xs btn-ghost" onClick={() => openMail("Purchase Order " + (head.batchNo || ""), "Purchase Order " + (head.batchNo || "") + " · " + dt(head.ts) + "\n\n" + items.map((po) => po.qty + "× " + po.productName + " (" + po.supplierName + ") — " + fmtExact(purchaseLineTotalCents(po), cur)).join("\n") + "\n\nTotal: " + fmtExact(total, cur))}>Email</button>
                 </div>
               </div>
             </div>
