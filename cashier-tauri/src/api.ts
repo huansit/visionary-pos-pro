@@ -543,6 +543,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   let dayClosedAt: number | null = catalogDayClosedAt;
 
   for (const item of events) {
+    const normalizedEventType = String(item.type || "").replace(/[_-]/g, "").toLowerCase();
     if (item.type === "branch") {
       if (item.deleted) {
         branchRecords.delete(item.id);
@@ -589,7 +590,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       const amount = centsFromPayload(payload, ["amountCents", "amount_cents"], moneyToCentsFromPayload(payload, ["amount"]));
       if (invoiceId) paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + amount);
     }
-    if (item.type === "endOfDay") {
+    if (normalizedEventType === "endofday" || normalizedEventType === "dayclosed") {
       const payload = item.payload || {};
       const branchId = String(payload.branchId || item.branchId || "");
       if (branchId === terminal.branchId) {
@@ -604,6 +605,13 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         if (Number.isFinite(closedAt) && closedAt > 0) {
           dayClosedAt = Math.max(dayClosedAt || 0, closedAt);
         }
+      }
+    }
+    if (item.type === "setting" || item.type === "settings") {
+      const payload = item.payload || {};
+      const closedAt = Number(payload.lastEndDayByBranch?.[terminal.branchId] || 0);
+      if (Number.isFinite(closedAt) && closedAt > 0) {
+        dayClosedAt = Math.max(dayClosedAt || 0, closedAt);
       }
     }
     if (item.type === "invoiceNote") {

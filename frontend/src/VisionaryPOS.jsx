@@ -5232,7 +5232,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const invoices = operationalInvoices(data);
-  const activeInvoices = invoices;
+  const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
   const invoiceIssuedTs = (invoice) => {
     const value = invoice.ts ?? invoice.issuedAt ?? invoice.createdAt;
     const numeric = Number(value);
@@ -5244,9 +5244,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const dateToTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
   const hasCustomDateRange = Boolean(dateFrom || dateTo);
   const todayStartTs = new Date().setHours(0, 0, 0, 0);
-  const todayEndTs = new Date().setHours(23, 59, 59, 999);
-  const totalRangeStartTs = hasCustomDateRange ? (dateFromTs ?? Number.MIN_SAFE_INTEGER) : todayStartTs;
-  const totalRangeEndTs = hasCustomDateRange ? (dateToTs ?? Number.MAX_SAFE_INTEGER) : todayEndTs;
+  const branchSinceEndDay = branchLastEndDay(data, branch.id);
+  const totalRangeStartTs = hasCustomDateRange
+    ? (dateFromTs ?? Number.MIN_SAFE_INTEGER)
+    : (branchSinceEndDay > 0 ? branchSinceEndDay + 1 : todayStartTs);
+  const totalRangeEndTs = hasCustomDateRange ? (dateToTs ?? Number.MAX_SAFE_INTEGER) : Date.now();
   const totalInvoicedInvoices = activeInvoices.filter((invoice) => {
     const issuedTs = invoiceIssuedTs(invoice);
     return issuedTs >= totalRangeStartTs && issuedTs <= totalRangeEndTs;
@@ -5256,8 +5258,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const overdue = outstanding.filter((i) => invIsDebt(i));
   const balanceDue = totalInvoicedInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
-  const branchSinceEndDay = branchLastEndDay(data, branch.id);
-  const sinceEndDay = activeInvoices.filter((i) => i.branchId === branch.id && i.ts > branchSinceEndDay);
+  const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
   const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
     const voidStatus = invoiceVoidState(data, invoice.id).status;
     return invOutstanding(invoice) > 0
@@ -5266,11 +5267,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       && voidStatus !== "pending";
   });
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
-  const cashierNames = Array.from(new Set(invoices.map(invoiceCashierName)))
+  const cashierNames = Array.from(new Set(activeInvoices.map(invoiceCashierName)))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const needle = query.trim().toLowerCase();
-  const filtered = invoices
+  const filtered = activeInvoices
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
       if (filter === "all") return true;
@@ -5327,8 +5328,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
         <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
-        <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due today"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
-        <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced today"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
+        <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due · current period"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
+        <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced · current period"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
       </div>
       {sinceEndDay.length === 0 ? <div className="notice">No new invoice sales since the last End of Day close.</div>
         : <div className="notice">{sinceEndDay.length} invoice(s) issued since the last End of Day close.</div>}

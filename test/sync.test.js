@@ -1042,7 +1042,7 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
   const closedAt = Date.now() - 250;
   const closeEvent = {
     id: `eod-catalog-${closedAt}`,
-    type: "endOfDay",
+    type: "day_closed",
     branchId: "b_sip",
     clientTs: closedAt,
     payload: {
@@ -1066,6 +1066,30 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.dayClosedAt, closedAt);
+    });
+
+  const settingsClosedAt = closedAt + 100;
+  const settingsRecord = {
+    id: `settings-eod-catalog-${closedAt}`,
+    type: "settings",
+    updatedAt: settingsClosedAt,
+    payload: {
+      lastEndDayByBranch: { b_sip: settingsClosedAt },
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [settingsRecord] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected));
+      assert.deepEqual(res.body.accepted, [settingsRecord.id]);
+    });
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.dayClosedAt, settingsClosedAt);
     });
 });
 

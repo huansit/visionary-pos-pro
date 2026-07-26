@@ -99,10 +99,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Invoices now receive a canonical branch-specific sequential number from the VisionPOS server.",
-  "SIPCITY and Cape Town maintain independent invoice sequences for clear branch auditing.",
-  "Retrying a synchronized checkout preserves the original invoice number and cannot create a second number.",
-  "Printed receipts, cashier history, admin records, and stock movements now use the same invoice number.",
+  "Closed business-day invoices no longer remain in active cashier sales totals.",
+  "Open invoices at End of Day are moved into carried-over cashier debts.",
+  "Cashier terminals recover a missed close event from synchronized branch settings.",
+  "Invoice and Clearing summaries now follow the selected branch and current business period.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

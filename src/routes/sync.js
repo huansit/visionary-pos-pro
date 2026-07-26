@@ -576,29 +576,43 @@ router.get("/catalog", requireDevice, async (req, res) => {
       isMySql
         ? `SELECT client_ts AS clientTs, server_ts AS serverTs, payload
              FROM events
-            WHERE type = 'endOfDay'
+            WHERE type IN ('endOfDay', 'day_closed', 'end_of_day', 'endofday')
               AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1)
             ORDER BY server_ts DESC
-            LIMIT 1`
+            LIMIT 20`
         : `SELECT client_ts AS "clientTs", server_ts AS "serverTs", payload
              FROM events
-            WHERE type = 'endOfDay'
+            WHERE type IN ('endOfDay', 'day_closed', 'end_of_day', 'endofday')
               AND (branch_id = $1 OR payload->>'branchId' = $1)
             ORDER BY server_ts DESC
-            LIMIT 1`,
+            LIMIT 20`,
       [branchId]
     );
-    const latestClose = closeRows.rows?.[0];
-    const closePayload = latestClose?.payload || {};
-    const closeCandidate = Number(
-      closePayload.periodEndedAt
-      || closePayload.closedAt
-      || closePayload.ts
-      || latestClose?.clientTs
-      || latestClose?.serverTs
-      || 0
+    const settingsRows = await q(
+      `SELECT payload
+         FROM records
+        WHERE type IN ('setting', 'settings')
+          AND deleted = false
+        ORDER BY server_ts DESC
+        LIMIT 20`
     );
-    const dayClosedAt = Number.isFinite(closeCandidate) && closeCandidate > 0 ? closeCandidate : null;
+    const parsePayload = (value) => {
+      if (!value) return {};
+      if (typeof value === "object") return value;
+      try { return JSON.parse(value); } catch { return {}; }
+    };
+    const closeCandidates = (closeRows.rows || []).map((row) => {
+      const payload = parsePayload(row.payload);
+      return Number(payload.periodEndedAt || payload.closedAt || payload.ts || row.clientTs || row.serverTs || 0);
+    });
+    for (const row of settingsRows.rows || []) {
+      const payload = parsePayload(row.payload);
+      closeCandidates.push(Number(payload.lastEndDayByBranch?.[branchId] || 0));
+    }
+    const dayClosedAt = closeCandidates.reduce(
+      (latest, candidate) => Number.isFinite(candidate) && candidate > latest ? candidate : latest,
+      0
+    ) || null;
 
     res.json({ branchId, products, total: products.length, dayClosedAt, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
@@ -669,10 +683,17 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "purchase",
   "invoiceVoidDecision",
 ]);
+
+const EVENT_TYPE_ALIASES = new Map([
+  ["endOfDay", "endOfDay"],
+  ["day_closed", "endOfDay"],
+  ["end_of_day", "endOfDay"],
+  ["endofday", "endOfDay"],
+]);
 const AUTH_SYNC_RECORD_TYPES = new Set(["user", "users", "credential", "credentials", "staffLogin", "staff_login"]);
 
 function normalizeType(type) {
-  return RECORD_TYPE_ALIASES.get(type) || type;
+  return EVENT_TYPE_ALIASES.get(type) || RECORD_TYPE_ALIASES.get(type) || type;
 }
 
 function isAuthSyncRecordType(type) {
