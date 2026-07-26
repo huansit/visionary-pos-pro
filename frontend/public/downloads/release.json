@@ -1,11 +1,11 @@
 {
-  "version": "2.0.48",
+  "version": "2.0.49",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.48_x64-setup.exe",
-  "size": 3149810,
-  "sha512": "4EAAA903A382D830D878BC87811ACC1C483B5C01ADDEE7F01E0E1B404303471F9AA1CD5A86EEAD52760536116B5F90A225842234E2575201D86889059C0EAE8A",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.49_x64-setup.exe",
+  "size": 3149458,
+  "sha512": "DFAEBB7405BBA56DFD660778F45E5CE8E9D01129F96CAEEA7BB726CDB8E74839353C789DC15DDB6DF809AA231D9D05C81E9ACB1DF0D324C5B43009D94D8473CF",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.48",
+    "VISIONPOS Cashier 2.0.49",
     "Closed business-day invoices no longer remain in active cashier sales totals.",
     "Open invoices at End of Day are moved into carried-over cashier debts.",
     "Cashier terminals recover a missed close event from synchronized branch settings.",

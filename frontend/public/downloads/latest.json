@@ -1,11 +1,11 @@
 {
-  "version": "2.0.48",
-  "notes": "VISIONPOS Cashier 2.0.48\nClosed business-day invoices no longer remain in active cashier sales totals.\nOpen invoices at End of Day are moved into carried-over cashier debts.\nCashier terminals recover a missed close event from synchronized branch settings.\nInvoice and Clearing summaries now follow the selected branch and current business period.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-26T03:02:37.866Z",
+  "version": "2.0.49",
+  "notes": "VISIONPOS Cashier 2.0.49\nClosed business-day invoices no longer remain in active cashier sales totals.\nOpen invoices at End of Day are moved into carried-over cashier debts.\nCashier terminals recover a missed close event from synchronized branch settings.\nInvoice and Clearing summaries now follow the selected branch and current business period.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-26T03:44:33.646Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmUzek5aZlc0dnZEYzZ4M0t2RTBxWVc5VGwwejc2NVozbzN5alhQbXZWd1JCaDk1czZmUGJCbURZRHJpeHNNRURwbWFJTEVVdVY4YjJyQlRsWHdCRGdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDM0OTU3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjQ4X3g2NC1zZXR1cC5leGUKZXNoalZqUVlMZiszSkZUV05kRkN4WGgrcW4wa0tKMnJkZWFWOVJJSVNvVnp6STdyQzJYWW9iSmYxNlZKQ3NOQmljazJwdmdFcVNIb01GOWZMeDRZQWc9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.48_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdll1dlZLVDdTaWo2M2M2ejM2U05HYzlrMzNaREtSbUxKLzRjZ29uVkx3dUh2TkFVdVNMQ1NjVjkya1dxZkE5RHp0aXQ1NWN4bXVDOEQrcm1SSFVxaWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDM3NDczCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjQ5X3g2NC1zZXR1cC5leGUKYjFHUEgzZ0JsNVIyU09xUXg3M29hdmVJc0ZCWlFzQ2djOFlVT0xUSVk2aUpsQmVOaUFFbVFvWW9aZklLU2U5Q1RTV2pVMHJ3L0ZQcHNsa3lMcnpTQlE9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.49_x64-setup.exe"
     }
   }
 }
