@@ -9126,11 +9126,18 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
   const itemsSold = saleMoves.reduce((s, m) => s + (-m.qty), 0);
   const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
-  const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
-  const grossProfit = grossSales - cogs;
+  // Gross sales is the full non-void invoice value for the selected period,
+  // including invoices that are still open or have since become overdue.
+  // Total sales remains conservative: only paid invoices from a closed
+  // business day are recognized in profit, margin and product P&L.
+  const grossSales = invs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
+  const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
+  const openSales = invs.reduce((s, i) => s + invOutstanding(i), 0);
+  const overdueSales = invs.filter((i) => invIsDebt(i)).reduce((s, i) => s + invOutstanding(i), 0);
+  const grossProfit = totalSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
   const netProfit = grossProfit - expTotal - lossTotal;
-  const margin = grossSales > 0 ? Math.round((grossProfit / grossSales) * 100) : 0;
+  const margin = totalSales > 0 ? Math.round((grossProfit / totalSales) * 100) : 0;
   const cleared = pays.reduce((s, p) => s + p.amountCents, 0);
   const pending = countPending(data);
   const inventoryValue = reportProducts.reduce(
@@ -9296,7 +9303,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   // Preserve reconciliation even for legacy invoices whose item lines were
   // incomplete. The adjustment remains visible instead of silently vanishing.
   const allocatedProductRevenue = Array.from(productPnl.values()).reduce((sum, row) => sum + row.revenue, 0);
-  const unallocatedRevenue = grossSales - allocatedProductRevenue;
+  const unallocatedRevenue = totalSales - allocatedProductRevenue;
   if (unallocatedRevenue !== 0) {
     ensureProductPnlRow("unallocated:invoice-adjustment", {
       name: "Unallocated invoice adjustment",
@@ -9422,7 +9429,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "Qty", "Date", "Status"], rows: transfers.map((t) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), t.productName, t.qty, new Date(t.ts).toLocaleString(), t.status || "completed"]) };
-    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales", m(grossSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared", m(cleared)]] };
+    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue balance", m(overdueSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
   const activeBranchName = rb === "all" ? "All branches" : bname(rb);
@@ -9494,6 +9501,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       ];
       return [
         { label: "Gross Sales", value: fmt(grossSales, cur) },
+        { label: "Total Sales", value: fmt(totalSales, cur) },
         { label: "Gross Profit", value: fmt(grossProfit, cur) },
         { label: "Net Profit", value: fmt(netProfit, cur) },
         { label: "Transactions", value: recInvs.length },
@@ -9569,14 +9577,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "overview" && (
         <>
           <div className="stats">
-            <Stat l="Gross Sales" v={fmt(grossSales, cur)} />
+            <Stat l="Gross Sales" v={fmt(grossSales, cur)} sub2={invs.length + " invoice(s) · includes open and overdue"} />
             <Stat l="Inventory Value" v={fmt(inventoryValue, cur)} sub2={activeBranchName} />
             <Stat l="Net Profit" v={fmt(netProfit, cur)} warn={netProfit < 0} />
             <Stat l="Cost of Goods" v={fmt(cogs, cur)} />
             <Stat l="Average Margin" v={margin + "%"} />
           </div>
           <div className="stats">
-            <Stat l="Total Sales" v={fmt(grossSales, cur)} sub2={recInvs.length + " transactions"} />
+            <Stat l="Total Sales" v={fmt(totalSales, cur)} sub2={recInvs.length + " paid and closed transaction(s)"} />
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
             <Stat l="Items Sold" v={itemsSold} />
             <Stat l="Cleared" v={fmt(cleared, cur)} sub2={pays.length + " payment(s)"} />
@@ -9711,7 +9719,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "pnl" && (
         <>
           <div className="panel"><div className="section-title" style={{ marginTop: 0 }}>Profit &amp; Loss · {period === "all" ? "all time" : period}</div>
-            {[["Gross sales", grossSales], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
+            {[["Total sales (paid and closed)", totalSales], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
               <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
             <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
             <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} transactions · {itemsSold} units</div>
@@ -9949,6 +9957,7 @@ const openWhatsApp = (text) => { try { window.open("https://wa.me/?text=" + enco
 function DocumentsTab({ data }) {
   const cur = data.settings.currency;
   const [type, setType] = useState("suppliers");
+  const [branch, setBranch] = useState("all");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [selected, setSelected] = useState(null);
@@ -9959,12 +9968,14 @@ function DocumentsTab({ data }) {
   const fromTs = start ? new Date(start + "T00:00:00").getTime() : null;
   const toTs = end ? new Date(end + "T23:59:59").getTime() : null;
   const inRange = (ts) => (fromTs == null || ts >= fromTs) && (toTs == null || ts <= toTs);
+  const inBranch = (branchId) => branch === "all" || branchId === branch;
+  const transferInBranch = (transfer) => branch === "all" || transfer.fromBranchId === branch || transfer.toBranchId === branch;
 
   let eyebrow = "Documents", title = "Document Reports", docs = [];
   if (type === "suppliers" || type === "purchases") {
     eyebrow = "Purchases"; title = type === "suppliers" ? "Supplier Invoice Reports" : "Purchase Order Reports";
     const groups = {};
-    data.purchases.filter((p) => inRange(p.ts)).forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
+    data.purchases.filter((p) => inRange(p.ts) && inBranch(p.branchId)).forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
     docs = Object.entries(groups).map(([key, items]) => {
       const ts = Math.max(...items.map((i) => i.ts));
       const total = items.reduce((s, i) => s + i.costCents * i.qty, 0);
@@ -9981,7 +9992,7 @@ function DocumentsTab({ data }) {
     });
   } else if (type === "sales") {
     eyebrow = "Sales"; title = "Sales Invoice Reports";
-    docs = data.invoices.filter((i) => inRange(i.ts)).map((i) => {
+    docs = data.invoices.filter((i) => inRange(i.ts) && inBranch(i.branchId)).map((i) => {
       const voided = invoiceIsVoided(data, i);
       return { id: i.id, label: i.number, meta: i.customerName + " · " + i.cashier, date: i.date, ts: i.ts, amountCents: i.totalCents,
         detail: [["Invoice", i.number], ["Customer", i.customerName], ["Cashier", i.cashier], ["Branch", bname(i.branchId)], ["Total", fmt(i.totalCents, cur)], ["Paid", fmt(i.paidCents, cur)], ["Outstanding", fmt(voided ? 0 : invOutstanding(i), cur)], ["Status", voided ? "VOIDED" : invStatus(i)], ["Date", i.date]] };
@@ -9989,7 +10000,7 @@ function DocumentsTab({ data }) {
   } else if (type === "inventory") {
     eyebrow = "Inventory"; title = "Inventory Count Reports";
     const groups = {};
-    (data.countLog || []).filter((c) => inRange(c.ts)).forEach((c) => { const k = c.branchId + "|" + c.ts; (groups[k] = groups[k] || []).push(c); });
+    (data.countLog || []).filter((c) => inRange(c.ts) && inBranch(c.branchId)).forEach((c) => { const k = c.branchId + "|" + c.ts; (groups[k] = groups[k] || []).push(c); });
     docs = Object.entries(groups).map(([key, entries]) => {
       const ts = entries[0].ts; const branchId = entries[0].branchId;
       const lines = entries.map((c) => { const p = prod(c.productId); return { id: c.id, name: p ? p.name : c.productId, sku: p ? p.sku : "", system: c.system, counted: c.counted, variance: c.variance, costCents: p ? branchInventoryCostCents(data, p, branchId) : 0, kind: c.kind }; });
@@ -10009,27 +10020,28 @@ function DocumentsTab({ data }) {
     });
   } else if (type === "loss") {
     eyebrow = "Shrinkage"; title = "Loss & Damage Reports";
-    docs = data.stockMovements.filter((m) => inRange(m.ts) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchInventoryCostCents(data, p, m.branchId) : 0);
+    docs = data.stockMovements.filter((m) => inRange(m.ts) && inBranch(m.branchId) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchInventoryCostCents(data, p, m.branchId) : 0);
       return { id: m.id, label: p ? p.name : "Product", meta: bname(m.branchId) + " · " + Math.abs(m.qty) + " units lost", date: dt(m.ts), ts: m.ts, amountCents: Math.abs(val),
         detail: [["Product", p ? p.name : ""], ["SKU", p ? p.sku : ""], ["Branch", bname(m.branchId)], ["Units lost", Math.abs(m.qty)], ["Cost value", fmt(Math.abs(val), cur)], ["Source", m.reason], ["When", new Date(m.ts).toLocaleString()]] }; });
   } else if (type === "transfers") {
     eyebrow = "Inventory"; title = "Stock Transfer Reports";
-    docs = data.borrowings.filter((t) => inRange(t.ts)).map((t) => { const items = t.items || [{ productName: t.productName, sku: "", qty: t.qty }]; const units = items.reduce((s, i) => s + i.qty, 0);
+    docs = data.borrowings.filter((t) => inRange(t.ts) && transferInBranch(t)).map((t) => { const items = t.items || [{ productName: t.productName, sku: "", qty: t.qty }]; const units = items.reduce((s, i) => s + i.qty, 0);
       return { id: t.id, label: t.number, meta: bname(t.fromBranchId) + " → " + bname(t.toBranchId) + " · " + (items.length === 1 ? items[0].productName + " ×" + items[0].qty : items.length + " products · " + units + " units"), date: dt(t.ts), ts: t.ts, amountCents: 0,
         detail: [["Transfer", t.number], ["From", bname(t.fromBranchId)], ["To", bname(t.toBranchId)], ["Products", items.length], ["Total units", units], ...items.map((i, idx) => ["Item " + (idx + 1), i.productName + " × " + i.qty]), ["Status", t.status || "completed"], ["Note", t.note || "—"], ["When", dt(t.ts)]] }; });
   } else if (type === "expenses") {
     eyebrow = "Expenses"; title = "Expense Reports";
-    docs = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts)).map((e) => ({ id: e.id, label: e.category, meta: e.note || "—", date: e.date, ts: e.ts, amountCents: e.amountCents,
+    docs = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts) && inBranch(e.branchId)).map((e) => ({ id: e.id, label: e.category, meta: e.note || "—", date: e.date, ts: e.ts, amountCents: e.amountCents,
       detail: [["Category", e.category], ["Amount", fmt(e.amountCents, cur)], ["Note", e.note || "—"], ["Date", e.date]] }));
   } else if (type === "endofday") {
     eyebrow = "Shift Close"; title = "End of Day Closes";
-    docs = (data.endOfDays || []).filter((e) => inRange(e.ts)).map((e) => ({ id: e.id, label: e.date + " · " + e.time + " · " + (e.branchName || ""), meta: e.transactions + " sale(s) · closed by " + e.closedBy, date: dt(e.ts), ts: e.ts, amountCents: e.totalSalesCents,
+    docs = (data.endOfDays || []).filter((e) => inRange(e.ts) && inBranch(e.branchId)).map((e) => ({ id: e.id, label: e.date + " · " + e.time + " · " + (e.branchName || ""), meta: e.transactions + " sale(s) · closed by " + e.closedBy, date: dt(e.ts), ts: e.ts, amountCents: e.totalSalesCents,
       detail: [["Branch", e.branchName], ["Date", e.date], ["Time", e.time], ["Transactions", e.transactions], ["Items sold", e.itemsSold], ["Total sales", fmt(e.totalSalesCents, cur)], ["Cash", fmt(e.cashCents, cur)], ["M-Pesa", fmt(e.mpesaCents, cur)], ["Card", fmt(e.cardCents, cur)], ["Invoice (credit)", fmt(e.invoiceCents, cur)], ["Counted cash", e.countedCashCents != null ? fmt(e.countedCashCents, cur) : "—"], ["Note", e.note || "—"], ["Closed by", e.closedBy]] }));
   }
   docs = docs.sort((a, b) => b.ts - a.ts);
   const sum = docs.reduce((s, d) => s + (d.amountCents || 0), 0);
   const periodLabel = (!start && !end) ? "All dates" : (start || "…") + " → " + (end || "…");
   const typeLabel = DOC_TYPES.find((t) => t[0] === type)?.[1] || "Documents";
+  const branchLabel = branch === "all" ? "All branches" : bname(branch);
 
   const runSelected = (a) => {
     if (!selected) return;
@@ -10056,6 +10068,11 @@ function DocumentsTab({ data }) {
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div><label className="label">Document type</label>
           <select className="select" style={{ minWidth: 210 }} value={type} onChange={(e) => { setType(e.target.value); setSelected(null); }}>{DOC_TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+        <div><label className="label">Branch</label>
+          <select className="select" style={{ minWidth: 180 }} value={branch} onChange={(e) => { setBranch(e.target.value); setSelected(null); setPoView(null); setRepView(null); }}>
+            <option value="all">All branches</option>
+            {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select></div>
         <div><label className="label">Start date</label><input type="date" className="input" style={{ maxWidth: 168 }} value={start} onChange={(e) => setStart(e.target.value)} /></div>
         <div><label className="label">End date</label><input type="date" className="input" style={{ maxWidth: 168 }} value={end} onChange={(e) => setEnd(e.target.value)} /></div>
       </div>
@@ -10065,6 +10082,7 @@ function DocumentsTab({ data }) {
         <div className="wstitle" style={{ fontSize: 20, marginBottom: 14 }}>{title}</div>
         <div className="stats">
           <div className="stat"><div className="sl">Period</div><div className="sv" style={{ fontSize: 17 }}>{periodLabel}</div></div>
+          <div className="stat"><div className="sl">Branch</div><div className="sv" style={{ fontSize: 17 }}>{branchLabel}</div></div>
           <div className="stat"><div className="sl">{typeLabel}</div><div className="sv">{docs.length}</div></div>
           <div className="stat"><div className="sl">Sum Total</div><div className="sv">{fmt(sum, cur)}</div></div>
         </div>
