@@ -83,6 +83,36 @@ createRoot(document.getElementById("root")).render(
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let refreshing = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+      .then((registration) => {
+        const activateWaitingWorker = () => {
+          if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        };
+        activateWaitingWorker();
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          worker?.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) activateWaitingWorker();
+          });
+        });
+
+        const checkForUpdate = () => registration.update().catch(() => {});
+        checkForUpdate();
+        const updateTimer = window.setInterval(checkForUpdate, 15 * 60 * 1000);
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) checkForUpdate();
+        });
+        window.addEventListener("pagehide", () => window.clearInterval(updateTimer), { once: true });
+      })
+      .catch(() => {});
   });
 }

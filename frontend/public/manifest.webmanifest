@@ -6,7 +6,7 @@
   "start_url": "/?source=installed-app",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
+  "display_override": ["standalone", "minimal-ui"],
   "prefer_related_applications": false,
   "orientation": "any",
   "background_color": "#0b1014",

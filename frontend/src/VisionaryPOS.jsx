@@ -3540,6 +3540,11 @@ export default function VisionPOS() {
       const result = await runSyncClient(dataRef.current, opts);
       setData(result.data);
     } catch (error) {
+      const message = String(error?.message || "");
+      if (session && /(?:pull|push)_failed_(?:401|403)|invalid_or_missing_user_session|session_(?:expired|revoked)/i.test(message)) {
+        signOutSession({ sessionToken: session.sessionToken });
+        return;
+      }
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
     } finally {
       setSyncing(false);

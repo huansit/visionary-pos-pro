@@ -1,4 +1,4 @@
-const CACHE_NAME = "visionpos-install-shell-v2";
+const CACHE_NAME = "visionpos-install-shell-v3";
 const INSTALL_ASSETS = [
   "/manifest.webmanifest",
   "/icons/visionpos-180.png",
@@ -11,7 +11,7 @@ const INSTALL_ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(INSTALL_ASSETS))
+      .then((cache) => Promise.all(INSTALL_ASSETS.map((asset) => cache.add(asset).catch(() => null))))
       .then(() => self.skipWaiting())
   );
 });
@@ -41,4 +41,8 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(caches.match(request).then((cached) => cached || fetch(request)));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
