@@ -9117,7 +9117,25 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const recInvs = invs.filter((i) => invRecognized(i, data.settings)); // counted in P&L only after payment and end-of-day
   const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
-  const pays = data.payments.filter((p) => p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p)) && inRange(p.ts) && (rb === "all" || (invById[p.orderId] ? invById[p.orderId].branchId === rb : false)));
+  const paymentTs = (payment) => Number(
+    payment?.ts || payment?.createdAt || payment?.updatedAt || payment?.serverTs || 0
+  );
+  const paymentBranchId = (payment) => {
+    const invoice = invById[paymentInvoiceId(payment)];
+    return payment?.branchId || invoice?.branchId || null;
+  };
+  const pays = (data.payments || []).filter((payment) => {
+    const invoiceId = paymentInvoiceId(payment);
+    const amountCents = Number(payment?.amountCents || 0);
+    const status = String(payment?.status || "captured").toLowerCase();
+    return Boolean(invoiceId && invById[invoiceId])
+      && status === "captured"
+      && Number.isFinite(amountCents)
+      && amountCents > 0
+      && !invoiceIsVoided(data, invoiceId)
+      && inRange(paymentTs(payment))
+      && inBranch(paymentBranchId(payment));
+  });
   const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts) && inBranch(e.branchId));
   const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
@@ -9134,11 +9152,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
   const openSales = invs.reduce((s, i) => s + invOutstanding(i), 0);
   const overdueSales = invs.filter((i) => invIsDebt(i)).reduce((s, i) => s + invOutstanding(i), 0);
+  const overdueCreditInvoices = activeInvoices.filter((invoice) => inBranch(invoice.branchId) && invIsDebt(invoice));
+  const overdueCredits = overdueCreditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const grossProfit = totalSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
   const netProfit = grossProfit - expTotal - lossTotal;
   const margin = totalSales > 0 ? Math.round((grossProfit / totalSales) * 100) : 0;
-  const cleared = pays.reduce((s, p) => s + p.amountCents, 0);
+  const cleared = pays.reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0);
+  const clearedInvoiceCount = new Set(pays.map(paymentInvoiceId)).size;
   const pending = countPending(data);
   const inventoryValue = reportProducts.reduce(
     (sum, product) => sum + productStockValuation(data, product, bId).costValue,
@@ -9584,10 +9605,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             <Stat l="Average Margin" v={margin + "%"} />
           </div>
           <div className="stats">
-            <Stat l="Total Sales" v={fmt(totalSales, cur)} sub2={recInvs.length + " paid and closed transaction(s)"} />
+            <Stat l="Overdue Credits" v={fmt(overdueCredits, cur)} sub2={overdueCreditInvoices.length + " carried-over invoice(s)"} warn={overdueCredits > 0} />
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
             <Stat l="Items Sold" v={itemsSold} />
-            <Stat l="Cleared" v={fmt(cleared, cur)} sub2={pays.length + " payment(s)"} />
+            <Stat l="Payments Collected" v={fmt(cleared, cur)} sub2={clearedInvoiceCount + " invoice(s)"} />
             <Stat l="Pending Sync" v={pending} sub2="local only" warn={pending > 0} />
           </div>
           <div className="grid2" style={{ gap: 16 }}>
