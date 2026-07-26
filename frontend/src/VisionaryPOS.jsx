@@ -1273,10 +1273,15 @@ async function secugenCapture({ timeout = 10000, quality = 50 } = {}) {
   }
   const template = data?.TemplateBase64 || data?.templateBase64 || data?.Template || data?.template || "";
   if (!template) throw new Error("low_quality");
+  const bitmap = data?.BMPBase64 || data?.BmpBase64 || data?.bmpBase64 || data?.ImageBase64 || data?.imageBase64 || "";
+  const previewUrl = bitmap
+    ? (String(bitmap).startsWith("data:") ? String(bitmap) : `data:image/bmp;base64,${bitmap}`)
+    : "";
   return {
     template,
     deviceSerial: data?.SerialNumber || data?.DeviceSerial || data?.deviceSerial || data?.DeviceID || "",
     quality: data?.ImageQuality || data?.Quality || "",
+    previewUrl,
   };
 }
 
@@ -2903,6 +2908,16 @@ const css = `
 /* modal */
 .scrim{position:fixed;inset:0;background:rgba(6,8,14,.66);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:60;padding:20px}
 .modal{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:24px;box-shadow:0 30px 80px -30px rgba(20,30,70,.4);animation:rise .2s ease;max-height:88vh;overflow:auto}
+.fp-reader-preview{position:relative;min-height:224px;margin-top:14px;border:1px solid color-mix(in srgb,var(--accent) 65%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,var(--bg));display:grid;place-items:center;overflow:hidden}
+.fp-reader-preview img{display:block;width:100%;height:224px;object-fit:contain;background:#f4f7f8}
+.fp-reader-empty{display:grid;place-items:center;gap:8px;color:var(--muted);text-align:center;padding:24px}
+.fp-reader-empty svg{width:54px;height:54px;color:var(--accent)}
+.fp-reader-preview.scanning::after{content:"";position:absolute;left:8%;right:8%;height:2px;background:var(--accent);box-shadow:0 0 12px var(--accent);animation:fpScan 1.4s ease-in-out infinite}
+.fp-reader-meta{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px;color:var(--muted);font-size:12px}
+.fp-enrolled-status{display:inline-flex;align-items:center;gap:5px;color:var(--ok);font-weight:800}
+.fp-enrolled-status svg{width:14px;height:14px}
+.fp-enrolled-btn{color:var(--ok)!important;border-color:color-mix(in srgb,var(--ok) 45%,var(--border))!important;background:color-mix(in srgb,var(--ok) 8%,var(--surface))!important}
+@keyframes fpScan{0%,100%{top:18%}50%{top:82%}}
 .customer-row{width:100%;grid-template-columns:auto minmax(0,1fr) auto 24px;text-align:left;cursor:pointer;appearance:none;color:inherit}
 .customer-row:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--border));background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
 .customer-row:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 35%,transparent);outline-offset:2px}
@@ -10320,6 +10335,7 @@ function UsersTab({ data, update, isAdmin }) {
   const [fpBusy, setFpBusy] = useState(false);
   const [fpErr, setFpErr] = useState("");
   const [fpMsg, setFpMsg] = useState("");
+  const [fpPreview, setFpPreview] = useState(null);
   const [terminals, setTerminals] = useState([]);
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
@@ -10438,12 +10454,16 @@ function UsersTab({ data, update, isAdmin }) {
   const openFingerprintEnroll = (emp) => {
     setFpEnroll(emp);
     setFpFirst(null);
+    setFpPreview(null);
     setFpErr("");
-    setFpMsg("Capture 1 of 2. Ask the user to place their finger on the SecuGen Hamster reader.");
+    setFpMsg(emp.fingerprintEnrolled
+      ? "This user already has an enrolled fingerprint. Capture twice to replace it."
+      : "Capture 1 of 2. Ask the user to place their finger on the SecuGen Hamster reader.");
   };
   const closeFingerprintEnroll = () => {
     setFpEnroll(null);
     setFpFirst(null);
+    setFpPreview(null);
     setFpErr("");
     setFpMsg("");
   };
@@ -10453,6 +10473,7 @@ function UsersTab({ data, update, isAdmin }) {
     setFpErr("");
     try {
       const capture = await secugenCapture();
+      setFpPreview(capture);
       if (!fpFirst) {
         setFpFirst(capture);
         setFpMsg("Capture 2 of 2. Lift the finger, place it again, then scan.");
@@ -10466,9 +10487,15 @@ function UsersTab({ data, update, isAdmin }) {
         return;
       }
       await authApi("/api/auth/fingerprints/enroll", { userId: fpEnroll.id, template: capture.template, deviceSerial: capture.deviceSerial }, { session: true });
+      update((current) => ({
+        ...current,
+        employees: current.employees.map((employee) => employee.id === fpEnroll.id
+          ? { ...employee, fingerprintEnrolled: true }
+          : employee),
+      }));
+      setFpEnroll((current) => current ? { ...current, fingerprintEnrolled: true } : current);
       setFpMsg("Fingerprint enrolled for " + fpEnroll.name + ".");
       setFpFirst(null);
-      setTimeout(closeFingerprintEnroll, 900);
     } catch (error) {
       setFpErr(secugenMessage(error));
     } finally {
@@ -10481,8 +10508,16 @@ function UsersTab({ data, update, isAdmin }) {
     setFpErr("");
     try {
       await authApi("/api/auth/fingerprints/remove", { userId: fpEnroll.id }, { session: true });
+      update((current) => ({
+        ...current,
+        employees: current.employees.map((employee) => employee.id === fpEnroll.id
+          ? { ...employee, fingerprintEnrolled: false }
+          : employee),
+      }));
+      setFpEnroll((current) => current ? { ...current, fingerprintEnrolled: false } : current);
+      setFpFirst(null);
+      setFpPreview(null);
       setFpMsg("Fingerprint removed for " + fpEnroll.name + ".");
-      setTimeout(closeFingerprintEnroll, 700);
     } catch (error) {
       setFpErr(error.message || "Could not remove fingerprint.");
     } finally {
@@ -10554,7 +10589,9 @@ function UsersTab({ data, update, isAdmin }) {
             <span className="pill plain" title="Branch is fixed once a user is created" style={{ fontSize: 11 }}><Building2 style={{ width: 12, height: 12, verticalAlign: "-2px", marginRight: 4 }} />{e.branchId ? bn(e.branchId) : "All branches"}</span>
             <button className="btn xs btn-ghost" onClick={() => setEditRights(editRights === e.id ? null : e.id)}><ShieldCheck /> Rights</button>
             <button className="btn xs btn-ghost" onClick={() => openCred(credEdit === e.id ? null : e.id)}><Lock /> {e.role === "Cashier" ? "PIN" : "Password"}</button>
-            <button className="btn xs btn-ghost" onClick={() => openFingerprintEnroll(e)}><Fingerprint /> Enroll</button>
+            <button className={"btn xs btn-ghost" + (e.fingerprintEnrolled ? " fp-enrolled-btn" : "")} onClick={() => openFingerprintEnroll(e)}>
+              {e.fingerprintEnrolled ? <Check /> : <Fingerprint />} {e.fingerprintEnrolled ? "Enrolled" : "Enroll"}
+            </button>
             {e.role === "Cashier"
               ? <button className="pill" onClick={() => setReveal((r) => ({ ...r, [e.id]: !r[e.id] }))}>{reveal[e.id] ? <EyeOff /> : <Eye />}{reveal[e.id] ? e.pin : "••••"}</button>
               : <span className="pill plain" style={{ fontSize: 11 }}>{e.email || "no email"}</span>}
@@ -10587,12 +10624,23 @@ function UsersTab({ data, update, isAdmin }) {
               <b>{fpEnroll.name}</b><br />
               {fpMsg || "Capture fingerprint twice to verify it belongs to this user. Only the encrypted fingerprint template is stored."}
             </div>
+            <div className={"fp-reader-preview" + (fpBusy ? " scanning" : "")}>
+              {fpPreview?.previewUrl
+                ? <img src={fpPreview.previewUrl} alt="Latest fingerprint scan preview" />
+                : <div className="fp-reader-empty"><Fingerprint /><b>{fpBusy ? "Scanning fingerprint..." : "Fingerprint preview"}</b><span>Place one finger flat on the reader.</span></div>}
+            </div>
+            <div className="fp-reader-meta">
+              <span>{fpEnroll.fingerprintEnrolled
+                ? <span className="fp-enrolled-status"><Check /> Enrolled</span>
+                : fpFirst ? "First capture saved" : "Ready for first capture"}</span>
+              <span>{fpPreview?.quality !== "" && fpPreview?.quality != null ? `Quality ${fpPreview.quality}` : "Preview is not stored"}</span>
+            </div>
             {fpErr && <div className="alert"><AlertCircle />{fpErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button className="btn btn-primary" style={{ flex: 1, minWidth: 190 }} disabled={fpBusy} onClick={captureFingerprintEnrollment}><Fingerprint /> {fpBusy ? "Scanning..." : fpFirst ? "Capture second scan" : "Capture first scan"}</button>
               <button className="btn btn-ghost" style={{ flex: 1, minWidth: 160 }} disabled={fpBusy} onClick={removeFingerprintEnrollment}><Trash2 /> Remove fingerprint</button>
             </div>
-            <div className="cust-meta" style={{ marginTop: 12 }}>If scanning fails, install the official SecuGen driver and WebAPI Client, connect the reader, and trust the local SecuGen certificate.</div>
+            <div className="cust-meta" style={{ marginTop: 12 }}>After the one-time SecuGen driver and WebAPI Client setup, enrollment is completed here with the Capture buttons. No PowerShell command is required.</div>
           </div>
         </div>
       )}

@@ -1837,6 +1837,13 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
   assert.notEqual(stored.rows[0].finger_template, template);
   assert.match(stored.rows[0].finger_template, /^v1:/);
 
+  await withAdminSession(request(app).get("/api/auth/users"))
+    .expect(200)
+    .expect((res) => {
+      const cashier = res.body.users.find((user) => user.id === state.cashierId);
+      assert.equal(cashier.fingerprintEnrolled, true);
+    });
+
   await request(app)
     .post("/api/auth/fingerprints/templates")
     .set("Authorization", `Bearer ${state.tokenA}`)

@@ -1022,6 +1022,7 @@ function credentialToUserRecord(row, { deleted = false } = {}) {
     : Array.isArray(account.rights?.rights)
       ? account.rights.rights
       : [];
+  const fingerprintEnrolled = row.fingerprint_enrolled ?? row.fingerprintEnrolled;
   return {
     id: account.id,
     name: account.name,
@@ -1033,6 +1034,7 @@ function credentialToUserRecord(row, { deleted = false } = {}) {
     status: deleted ? "deleted" : (account.status || "active"),
     synced: true,
     updatedAt: Date.now(),
+    ...(fingerprintEnrolled == null ? {} : { fingerprintEnrolled: Boolean(fingerprintEnrolled) }),
   };
 }
 
@@ -1082,6 +1084,9 @@ router.get("/users", requireAdminOrSupervisor, async (_req, res) => {
         ORDER BY name ASC`,
       []
     );
+    const fingerprintResult = await q("SELECT user_id FROM user_fingerprints", []);
+    const fingerprintUserIds = new Set(fingerprintResult.rows.map((row) => String(row.user_id ?? row.userId)));
+    for (const row of result.rows) row.fingerprint_enrolled = fingerprintUserIds.has(String(row.id));
     const existing = await q("SELECT id FROM records WHERE type = 'user' AND deleted = false", []);
     const recordedIds = new Set(existing.rows.map((row) => String(row.id)));
     for (const row of result.rows) {
@@ -1238,7 +1243,7 @@ router.post("/fingerprints/enroll", requireAdminOrSupervisor, async (req, res) =
       );
     }
     await audit("fingerprint_enrollment", req, userId, { deviceSerial });
-    res.json({ ok: true, userId, deviceSerial });
+    res.json({ ok: true, userId, deviceSerial, fingerprintEnrolled: true });
   } catch (error) {
     console.error("fingerprint enroll failed:", error);
     res.status(500).json({ error: "fingerprint_enroll_failed" });
@@ -1252,7 +1257,7 @@ router.post("/fingerprints/remove", requireAdminOrSupervisor, async (req, res) =
   try {
     await q("DELETE FROM user_fingerprints WHERE user_id = $1", [userId]);
     await audit("fingerprint_removed", req, userId, { byUser: req.account?.id || null });
-    res.json({ ok: true });
+    res.json({ ok: true, userId, fingerprintEnrolled: false });
   } catch (error) {
     console.error("fingerprint remove failed:", error);
     res.status(500).json({ error: "fingerprint_remove_failed" });
