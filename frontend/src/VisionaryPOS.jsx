@@ -1217,6 +1217,8 @@ async function logoutSessionToken(sessionToken, options = {}) {
 // SecuGen WebAPI uses HTTPS on port 8000 by default. Keep the legacy ports as
 // fallbacks for terminals whose local client was installed with custom ports.
 const SECUGEN_BASES = [
+  "http://127.0.0.1:8000",
+  "http://localhost:8000",
   "https://localhost:8000",
   "https://127.0.0.1:8000",
   "https://localhost:8443",
@@ -1233,7 +1235,7 @@ function secugenMessage(error) {
   if (msg.includes("not_connected")) return "Fingerprint reader not detected. Connect the SecuGen Hamster reader and try again.";
   if (msg.includes("low_quality")) return "Fingerprint quality was too low. Wipe the reader, place the finger flat, and scan again.";
   if (msg.includes("match_service")) return "SecuGen match service is not responding. Start the official SecuGen WebAPI Client.";
-  if (msg.includes("webapi_unreachable") || msg.includes("Failed to fetch")) return "SecuGen WebAPI Client could not be reached. Start the client, then open https://localhost:8000 once and trust its local certificate before retrying.";
+  if (msg.includes("webapi_unreachable") || msg.includes("Failed to fetch")) return "SecuGen WebAPI Client could not be reached on this computer. Start the installed client and reconnect the fingerprint reader before retrying.";
   return msg || "SecuGen fingerprint service is not available.";
 }
 
