@@ -103,10 +103,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Cashier receipts now use an 80 mm portrait thermal layout.",
-  "The branch name prints centered, bold, and larger, with an emphasized receipt total.",
-  "Product names wrap above quantity and price details instead of being truncated.",
-  "Automatic printing, paper feed, cutter support, and the portrait print-dialog fallback remain available.",
+  "The floating on-screen keyboard has been removed from the cashier app.",
+  "Text fields continue to support normal physical keyboard input.",
+  "The dedicated Expense amount number pad remains available.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

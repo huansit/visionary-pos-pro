@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -14,14 +14,11 @@ import {
   FileText,
   Fingerprint,
   Grid2X2,
-  GripHorizontal,
   Heart,
   KeyRound,
-  Keyboard,
   Lock,
   LogOut,
   Menu,
-  Minus,
   MonitorCheck,
   Pencil,
   Search,
@@ -61,8 +58,6 @@ import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCred
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
-const VIRTUAL_KEYBOARD_ENABLED_KEY = "visionpos:cashier:virtual-keyboard-enabled:v1";
-const VIRTUAL_KEYBOARD_POSITION_KEY = "visionpos:cashier:virtual-keyboard-position:v1";
 const SUPERVISOR_EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
 const CASHIER_INACTIVITY_LOGOUT_MS = 5 * 60 * 1000;
 
@@ -549,14 +544,6 @@ export default function App() {
   const [latestUpdateNotice, setLatestUpdateNotice] = useState(false);
   const [dayClosedAt, setDayClosedAt] = useState<number | null>(null);
   const [dayCloseNoticeAt, setDayCloseNoticeAt] = useState<number | null>(null);
-  const [virtualKeyboardEnabled] = useState(() => {
-    try {
-      const stored = localStorage.getItem(VIRTUAL_KEYBOARD_ENABLED_KEY);
-      return stored == null ? true : stored === "1";
-    } catch {
-      return true;
-    }
-  });
   const [leftCollapsed, setLeftCollapsed] = useState(() => {
     try {
       return localStorage.getItem(LEFT_RAIL_COLLAPSED_KEY) === "1";
@@ -1590,7 +1577,6 @@ export default function App() {
           }}
         />
       )}
-      <VirtualKeyboard enabled={virtualKeyboardEnabled} />
     </main>
   );
 }
@@ -2098,296 +2084,6 @@ function UpdateReadyToast({
         <button className="primary" onClick={onRestart} disabled={cartBlocked}>Update now</button>
       </div>
     </aside>
-  );
-}
-
-type VirtualKeyboardTarget = HTMLInputElement | HTMLTextAreaElement;
-
-type VirtualKeyboardSession = {
-  label: string;
-  value: string;
-  selectionStart: number;
-  selectionEnd: number;
-};
-
-const TEXT_INPUT_TYPES = new Set(["", "text", "search", "email", "tel", "url"]);
-const VIRTUAL_KEYBOARD_WIDTH = 760;
-const VIRTUAL_KEYBOARD_HEIGHT = 330;
-
-function isTextInputTarget(target: EventTarget | null): target is VirtualKeyboardTarget {
-  if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) return false;
-  if (target.disabled || target.readOnly) return false;
-  if (target.dataset.virtualKeyboard === "off") return false;
-  if (target instanceof HTMLTextAreaElement) return true;
-  const type = target.type.toLowerCase();
-  if (!TEXT_INPUT_TYPES.has(type)) return false;
-  if (target.inputMode === "numeric" || target.inputMode === "decimal") return false;
-  return true;
-}
-
-function hasHardwareKeyboard() {
-  if (typeof navigator === "undefined" || typeof window === "undefined") return true;
-  const hasTouch = Number(navigator.maxTouchPoints || 0) > 0 || window.matchMedia("(pointer: coarse)").matches;
-  return !hasTouch;
-}
-
-function keyboardFieldLabel(target: VirtualKeyboardTarget) {
-  const explicit = target.dataset.keyboardLabel || target.getAttribute("aria-label");
-  if (explicit) return explicit.trim();
-  if (target.id) {
-    const linked = document.querySelector(`label[for="${CSS.escape(target.id)}"]`);
-    if (linked?.textContent?.trim()) return linked.textContent.trim();
-  }
-  const parentLabel = target.closest("label");
-  const parentText = parentLabel?.textContent?.replace(target.value || "", "").trim();
-  if (parentText) return parentText;
-  const previousLabel = target.previousElementSibling;
-  if (previousLabel?.tagName === "LABEL" && previousLabel.textContent?.trim()) return previousLabel.textContent.trim();
-  return target.placeholder || "Text field";
-}
-
-function clampKeyboardPosition(position: { x: number; y: number }) {
-  const maxX = Math.max(16, window.innerWidth - VIRTUAL_KEYBOARD_WIDTH - 16);
-  const maxY = Math.max(16, window.innerHeight - VIRTUAL_KEYBOARD_HEIGHT - 16);
-  return {
-    x: Math.min(Math.max(16, position.x), maxX),
-    y: Math.min(Math.max(16, position.y), maxY)
-  };
-}
-
-function initialKeyboardPosition() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(VIRTUAL_KEYBOARD_POSITION_KEY) || "null");
-    if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) return clampKeyboardPosition(saved);
-  } catch {
-    // Position persistence is best-effort.
-  }
-  return clampKeyboardPosition({
-    x: Math.max(16, Math.round((window.innerWidth - VIRTUAL_KEYBOARD_WIDTH) / 2)),
-    y: Math.max(16, window.innerHeight - VIRTUAL_KEYBOARD_HEIGHT - 24)
-  });
-}
-
-function targetSession(target: VirtualKeyboardTarget): VirtualKeyboardSession {
-  return {
-    label: keyboardFieldLabel(target),
-    value: target.value,
-    selectionStart: target.selectionStart ?? target.value.length,
-    selectionEnd: target.selectionEnd ?? target.value.length
-  };
-}
-
-function setTargetValue(target: VirtualKeyboardTarget, value: string, selection: number, inputType: string, data: string | null = null) {
-  const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
-  descriptor?.set?.call(target, value);
-  target.setSelectionRange(selection, selection);
-  try {
-    target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType, data }));
-  } catch {
-    target.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-}
-
-function renderKeyboardMirror(session: VirtualKeyboardSession) {
-  const start = session.selectionStart;
-  const end = session.selectionEnd;
-  const value = session.value || "";
-  return (
-    <>
-      {value.slice(0, start)}
-      <i />
-      {value.slice(end)}
-    </>
-  );
-}
-
-function VirtualKeyboard({ enabled }: { enabled: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [minimized, setMinimized] = useState(false);
-  const [caps, setCaps] = useState(false);
-  const [symbols, setSymbols] = useState(false);
-  const [session, setSession] = useState<VirtualKeyboardSession | null>(null);
-  const [position, setPosition] = useState(initialKeyboardPosition);
-  const targetRef = useRef<VirtualKeyboardTarget | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(VIRTUAL_KEYBOARD_POSITION_KEY, JSON.stringify(position));
-    } catch {
-      // Position persistence is best-effort.
-    }
-  }, [position]);
-
-  useEffect(() => {
-    const sync = () => {
-      const target = targetRef.current;
-      if (target) setSession(targetSession(target));
-    };
-
-    const handleFocusIn = (event: FocusEvent) => {
-      if (!enabled || hasHardwareKeyboard()) return;
-      if (isTextInputTarget(event.target)) {
-        targetRef.current = event.target;
-        setSession(targetSession(event.target));
-        setMinimized(false);
-        setOpen(true);
-        return;
-      }
-      const element = event.target as Element | null;
-      if (!element?.closest?.(".virtual-keyboard")) {
-        targetRef.current = null;
-        setOpen(false);
-      }
-    };
-
-    const handleFocusOut = () => {
-      window.setTimeout(() => {
-        const active = document.activeElement;
-        if (!isTextInputTarget(active)) {
-          targetRef.current = null;
-          setOpen(false);
-        }
-      }, 0);
-    };
-
-    window.addEventListener("focusin", handleFocusIn);
-    window.addEventListener("focusout", handleFocusOut);
-    window.addEventListener("input", sync);
-    window.addEventListener("keyup", sync);
-    window.addEventListener("click", sync);
-    document.addEventListener("selectionchange", sync);
-    return () => {
-      window.removeEventListener("focusin", handleFocusIn);
-      window.removeEventListener("focusout", handleFocusOut);
-      window.removeEventListener("input", sync);
-      window.removeEventListener("keyup", sync);
-      window.removeEventListener("click", sync);
-      document.removeEventListener("selectionchange", sync);
-    };
-  }, [enabled]);
-
-  useEffect(() => {
-    const handleResize = () => setPosition((current) => clampKeyboardPosition(current));
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  function beginDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const origin = position;
-    const move = (moveEvent: PointerEvent) => {
-      setPosition(clampKeyboardPosition({
-        x: origin.x + moveEvent.clientX - startX,
-        y: origin.y + moveEvent.clientY - startY
-      }));
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-  }
-
-  function pressKey(key: string) {
-    const target = targetRef.current;
-    if (!target) return;
-    target.focus({ preventScroll: true });
-    const value = target.value;
-    const start = target.selectionStart ?? value.length;
-    const end = target.selectionEnd ?? value.length;
-
-    if (key === "backspace") {
-      if (start === 0 && end === 0) return;
-      const deleteStart = start === end ? Math.max(0, start - 1) : start;
-      const next = value.slice(0, deleteStart) + value.slice(end);
-      setTargetValue(target, next, deleteStart, "deleteContentBackward");
-      setSession(targetSession(target));
-      return;
-    }
-
-    const text = key === "space" ? " " : caps && key.length === 1 ? key.toUpperCase() : key;
-    const next = value.slice(0, start) + text + value.slice(end);
-    const cursor = start + text.length;
-    setTargetValue(target, next, cursor, "insertText", text);
-    setSession(targetSession(target));
-  }
-
-  function closeKeyboard() {
-    targetRef.current = null;
-    setOpen(false);
-    setMinimized(false);
-  }
-
-  if (!enabled || !open || !session) return null;
-
-  const letterRows = [
-    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
-    ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
-    ["z", "x", "c", "v", "b", "n", "m"]
-  ];
-  const symbolRows = [
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
-    ["@", "#", "KES", "-", "_", "&", ".", ",", "/"],
-    ["(", ")", "'", "\"", ":", ";", "?", "!"]
-  ];
-  const rows = symbols ? symbolRows : letterRows;
-
-  if (minimized) {
-    return (
-      <div className="virtual-keyboard-minimized" style={{ left: position.x, top: position.y }} role="dialog" aria-label="Virtual keyboard minimized">
-        <button onMouseDown={(event) => event.preventDefault()} onClick={() => setMinimized(false)} aria-label="Restore virtual keyboard">
-          <Keyboard size={18} />
-          Keyboard
-        </button>
-        <button onMouseDown={(event) => event.preventDefault()} onClick={closeKeyboard} aria-label="Close virtual keyboard"><X size={15} /></button>
-      </div>
-    );
-  }
-
-  return (
-    <section className="virtual-keyboard" style={{ left: position.x, top: position.y }} role="dialog" aria-label="On-screen keyboard">
-      <div className="virtual-keyboard-title" onPointerDown={beginDrag}>
-        <GripHorizontal size={18} />
-        <div>
-          <span>Typing into: {session.label}</span>
-          <strong>{renderKeyboardMirror(session)}</strong>
-        </div>
-        <button onMouseDown={(event) => event.preventDefault()} onClick={() => setMinimized(true)} aria-label="Minimize virtual keyboard"><Minus size={16} /></button>
-        <button onMouseDown={(event) => event.preventDefault()} onClick={closeKeyboard} aria-label="Close virtual keyboard"><X size={16} /></button>
-      </div>
-
-      <div className="virtual-keyboard-keys" onMouseDown={(event) => event.preventDefault()}>
-        <div className="vk-row vk-number-row">
-          {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map((key) => (
-            <button key={key} type="button" aria-label={`Type ${key}`} onClick={() => pressKey(key)}>{key}</button>
-          ))}
-        </div>
-        {rows.map((row, index) => (
-          <div className={"vk-row row-" + index} key={row.join("")}>
-            {index === 2 && !symbols && (
-              <button type="button" className={caps ? "vk-wide active" : "vk-wide"} aria-label="Shift" onClick={() => setCaps((value) => !value)}>Shift</button>
-            )}
-            {row.map((key) => (
-              <button key={key} type="button" aria-label={`Type ${key}`} onClick={() => pressKey(key)}>
-                {symbols ? key : caps ? key.toUpperCase() : key}
-              </button>
-            ))}
-            {index === 2 && (
-              <button type="button" className="vk-wide danger" aria-label="Backspace" onClick={() => pressKey("backspace")}>Backspace</button>
-            )}
-          </div>
-        ))}
-        <div className="vk-row vk-action-row">
-          <button type="button" className={symbols ? "vk-wide active" : "vk-wide"} aria-label="Toggle symbols keyboard" onClick={() => setSymbols((value) => !value)}>?123</button>
-          <button type="button" className="vk-space" aria-label="Space" onClick={() => pressKey("space")}>Space</button>
-          <button type="button" className="vk-done" aria-label="Done typing" onClick={closeKeyboard}>Done</button>
-        </div>
-      </div>
-    </section>
   );
 }
 

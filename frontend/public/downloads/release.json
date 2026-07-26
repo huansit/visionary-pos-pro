@@ -1,15 +1,14 @@
 {
-  "version": "2.0.55",
+  "version": "2.0.56",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.55_x64-setup.exe",
-  "size": 3170345,
-  "sha512": "18464E66DCB539536B81B37938BB8C14090D189D048C16BF4DF8FF7273F5CE71073DA87AF6D49D80D4055425FDB77E47B8E14D2D88F0FE03C7F9E5C3EA733D84",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.56_x64-setup.exe",
+  "size": 3168281,
+  "sha512": "893AD3696345F3F6767E560F86E395839E6FA2B85D2A1B58895227461AC1CD7AE9F1A73423B5FE40365EE132D0623E290E5C7248CE088088ED5AA283C4DBE823",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.55",
-    "Cashier receipts now use an 80 mm portrait thermal layout.",
-    "The branch name prints centered, bold, and larger, with an emphasized receipt total.",
-    "Product names wrap above quantity and price details instead of being truncated.",
-    "Automatic printing, paper feed, cutter support, and the portrait print-dialog fallback remain available.",
+    "VISIONPOS Cashier 2.0.56",
+    "The floating on-screen keyboard has been removed from the cashier app.",
+    "Text fields continue to support normal physical keyboard input.",
+    "The dedicated Expense amount number pad remains available.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }
