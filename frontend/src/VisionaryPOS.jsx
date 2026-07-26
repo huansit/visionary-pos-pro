@@ -1387,16 +1387,20 @@ async function provisionCloudEmployeeCredentials(data) {
   }
   return { ok, failed };
 }
-async function aiComplete({ system, messages, maxTokens = 400 }) {
+async function aiComplete({ system, messages, maxTokens = 400, sessionToken = "" }) {
   const cfg = syncConfig();
   const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
     method: "POST",
-    headers: sessionAuthHeaders({ "Content-Type": "application/json" }),
+    headers: sessionAuthHeaders({ "Content-Type": "application/json" }, sessionToken),
     cache: "no-store",
     body: JSON.stringify({ system, messages, maxTokens }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "ai_request_failed");
+  if (!response.ok) {
+    const error = new Error(data.error || "ai_request_failed");
+    error.status = response.status;
+    throw error;
+  }
   return String(data.text || "").trim();
 }
 function cleanPayload(type, record) {
@@ -3676,7 +3680,7 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -5073,7 +5077,7 @@ const INSIGHT_GROUPS = [
   { title: "Customers", icon: FileText, qs: ["Overdue invoices.", "Top customers by spend.", "Credit recovery rate."] },
   { title: "Operations", icon: SettingsIcon, qs: ["End-of-day summary.", "Offline transactions.", "Sync status log."] },
 ];
-function InsightsTab({ data, online }) {
+function InsightsTab({ data, online, sessionToken }) {
   const cur = data.settings.currency;
   const [q, setQ] = useState(""); const [ans, setAns] = useState(""); const [loading, setLoading] = useState(false);
   const f = (c) => fmt(c, cur);
@@ -5115,7 +5119,7 @@ function InsightsTab({ data, online }) {
     if (!online) { setAns(local(question)); setLoading(false); return; }
     try {
       const sys = "You are the analyst for a wines & spirits retailer in Kenya (currency KES). Answer the question using ONLY the JSON business data. Reply with a one-line headline, then up to 5 concise bullet points with concrete numbers. If the data doesn't cover it, say so in one line.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: question }], maxTokens: 500 });
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: question }], maxTokens: 500, sessionToken });
       setAns(txt || local(question));
     } catch (e) { setAns(local(question)); }
     setLoading(false);
@@ -5139,7 +5143,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -5169,16 +5173,16 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
     <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => { if (item.id === "invoices") setInvoiceFocus(null); setTab(item.id); }}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
   const render = () => {
-    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} />;
+    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
     switch (tab) {
-      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} />;
-      case "ai": return <AIManagerTab data={data} />;
+      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
+      case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} online={online} isAdmin={isAdmin} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} online={online} isAdmin={isAdmin} sessionToken={sessionToken} />;
       case "borrowing": return <BorrowingTab data={data} update={update} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
@@ -5187,13 +5191,13 @@ function AdminWorkspace({ data, update, branch, user, role, rights, online, envi
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
-      case "insights": return <InsightsTab data={data} online={online} />;
+      case "insights": return <InsightsTab data={data} online={online} sessionToken={sessionToken} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
-      default: return <DashboardTab data={data} update={update} branch={branch} online={online} />;
+      default: return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
     }
   };
   return (
@@ -6142,7 +6146,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   );
 }
 /* ---- Dashboard ---- */
-function DashboardTab({ data, update, branch, online }) {
+function DashboardTab({ data, update, branch, online, sessionToken }) {
   const cur = data.settings.currency;
   const [detail, setDetail] = useState(null);
   const [summary, setSummary] = useState(""); const [sumLoading, setSumLoading] = useState(false);
@@ -6196,7 +6200,7 @@ function DashboardTab({ data, update, branch, online }) {
     if (sumLoading) return; setSumLoading(true);
     try {
       const sys = "You are the analyst for a wines & spirits retailer in Kenya (KES). Write a concise 2-3 sentence business summary of today: sales, profit, credit risk, and the single most important action. Use ONLY the JSON. No preamble.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: "Give me today's business summary." }], maxTokens: 220 });
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: "Give me today's business summary." }], maxTokens: 220, sessionToken });
       setSummary(txt || localSummary());
     } catch (e) { setSummary(localSummary()); }
     setSumLoading(false);
@@ -7402,7 +7406,7 @@ function StockTabLegacy({ data, update, branch }) {
     </div>
   );
 }
-function PurchasesTab({ data, update, branch, online, isAdmin }) {
+function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
   const sp = data.supplierPrices || [];
@@ -7548,7 +7552,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin }) {
     try {
       const payload = lines.map((l) => ({ product: l.name, onHand: l.onHand, reorder: l.reorder, suggestQty: l.qty, quotes: l.quotes.map((q) => ({ supplier: q.supplier.name, cost: q.costCents / 100 })) }));
       const sys = "You are a procurement assistant for a wines & spirits shop in Kenya (currency KES). Given low-stock items each with supplier quotes, write 2-4 short sentences: state which supplier is cheapest for each item that has quotes, flag any item with no quotes, and give the total estimated order value. Concise, no markdown, no bullet symbols.";
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: JSON.stringify(payload) }], maxTokens: 320 });
+      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: JSON.stringify(payload) }], maxTokens: 320, sessionToken });
       setPlanNote(txt || localNote(lines));
     } catch (e) { setPlanNote(localNote(lines)); }
     setPlanLoading(false);
@@ -8803,7 +8807,7 @@ function aiDigest(data) {
     dataNotes: "Values are in " + cur + " whole units. This system has NO discount, refund, void, loyalty, or customer-demographic data — do not invent any; state when something cannot be assessed from the data.",
   };
 }
-function AIManagerTab({ data }) {
+function AIManagerTab({ data, sessionToken }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -8816,10 +8820,18 @@ function AIManagerTab({ data }) {
     setMessages(history); setLoading(true);
     const system = "You are 'Ask My Business', the analyst for a multi-branch wines & spirits retailer in Kenya (currency KES). Answer using ONLY the JSON business data below. Be very brief: reply in 1-3 short sentences and lead with the direct answer/number. Do NOT add long explanations, methodology, or breakdowns unless the user explicitly asks for detail. For list requests (e.g. purchase orders, which branches), give a short bulleted list only — no preamble. Use KES. If something is not in the data (discounts, refunds, loyalty, demographics, hourly data), say briefly that it is not tracked rather than inventing it.\n\nBUSINESS DATA (JSON):\n" + JSON.stringify(aiDigest(data));
     try {
-      const text = await aiComplete({ system, messages: history.map((m) => ({ role: m.role, content: m.content })), maxTokens: 400 });
+      const text = await aiComplete({ system, messages: history.map((m) => ({ role: m.role, content: m.content })), maxTokens: 400, sessionToken });
       setMessages((m) => [...m, { role: "assistant", content: text || "I couldn't generate an answer. Please try again." }]);
     } catch (e) {
-      setError(e.message === "ai_not_configured" ? "AI is not configured on the server. Add ANTHROPIC_API_KEY to the VPS environment and restart VISIONPOS." : "Could not reach the AI service. Check the server internet connection and AI API key.");
+      setError(
+        e.status === 401 || e.message === "invalid_or_missing_user_session"
+          ? "Your admin session has expired. Sign out, sign in again, then retry."
+          : e.status === 403 || e.message === "insufficient_role"
+            ? "Your account is not authorized to use the AI Assistant."
+            : e.message === "ai_not_configured"
+              ? "AI is not configured on the server. Add ANTHROPIC_API_KEY to the VPS environment and restart VISIONPOS."
+              : "The AI provider request failed. Check the server logs for the exact response."
+      );
       setMessages((m) => m.slice(0, -1));
     }
     setLoading(false);
