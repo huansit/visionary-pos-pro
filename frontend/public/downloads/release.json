@@ -1,14 +1,14 @@
 {
-  "version": "2.0.56",
+  "version": "2.0.57",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.56_x64-setup.exe",
-  "size": 3168281,
-  "sha512": "893AD3696345F3F6767E560F86E395839E6FA2B85D2A1B58895227461AC1CD7AE9F1A73423B5FE40365EE132D0623E290E5C7248CE088088ED5AA283C4DBE823",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.57_x64-setup.exe",
+  "size": 3178213,
+  "sha512": "F60A430F4FE3063A82AC2984C8D47B8D59CF53D490AA6B7AB870E701E5973BFEB0BCA4DCD102C022712C422CBBA6F58C81EDFE81B2692F703DD0D800C9524539",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.56",
-    "The floating on-screen keyboard has been removed from the cashier app.",
-    "Text fields continue to support normal physical keyboard input.",
-    "The dedicated Expense amount number pad remains available.",
+    "VISIONPOS Cashier 2.0.57",
+    "Cashier fingerprint login and checkout now use a shorter, warmed fast path.",
+    "Fingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.",
+    "SecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

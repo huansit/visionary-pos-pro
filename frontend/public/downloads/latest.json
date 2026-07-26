@@ -1,11 +1,11 @@
 {
-  "version": "2.0.56",
-  "notes": "VISIONPOS Cashier 2.0.56\nThe floating on-screen keyboard has been removed from the cashier app.\nText fields continue to support normal physical keyboard input.\nThe dedicated Expense amount number pad remains available.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-26T13:08:37.638Z",
+  "version": "2.0.57",
+  "notes": "VISIONPOS Cashier 2.0.57\nCashier fingerprint login and checkout now use a shorter, warmed fast path.\nFingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.\nSecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-26T18:35:48.453Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmFUUEd5SUFnU293YWs4eUlDT2NEWkdoMDh5ZDVnNlFxYllNS3NIc1RwOEJWZW9BOEw0MEpXaWJ6NmM0Q3BETVoraWM5R2VTMFRSN2dpZk5naUFvd3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDcxMzE3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU2X3g2NC1zZXR1cC5leGUKRVZiUjRaSU9WN05xdDU3UXY2VStlZ3FacW41WE5MLzc1UGNTVlNlUytvekNxOW5pVXBHNVRKWGxFTTFJU2NER2Rxcy9GaUgrdmNQVm9nSXZVMTFVQlE9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.56_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmJveU5GdmZvNkxmaTVFd2NsY2FxMXc3ei83Zms3d1lLcjdZNlFrTmhyTlJuSithaXgvdXJWNUpPVW5FRm9uVHBVSm9ITG5jakY3Um9pWXJvQjNhWGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDkwOTQ3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU3X3g2NC1zZXR1cC5leGUKdjVWRW10MUNJV3pGUG1sdGw2Z2hPZWNHQ1YwWGRBU2xjTEt5RE5Jdm5zYVlvZXhua3E2ZUJPNkZrWXdNdm4zTFhXUW5GUC8xcFZmcUdBNnNMRTZhQ2c9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.57_x64-setup.exe"
     }
   }
 }

@@ -103,9 +103,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "The floating on-screen keyboard has been removed from the cashier app.",
-  "Text fields continue to support normal physical keyboard input.",
-  "The dedicated Expense amount number pad remains available.",
+  "Cashier fingerprint login and checkout now use a shorter, warmed fast path.",
+  "Fingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.",
+  "SecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 
