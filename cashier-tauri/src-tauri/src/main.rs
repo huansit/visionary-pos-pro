@@ -252,9 +252,34 @@ fn print_raw_to_default_printer(receipt_text: &str) -> Result<String, String> {
         .chars()
         .filter(|character| *character == '\n' || *character == '\r' || *character == '\t' || !character.is_control())
         .collect();
-    let mut payload = Vec::with_capacity(safe_text.len() + 16);
+    let mut payload = Vec::with_capacity(safe_text.len() + 64);
     payload.extend_from_slice(&[0x1b, 0x40]); // ESC @: initialize printer.
-    payload.extend_from_slice(safe_text.as_bytes());
+    for (index, line) in safe_text.lines().enumerate() {
+        if index == 0 {
+            payload.extend_from_slice(&[0x1b, 0x61, 0x01]); // ESC a: centered.
+            payload.extend_from_slice(&[0x1b, 0x45, 0x01]); // ESC E: bold on.
+            payload.extend_from_slice(&[0x1d, 0x21, 0x11]); // GS !: double width and height.
+            payload.extend_from_slice(line.trim().as_bytes());
+            payload.extend_from_slice(b"\n");
+            payload.extend_from_slice(&[0x1d, 0x21, 0x00]);
+            payload.extend_from_slice(&[0x1b, 0x45, 0x00]);
+            payload.extend_from_slice(&[0x1b, 0x61, 0x00]);
+            continue;
+        }
+
+        if line.starts_with("TOTAL") {
+            payload.extend_from_slice(&[0x1b, 0x45, 0x01]); // Bold total.
+            payload.extend_from_slice(&[0x1b, 0x21, 0x10]); // Double-height total.
+            payload.extend_from_slice(line.as_bytes());
+            payload.extend_from_slice(b"\n");
+            payload.extend_from_slice(&[0x1b, 0x21, 0x00]);
+            payload.extend_from_slice(&[0x1b, 0x45, 0x00]);
+            continue;
+        }
+
+        payload.extend_from_slice(line.as_bytes());
+        payload.extend_from_slice(b"\n");
+    }
     payload.extend_from_slice(b"\n\n\n\n");
     payload.extend_from_slice(&[0x1d, 0x56, 0x00]); // GS V: full cut when supported.
 

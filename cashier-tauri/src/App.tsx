@@ -161,11 +161,21 @@ function categoryAccentClass(category: string) {
   return "";
 }
 
+function receiptPageHeightMm(receipt: Receipt) {
+  const itemLines = receipt.items.reduce((total, item) => total + Math.max(2, Math.ceil(item.name.length / 30)), 0);
+  const noteLines = receipt.note ? Math.max(1, Math.ceil(receipt.note.length / 34)) : 0;
+  return Math.max(120, Math.min(1000, 78 + itemLines * 7 + noteLines * 6));
+}
+
 function receiptPrintHtml(receipt: Receipt) {
+  const pageHeightMm = receiptPageHeightMm(receipt);
   const lines = receipt.items.map((item) => `
     <div class="line">
-      <span>${escapeHtml(String(item.qty))} x ${escapeHtml(item.name)}</span>
-      <b>${escapeHtml(money(item.qty * item.priceCents))}</b>
+      <strong>${escapeHtml(item.name)}</strong>
+      <div class="line-detail">
+        <span>${escapeHtml(String(item.qty))} x ${escapeHtml(money(item.priceCents))}</span>
+        <b>${escapeHtml(money(item.qty * item.priceCents))}</b>
+      </div>
     </div>
   `).join("");
   return `<!doctype html>
@@ -174,41 +184,51 @@ function receiptPrintHtml(receipt: Receipt) {
   <meta charset="utf-8" />
   <title>Receipt ${escapeHtml(receipt.number)}</title>
   <style>
-    @page { size: 80mm auto; margin: 3mm; }
+    @page { size: 80mm ${pageHeightMm}mm; margin: 0; }
     * { box-sizing: border-box; }
-    html { width: 74mm; background: #fff; }
+    html { width: 80mm; background: #fff; }
     body {
       margin: 0;
-      width: 74mm;
+      width: 80mm;
       min-height: 1px;
+      padding: 3mm;
       color: #000;
       background: #fff;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       line-height: 1.35;
       overflow-wrap: anywhere;
+      writing-mode: horizontal-tb;
     }
-    h1 { margin: 0 0 5px; text-align: center; font-size: 16px; }
+    .receipt { width: 74mm; }
+    h1 { margin: 0 0 6px; text-align: center; font-size: 20px; line-height: 1.15; font-weight: 900; }
     p { margin: 2px 0; text-align: center; }
     hr { border: 0; border-top: 1px dashed #000; margin: 7px 0; }
-    .line, .total {
+    .line {
+      display: block;
+      padding: 3px 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .line strong { display: block; font-weight: 700; }
+    .line-detail, .total {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: start;
       gap: 3mm;
-      padding: 3px 0;
-      break-inside: avoid;
     }
-    .line span { min-width: 0; }
-    .line b, .total b { white-space: nowrap; text-align: right; }
-    .total { font-size: 14px; font-weight: 900; }
+    .line-detail { margin-top: 1px; }
+    .line-detail span { min-width: 0; }
+    .line-detail b, .total b { white-space: nowrap; text-align: right; }
+    .total { margin-top: 2px; font-size: 18px; line-height: 1.2; font-weight: 900; }
     @media print {
-      html, body { width: 74mm; }
+      html, body { width: 80mm; }
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
+  <main class="receipt">
   <h1>${escapeHtml(receipt.branchName)}</h1>
   <p>${escapeHtml(new Date(receipt.ts).toLocaleString())}</p>
   <p>Receipt: ${escapeHtml(receipt.number)}</p>
@@ -221,6 +241,7 @@ function receiptPrintHtml(receipt: Receipt) {
   <div class="total"><span>Total</span><b>${escapeHtml(money(receipt.totalCents))}</b></div>
   <p>Open invoice - not paid at checkout.</p>
   <p>Thank you.</p>
+  </main>
 </body>
 </html>`;
 }
@@ -239,6 +260,40 @@ function thermalLine(left: string, right: string) {
   return `${label}${" ".repeat(Math.max(1, THERMAL_RECEIPT_COLUMNS - label.length - amount.length))}${amount}`;
 }
 
+function thermalWrap(value: string) {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    if (word.length > THERMAL_RECEIPT_COLUMNS) {
+      if (current) lines.push(current);
+      for (let index = 0; index < word.length; index += THERMAL_RECEIPT_COLUMNS) {
+        lines.push(word.slice(index, index + THERMAL_RECEIPT_COLUMNS));
+      }
+      current = "";
+      continue;
+    }
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > THERMAL_RECEIPT_COLUMNS) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+function thermalItemLines(item: Receipt["items"][number]) {
+  return [
+    ...thermalWrap(item.name),
+    thermalLine(`  ${item.qty} x ${money(item.priceCents)}`, money(item.qty * item.priceCents)),
+  ];
+}
+
 function receiptPrintText(receipt: Receipt) {
   const separator = "-".repeat(THERMAL_RECEIPT_COLUMNS);
   return [
@@ -250,7 +305,7 @@ function receiptPrintText(receipt: Receipt) {
     `Customer: ${receipt.customerName}`,
     ...(receipt.note ? [`Note: ${receipt.note}`] : []),
     separator,
-    ...receipt.items.map((item) => thermalLine(`${item.qty} x ${item.name}`, money(item.qty * item.priceCents))),
+    ...receipt.items.flatMap(thermalItemLines),
     separator,
     thermalLine("TOTAL", money(receipt.totalCents)),
     "",
@@ -266,7 +321,7 @@ function printReceiptWithDialog(receipt: Receipt) {
   frame.style.left = "-10000px";
   frame.style.top = "0";
   frame.style.width = "80mm";
-  frame.style.height = "1px";
+  frame.style.height = `${receiptPageHeightMm(receipt)}mm`;
   frame.style.border = "0";
   frame.style.opacity = "0";
   frame.style.pointerEvents = "none";
