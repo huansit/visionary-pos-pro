@@ -569,7 +569,38 @@ router.get("/catalog", requireDevice, async (req, res) => {
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
 
-    res.json({ branchId, products, total: products.length, resetEpoch: await operationalResetEpoch() });
+    // Include the branch's latest business-day boundary in the compact catalog
+    // response. Terminals use this as an authoritative fallback when an older
+    // client cursor or a delayed realtime message omits the endOfDay event.
+    const closeRows = await q(
+      isMySql
+        ? `SELECT client_ts AS clientTs, server_ts AS serverTs, payload
+             FROM events
+            WHERE type = 'endOfDay'
+              AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1)
+            ORDER BY server_ts DESC
+            LIMIT 1`
+        : `SELECT client_ts AS "clientTs", server_ts AS "serverTs", payload
+             FROM events
+            WHERE type = 'endOfDay'
+              AND (branch_id = $1 OR payload->>'branchId' = $1)
+            ORDER BY server_ts DESC
+            LIMIT 1`,
+      [branchId]
+    );
+    const latestClose = closeRows.rows?.[0];
+    const closePayload = latestClose?.payload || {};
+    const closeCandidate = Number(
+      closePayload.periodEndedAt
+      || closePayload.closedAt
+      || closePayload.ts
+      || latestClose?.clientTs
+      || latestClose?.serverTs
+      || 0
+    );
+    const dayClosedAt = Number.isFinite(closeCandidate) && closeCandidate > 0 ? closeCandidate : null;
+
+    res.json({ branchId, products, total: products.length, dayClosedAt, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
     console.error("catalog failed:", error);
     res.status(500).json({ error: "catalog_failed" });

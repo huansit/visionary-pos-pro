@@ -499,13 +499,16 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   let hasMore = true;
   const events: Array<any> = [];
   let serverCatalogProducts: Product[] | null = null;
+  let catalogDayClosedAt: number | null = null;
 
   try {
-    const catalog = await jsonFetch<{ products?: Product[]; resetEpoch?: string }>(`/api/sync/catalog?t=${Date.now()}`, {
+    const catalog = await jsonFetch<{ products?: Product[]; dayClosedAt?: number | null; resetEpoch?: string }>(`/api/sync/catalog?t=${Date.now()}`, {
       method: "GET",
       headers: terminalHeaders(terminal)
     });
     writeResetEpoch(terminal, catalog.resetEpoch);
+    const closeCandidate = Number(catalog.dayClosedAt || 0);
+    catalogDayClosedAt = Number.isFinite(closeCandidate) && closeCandidate > 0 ? closeCandidate : null;
     if (Array.isArray(catalog.products)) {
       serverCatalogProducts = dedupeCatalogProducts(
         catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
@@ -537,7 +540,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
-  let dayClosedAt: number | null = null;
+  let dayClosedAt: number | null = catalogDayClosedAt;
 
   for (const item of events) {
     if (item.type === "branch") {

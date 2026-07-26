@@ -6113,14 +6113,16 @@ function DashboardTab({ data, update, branch, online }) {
   const [summary, setSummary] = useState(""); const [sumLoading, setSumLoading] = useState(false);
 
   const activeInvoices = operationalInvoices(data);
-  const todayInv = activeInvoices.filter((i) => isToday(i.ts));
+  const branchInvoices = activeInvoices.filter((invoice) => invoice.branchId === branch.id);
+  const businessPeriodStart = branchLastEndDay(data, branch.id);
+  const todayInv = branchInvoices.filter((invoice) => Number(invoice.ts || 0) > businessPeriodStart);
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
   const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
-  const todayCOGS = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && isToday(m.ts) && saleMoveRecognized(data, m))
+  const todayCOGS = data.stockMovements.filter((m) => m.branchId === branch.id && Number(m.ts || 0) > businessPeriodStart && typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m))
     .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
-  const creditTotal = activeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const creditTotal = branchInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
   const fastReorders = (() => {
     const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
@@ -6138,15 +6140,15 @@ function DashboardTab({ data, update, branch, online }) {
 
   const days = [];
   for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const start = d.getTime(); const end = start + 864e5;
-    days.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2), total: activeInvoices.filter((inv) => inv.ts >= start && inv.ts < end).reduce((s, inv) => s + inv.totalCents, 0) }); }
+    days.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2), total: branchInvoices.filter((inv) => inv.ts >= start && inv.ts < end).reduce((s, inv) => s + inv.totalCents, 0) }); }
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
   const since7 = Date.now() - 7 * 864e5; const catRev = {};
-  data.stockMovements.forEach((m) => { if (typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
+  data.stockMovements.forEach((m) => { if (m.branchId === branch.id && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
   const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
-  const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
+  const openInv = branchInvoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
 
   const localSummary = () => {
     const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;
@@ -6164,7 +6166,12 @@ function DashboardTab({ data, update, branch, online }) {
     } catch (e) { setSummary(localSummary()); }
     setSumLoading(false);
   };
-  useEffect(() => { if (online) genSummary(); else setSummary(localSummary()); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    if (online) genSummary();
+    else setSummary(localSummary());
+    // Refresh the summary when End of Day starts a new branch business period.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessPeriodStart, branch.id]);
 
   return (
     <div className="dash">

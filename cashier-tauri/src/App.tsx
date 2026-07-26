@@ -434,6 +434,7 @@ export default function App() {
   const catalogSyncPending = useRef(false);
   const updateCheckInFlight = useRef(false);
   const updateStateRef = useRef<CashierUpdateState>("idle");
+  const dayClosedAtRef = useRef<number | null>(null);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
@@ -513,13 +514,22 @@ export default function App() {
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);
 
+  function retainLatestDayClose(candidate: number | null | undefined) {
+    const parsed = Number(candidate || 0);
+    const current = Number(dayClosedAtRef.current || 0);
+    const latest = Math.max(current, Number.isFinite(parsed) ? parsed : 0);
+    dayClosedAtRef.current = latest > 0 ? latest : null;
+    setDayClosedAt(dayClosedAtRef.current);
+    return dayClosedAtRef.current;
+  }
+
   useEffect(() => {
     loadTerminalCredentials().then((stored) => {
       const cached = loadCatalog();
       setBranches(cached.branches);
       setProducts(cached.products);
       setInvoices(cached.invoices);
-      setDayClosedAt(cached.dayClosedAt);
+      retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
       if (stored) {
         setTerminal(stored);
@@ -735,12 +745,18 @@ export default function App() {
         try {
           if (!options.silent) setStatus("Syncing products...");
           const pulled = await pullCatalog(nextTerminal);
+          const effectiveDayClosedAt = retainLatestDayClose(pulled.dayClosedAt);
+          const effectiveInvoices = pulled.invoices.map((invoice) => {
+            const invoiceTs = Number(invoice.ts || 0);
+            return effectiveDayClosedAt && invoiceTs > 0 && invoiceTs <= effectiveDayClosedAt && outstanding(invoice) > 0
+              ? { ...invoice, carriedOver: true }
+              : invoice;
+          });
           setBranches(pulled.branches);
           setProducts(pulled.products);
-          setInvoices(pulled.invoices);
-          setDayClosedAt(pulled.dayClosedAt);
-          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, pulled.invoices, pulled.dayClosedAt));
-          setStatus(`Connected. Synced ${pulled.products.length} products and ${pulled.invoices.length} invoices.`);
+          setInvoices(effectiveInvoices);
+          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, effectiveInvoices, effectiveDayClosedAt));
+          setStatus(`Connected. Synced ${pulled.products.length} products and ${effectiveInvoices.length} invoices.`);
           setError("");
         } catch (err) {
           if (isTerminalRegistrationError(err)) {
@@ -751,6 +767,8 @@ export default function App() {
             setBranches([]);
             setProducts([]);
             setInvoices([]);
+            dayClosedAtRef.current = null;
+            setDayClosedAt(null);
             setCart({});
             setCustomerName("");
             catalogSyncPending.current = false;
@@ -902,11 +920,11 @@ export default function App() {
   }
 
   function handleDayClosed(ts = Date.now()) {
-    setDayClosedAt(ts);
-    setDayCloseNoticeAt(ts);
+    const effectiveTs = retainLatestDayClose(ts) || ts;
+    setDayCloseNoticeAt(effectiveTs);
     setInvoices((current) => current
       .map((invoice) => (
-        Number(invoice.ts || 0) <= ts && outstanding(invoice) > 0
+        Number(invoice.ts || 0) <= effectiveTs && outstanding(invoice) > 0
           ? { ...invoice, carriedOver: true }
           : invoice
       )));
