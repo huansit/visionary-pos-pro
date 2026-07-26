@@ -5089,9 +5089,9 @@ const INSIGHT_GROUPS = [
   { title: "Customers", icon: FileText, qs: ["Overdue invoices.", "Top customers by spend.", "Credit recovery rate."] },
   { title: "Operations", icon: SettingsIcon, qs: ["End-of-day summary.", "Offline transactions.", "Sync status log."] },
 ];
-function InsightsTab({ data, online, sessionToken }) {
+function InsightsTab({ data, online }) {
   const cur = data.settings.currency;
-  const [q, setQ] = useState(""); const [ans, setAns] = useState(""); const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState(""); const [ans, setAns] = useState("");
   const f = (c) => fmt(c, cur);
   const local = (question) => {
     const Q = question.toLowerCase();
@@ -5126,23 +5126,17 @@ function InsightsTab({ data, online, sessionToken }) {
     if (Q.includes("discrepanc")) return "Stock discrepancies are flagged during inventory counts (Stock module). No automatic variance is recorded outside a count.";
     return online ? "Couldn't generate this insight just now — try again." : "This insight needs an internet connection. Reconnect to generate it.";
   };
-  const ask = async (question) => {
-    setQ(question); setAns(""); setLoading(true);
-    if (!online) { setAns(local(question)); setLoading(false); return; }
-    try {
-      const sys = "You are the analyst for a wines & spirits retailer in Kenya (currency KES). Answer the question using ONLY the JSON business data. Reply with a one-line headline, then up to 5 concise bullet points with concrete numbers. If the data doesn't cover it, say so in one line.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: question }], maxTokens: 500, sessionToken });
-      setAns(txt || local(question));
-    } catch (e) { setAns(local(question)); }
-    setLoading(false);
+  const ask = (question) => {
+    setQ(question);
+    setAns(local(question));
   };
   return (
     <div>
       <PageHead title="Insights" sub="Tap a question for an instant read on your business." />
-      {(q || loading) && (
+      {q && (
         <div className="insans" style={{ marginBottom: 18 }}>
           <div className="qh"><Sparkles /> {q}</div>
-          <div>{loading ? "Analyzing your data…" : ans}</div>
+          <div>{ans}</div>
         </div>
       )}
       <div className="insgroups">
@@ -5185,16 +5179,16 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
     <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => { if (item.id === "invoices") setInvoiceFocus(null); setTab(item.id); }}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
   const render = () => {
-    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
+    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} />;
     switch (tab) {
-      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
+      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} />;
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} online={online} isAdmin={isAdmin} sessionToken={sessionToken} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "borrowing": return <BorrowingTab data={data} update={update} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
@@ -5202,13 +5196,13 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
-      case "insights": return <InsightsTab data={data} online={online} sessionToken={sessionToken} />;
+      case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
-      default: return <DashboardTab data={data} update={update} branch={branch} online={online} sessionToken={sessionToken} />;
+      default: return <DashboardTab data={data} update={update} branch={branch} />;
     }
   };
   return (
@@ -6157,10 +6151,10 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   );
 }
 /* ---- Dashboard ---- */
-function DashboardTab({ data, update, branch, online, sessionToken }) {
+function DashboardTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [detail, setDetail] = useState(null);
-  const [summary, setSummary] = useState(""); const [sumLoading, setSumLoading] = useState(false);
+  const [summary, setSummary] = useState("");
 
   const activeInvoices = operationalInvoices(data);
   const branchInvoices = activeInvoices.filter((invoice) => invoice.branchId === branch.id);
@@ -6207,18 +6201,9 @@ function DashboardTab({ data, update, branch, online, sessionToken }) {
     s += fastReorders.length > 0 ? fastReorders.length + " fast-moving product(s) need reordering — prioritise the lowest cover." : "Fast movers are well stocked.";
     return s;
   };
-  const genSummary = async () => {
-    if (sumLoading) return; setSumLoading(true);
-    try {
-      const sys = "You are the analyst for a wines & spirits retailer in Kenya (KES). Write a concise 2-3 sentence business summary of today: sales, profit, credit risk, and the single most important action. Use ONLY the JSON. No preamble.\n\nDATA:\n" + JSON.stringify(aiDigest(data));
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: "Give me today's business summary." }], maxTokens: 220, sessionToken });
-      setSummary(txt || localSummary());
-    } catch (e) { setSummary(localSummary()); }
-    setSumLoading(false);
-  };
+  const genSummary = () => setSummary(localSummary());
   useEffect(() => {
-    if (online) genSummary();
-    else setSummary(localSummary());
+    setSummary(localSummary());
     // Refresh the summary when End of Day starts a new branch business period.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessPeriodStart, branch.id]);
@@ -6252,8 +6237,8 @@ function DashboardTab({ data, update, branch, online, sessionToken }) {
       </div>
 
       <div className="dcard aisum">
-        <div className="ht"><Sparkles /> AI Business Summary <button className="rt linkc" onClick={genSummary} disabled={sumLoading}>{sumLoading ? "Analyzing…" : "Refresh"}</button></div>
-        <div className="txt">{sumLoading && !summary ? "Analyzing today's numbers…" : summary || localSummary()}</div>
+        <div className="ht"><BarChart3 /> Business Summary <button className="rt linkc" onClick={genSummary}>Refresh</button></div>
+        <div className="txt">{summary || localSummary()}</div>
       </div>
 
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} onClose={() => setDetail(null)} />}
@@ -7417,7 +7402,7 @@ function StockTabLegacy({ data, update, branch }) {
     </div>
   );
 }
-function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
+function PurchasesTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
   const sp = data.supplierPrices || [];
@@ -7546,7 +7531,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
   const removeBatch = (key) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
   const [plan, setPlan] = useState(null);
   const [planBranch, setPlanBranch] = useState(branch.id);
-  const [planNote, setPlanNote] = useState(""); const [planLoading, setPlanLoading] = useState(false);
+  const [planNote, setPlanNote] = useState("");
   const reorderLvl = (p) => p.reorderLevel ?? data.settings.reorderLevel;
   const suggestQty = (p, bid) => { const oh = productOnHand(data, p, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
   const buildLines = (bid) => reorderList(data, bid).map((p) => {
@@ -7554,19 +7539,11 @@ function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
     return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : branchInventoryCostCents(data, p, bid), hasQuote: !!r, quotes: qs };
   });
   const localNote = (lines) => { const named = lines.filter((l) => l.hasQuote).length; const total = lines.reduce((s, l) => s + l.qty * l.costCents, 0); return named + " of " + lines.length + " item(s) have supplier quotes — each matched to its cheapest supplier. Estimated order value " + fmt(total, cur) + (named < lines.length ? ". Items without quotes need a supplier chosen manually." : "."); };
-  const prepare = async (bid) => {
+  const prepare = (bid) => {
     const useBid = bid || branch.id; setPlanBranch(useBid);
     const lines = buildLines(useBid); setPlan(lines); setPlanNote("");
     if (lines.length === 0) return;
-    if (!online) { setPlanNote(localNote(lines)); return; }
-    setPlanLoading(true);
-    try {
-      const payload = lines.map((l) => ({ product: l.name, onHand: l.onHand, reorder: l.reorder, suggestQty: l.qty, quotes: l.quotes.map((q) => ({ supplier: q.supplier.name, cost: q.costCents / 100 })) }));
-      const sys = "You are a procurement assistant for a wines & spirits shop in Kenya (currency KES). Given low-stock items each with supplier quotes, write 2-4 short sentences: state which supplier is cheapest for each item that has quotes, flag any item with no quotes, and give the total estimated order value. Concise, no markdown, no bullet symbols.";
-      const txt = await aiComplete({ system: sys, messages: [{ role: "user", content: JSON.stringify(payload) }], maxTokens: 320, sessionToken });
-      setPlanNote(txt || localNote(lines));
-    } catch (e) { setPlanNote(localNote(lines)); }
-    setPlanLoading(false);
+    setPlanNote(localNote(lines));
   };
   const setLine = (pid, patch) => setPlan((ls) => ls.map((l) => l.productId === pid ? { ...l, ...patch } : l));
   const lineSupplier = (l, sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === l.productId); setLine(l.productId, { supplierId: sid, costCents: e ? e.costCents : l.costCents }); };
@@ -7581,7 +7558,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
       {!adding ? (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button className="btn btn-primary" onClick={() => setAdding(true)}><Plus /> New purchase order</button>
-          <button className="btn btn-ghost" onClick={() => prepare()}><Sparkles /> AI: prepare reorder</button>
+          <button className="btn btn-ghost" onClick={() => prepare()}><RefreshCw /> Prepare reorder</button>
         </div>
       ) : (
         <div className="addpanel fade"><div className="grid2">
@@ -7657,7 +7634,7 @@ function PurchasesTab({ data, update, branch, online, isAdmin, sessionToken }) {
               <button className="iconbtn" onClick={() => { setPlan(null); setPlanNote(""); }}><X /></button>
             </div>
           </div>
-          {(planLoading || planNote) && <div className="insans" style={{ marginBottom: 12 }}>{planLoading ? "Comparing suppliers…" : planNote}</div>}
+          {planNote && <div className="insans" style={{ marginBottom: 12 }}>{planNote}</div>}
           {plan.length === 0 ? <div className="notice">Nothing is below reorder level at {data.branches.find((b) => b.id === planBranch)?.name || branch.name} right now.</div> : (
             <>
               <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>On hand</th><th>Qty</th><th>Recommended supplier</th><th>Unit cost</th><th>Line total</th><th></th></tr></thead>
