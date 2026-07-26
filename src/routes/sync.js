@@ -166,18 +166,23 @@ const BRANCH_SCOPED_PRODUCT_MAP_FIELDS = [...new Set([
   ...PRODUCT_STOCK_MAP_FIELDS,
 ])];
 
-function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = []) {
+function preciseCentValue(value, fractionDigits = 6) {
+  const factor = 10 ** fractionDigits;
+  return Math.round(Math.max(0, Number(value) || 0) * factor) / factor;
+}
+
+function fieldCentsFromPayload(payload = {}, centFields = [], moneyFields = [], preserveFraction = false) {
   for (const field of centFields) {
     const raw = payload[field];
     if (raw === undefined || raw === null || raw === "") continue;
     const value = Number(raw);
-    if (Number.isFinite(value)) return Math.round(value);
+    if (Number.isFinite(value)) return preserveFraction ? preciseCentValue(value) : Math.round(value);
   }
   for (const field of moneyFields) {
     const raw = payload[field];
     if (raw === undefined || raw === null || raw === "") continue;
     const value = Number(raw);
-    if (Number.isFinite(value)) return Math.round(value * 100);
+    if (Number.isFinite(value)) return preserveFraction ? preciseCentValue(value * 100) : Math.round(value * 100);
   }
   return null;
 }
@@ -206,13 +211,14 @@ function centsFromBranchValue(
   value,
   centFields = PRODUCT_PRICE_CENT_FIELDS,
   moneyFields = PRODUCT_PRICE_MONEY_FIELDS,
+  preserveFraction = false,
 ) {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value === "object") {
-    return fieldCentsFromPayload(value, centFields, moneyFields);
+    return fieldCentsFromPayload(value, centFields, moneyFields, preserveFraction);
   }
   const number = Number(value);
-  return Number.isFinite(number) ? Math.round(number) : null;
+  return Number.isFinite(number) ? (preserveFraction ? preciseCentValue(number) : Math.round(number)) : null;
 }
 
 function stockFromBranchValue(value) {
@@ -232,10 +238,11 @@ function productOverlayFromPayload(payload = {}, branchId = "") {
     branchValueFromMap(payload, PRODUCT_COST_MAP_FIELDS, branchId),
     PRODUCT_COST_CENT_FIELDS,
     PRODUCT_COST_MONEY_FIELDS,
+    true,
   );
   const stockFromMap = stockFromBranchValue(branchValueFromMap(payload, PRODUCT_STOCK_MAP_FIELDS, branchId));
   const directPrice = fieldCentsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS);
-  const directCost = fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS);
+  const directCost = fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS, true);
   const directStock = numberFromPayload(payload, PRODUCT_STOCK_FIELDS, null);
 
   if (hasPriceMap) overlay.priceCents = priceFromMap ?? 0;
@@ -467,7 +474,7 @@ function normalizeProduct(row, branchId, stockQty, overlay = {}) {
     categoryId: payload.categoryId || payload.category || "",
     image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
     priceCents: overlay.priceCents ?? centsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS),
-    costCents: overlay.costCents ?? centsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS),
+    costCents: overlay.costCents ?? fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS, true) ?? 0,
     stockQty: Number.isFinite(Number(stockQty)) ? Number(stockQty) : 0,
     serverTs: Number(row.serverTs || row.updatedAt || 0),
   };
@@ -1057,7 +1064,10 @@ router.post("/push", requireSyncWrite, async (req, res) => {
               continue;
             }
           }
-          acceptedTs = await upsertMutableRecord(client, guardedEvent, type, recordDeviceId, nextServerTs());
+          const recordToStore = type === "expense"
+            ? await canonicalizeExpenseCategory(client, guardedEvent)
+            : guardedEvent;
+          acceptedTs = await upsertMutableRecord(client, recordToStore, type, recordDeviceId, nextServerTs());
           if (type === "expense") {
             // Older cashier builds stored expenses as append-only events. Once an
             // expense is updated, the mutable record becomes the canonical copy.
@@ -1353,7 +1363,7 @@ async function upsertProductRecordBySku(client, ev, deviceId, ts) {
   }
 
   const existing = await client.query(
-    `SELECT id, payload, updated_at AS "updatedAt"
+    `SELECT id, payload, updated_at AS "updatedAt", server_ts AS "serverTs"
      FROM records
      WHERE type = 'product'
        AND deleted = false
@@ -1365,7 +1375,10 @@ async function upsertProductRecordBySku(client, ev, deviceId, ts) {
   const existingProduct = existing.rows[0];
 
   if (existingProduct && existingProduct.id === ev.id) {
-    if (Number(existingProduct.updatedAt || 0) <= updatedAt) {
+    const baseServerTs = Number(ev.baseServerTs || 0);
+    const isCurrentServerRevision = baseServerTs > 0
+      && baseServerTs === Number(existingProduct.serverTs || 0);
+    if (Number(existingProduct.updatedAt || 0) <= updatedAt || isCurrentServerRevision) {
       const merged = mergeSharedProductPayload(existingProduct.payload, payload);
       await client.query(
         `UPDATE records
@@ -1467,6 +1480,33 @@ async function upsertMutableRecord(client, ev, type, deviceId, ts) {
     [type, ev.id]
   );
   return existing.rows[0].server_ts;
+}
+
+async function canonicalizeExpenseCategory(client, ev) {
+  const payload = ev.payload || {};
+  const categoryId = String(payload.categoryId || "").trim();
+  if (!categoryId) return ev;
+
+  const result = await client.query(
+    `SELECT payload
+       FROM records
+      WHERE type = 'expenseCategory'
+        AND id = $1
+        AND deleted = false
+      LIMIT 1`,
+    [categoryId]
+  );
+  const categoryName = String(result.rows[0]?.payload?.name || "").trim();
+  if (!categoryName) return ev;
+
+  return {
+    ...ev,
+    payload: {
+      ...payload,
+      categoryId,
+      category: categoryName,
+    },
+  };
 }
 
 const PRODUCT_GLOBAL_FIELDS = [

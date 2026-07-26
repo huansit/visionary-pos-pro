@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
-import type { Account, Branch, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -209,24 +209,31 @@ async function pushSyncEvents(
   }
 }
 
-function centsFromPayload(payload: any, fields: string[], fallback = 0) {
+function preciseCentValue(raw: any, fractionDigits = 6) {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** fractionDigits;
+  return Math.round(Math.max(0, value) * factor) / factor;
+}
+
+function centsFromPayload(payload: any, fields: string[], fallback = 0, preserveFraction = false) {
   for (const field of fields) {
     const raw = payload?.[field];
     if (raw === undefined || raw === null || raw === "") continue;
     const value = Number(raw);
     if (!Number.isFinite(value)) continue;
-    return Math.round(value);
+    return preserveFraction ? preciseCentValue(value) ?? fallback : Math.round(value);
   }
   return fallback;
 }
 
-function moneyToCentsFromPayload(payload: any, fields: string[], fallback = 0) {
+function moneyToCentsFromPayload(payload: any, fields: string[], fallback = 0, preserveFraction = false) {
   for (const field of fields) {
     const raw = payload?.[field];
     if (raw === undefined || raw === null || raw === "") continue;
     const value = Number(raw);
     if (!Number.isFinite(value)) continue;
-    return Math.round(value * 100);
+    return preserveFraction ? preciseCentValue(value * 100) ?? fallback : Math.round(value * 100);
   }
   return fallback;
 }
@@ -277,24 +284,24 @@ function branchMappedValue(payload: any, mapFields: string[], branchId: string, 
   return undefined;
 }
 
-function centsFromAny(raw: any): number | null {
+function centsFromAny(raw: any, fields = PRODUCT_PRICE_CENT_FIELDS, preserveFraction = false): number | null {
   if (raw === undefined || raw === null || raw === "") return null;
   if (typeof raw === "object") {
-    return centsFromAny(valueFromObject(raw, PRODUCT_PRICE_CENT_FIELDS));
+    return centsFromAny(valueFromObject(raw, fields), fields, preserveFraction);
   }
   const value = Number(raw);
   if (!Number.isFinite(value)) return null;
-  return Math.round(value);
+  return preserveFraction ? preciseCentValue(value) : Math.round(value);
 }
 
-function moneyCentsFromAny(raw: any): number | null {
+function moneyCentsFromAny(raw: any, fields = PRODUCT_PRICE_MONEY_FIELDS, preserveFraction = false): number | null {
   if (raw === undefined || raw === null || raw === "") return null;
   if (typeof raw === "object") {
-    return moneyCentsFromAny(valueFromObject(raw, PRODUCT_PRICE_MONEY_FIELDS));
+    return moneyCentsFromAny(valueFromObject(raw, fields), fields, preserveFraction);
   }
   const value = Number(raw);
   if (!Number.isFinite(value)) return null;
-  return Math.round(value * 100);
+  return preserveFraction ? preciseCentValue(value * 100) : Math.round(value * 100);
 }
 
 function numberFromAny(raw: any): number | null {
@@ -311,11 +318,11 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
   const sku = String(payload.sku || "").trim();
   const barcode = String(payload.barcode || "").trim();
   const branchPrice =
-    centsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_CENT_FIELDS)) ??
-    moneyCentsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_MONEY_FIELDS));
+    centsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_CENT_FIELDS), PRODUCT_PRICE_CENT_FIELDS) ??
+    moneyCentsFromAny(branchMappedValue(payload, BRANCH_PRICE_MAP_FIELDS, branchId, PRODUCT_PRICE_MONEY_FIELDS), PRODUCT_PRICE_MONEY_FIELDS);
   const branchCost =
-    centsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_CENT_FIELDS)) ??
-    moneyCentsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_MONEY_FIELDS));
+    centsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_CENT_FIELDS), PRODUCT_COST_CENT_FIELDS, true) ??
+    moneyCentsFromAny(branchMappedValue(payload, BRANCH_COST_MAP_FIELDS, branchId, PRODUCT_COST_MONEY_FIELDS), PRODUCT_COST_MONEY_FIELDS, true);
   const branchStock = numberFromAny(branchMappedValue(payload, BRANCH_STOCK_MAP_FIELDS, branchId, PRODUCT_STOCK_FIELDS));
   const directPrice = centsFromPayload(
     payload,
@@ -325,7 +332,8 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
   const directCost = centsFromPayload(
     payload,
     PRODUCT_COST_CENT_FIELDS,
-    moneyToCentsFromPayload(payload, PRODUCT_COST_MONEY_FIELDS)
+    moneyToCentsFromPayload(payload, PRODUCT_COST_MONEY_FIELDS, 0, true),
+    true
   );
   const directStock = numberFromPayload(payload, PRODUCT_STOCK_FIELDS, 0);
 
@@ -678,6 +686,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   branches: Branch[];
   products: Product[];
   invoices: Invoice[];
+  expenseCategories: ExpenseCategory[];
   dayClosedAt: number | null;
 }> {
   let cursor = 0;
@@ -726,6 +735,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   }
 
   const branchRecords = new Map<string, any>();
+  const expenseCategoryRecords = new Map<string, any>();
   const productRecords = new Map<string, any>();
   const productGroups = new Map<string, Product[]>();
   const productIdsByKey = new Map<string, string[]>();
@@ -740,6 +750,17 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
 
   for (const item of events) {
     const normalizedEventType = String(item.type || "").replace(/[_-]/g, "").toLowerCase();
+    if (normalizedEventType === "expensecategory") {
+      if (item.deleted) {
+        expenseCategoryRecords.delete(item.id);
+      } else {
+        const previous = expenseCategoryRecords.get(item.id);
+        if (!previous || Number(item.serverTs || 0) >= Number(previous.serverTs || 0)) {
+          expenseCategoryRecords.set(item.id, item);
+        }
+      }
+      continue;
+    }
     if (item.type === "branch") {
       if (item.deleted) {
         branchRecords.delete(item.id);
@@ -878,6 +899,21 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     return { id: item.id, name: payload.name || payload.branchName || item.id, location: payload.location || "" };
   });
 
+  const expenseCategories = Array.from(expenseCategoryRecords.values())
+    .map((item) => {
+      const payload = item.payload || {};
+      return {
+        id: String(item.id || payload.id || ""),
+        name: String(payload.name || "Other").trim() || "Other",
+        icon: String(payload.icon || "circle"),
+        active: payload.active !== false,
+        order: Number(payload.order || 0),
+        serverTs: Number(item.serverTs || payload.updatedAt || 0)
+      } satisfies ExpenseCategory;
+    })
+    .filter((category) => category.id && category.active)
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0) || a.name.localeCompare(b.name));
+
   for (const item of productRecords.values()) {
     const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
     const key = productDedupeKey(product);
@@ -925,7 +961,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
 
-  return { branches, invoices, products, dayClosedAt };
+  return { branches, invoices, products, expenseCategories, dayClosedAt };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {
@@ -1032,7 +1068,7 @@ export async function patchInvoiceNote(
 export async function pushExpense(
   terminal: TerminalCredentials,
   account: Account,
-  expense: { category: string; amountCents: number; note?: string; source?: "cash_till" | "mpesa"; status?: "approved" | "pending" }
+  expense: { categoryId: string; category: string; amountCents: number; note?: string; source?: "cash_till" | "mpesa"; status?: "approved" | "pending" }
 ): Promise<void> {
   const ts = Date.now();
   const status = expense.status || (expense.amountCents > 50000 ? "pending" : "approved");
@@ -1042,6 +1078,7 @@ export async function pushExpense(
         branchId: terminal.branchId,
         clientTs: ts,
         payload: {
+          categoryId: expense.categoryId,
           category: expense.category,
           amountCents: expense.amountCents,
           note: `Quick expense - ${account.name}${expense.note ? " - " + expense.note : ""}`,

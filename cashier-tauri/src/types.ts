@@ -24,6 +24,15 @@ export type Branch = {
   location?: string;
 };
 
+export type ExpenseCategory = {
+  id: string;
+  name: string;
+  icon?: string;
+  active: boolean;
+  order?: number;
+  serverTs?: number;
+};
+
 export type Product = {
   id: string;
   branchId: string;

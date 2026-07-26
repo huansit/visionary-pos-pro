@@ -161,6 +161,73 @@ test("1a. provisions an admin session for management routes", async () => {
   state.adminSessionToken = login.body.sessionToken;
 });
 
+test("1ab. renamed expense categories retain their ID and reach cashier terminals", async () => {
+  const categoryId = "excat_sync_rename";
+  const createdAt = Date.now();
+  const original = {
+    id: categoryId,
+    type: "expenseCategory",
+    updatedAt: createdAt,
+    payload: {
+      name: "Old category name",
+      icon: "wallet",
+      active: true,
+      order: 20,
+    },
+  };
+  const renamed = {
+    ...original,
+    updatedAt: createdAt + 1,
+    payload: { ...original.payload, name: "Current category name" },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [original, renamed] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.deepEqual(res.body.accepted, [categoryId, categoryId]);
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const categories = res.body.events.filter((event) => event.type === "expenseCategory" && event.id === categoryId);
+      assert.equal(categories.length, 1);
+      assert.equal(categories[0].payload.name, "Current category name");
+    });
+
+  const expenseId = "expense-stale-category-name";
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: expenseId,
+        type: "expense",
+        branchId: "b_sip",
+        updatedAt: createdAt + 2,
+        payload: {
+          categoryId,
+          category: "Old category name",
+          amountCents: 5000,
+          status: "approved",
+        },
+      }],
+    })
+    .expect(200);
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const expense = res.body.events.find((event) => event.type === "expense" && event.id === expenseId);
+      assert.equal(expense?.payload?.categoryId, categoryId);
+      assert.equal(expense?.payload?.category, "Current category name");
+    });
+});
+
 test("1aa. branch users require an active terminal in their branch", async () => {
   await withAdminSession(request(app)
     .post("/api/auth/users")
@@ -1164,7 +1231,7 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
         b_sip: { priceCents: 240000 },
       },
       branchCosts: {
-        b_sip: { costCents: 155000 },
+        b_sip: { costCents: 155000.123456 },
       },
     },
   };
@@ -1174,7 +1241,35 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
     .expect(200)
     .expect((res) => assert.deepEqual(res.body.accepted, [changedProduct.id]));
 
-  await expectBranchValues(sipTerminal, 240000, 155000);
+  await expectBranchValues(sipTerminal, 240000, 155000.123456);
+  await expectBranchValues(cptTerminal, 260000, 175000);
+
+  const storedRevision = await pool.query(
+    `SELECT server_ts AS "serverTs"
+       FROM records
+      WHERE type = 'product' AND id = $1`,
+    [product.id]
+  );
+  const phonePurchaseCostUpdate = {
+    ...changedProduct,
+    updatedAt: 7350,
+    baseServerTs: Number(storedRevision.rows[0].serverTs),
+    payload: {
+      name: product.payload.name,
+      sku: product.payload.sku,
+      barcode: product.payload.barcode,
+      branchCosts: {
+        b_sip: { costCents: 156250.654321 },
+      },
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [phonePurchaseCostUpdate] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [phonePurchaseCostUpdate.id]));
+
+  await expectBranchValues(sipTerminal, 240000, 156250.654321);
   await expectBranchValues(cptTerminal, 260000, 175000);
 
   const branchOnlyProduct = {

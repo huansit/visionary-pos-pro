@@ -53,12 +53,18 @@ import {
   verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
-const SUPERVISOR_EXPENSE_CATEGORIES = ["Police", "Utilities", "Other"];
+const DEFAULT_CASHIER_EXPENSE_CATEGORIES: ExpenseCategory[] = [
+  { id: "excat_police", name: "Police", icon: "shield", active: true, order: 50 },
+  { id: "excat_utilities", name: "Utilities", icon: "zap", active: true, order: 60 },
+  { id: "excat_other", name: "Other", icon: "circle", active: true, order: 999 }
+];
+const CASHIER_EXPENSE_CATEGORY_IDS = new Set(DEFAULT_CASHIER_EXPENSE_CATEGORIES.map((category) => category.id));
+const CASHIER_EXPENSE_CATEGORY_NAMES = new Set(DEFAULT_CASHIER_EXPENSE_CATEGORIES.map((category) => category.name.toLowerCase()));
 const CASHIER_INACTIVITY_LOGOUT_MS = 5 * 60 * 1000;
 
 type UpdatePrompt = {
@@ -362,22 +368,23 @@ async function printReceipt(receipt: Receipt) {
   }
 }
 
-function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[], dayClosedAt: number | null) {
+function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[], expenseCategories: ExpenseCategory[], dayClosedAt: number | null) {
   const savedAt = Date.now();
   localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({
     branches,
     products: dedupeCatalogProducts(products),
     invoices,
+    expenseCategories,
     dayClosedAt,
     savedAt
   }));
   return savedAt;
 }
 
-function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; dayClosedAt: number | null; savedAt?: number } {
+function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; expenseCategories: ExpenseCategory[]; dayClosedAt: number | null; savedAt?: number } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [], invoices: [], dayClosedAt: null };
+    if (!raw) return { branches: [], products: [], invoices: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
     const parsed = JSON.parse(raw);
     const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
     const parsedClose = Number(parsed.dayClosedAt || 0);
@@ -385,14 +392,23 @@ function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Inv
       branches: parsed.branches || [],
       products,
       invoices: parsed.invoices || [],
+      expenseCategories: Array.isArray(parsed.expenseCategories) && parsed.expenseCategories.length ? parsed.expenseCategories : DEFAULT_CASHIER_EXPENSE_CATEGORIES,
       dayClosedAt: Number.isFinite(parsedClose) && parsedClose > 0 ? parsedClose : null,
       savedAt: parsed.savedAt
     };
     localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
     return repaired;
   } catch {
-    return { branches: [], products: [], invoices: [], dayClosedAt: null };
+    return { branches: [], products: [], invoices: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
   }
+}
+
+function cashierManagedExpenseCategories(categories: ExpenseCategory[]) {
+  const scoped = (categories || [])
+    .filter((category) => category.active !== false)
+    .filter((category) => CASHIER_EXPENSE_CATEGORY_IDS.has(category.id) || CASHIER_EXPENSE_CATEGORY_NAMES.has(category.name.toLowerCase()))
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0) || a.name.localeCompare(b.name));
+  return scoped.length ? scoped : DEFAULT_CASHIER_EXPENSE_CATEGORIES;
 }
 
 function syncLabel(ts?: number) {
@@ -523,6 +539,7 @@ export default function App() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Products");
@@ -662,6 +679,7 @@ export default function App() {
       setBranches(cached.branches);
       setProducts(cached.products);
       setInvoices(cached.invoices);
+      setExpenseCategories(cashierManagedExpenseCategories(cached.expenseCategories));
       retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
       if (stored) {
@@ -888,7 +906,9 @@ export default function App() {
           setBranches(pulled.branches);
           setProducts(pulled.products);
           setInvoices(effectiveInvoices);
-          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, effectiveInvoices, effectiveDayClosedAt));
+          const currentExpenseCategories = cashierManagedExpenseCategories(pulled.expenseCategories);
+          setExpenseCategories(currentExpenseCategories);
+          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, effectiveInvoices, currentExpenseCategories, effectiveDayClosedAt));
           setStatus(`Connected. Synced ${pulled.products.length} products and ${effectiveInvoices.length} invoices.`);
           setError("");
         } catch (err) {
@@ -900,6 +920,7 @@ export default function App() {
             setBranches([]);
             setProducts([]);
             setInvoices([]);
+            setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
             dayClosedAtRef.current = null;
             setDayClosedAt(null);
             setCart({});
@@ -1489,6 +1510,7 @@ export default function App() {
         <Drawer side="left" onClose={() => { setExpenseOpen(false); focusSearch(); }} labelledBy="expense-sheet-title">
           <ExpenseModal
             cashierName={account.name}
+            categories={expenseCategories}
             onClose={() => { setExpenseOpen(false); focusSearch(); }}
             onSave={async (expense) => {
               setError("");
@@ -2089,14 +2111,17 @@ function UpdateReadyToast({
 
 function ExpenseModal({
   cashierName,
+  categories,
   onClose,
   onSave
 }: {
   cashierName: string;
+  categories: ExpenseCategory[];
   onClose: () => void;
-  onSave: (expense: { category: string; amountCents: number; note?: string; source: "cash_till" | "mpesa"; status: "approved" | "pending" }) => Promise<void>;
+  onSave: (expense: { categoryId: string; category: string; amountCents: number; note?: string; source: "cash_till" | "mpesa"; status: "approved" | "pending" }) => Promise<void>;
 }) {
-  const [category, setCategory] = useState(SUPERVISOR_EXPENSE_CATEGORIES[0]);
+  const availableCategories = cashierManagedExpenseCategories(categories);
+  const [categoryId, setCategoryId] = useState(availableCategories[0]?.id || "excat_other");
   const [digits, setDigits] = useState("");
   const [source, setSource] = useState<"cash_till" | "mpesa">("cash_till");
   const [note, setNote] = useState("");
@@ -2109,6 +2134,12 @@ function ExpenseModal({
   const footerText = needsApproval
     ? "Sent to the supervisor - shows as Pending until they decide."
     : "Added to today's expenses - supervisor reviews at day close.";
+
+  useEffect(() => {
+    if (!availableCategories.some((category) => category.id === categoryId)) {
+      setCategoryId(availableCategories[0]?.id || "excat_other");
+    }
+  }, [availableCategories, categoryId]);
 
   function pressKey(key: string) {
     setMessage("");
@@ -2130,8 +2161,10 @@ function ExpenseModal({
     setBusy(true);
     setMessage("");
     try {
+      const category = availableCategories.find((item) => item.id === categoryId) || availableCategories[0];
       await onSave({
-        category,
+        categoryId: category?.id || categoryId,
+        category: category?.name || "Other",
         amountCents,
         note: note.trim(),
         source,
@@ -2170,13 +2203,13 @@ function ExpenseModal({
             <small>set by supervisor</small>
           </div>
           <div className="expense-category-chips">
-            {SUPERVISOR_EXPENSE_CATEGORIES.map((item) => (
+            {availableCategories.map((item) => (
               <button
-                key={item}
-                className={category === item ? "active" : ""}
-                onClick={() => setCategory(item)}
+                key={item.id}
+                className={categoryId === item.id ? "active" : ""}
+                onClick={() => setCategoryId(item.id)}
               >
-                {item}
+                {item.name}
               </button>
             ))}
           </div>

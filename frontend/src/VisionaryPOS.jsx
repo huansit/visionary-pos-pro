@@ -54,6 +54,7 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   { id: "excat_other", name: "Other", icon: "circle", active: true, order: 999, synced: true },
 ];
 const CASHIER_EXPENSE_CATEGORY_NAMES = new Set(["police", "utilities", "other"]);
+const CASHIER_EXPENSE_CATEGORY_IDS = new Set(["excat_police", "excat_utilities", "excat_other"]);
 const EXPENSE_CATEGORY_ICON_OPTIONS = [
   ["wallet", "Wallet"],
   ["truck", "Transport"],
@@ -100,11 +101,11 @@ function expenseCategories(data, { activeOnly = false } = {}) {
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name));
 }
 function cashierExpenseCategories(data) {
-  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
+  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => CASHIER_EXPENSE_CATEGORY_IDS.has(cat.id) || CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
   return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
 }
 function adminExpenseCategories(data) {
-  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
+  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => !CASHIER_EXPENSE_CATEGORY_IDS.has(cat.id) && !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
   return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
 }
 function firstExpenseCategoryName(data) {
@@ -1417,7 +1418,7 @@ async function aiComplete({ system, messages, maxTokens = 400, sessionToken = ""
   return String(data.text || "").trim();
 }
 function cleanPayload(type, record) {
-  const { synced, _sync, ...payload } = record || {};
+  const { synced, _sync, _serverTs, serverTs, ...payload } = record || {};
   if (type === "user") {
     delete payload.pin;
     delete payload.password;
@@ -1446,6 +1447,9 @@ function eventFromRecord(collection, record, data) {
     type,
     branchId: branchIdFor(record, data),
     ...(appendType ? { clientTs: ts } : { updatedAt: ts }),
+    ...(mutableType && Number(record._serverTs || record.serverTs || 0) > 0
+      ? { baseServerTs: Number(record._serverTs || record.serverTs) }
+      : {}),
     payload: cleanPayload(type, record),
   };
 }
@@ -1532,9 +1536,18 @@ function mergeSyncEvents(data, events) {
       continue;
     }
     const existing = (next[collection] || []).find((x) => x.id === ev.id);
-    if (SYNC_MUTABLE.has(collection) && existing && Number(existing.updatedAt || existing.ts || 0) > Number(ev.updatedAt || ev.serverTs || 0)) continue;
+    if (SYNC_MUTABLE.has(collection) && existing) {
+      const incomingServerTs = Number(ev.serverTs || 0);
+      const existingServerTs = Number(existing._serverTs || existing.serverTs || 0);
+      if (incomingServerTs > 0 && existingServerTs >= incomingServerTs) continue;
+      if (existing.synced === false
+        && Number(existing.updatedAt || existing.ts || 0) > Number(ev.updatedAt || ev.serverTs || 0)) continue;
+    }
     const record = { ...(ev.payload || {}), id: ev.id, branchId: ev.branchId ?? ev.payload?.branchId, synced: true };
-    if (SYNC_MUTABLE.has(collection)) record.updatedAt = ev.updatedAt || ev.serverTs || now();
+    if (SYNC_MUTABLE.has(collection)) {
+      record.updatedAt = ev.updatedAt || ev.serverTs || now();
+      record._serverTs = Number(ev.serverTs || 0);
+    }
     else record.ts = record.ts || ev.clientTs || ev.serverTs || now();
     next = { ...next, [collection]: mergeById(next[collection], record) };
   }
@@ -1739,6 +1752,11 @@ function fmtExact(cents, cur = "KES", maximumFractionDigits = 2) {
   });
   return (cur === "KES" ? "KES " : (cur || "$")) + amount;
 }
+function preciseCents(value, fractionDigits = 6) {
+  const numeric = Math.max(0, Number(value) || 0);
+  const factor = 10 ** fractionDigits;
+  return Math.round(numeric * factor) / factor;
+}
 function purchaseLineTotalCents(line) {
   const storedTotal = Number(line?.lineTotalCents);
   if (Number.isFinite(storedTotal) && storedTotal >= 0) return Math.round(storedTotal);
@@ -1766,12 +1784,12 @@ function onHand(data, productId, branchId) {
 }
 function wacCost(prevQty, prevCost, addQty, addCost) {
   const q = Math.max(0, prevQty); const denom = q + addQty;
-  if (denom <= 0) return addCost;
-  return Math.round((q * prevCost + addQty * addCost) / denom);
+  if (denom <= 0) return preciseCents(addCost);
+  return preciseCents((q * prevCost + addQty * addCost) / denom);
 }
 const BRANCH_PRICE_MAP_FIELDS = ["branchPrices", "priceByBranch", "sellingPrices", "sellingPriceByBranch", "branchSellingPrices"];
 const BRANCH_COST_MAP_FIELDS = ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"];
-function branchMappedCentsState(product, branchId, mapFields, valueFields) {
+function branchMappedCentsState(product, branchId, mapFields, valueFields, preserveFraction = false) {
   if (!product || !branchId) return { hasMap: false, value: null };
   const wantedBranch = String(branchId).trim().toLowerCase();
   let hasMap = false;
@@ -1786,13 +1804,13 @@ function branchMappedCentsState(product, branchId, mapFields, valueFields) {
       for (const valueField of valueFields) {
         if (raw[valueField] !== undefined && raw[valueField] !== null && raw[valueField] !== "") {
           const value = Number(raw[valueField]);
-          if (Number.isFinite(value)) return { hasMap, value: Math.max(0, Math.round(value)) };
+          if (Number.isFinite(value)) return { hasMap, value: preserveFraction ? preciseCents(value) : Math.max(0, Math.round(value)) };
         }
       }
       continue;
     }
     const value = Number(raw);
-    if (Number.isFinite(value)) return { hasMap, value: Math.max(0, Math.round(value)) };
+    if (Number.isFinite(value)) return { hasMap, value: preserveFraction ? preciseCents(value) : Math.max(0, Math.round(value)) };
   }
   return { hasMap, value: null };
 }
@@ -1801,8 +1819,8 @@ function branchProductPriceCents(product, branchId) {
   return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.priceCents) || 0));
 }
 function branchProductCostCents(product, branchId) {
-  const mapped = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"]);
-  return mapped.hasMap ? (mapped.value ?? 0) : Math.max(0, Math.round(Number(product?.costCents) || 0));
+  const mapped = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"], true);
+  return mapped.hasMap ? (mapped.value ?? 0) : preciseCents(product?.costCents);
 }
 function branchInventoryCostCents(data, product, branchId) {
   const directCost = branchProductCostCents(product, branchId);
@@ -1835,7 +1853,7 @@ function branchInventoryCostCents(data, product, branchId) {
       && Number(movement.costCents || 0) > 0)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
   if (latestCostedReceipt) {
-    return Math.max(0, Math.round(Number(latestCostedReceipt.costCents) || 0));
+    return preciseCents(latestCostedReceipt.costCents);
   }
 
   const latestReceivedPurchase = (data.purchases || [])
@@ -1845,7 +1863,7 @@ function branchInventoryCostCents(data, product, branchId) {
       && Number(purchase.costCents || 0) > 0)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
   if (latestReceivedPurchase) {
-    return Math.max(0, Math.round(Number(latestReceivedPurchase.costCents) || 0));
+    return preciseCents(purchaseUnitCostCents(latestReceivedPurchase));
   }
 
   const latestInboundTransfer = (data.borrowings || [])
@@ -1864,7 +1882,7 @@ function branchInventoryCostCents(data, product, branchId) {
     })
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
   if (Number(latestInboundTransfer?.costCents || 0) > 0) {
-    return Math.max(0, Math.round(Number(latestInboundTransfer.costCents) || 0));
+    return preciseCents(latestInboundTransfer.costCents);
   }
 
   const inboundMovement = (data.stockMovements || [])
@@ -1894,7 +1912,7 @@ function branchInventoryCostCents(data, product, branchId) {
         && Number(movement.costCents || 0) > 0)
       .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
     if (sourceReceipt) {
-      return Math.max(0, Math.round(Number(sourceReceipt.costCents) || 0));
+      return preciseCents(sourceReceipt.costCents);
     }
 
     const sourcePurchase = (data.purchases || [])
@@ -1904,11 +1922,11 @@ function branchInventoryCostCents(data, product, branchId) {
         && Number(purchase.costCents || 0) > 0)
       .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0];
     if (sourcePurchase) {
-      return Math.max(0, Math.round(Number(sourcePurchase.costCents) || 0));
+      return preciseCents(purchaseUnitCostCents(sourcePurchase));
     }
   }
 
-  return Math.max(0, Math.round(Number(product.costCents) || 0));
+  return preciseCents(product.costCents);
 }
 function productStockValuation(data, product, branchId) {
   const branchIds = branchId ? [branchId] : (data?.branches || []).map((branch) => branch.id);
@@ -1933,15 +1951,15 @@ function productBranchAverageCents(data, product, branchId, valueForBranch) {
   const values = (data?.branches || [])
     .map((branch) => valueForBranch(product, branch.id))
     .filter((value) => Number(value) > 0);
-  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+  return values.length ? preciseCents(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
 }
-function withBranchMappedCents(product, branchId, mapField, valueField, cents) {
+function withBranchMappedCents(product, branchId, mapField, valueField, cents, preserveFraction = false) {
   if (!product || !branchId) return product;
   return {
     ...product,
     [mapField]: {
       ...(product[mapField] && typeof product[mapField] === "object" && !Array.isArray(product[mapField]) ? product[mapField] : {}),
-      [branchId]: { [valueField]: Math.max(0, Math.round(Number(cents) || 0)) },
+      [branchId]: { [valueField]: preserveFraction ? preciseCents(cents) : Math.max(0, Math.round(Number(cents) || 0)) },
     },
     updatedAt: now(),
     synced: false,
@@ -1951,7 +1969,7 @@ function withBranchProductPrice(product, branchId, cents) {
   return withBranchMappedCents(product, branchId, "branchPrices", "priceCents", cents);
 }
 function withBranchProductCost(product, branchId, cents) {
-  return withBranchMappedCents(product, branchId, "branchCosts", "costCents", cents);
+  return withBranchMappedCents(product, branchId, "branchCosts", "costCents", cents, true);
 }
 function withBranchProductCostForKey(products, product, branchId, cents) {
   if (!product) return products;
@@ -4285,7 +4303,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const [receipt, setReceipt] = useState(null);
   const [detail, setDetail] = useState(null);
   const [holds, setHolds] = useState([]);
-  const [exp, setExp] = useState(null); // {category, amount, note}
+  const [exp, setExp] = useState(null); // {categoryId, amount, note}
   const [debtsOpen, setDebtsOpen] = useState(false);
   const [flash, setFlash] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -4312,7 +4330,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 
   const branchProducts = branchProductsUnique(data, branch.id);
   const activeExpenseCategories = cashierExpenseCategories(data);
-  const defaultExpenseCategory = activeExpenseCategories[0]?.name || "Other";
+  const defaultExpenseCategoryId = activeExpenseCategories[0]?.id || "excat_other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
   const qNorm = q.trim().toLowerCase();
   const visible = branchProducts.filter((p) =>
@@ -4583,7 +4601,11 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const status = c > APPROVAL_LIMIT ? "pending" : "approved";
     const note = "Quick expense · " + employee.name + (exp.note.trim() ? " · " + exp.note.trim() : "");
     const ts = now();
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: exp.category, amountCents: c, note, status, enteredBy: employee.name, branchId: branch.id, date: todayStr(), ts, updatedAt: ts, synced: online }] }));
+    update((d) => {
+      const currentCategories = cashierExpenseCategories(d);
+      const category = currentCategories.find((item) => item.id === exp.categoryId) || currentCategories[0];
+      return { ...d, expenses: [...d.expenses, { id: uid("ex"), categoryId: category?.id || exp.categoryId, category: category?.name || "Other", amountCents: c, note, status, enteredBy: employee.name, branchId: branch.id, date: todayStr(), ts, updatedAt: ts, synced: online }] };
+    });
     setFlash(status === "pending" ? "Expense sent for admin approval." : "Expense recorded."); setExp(null);
   };
   const stock = (p) => { const left = onHand(data, p.id, branch.id) - (cart[p.id] || 0); return { left, cls: left <= 0 ? "out" : left <= reorder ? "low" : "ok" }; };
@@ -4659,7 +4681,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
           <div className="poscard">
             <div className="sectit">Quick Actions</div>
             <div className="qa">
-              <button className="qabtn" onClick={() => setExp({ category: defaultExpenseCategory, amount: "", note: "" })}><Wallet /> Expense</button>
+              <button className="qabtn" onClick={() => setExp({ categoryId: defaultExpenseCategoryId, amount: "", note: "" })}><Wallet /> Expense</button>
               <button className="qabtn" onClick={holdSale}><Receipt /> Hold Sale</button>
               <button className="qabtn" onClick={() => setDebtsOpen(true)}><AlertCircle /> My Debts{debtTotal > 0 ? " · " + fmt(debtTotal, cur) : ""}</button>
             </div>
@@ -4818,7 +4840,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
         <div className="scrim" onClick={() => setExp(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Quick</div><div className="title" style={{ fontSize: 21 }}>Record Expense</div></div><button className="iconbtn" onClick={() => setExp(null)}><X /></button></div>
-            <div className="field" style={{ marginTop: 12 }}><label className="label">Category</label><select className="select" value={exp.category} onChange={(e) => setExp({ ...exp, category: e.target.value })}>{activeExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
+            <div className="field" style={{ marginTop: 12 }}><label className="label">Category</label><select className="select" value={exp.categoryId} onChange={(e) => setExp({ ...exp, categoryId: e.target.value })}>{activeExpenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
             <div className="field"><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" autoFocus value={exp.amount} onChange={(e) => setExp({ ...exp, amount: e.target.value.replace(/[^\d.]/g, "") })} placeholder="Enter amount" onKeyDown={(e) => { if (e.key === "Enter") saveExp(); }} /></div>
             <div className="field"><label className="label">Description</label><input className="input" value={exp.note} onChange={(e) => setExp({ ...exp, note: e.target.value })} placeholder="Short note" /></div>
             {parseFloat(exp.amount) * 100 > APPROVAL_LIMIT && <div className="notice" style={{ fontSize: 12 }}>Over {fmt(APPROVAL_LIMIT, cur)} — needs admin approval.</div>}
@@ -6663,7 +6685,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                       <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div></td>
                       <td><span className="ptcat">{p.category}</span></td>
                       <td className="num"><span className="ptstk"><span className={"dot " + cls} /> {left}</span></td>
-                      <td className="num">{fmt(branchCost, cur)}</td>
+                      <td className="num">{fmtExact(branchCost, cur, 6)}</td>
                       <td className="num">{fmt(branchPrice, cur)}</td>
                       <td className="num">{marg}%</td>
                       <td><div className="ptact"><button className="btn xs btn-ghost" onClick={() => startEdit(p)}>Edit</button><button className="smdel" onClick={() => { setDelMsg(""); setDeleteTarget(p); }} aria-label={`Delete ${p.name}`}><Trash2 /></button></div></td>
@@ -8598,8 +8620,8 @@ function ExpensesTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
   const allExpenseCategories = expenseCategories(data);
   const recordExpenseCategories = adminExpenseCategories(data);
-  const defaultCategory = recordExpenseCategories[0]?.name || "Other";
-  const [f, setF] = useState({ category: defaultCategory, amount: "", note: "", branchId: branch.id });
+  const defaultCategoryId = recordExpenseCategories[0]?.id || "excat_other";
+  const [f, setF] = useState({ categoryId: defaultCategoryId, amount: "", note: "", branchId: branch.id });
   const [period, setPeriod] = useState("30d");
   const [rb, setRb] = useState("all");
   const [rejecting, setRejecting] = useState(null);
@@ -8668,7 +8690,11 @@ function ExpensesTab({ data, update, branch, user }) {
   const pendingTotal = pending.reduce((s, e) => s + e.amountCents, 0);
   const add = () => { const amt = Math.round(parseFloat(f.amount) * 100); if (!amt || amt <= 0) return;
     const ts = now();
-    update((d) => ({ ...d, expenses: [...d.expenses, { id: uid("ex"), category: f.category || defaultCategory, amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts, updatedAt: ts, synced: false }] })); setF({ category: defaultCategory, amount: "", note: "", branchId: f.branchId }); };
+    update((d) => {
+      const categories = adminExpenseCategories(d);
+      const category = categories.find((item) => item.id === f.categoryId) || categories[0];
+      return { ...d, expenses: [...d.expenses, { id: uid("ex"), categoryId: category?.id || f.categoryId, category: category?.name || "Other", amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts, updatedAt: ts, synced: false }] };
+    }); setF({ categoryId: defaultCategoryId, amount: "", note: "", branchId: f.branchId }); };
   const remove = (id) => update((d) => ({ ...d, expenses: d.expenses.filter((e) => e.id !== id) }));
   const approve = (id) => { const ts = now(); const by = actor(); update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", decidedBy: by, decidedAt: ts, approvedBy: by, approvedAt: ts, rejectReason: "", updatedAt: ts, synced: false } : e) })); };
   const reject = (id) => {
@@ -8710,7 +8736,7 @@ function ExpensesTab({ data, update, branch, user }) {
       <div className="addpanel" style={{ marginBottom: 18 }}>
         <div className="sideh" style={{ marginBottom: 10 }}>Record expense</div>
         <div className="grid2">
-          <div><label className="label">Category</label><select className="select" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>{recordExpenseCategories.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
+          <div><label className="label">Category</label><select className="select" value={f.categoryId} onChange={(e) => setF({ ...f, categoryId: e.target.value })}>{recordExpenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         </div>
         <div className="grid2" style={{ marginTop: 12 }}>

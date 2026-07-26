@@ -95,7 +95,7 @@ export type CashierStateContextValue = {
   state: CashierState;
   rules: ReturnType<typeof cashierRuleSnapshot>;
   refresh: () => Promise<void>;
-  submitExpense: (expense: { category: string; amountCents: number; note?: string }) => Promise<ExpenseDecision>;
+  submitExpense: (expense: { categoryId: string; category: string; amountCents: number; note?: string }) => Promise<ExpenseDecision>;
   setUpdateState: (state: CashierUpdateState) => void;
 };
 
@@ -415,7 +415,7 @@ export function CashierStateProvider({
   }, [refresh]);
 
   const submitExpense = useCallback(
-    async (expense: { category: string; amountCents: number; note?: string }) => {
+    async (expense: { categoryId: string; category: string; amountCents: number; note?: string }) => {
       const decision = classifyExpense(expense.amountCents);
       if (terminal && account) {
         await pushExpense(terminal, account, expense);
