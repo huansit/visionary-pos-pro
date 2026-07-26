@@ -1441,13 +1441,12 @@ function Drawer({
   }, [onClose]);
 
   return (
-    <div className={"drawer-backdrop " + side} onClick={onClose}>
+    <div className={"drawer-backdrop " + side}>
       <aside
         className={"app-drawer " + side}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-labelledby={labelledBy}
-        onClick={(event) => event.stopPropagation()}
       >
         <button className="drawer-close" onClick={onClose} aria-label="Close panel">
           {side === "left" ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
