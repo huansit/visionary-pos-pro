@@ -399,8 +399,18 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
         return Err("invalid_secugen_path".into());
     }
 
+    let request_timeout = if req.path == "/SGIFPCapture" {
+        let capture_timeout = req
+            .params
+            .get("Timeout")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(6_000);
+        Duration::from_millis(capture_timeout.saturating_add(1_500).clamp(2_500, 8_000))
+    } else {
+        Duration::from_secs(4)
+    };
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(request_timeout)
         // SecuGen installs a local certificate. Restricting this client to the
         // two loopback WebAPI endpoints prevents this exception from weakening
         // any cloud request made by the cashier app.

@@ -495,6 +495,8 @@ type FingerprintTemplate = {
 const SECUGEN_TEMPLATE_FORMAT = "ISO";
 const SECUGEN_MATCH_THRESHOLD = 80;
 const FINGERPRINT_TEMPLATE_CACHE_MS = 5 * 60 * 1000;
+const FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS = 6000;
+const FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS = 3500;
 const fingerprintTemplateCache = new Map<string, { expiresAt: number; templates: FingerprintTemplate[] }>();
 
 function secugenErrorMessage(error: unknown) {
@@ -526,10 +528,15 @@ async function secugenRequest(path: "/SGIFPCapture" | "/SGIMatchScore", params: 
   return invoke<Record<string, any>>("secugen_request", { req: { path, params } });
 }
 
-async function captureFingerprint(): Promise<FingerprintCapture> {
+function fingerprintPerf(label: string, startedAt: number, details: Record<string, unknown> = {}) {
+  console.info("[visionpos:fingerprint]", label, { ms: Math.round(performance.now() - startedAt), ...details });
+}
+
+async function captureFingerprint(timeoutMs = FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS): Promise<FingerprintCapture> {
+  const startedAt = performance.now();
   try {
     const data = await secugenRequest("/SGIFPCapture", {
-      Timeout: "10000",
+      Timeout: String(timeoutMs),
       Quality: "50",
       FakeDetection: "0",
       licstr: "",
@@ -546,6 +553,7 @@ async function captureFingerprint(): Promise<FingerprintCapture> {
     }
     const template = String(data.TemplateBase64 || data.templateBase64 || data.Template || data.template || "");
     if (!template) throw new Error("low_quality");
+    fingerprintPerf("capture", startedAt, { timeoutMs, quality: data.ImageQuality || data.Quality || "" });
     return {
       template,
       deviceSerial: String(data.SerialNumber || data.DeviceSerial || data.deviceSerial || data.DeviceID || ""),
@@ -557,6 +565,7 @@ async function captureFingerprint(): Promise<FingerprintCapture> {
 }
 
 async function fingerprintScore(templateA: string, templateB: string) {
+  const startedAt = performance.now();
   const data = await secugenRequest("/SGIMatchScore", {
     template1: templateA,
     template2: templateB,
@@ -567,6 +576,7 @@ async function fingerprintScore(templateA: string, templateB: string) {
   const code = secugenErrorCode(data);
   if (code !== 0) throw new Error(`secugen_match_error_${code}`);
   const score = Number(data.MatchingScore ?? data.Score ?? data.score ?? data.matchScore ?? 0);
+  fingerprintPerf("match-score", startedAt, { score: Number.isFinite(score) ? score : 0 });
   return Number.isFinite(score) ? score : 0;
 }
 
@@ -587,9 +597,11 @@ export async function preloadCashierFingerprintTemplate(terminal: TerminalCreden
 }
 
 async function fingerprintTemplates(terminal: TerminalCredentials, preferredUserId?: string, forceRefresh = false): Promise<FingerprintTemplate[]> {
+  const startedAt = performance.now();
   const cacheKey = fingerprintTemplateCacheKey(terminal, preferredUserId);
   const cached = fingerprintTemplateCache.get(cacheKey);
   if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+    fingerprintPerf("templates-cache-hit", startedAt, { count: cached.templates.length, preferredUserId: preferredUserId || null });
     return cached.templates;
   }
 
@@ -604,6 +616,7 @@ async function fingerprintTemplates(terminal: TerminalCredentials, preferredUser
     expiresAt: Date.now() + FINGERPRINT_TEMPLATE_CACHE_MS,
     templates
   });
+  fingerprintPerf("templates-fetch", startedAt, { count: templates.length, preferredUserId: preferredUserId || null, forceRefresh });
   return templates;
 }
 
@@ -628,10 +641,11 @@ async function recordFingerprintFailure(
 async function matchFingerprint(
   terminal: TerminalCredentials,
   preferredUserId?: string,
-  options: { fallbackToAll?: boolean } = {}
+  options: { fallbackToAll?: boolean; captureTimeoutMs?: number; retryFresh?: boolean } = {}
 ): Promise<{ capture: FingerprintCapture; match: FingerprintTemplate }> {
+  const startedAt = performance.now();
   const [capture, templates] = await Promise.all([
-    captureFingerprint(),
+    captureFingerprint(options.captureTimeoutMs),
     fingerprintTemplates(terminal, preferredUserId)
   ]);
   if (!templates.length) {
@@ -640,16 +654,27 @@ async function matchFingerprint(
   }
 
   const match = await bestFingerprintMatch(capture.template, templates);
-  if (match) return { capture, match };
+  if (match) {
+    fingerprintPerf("match-complete", startedAt, { userId: match.userId, preferredUserId: preferredUserId || null });
+    return { capture, match };
+  }
 
-  const freshTemplates = await fingerprintTemplates(terminal, preferredUserId, true);
-  const freshMatch = await bestFingerprintMatch(capture.template, freshTemplates);
-  if (freshMatch) return { capture, match: freshMatch };
+  if (options.retryFresh !== false) {
+    const freshTemplates = await fingerprintTemplates(terminal, preferredUserId, true);
+    const freshMatch = await bestFingerprintMatch(capture.template, freshTemplates);
+    if (freshMatch) {
+      fingerprintPerf("match-complete-after-refresh", startedAt, { userId: freshMatch.userId, preferredUserId: preferredUserId || null });
+      return { capture, match: freshMatch };
+    }
+  }
 
   if (preferredUserId && options.fallbackToAll) {
     const fallbackTemplates = await fingerprintTemplates(terminal, undefined, true);
     const fallbackMatch = await bestFingerprintMatch(capture.template, fallbackTemplates);
-    if (fallbackMatch) return { capture, match: fallbackMatch };
+    if (fallbackMatch) {
+      fingerprintPerf("match-complete-after-fallback", startedAt, { userId: fallbackMatch.userId, preferredUserId });
+      return { capture, match: fallbackMatch };
+    }
   }
 
   await recordFingerprintFailure(terminal, capture, "fingerprint_not_recognized", preferredUserId);
@@ -674,7 +699,11 @@ export async function loginCashierWithFingerprint(terminal: TerminalCredentials,
   account: Account;
   sessionToken: string;
 }> {
-  const { capture, match } = await matchFingerprint(terminal, preferredUserId, { fallbackToAll: true });
+  const { capture, match } = await matchFingerprint(terminal, preferredUserId, {
+    fallbackToAll: true,
+    captureTimeoutMs: FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS,
+    retryFresh: true
+  });
   return jsonFetch("/api/auth/fingerprints/login", {
     method: "POST",
     headers: terminalHeaders(terminal),
@@ -692,7 +721,10 @@ export async function verifyCashierFingerprint(
   account: Account,
   sessionToken: string
 ): Promise<void> {
-  const { capture } = await matchFingerprint(terminal, account.id);
+  const { capture } = await matchFingerprint(terminal, account.id, {
+    captureTimeoutMs: FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS,
+    retryFresh: false
+  });
   await jsonFetch("/api/auth/fingerprints/checkout", {
     method: "POST",
     headers: terminalHeaders(terminal),
