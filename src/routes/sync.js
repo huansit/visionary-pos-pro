@@ -614,7 +614,41 @@ router.get("/catalog", requireDevice, async (req, res) => {
       0
     ) || null;
 
-    res.json({ branchId, products, total: products.length, dayClosedAt, resetEpoch: await operationalResetEpoch() });
+    // Give terminals an explicit list of invoices that belong to an already
+    // closed business period. This is more reliable than asking every client
+    // to infer carry-over state from timestamps alone, while preserving the
+    // timestamp fallback for older close events.
+    let carriedOverInvoiceIds = [];
+    if (dayClosedAt) {
+      const closedInvoiceRows = await q(
+        isMySql
+          ? `SELECT id, client_ts AS clientTs, payload
+               FROM events
+              WHERE type = 'invoice'
+                AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1)`
+          : `SELECT id, client_ts AS "clientTs", payload
+               FROM events
+              WHERE type = 'invoice'
+                AND (branch_id = $1 OR payload->>'branchId' = $1)`,
+        [branchId]
+      );
+      carriedOverInvoiceIds = (closedInvoiceRows.rows || [])
+        .filter((row) => {
+          const payload = parsePayload(row.payload);
+          const invoiceTs = Number(payload.ts || row.clientTs || 0);
+          return Number.isFinite(invoiceTs) && invoiceTs > 0 && invoiceTs <= dayClosedAt;
+        })
+        .map((row) => String(row.id));
+    }
+
+    res.json({
+      branchId,
+      products,
+      total: products.length,
+      dayClosedAt,
+      carriedOverInvoiceIds,
+      resetEpoch: await operationalResetEpoch(),
+    });
   } catch (error) {
     console.error("catalog failed:", error);
     res.status(500).json({ error: "catalog_failed" });

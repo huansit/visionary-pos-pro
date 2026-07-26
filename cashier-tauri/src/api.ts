@@ -500,15 +500,26 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const events: Array<any> = [];
   let serverCatalogProducts: Product[] | null = null;
   let catalogDayClosedAt: number | null = null;
+  let carriedOverInvoiceIds = new Set<string>();
 
   try {
-    const catalog = await jsonFetch<{ products?: Product[]; dayClosedAt?: number | null; resetEpoch?: string }>(`/api/sync/catalog?t=${Date.now()}`, {
+    const catalog = await jsonFetch<{
+      products?: Product[];
+      dayClosedAt?: number | null;
+      carriedOverInvoiceIds?: string[];
+      resetEpoch?: string;
+    }>(`/api/sync/catalog?t=${Date.now()}`, {
       method: "GET",
       headers: terminalHeaders(terminal)
     });
     writeResetEpoch(terminal, catalog.resetEpoch);
     const closeCandidate = Number(catalog.dayClosedAt || 0);
     catalogDayClosedAt = Number.isFinite(closeCandidate) && closeCandidate > 0 ? closeCandidate : null;
+    carriedOverInvoiceIds = new Set(
+      (Array.isArray(catalog.carriedOverInvoiceIds) ? catalog.carriedOverInvoiceIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    );
     if (Array.isArray(catalog.products)) {
       serverCatalogProducts = dedupeCatalogProducts(
         catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
@@ -707,7 +718,10 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       };
       const balance = Math.max(0, hydratedInvoice.totalCents - hydratedInvoice.paidCents);
       const invoiceTs = Number(hydratedInvoice.ts || 0);
-      return dayClosedAt && invoiceTs > 0 && invoiceTs <= dayClosedAt && balance > 0
+      return balance > 0 && (
+        carriedOverInvoiceIds.has(hydratedInvoice.id)
+        || Boolean(dayClosedAt && invoiceTs > 0 && invoiceTs <= dayClosedAt)
+      )
         ? { ...hydratedInvoice, carriedOver: true }
         : hydratedInvoice;
     })

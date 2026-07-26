@@ -442,8 +442,15 @@ export default function App() {
   const itemCount = cartLines.reduce((sum, line) => sum + line.qty, 0);
   const myInvoices = useMemo(() => {
     if (!account?.id) return [];
-    return invoices.filter((invoice) => !invoice.cashierId || invoice.cashierId === account.id);
-  }, [account?.id, invoices]);
+    const accountName = normalize(account.name || "");
+    return invoices.filter((invoice) => {
+      if (invoice.cashierId === account.id) return true;
+      const invoiceCashierName = normalize(invoice.cashierName || "");
+      if (accountName && invoiceCashierName === accountName) return true;
+      // Keep legacy invoices that predate cashier identity fields visible.
+      return !invoice.cashierId && !invoiceCashierName;
+    });
+  }, [account?.id, account?.name, invoices]);
   const businessDayInvoices = useMemo(() => myInvoices.map((invoice) => {
     const invoiceTs = Number(invoice.ts || 0);
     return dayClosedAt && invoiceTs > 0 && invoiceTs <= dayClosedAt && outstanding(invoice) > 0

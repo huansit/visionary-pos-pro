@@ -5795,7 +5795,26 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     setCloseError("");
     const ts = now();
     const closeId = closeBatchId;
-    const record = { id: closeId, type: "day_closed", eventType: "day_closed", ...d, businessDate, periodStartedAt, periodEndedAt: ts, lastInvoiceAt: periodLastInvoiceAt, countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null, note: note.trim(), closedBy: user, closedAt: ts, ts, synced: false };
+    const record = {
+      id: closeId,
+      type: "day_closed",
+      eventType: "day_closed",
+      ...d,
+      businessDate,
+      periodStartedAt,
+      periodEndedAt: ts,
+      lastInvoiceAt: periodLastInvoiceAt,
+      invoiceIds: periodInvoices.map((invoice) => invoice.id),
+      carriedOverInvoiceIds: periodInvoices
+        .filter((invoice) => invOutstanding(invoice) > 0)
+        .map((invoice) => invoice.id),
+      countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null,
+      note: note.trim(),
+      closedBy: user,
+      closedAt: ts,
+      ts,
+      synced: false,
+    };
     update((dd) => {
       const current = reconcileInvoicePayments(dd);
       if ((current.endOfDays || []).some((entry) => entry.id === closeId)) return current;

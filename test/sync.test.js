@@ -1040,6 +1040,21 @@ test("6d. admin branch pricing changes reach the activated cashier catalog", asy
 test("6da. cashier catalog carries the latest branch End of Day boundary", async () => {
   const terminal = await activateTestTerminal("End of Day Catalog Till", "b_sip");
   const closedAt = Date.now() - 250;
+  const closedInvoice = {
+    id: `invoice-before-eod-${closedAt}`,
+    type: "invoice",
+    branchId: "b_sip",
+    clientTs: closedAt - 1000,
+    payload: {
+      branchId: "b_sip",
+      cashierId: "cashier-eod-test",
+      cashierName: "End Day Cashier",
+      customerName: "Carry Over Customer",
+      totalCents: 2500,
+      paidCents: 0,
+      ts: closedAt - 1000,
+    },
+  };
   const closeEvent = {
     id: `eod-catalog-${closedAt}`,
     type: "day_closed",
@@ -1055,17 +1070,18 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
   };
 
   await withAdminSession(request(app).post("/api/sync/push"))
-    .send({ events: [closeEvent] })
+    .send({ events: [closedInvoice, closeEvent] })
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected));
-      assert.deepEqual(res.body.accepted, [closeEvent.id]);
+      assert.deepEqual(res.body.accepted, [closedInvoice.id, closeEvent.id]);
     });
 
   await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.dayClosedAt, closedAt);
+      assert.ok(res.body.carriedOverInvoiceIds.includes(closedInvoice.id));
     });
 
   const settingsClosedAt = closedAt + 100;
