@@ -5034,7 +5034,7 @@ const NAV_TOP = [
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
   products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
-  cash: "cash", expenses: "expenses", financials: "financials",
+  cash: "cash", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
@@ -5055,7 +5055,6 @@ const NAV_GROUPS = [
   { id: "fingrp", label: "Finance", icon: Banknote, items: [
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
-    { id: "financials", label: "Financials", icon: BarChart3 },
   ] },
   { id: "opsgrp", label: "Branch Operations", icon: Building2, items: [
     { id: "branches", label: "Branches", icon: Building2 },
@@ -5190,7 +5189,6 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
-      case "financials": return <ReportsTab key="financials" data={data} initialTab="pnl" onOpenCashierCredit={openCashierCreditInvoices} />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
