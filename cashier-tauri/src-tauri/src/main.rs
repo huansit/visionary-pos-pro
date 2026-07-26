@@ -26,6 +26,12 @@ struct ApiResponse {
     body: Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct SecugenRequest {
+    path: String,
+    params: HashMap<String, String>,
+}
+
 #[tauri::command]
 fn save_terminal_credentials(payload: String) -> Result<(), String> {
     let payload = Zeroizing::new(payload);
@@ -107,6 +113,49 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     })
 }
 
+#[tauri::command]
+async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
+    if !matches!(req.path.as_str(), "/SGIFPCapture" | "/SGIMatchScore") {
+        return Err("invalid_secugen_path".into());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        // SecuGen installs a local certificate. Restricting this client to the
+        // two loopback WebAPI endpoints prevents this exception from weakening
+        // any cloud request made by the cashier app.
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let mut last_error = "secugen_webapi_unreachable".to_string();
+
+    for base in ["https://localhost:8443", "http://127.0.0.1:8080"] {
+        let url = format!("{}{}", base, req.path);
+        match client.post(url).form(&req.params).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.map_err(|err| err.to_string())?;
+                if !status.is_success() {
+                    last_error = format!("secugen_webapi_http_{}", status.as_u16());
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                    return Ok(value);
+                }
+                let parsed = text
+                    .split('&')
+                    .filter_map(|pair| pair.split_once('='))
+                    .map(|(key, value)| (key.to_string(), Value::String(value.to_string())))
+                    .collect::<serde_json::Map<String, Value>>();
+                return Ok(Value::Object(parsed));
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+    }
+
+    Err(format!("secugen_webapi_unreachable: {last_error}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -117,7 +166,8 @@ pub fn run() {
             load_terminal_credentials,
             clear_terminal_credentials,
             close_app,
-            api_request
+            api_request,
+            secugen_request
         ])
         .run(tauri::generate_context!())
         .expect("error while running VISIONPOS Cashier");

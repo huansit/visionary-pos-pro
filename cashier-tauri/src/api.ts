@@ -472,11 +472,184 @@ export async function loginCashier(terminal: TerminalCredentials, employeeNumber
   });
 }
 
-export async function verifyCashierPin(terminal: TerminalCredentials, account: Account, pin: string): Promise<void> {
-  await jsonFetch("/api/auth/verify-pin", {
+type FingerprintCapture = {
+  template: string;
+  deviceSerial: string;
+  quality: number | string;
+};
+
+type FingerprintTemplate = {
+  userId: string;
+  template: string;
+  account: Account;
+};
+
+const SECUGEN_TEMPLATE_FORMAT = "ISO";
+const SECUGEN_MATCH_THRESHOLD = 80;
+
+function secugenErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (message.includes("secugen_webapi_unreachable")) {
+    return "SecuGen WebAPI Client is not running. Start it, connect the fingerprint reader, and try again.";
+  }
+  if (message.includes("not_connected")) return "Fingerprint reader not detected. Connect the SecuGen reader and try again.";
+  if (message.includes("low_quality")) return "Fingerprint quality was too low. Place the enrolled finger flat and scan again.";
+  if (message.includes("not_enrolled")) return "No fingerprint is enrolled for this cashier.";
+  if (message.includes("not_recognized")) return "Fingerprint not recognized. Use an enrolled finger and try again.";
+  return message || "Fingerprint verification failed.";
+}
+
+function secugenErrorCode(data: any) {
+  const value = Number(data?.ErrorCode ?? data?.errorCode ?? data?.error_code ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+async function secugenRequest(path: "/SGIFPCapture" | "/SGIMatchScore", params: Record<string, string>) {
+  return invoke<Record<string, any>>("secugen_request", { req: { path, params } });
+}
+
+async function captureFingerprint(): Promise<FingerprintCapture> {
+  try {
+    const data = await secugenRequest("/SGIFPCapture", {
+      Timeout: "10000",
+      Quality: "50",
+      licstr: "",
+      templateFormat: SECUGEN_TEMPLATE_FORMAT
+    });
+    const code = secugenErrorCode(data);
+    if (code !== 0) {
+      if ([54, 55, 56, 57].includes(code)) throw new Error("not_connected");
+      if ([51, 52, 53].includes(code)) throw new Error("low_quality");
+      throw new Error(`secugen_error_${code}`);
+    }
+    const template = String(data.TemplateBase64 || data.templateBase64 || data.Template || data.template || "");
+    if (!template) throw new Error("low_quality");
+    return {
+      template,
+      deviceSerial: String(data.SerialNumber || data.DeviceSerial || data.deviceSerial || data.DeviceID || ""),
+      quality: data.ImageQuality || data.Quality || ""
+    };
+  } catch (error) {
+    throw new Error(secugenErrorMessage(error));
+  }
+}
+
+async function fingerprintScore(templateA: string, templateB: string) {
+  const data = await secugenRequest("/SGIMatchScore", {
+    template1: templateA,
+    template2: templateB,
+    Template1: templateA,
+    Template2: templateB,
+    templateFormat: SECUGEN_TEMPLATE_FORMAT
+  });
+  const code = secugenErrorCode(data);
+  if (code !== 0) throw new Error(`secugen_match_error_${code}`);
+  const score = Number(data.MatchingScore ?? data.Score ?? data.score ?? data.matchScore ?? 0);
+  return Number.isFinite(score) ? score : 0;
+}
+
+async function fingerprintTemplates(terminal: TerminalCredentials): Promise<FingerprintTemplate[]> {
+  const data = await jsonFetch<{ templates?: FingerprintTemplate[] }>("/api/auth/fingerprints/templates", {
     method: "POST",
     headers: terminalHeaders(terminal),
-    body: JSON.stringify({ accountId: account.id, pin })
+    body: JSON.stringify({ branchId: terminal.branchId })
+  });
+  return (Array.isArray(data.templates) ? data.templates : [])
+    .filter((entry) => String(entry?.account?.kind || "").toLowerCase() === "cashier");
+}
+
+async function recordFingerprintFailure(
+  terminal: TerminalCredentials,
+  capture: FingerprintCapture,
+  reason: string,
+  userId?: string
+) {
+  await jsonFetch("/api/auth/fingerprints/failed", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({
+      userId: userId || null,
+      branchId: terminal.branchId,
+      deviceSerial: capture.deviceSerial,
+      reason
+    })
+  }).catch(() => undefined);
+}
+
+async function matchFingerprint(
+  terminal: TerminalCredentials,
+  preferredUserId?: string
+): Promise<{ capture: FingerprintCapture; match: FingerprintTemplate }> {
+  const capture = await captureFingerprint();
+  const templates = (await fingerprintTemplates(terminal))
+    .filter((entry) => !preferredUserId || entry.userId === preferredUserId);
+  if (!templates.length) {
+    await recordFingerprintFailure(terminal, capture, "fingerprint_not_enrolled", preferredUserId);
+    throw new Error(secugenErrorMessage(new Error("not_enrolled")));
+  }
+  let best: FingerprintTemplate | null = null;
+  let bestScore = -1;
+  for (const entry of templates) {
+    const score = await fingerprintScore(capture.template, entry.template);
+    if (score > bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+    if (score >= SECUGEN_MATCH_THRESHOLD) return { capture, match: entry };
+  }
+  await recordFingerprintFailure(terminal, capture, "fingerprint_not_recognized", preferredUserId);
+  throw new Error(secugenErrorMessage(new Error("not_recognized")));
+}
+
+export async function loginCashierWithFingerprint(terminal: TerminalCredentials): Promise<{
+  account: Account;
+  sessionToken: string;
+}> {
+  const { capture, match } = await matchFingerprint(terminal);
+  return jsonFetch("/api/auth/fingerprints/login", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({
+      userId: match.userId,
+      branchId: terminal.branchId,
+      deviceSerial: capture.deviceSerial,
+      deviceName: terminal.terminalName
+    })
+  });
+}
+
+export async function verifyCashierFingerprint(
+  terminal: TerminalCredentials,
+  account: Account,
+  sessionToken: string
+): Promise<void> {
+  const { capture } = await matchFingerprint(terminal, account.id);
+  await jsonFetch("/api/auth/fingerprints/checkout", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({
+      sessionToken,
+      userId: account.id,
+      branchId: terminal.branchId,
+      deviceSerial: capture.deviceSerial
+    })
+  });
+}
+
+export async function verifyCheckoutWithSupervisorPin(
+  terminal: TerminalCredentials,
+  account: Account,
+  sessionToken: string,
+  pin: string
+): Promise<{ supervisor: { id: string; name: string; role: string } }> {
+  return jsonFetch("/api/auth/verify-supervisor-pin", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({
+      sessionToken,
+      cashierAccountId: account.id,
+      pin
+    })
   });
 }
 

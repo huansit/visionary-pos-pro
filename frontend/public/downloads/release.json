@@ -1,15 +1,15 @@
 {
-  "version": "2.0.49",
+  "version": "2.0.50",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.49_x64-setup.exe",
-  "size": 3149458,
-  "sha512": "DFAEBB7405BBA56DFD660778F45E5CE8E9D01129F96CAEEA7BB726CDB8E74839353C789DC15DDB6DF809AA231D9D05C81E9ACB1DF0D324C5B43009D94D8473CF",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.50_x64-setup.exe",
+  "size": 3164670,
+  "sha512": "7E2D9731BFDB38D07F16FF5410673D8DC25BE85726864F1A5B97646EE8637627BE1296CEDD030576AC34489C563623BE760B5D7A983CF8603A30B4DC795A073F",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.49",
-    "Closed business-day invoices no longer remain in active cashier sales totals.",
-    "Open invoices at End of Day are moved into carried-over cashier debts.",
-    "Cashier terminals recover a missed close event from synchronized branch settings.",
-    "Invoice and Clearing summaries now follow the selected branch and current business period.",
+    "VISIONPOS Cashier 2.0.50",
+    "Cashiers can sign in with either their PIN or enrolled fingerprint.",
+    "Checkout now requires the signed-in cashier's enrolled fingerprint.",
+    "A branch-authorized supervisor emergency PIN can approve checkout when biometric scanning is unavailable.",
+    "Emergency checkout approvals are rate-limited, server-verified, and recorded in the security audit log.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

@@ -12,6 +12,7 @@ import {
   Delete,
   Download,
   FileText,
+  Fingerprint,
   Grid2X2,
   GripHorizontal,
   Heart,
@@ -42,6 +43,7 @@ import {
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
+  loginCashierWithFingerprint,
   logout,
   patchInvoiceNote,
   pullCatalog,
@@ -50,7 +52,8 @@ import {
   requestInvoiceVoid,
   resolveBarcode,
   isTerminalRegistrationError,
-  verifyCashierPin
+  verifyCashierFingerprint,
+  verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import type { Account, Branch, CartLine, Invoice, Product, Receipt, TerminalCredentials } from "./types";
@@ -397,7 +400,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null);
-  const [checkoutPinOpen, setCheckoutPinOpen] = useState(false);
+  const [checkoutFingerprintOpen, setCheckoutFingerprintOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
@@ -862,10 +865,10 @@ export default function App() {
 
   function completeSale() {
     if (!terminal || !account || !canCompleteSale) return;
-    setCheckoutPinOpen(true);
+    setCheckoutFingerprintOpen(true);
   }
 
-  async function issueInvoiceAfterPin(pin: string) {
+  async function issueInvoiceAfterAuthorization(authorize: () => Promise<void>) {
     if (!terminal || !account || !canCompleteSale) return;
     setError("");
     const unavailable = cartLines.find((line) => productSaleBlockReason(line.product, line.qty - 1));
@@ -892,23 +895,35 @@ export default function App() {
       }))
     };
     try {
-      await verifyCashierPin(terminal, account, pin);
+      await authorize();
       const assignedReceiptNumber = await pushCheckout(terminal, account, nextReceipt);
       const issuedReceipt = { ...nextReceipt, number: assignedReceiptNumber };
       setReceipt(issuedReceipt);
       setLastReceipt(issuedReceipt);
       setCart({});
       setCustomerName("");
-      setCheckoutPinOpen(false);
+      setCheckoutFingerprintOpen(false);
       setStatus(`Open invoice ${assignedReceiptNumber} issued.`);
       refreshCatalog(terminal);
     } catch (err) {
-      const message = String(err).includes("invalid_pin") ? "PIN does not match this cashier." : `Checkout failed: ${String(err)}`;
+      const message = `Checkout failed: ${String(err).replace(/^Error:\s*/, "")}`;
       setError(message);
       throw new Error(message);
     } finally {
       focusSearch();
     }
+  }
+
+  async function issueInvoiceAfterFingerprint() {
+    if (!terminal || !account) return;
+    await issueInvoiceAfterAuthorization(() => verifyCashierFingerprint(terminal, account, sessionToken));
+  }
+
+  async function issueInvoiceAfterSupervisorPin(pin: string) {
+    if (!terminal || !account) return;
+    await issueInvoiceAfterAuthorization(async () => {
+      await verifyCheckoutWithSupervisorPin(terminal, account, sessionToken, pin);
+    });
   }
 
   async function handleLogout(reason: "manual" | "inactivity" = "manual") {
@@ -917,7 +932,7 @@ export default function App() {
     setSessionToken("");
     setCart({});
     setCustomerName("");
-    setCheckoutPinOpen(false);
+    setCheckoutFingerprintOpen(false);
     setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
   }
 
@@ -987,6 +1002,14 @@ export default function App() {
           onLogin={async (employeeNumber, pin) => {
             setError("");
             const result = await loginCashier(terminal, employeeNumber, pin);
+            setAccount(result.account);
+            setSessionToken(result.sessionToken);
+            setStatus(`Signed in as ${result.account.name}.`);
+            await refreshCatalog(terminal);
+          }}
+          onFingerprintLogin={async () => {
+            setError("");
+            const result = await loginCashierWithFingerprint(terminal);
             setAccount(result.account);
             setSessionToken(result.sessionToken);
             setStatus(`Signed in as ${result.account.name}.`);
@@ -1307,11 +1330,12 @@ export default function App() {
       )}
 
       {receipt && <ReceiptPreview receipt={receipt} onClose={() => setReceipt(null)} />}
-      {checkoutPinOpen && account && (
-        <CashierPinPrompt
+      {checkoutFingerprintOpen && account && (
+        <FingerprintCheckoutPrompt
           cashierName={account.name}
-          onClose={() => { setCheckoutPinOpen(false); focusSearch(); }}
-          onConfirm={issueInvoiceAfterPin}
+          onClose={() => { setCheckoutFingerprintOpen(false); focusSearch(); }}
+          onConfirm={issueInvoiceAfterFingerprint}
+          onSupervisorConfirm={issueInvoiceAfterSupervisorPin}
         />
       )}
       {updateModal}
@@ -2752,7 +2776,8 @@ function LoginScreen({
   status,
   error,
   onClose,
-  onLogin
+  onLogin,
+  onFingerprintLogin
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
@@ -2761,10 +2786,12 @@ function LoginScreen({
   error: string;
   onClose: () => void;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
+  onFingerprintLogin: () => Promise<void>;
 }) {
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
+  const [fingerprintBusy, setFingerprintBusy] = useState(false);
   const [message, setMessage] = useState(error);
   const canSubmit = !busy && employeeNumber.trim().length > 0 && pin.length >= 4;
 
@@ -2781,6 +2808,19 @@ function LoginScreen({
     }
   }
 
+  async function scanFingerprint() {
+    if (busy || fingerprintBusy) return;
+    setFingerprintBusy(true);
+    setMessage("");
+    try {
+      await onFingerprintLogin();
+    } catch (err) {
+      setMessage(String(err).replace(/^Error:\s*/, ""));
+    } finally {
+      setFingerprintBusy(false);
+    }
+  }
+
   return (
     <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status} onClose={onClose}>
       <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
@@ -2794,66 +2834,120 @@ function LoginScreen({
         <label>PIN</label>
         <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" /></div>
         {message && <div className="error">{message}</div>}
-        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign In"}</button>
+        <button className="premium-primary" disabled={!canSubmit || fingerprintBusy} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign in with PIN"}</button>
+        <div className="auth-choice"><span>or</span></div>
+        <button className="premium-secondary fingerprint-login-button" disabled={busy || fingerprintBusy} onClick={scanFingerprint}>
+          {fingerprintBusy ? <span className="spinner" /> : <Fingerprint size={22} />}
+          {fingerprintBusy ? "Place finger on reader..." : "Sign in with fingerprint"}
+        </button>
       </LoginCard>
     </AuthShell>
   );
 }
 
-function CashierPinPrompt({
+function FingerprintCheckoutPrompt({
   cashierName,
   onClose,
-  onConfirm
+  onConfirm,
+  onSupervisorConfirm
 }: {
   cashierName: string;
   onClose: () => void;
-  onConfirm: (pin: string) => Promise<void>;
+  onConfirm: () => Promise<void>;
+  onSupervisorConfirm: (pin: string) => Promise<void>;
 }) {
-  const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const canSubmit = !busy && pin.trim().length >= 4;
+  const [fallbackOpen, setFallbackOpen] = useState(false);
+  const [supervisorPin, setSupervisorPin] = useState("");
 
-  async function submit() {
-    if (!canSubmit) return;
+  async function scanAndConfirm() {
+    if (busy) return;
     setBusy(true);
     setMessage("");
     try {
-      await onConfirm(pin.trim());
+      await onConfirm();
     } catch (err) {
       setMessage(String(err).replace(/^Error:\s*/, ""));
-      setPin("");
+      setBusy(false);
+    }
+  }
+
+  async function confirmSupervisorPin() {
+    if (busy || !/^\d{4}$/.test(supervisorPin)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await onSupervisorConfirm(supervisorPin);
+    } catch (err) {
+      setMessage(String(err).replace(/^Error:\s*/, ""));
+      setSupervisorPin("");
       setBusy(false);
     }
   }
 
   return (
     <div className="pin-confirm-backdrop" role="presentation">
-      <form className="pin-confirm-card" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <section className="pin-confirm-card fingerprint-confirm-card" role="dialog" aria-modal="true" aria-labelledby="fingerprint-checkout-title">
         <div className="pin-confirm-head">
-          <span><ShieldCheck size={18} /> Cashier confirmation</span>
-          <button type="button" onClick={onClose} aria-label="Cancel PIN confirmation"><X size={18} /></button>
+          <span><ShieldCheck size={18} /> Secure checkout</span>
+          <button type="button" onClick={onClose} aria-label="Cancel fingerprint confirmation"><X size={18} /></button>
         </div>
-        <h2>Enter {cashierName}'s PIN</h2>
-        <p>This confirms the invoice is being issued by the logged-in cashier.</p>
-        <label>Cashier PIN</label>
-        <div className="pin-confirm-input">
-          <KeyRound size={21} />
-          <input
-            value={pin}
-            onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 8))}
-            type="password"
-            inputMode="numeric"
-            autoFocus
-            placeholder="Enter PIN"
-          />
-        </div>
+        {!fallbackOpen ? (
+          <>
+            <div className={"fingerprint-scan-visual" + (busy ? " scanning" : "")}>
+              <Fingerprint size={58} />
+              <i />
+            </div>
+            <h2 id="fingerprint-checkout-title">Confirm {cashierName}'s fingerprint</h2>
+            <p>Checkout requires the enrolled fingerprint of the cashier currently signed in.</p>
+          </>
+        ) : (
+          <>
+            <div className="supervisor-override-icon"><KeyRound size={34} /></div>
+            <h2 id="fingerprint-checkout-title">Supervisor emergency approval</h2>
+            <p>Use only when the fingerprint reader or cashier's finger is unavailable. This approval is recorded.</p>
+            <label className="supervisor-pin-label" htmlFor="supervisor-checkout-pin">Supervisor PIN</label>
+            <input
+              id="supervisor-checkout-pin"
+              className="supervisor-pin-input"
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={4}
+              autoFocus
+              value={supervisorPin}
+              onChange={(event) => setSupervisorPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
+              onKeyDown={(event) => { if (event.key === "Enter") confirmSupervisorPin(); }}
+              aria-label="Four digit supervisor emergency PIN"
+            />
+          </>
+        )}
         {message && <div className="pin-confirm-error">{message}</div>}
-        <button className="pin-confirm-primary" type="submit" disabled={!canSubmit}>
-          {busy ? <span className="spinner" /> : <Check size={20} />}
-          {busy ? "Verifying..." : "Confirm and issue invoice"}
-        </button>
-      </form>
+        {!fallbackOpen ? (
+          <>
+            <button className="pin-confirm-primary" type="button" disabled={busy} onClick={scanAndConfirm}>
+              {busy ? <span className="spinner" /> : <Fingerprint size={22} />}
+              {busy ? "Reading fingerprint..." : message ? "Try fingerprint again" : "Scan fingerprint and issue invoice"}
+            </button>
+            <button className="supervisor-fallback-toggle" type="button" disabled={busy} onClick={() => { setFallbackOpen(true); setMessage(""); }}>
+              <KeyRound size={16} /> Scanner unavailable? Use supervisor PIN
+            </button>
+            <small className="fingerprint-required-note"><Lock size={14} /> Cashier PIN checkout is disabled.</small>
+          </>
+        ) : (
+          <>
+            <button className="pin-confirm-primary" type="button" disabled={busy || !/^\d{4}$/.test(supervisorPin)} onClick={confirmSupervisorPin}>
+              {busy ? <span className="spinner" /> : <ShieldCheck size={22} />}
+              {busy ? "Verifying supervisor..." : "Approve and issue invoice"}
+            </button>
+            <button className="supervisor-fallback-toggle" type="button" disabled={busy} onClick={() => { setFallbackOpen(false); setSupervisorPin(""); setMessage(""); }}>
+              <Fingerprint size={16} /> Return to fingerprint
+            </button>
+            <small className="fingerprint-required-note"><Lock size={14} /> PIN is verified by the server and never stored on this terminal.</small>
+          </>
+        )}
+      </section>
     </div>
   );
 }

@@ -1762,6 +1762,61 @@ test("10c. checkout PIN verification requires the logged-in cashier on a registe
     });
 });
 
+test("10d. emergency checkout requires a branch-authorized supervisor PIN and active cashier session", async () => {
+  const supervisorPin = state.cashierPin === "7391" ? "7392" : "7391";
+  const managerPin = [state.cashierPin, supervisorPin].includes("7393") ? "7394" : "7393";
+
+  await withAdminSession(request(app)
+    .post("/api/auth/users/supervisor-all-branches/emergency-pin")
+    .send({ pin: supervisorPin }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.ok, true));
+
+  await withAdminSession(request(app)
+    .post("/api/auth/users/manager-cape-town/emergency-pin")
+    .send({ pin: managerPin }))
+    .expect(200);
+
+  await withAdminSession(request(app)
+    .post("/api/auth/users/supervisor-all-branches/emergency-pin")
+    .send({ pin: state.cashierPin }))
+    .expect(409)
+    .expect((res) => assert.equal(res.body.error, "duplicate_pin"));
+
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
+    .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip" })
+    .expect(200);
+  const checkout = {
+    sessionToken: login.body.sessionToken,
+    cashierAccountId: state.cashierId,
+  };
+
+  await request(app)
+    .post("/api/auth/verify-supervisor-pin")
+    .send({ ...checkout, pin: supervisorPin })
+    .expect(401)
+    .expect((res) => assert.equal(res.body.error, "registered_terminal_required"));
+
+  await withTerminalAuth(request(app).post("/api/auth/verify-supervisor-pin"), state.loginTerminal)
+    .send({ ...checkout, pin: state.cashierPin })
+    .expect(401)
+    .expect((res) => assert.equal(res.body.error, "invalid_supervisor_pin"));
+
+  await withTerminalAuth(request(app).post("/api/auth/verify-supervisor-pin"), state.loginTerminal)
+    .send({ ...checkout, pin: managerPin })
+    .expect(401)
+    .expect((res) => assert.equal(res.body.error, "invalid_supervisor_pin"));
+
+  await withTerminalAuth(request(app).post("/api/auth/verify-supervisor-pin"), state.loginTerminal)
+    .send({ ...checkout, pin: supervisorPin })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.ok, true);
+      assert.equal(res.body.supervisor.id, "supervisor-all-branches");
+      assert.equal(res.body.supervisor.role, "supervisor");
+    });
+});
+
 test("11. cloud login sessions can be validated and revoked", async () => {
   const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
     .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip", deviceName: "Test Till" })

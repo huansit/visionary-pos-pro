@@ -22,7 +22,7 @@ function run(command, args) {
   const result = spawnSync(command, args, {
     cwd: root,
     stdio: "inherit",
-    shell: process.platform === "win32",
+    shell: false,
     env: process.env
   });
 
@@ -68,8 +68,12 @@ if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
 process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= "";
 
 console.log(`Building VISIONPOS Cashier ${version}...`);
-run("npm", ["run", "build"]);
-run("npx", ["tauri", "build"]);
+const npmCli = process.env.npm_execpath;
+if (!npmCli || !fs.existsSync(npmCli)) {
+  fail("npm CLI path is unavailable. Run this script through `npm run release`.");
+}
+run(process.execPath, [npmCli, "run", "build"]);
+run(process.execPath, [npmCli, "exec", "--", "tauri", "build"]);
 
 if (!fs.existsSync(nsisDir)) {
   fail(`NSIS bundle directory was not found: ${nsisDir}`);
@@ -99,10 +103,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Closed business-day invoices no longer remain in active cashier sales totals.",
-  "Open invoices at End of Day are moved into carried-over cashier debts.",
-  "Cashier terminals recover a missed close event from synchronized branch settings.",
-  "Invoice and Clearing summaries now follow the selected branch and current business period.",
+  "Cashiers can sign in with either their PIN or enrolled fingerprint.",
+  "Checkout now requires the signed-in cashier's enrolled fingerprint.",
+  "A branch-authorized supervisor emergency PIN can approve checkout when biometric scanning is unavailable.",
+  "Emergency checkout approvals are rate-limited, server-verified, and recorded in the security audit log.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

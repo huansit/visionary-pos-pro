@@ -22,6 +22,7 @@ const emailVerificationBuckets = new Map();
 const EMAIL_VERIFICATION_RESEND_SECONDS = 60;
 const EMAIL_VERIFICATION_RATE_WINDOW_MINUTES = 10;
 const EMAIL_VERIFICATION_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.EMAIL_VERIFICATION_RATE_MAX || "5", 10)));
+const checkoutOverrideBuckets = new Map();
 
 function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
@@ -1107,7 +1108,9 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   if (!allowedRoles.has(role)) return res.status(400).json({ error: "invalid_role" });
   const isAdmin = role === "Admin" || id === "admin";
   const isCashier = role === "Cashier" && !isAdmin;
+  const hasEmergencyPin = !isCashier && String(pin || "").length > 0;
   if (isCashier && !/^\d{4}$/.test(String(pin || ""))) return res.status(400).json({ error: "cashier_pin_required" });
+  if (hasEmergencyPin && !/^\d{4}$/.test(String(pin))) return res.status(400).json({ error: "emergency_pin_invalid" });
   if (!isCashier && (!email || !password)) return res.status(400).json({ error: "email_password_required" });
 
   try {
@@ -1119,12 +1122,12 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
       const terminal = await activeTerminalForBranch(credentialBranchId);
       if (!terminal) return res.status(409).json({ error: "branch_terminal_required" });
     }
-    if (isCashier) {
+    if (isCashier || hasEmergencyPin) {
       const duplicatePinOwner = await pinAlreadyAssigned(pin, credentialId);
       if (duplicatePinOwner) return res.status(409).json({ error: "duplicate_pin", ownerId: duplicatePinOwner });
     }
-    const pinHash = isCashier ? await bcrypt.hash(String(pin), ROUNDS) : null;
-    const pinLookup = isCashier ? pinLookupHash(pin) : null;
+    const pinHash = isCashier || hasEmergencyPin ? await bcrypt.hash(String(pin), ROUNDS) : null;
+    const pinLookup = isCashier || hasEmergencyPin ? pinLookupHash(pin) : null;
     const passwordHash = !isCashier ? await bcrypt.hash(String(password), ROUNDS) : null;
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
@@ -1139,8 +1142,8 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
            name = VALUES(name),
            email = VALUES(email),
            phone = VALUES(phone),
-           pin_hash = VALUES(pin_hash),
-           pin_lookup_hash = VALUES(pin_lookup_hash),
+           pin_hash = COALESCE(VALUES(pin_hash), pin_hash),
+           pin_lookup_hash = COALESCE(VALUES(pin_lookup_hash), pin_lookup_hash),
            password_hash = VALUES(password_hash),
            branch_id = VALUES(branch_id),
            rights = VALUES(rights),
@@ -1156,8 +1159,8 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
            name = EXCLUDED.name,
            email = EXCLUDED.email,
            phone = EXCLUDED.phone,
-           pin_hash = EXCLUDED.pin_hash,
-           pin_lookup_hash = EXCLUDED.pin_lookup_hash,
+           pin_hash = COALESCE(EXCLUDED.pin_hash, credentials.pin_hash),
+           pin_lookup_hash = COALESCE(EXCLUDED.pin_lookup_hash, credentials.pin_lookup_hash),
            password_hash = EXCLUDED.password_hash,
            branch_id = EXCLUDED.branch_id,
            rights = EXCLUDED.rights,
@@ -1173,6 +1176,39 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
     if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
     console.error("upsert user credential failed:", error);
     res.status(error.statusCode || 500).json({ error: error.message || "upsert_user_failed" });
+  }
+});
+
+router.post("/users/:id/emergency-pin", requireOwnerOrAdmin, async (req, res) => {
+  await ensureAuthSchema();
+  const id = String(req.params.id || "").trim();
+  const pin = String(req.body?.pin || "").trim();
+  if (!id || !/^\d{4}$/.test(pin)) return res.status(400).json({ error: "emergency_pin_invalid" });
+  try {
+    const result = await q(
+      "SELECT id, kind, name, branch_id, rights, status FROM credentials WHERE id = $1 LIMIT 1",
+      [id]
+    );
+    const row = result.rows[0];
+    if (!row || row.status !== "active" || !["supervisor", "manager", "admin", "owner"].includes(credentialRole(row))) {
+      return res.status(403).json({ error: "supervisor_account_required" });
+    }
+    const duplicatePinOwner = await pinAlreadyAssigned(pin, id);
+    if (duplicatePinOwner) return res.status(409).json({ error: "duplicate_pin", ownerId: duplicatePinOwner });
+    await q(
+      `UPDATE credentials
+          SET pin_hash = $1,
+              pin_lookup_hash = $2,
+              updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $3`,
+      [await bcrypt.hash(pin, ROUNDS), pinLookupHash(pin), id]
+    );
+    await audit("emergency_checkout_pin_changed", req, id, { byUser: req.account?.id || null });
+    res.json({ ok: true });
+  } catch (error) {
+    if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
+    console.error("emergency checkout PIN update failed:", error);
+    res.status(500).json({ error: "emergency_pin_update_failed" });
   }
 });
 
@@ -1526,6 +1562,73 @@ router.post("/verify-pin", async (req, res) => {
   } catch (error) {
     console.error("checkout pin verification failed:", error);
     return res.status(500).json({ error: "pin_verification_failed" });
+  }
+});
+
+router.post("/verify-supervisor-pin", async (req, res) => {
+  await ensureAuthSchema();
+  const sessionToken = String(req.body?.sessionToken || "").trim();
+  const cashierAccountId = String(req.body?.cashierAccountId || "").trim();
+  const pin = String(req.body?.pin || "").trim();
+  let terminal = null;
+  try {
+    terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
+    if (terminal.error) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId || null, { reason: terminal.error });
+      return res.status(401).json({ error: terminal.error });
+    }
+    const rateKey = `${terminal.terminalUuid}|${requestMeta(req).ipAddress}`;
+    if (bucketRateLimited(checkoutOverrideBuckets, rateKey, 10, 6)) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId || null, { reason: "rate_limited", terminalId: terminal.deviceId });
+      return res.status(429).json({ error: "too_many_override_attempts" });
+    }
+    if (!sessionToken || !cashierAccountId || !/^\d{4}$/.test(pin)) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId || null, { reason: "invalid_request", terminalId: terminal.deviceId });
+      return res.status(400).json({ error: "session_cashier_and_pin_required" });
+    }
+    const active = await accountForSessionToken(sessionToken);
+    if (!active || active.account.id !== cashierAccountId || active.account.kind !== "cashier" || active.account.branchId !== terminal.branchId) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId, { reason: "invalid_cashier_session", terminalId: terminal.deviceId, branchId: terminal.branchId });
+      return res.status(401).json({ error: "invalid_cashier_session" });
+    }
+    const sessionResult = await q(
+      "SELECT terminal_uuid, device_id FROM user_sessions WHERE id = $1 LIMIT 1",
+      [active.sessionId]
+    );
+    const sessionRow = sessionResult.rows[0];
+    if (!sessionRow || (sessionRow.terminal_uuid ?? sessionRow.terminalUuid) !== terminal.terminalUuid) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId, { reason: "terminal_session_mismatch", terminalId: terminal.deviceId, branchId: terminal.branchId });
+      return res.status(401).json({ error: "terminal_session_mismatch" });
+    }
+    const result = await q(
+      `SELECT id, kind, name, branch_id, rights, status, pin_hash
+         FROM credentials
+        WHERE pin_lookup_hash = $1
+          AND pin_hash IS NOT NULL
+          AND status = 'active'
+        LIMIT 1`,
+      [pinLookupHash(pin)]
+    );
+    const supervisor = result.rows[0];
+    const role = credentialRole(supervisor);
+    const supervisorBranchId = supervisor?.branch_id ?? supervisor?.branchId ?? null;
+    const privileged = ["supervisor", "manager", "admin", "owner"].includes(role);
+    const branchAuthorized = supervisorBranchId == null || supervisorBranchId === terminal.branchId;
+    if (!supervisor || !privileged || !branchAuthorized || !(await bcrypt.compare(pin, supervisor.pin_hash))) {
+      await audit("supervisor_checkout_override_failed", req, cashierAccountId, { reason: "invalid_supervisor_pin", terminalId: terminal.deviceId, branchId: terminal.branchId });
+      return res.status(401).json({ error: "invalid_supervisor_pin" });
+    }
+    await audit("supervisor_checkout_override", req, cashierAccountId, {
+      supervisorId: supervisor.id,
+      supervisorRole: role,
+      terminalId: terminal.deviceId,
+      branchId: terminal.branchId,
+    });
+    return res.json({ ok: true, supervisor: { id: supervisor.id, name: supervisor.name, role } });
+  } catch (error) {
+    console.error("supervisor checkout override failed:", error);
+    await audit("supervisor_checkout_override_failed", req, cashierAccountId || null, { reason: "server_error", terminalId: terminal?.deviceId || null });
+    return res.status(500).json({ error: "supervisor_override_failed" });
   }
 });
 

@@ -10397,6 +10397,9 @@ function UsersTab({ data, update, isAdmin }) {
   const [terminals, setTerminals] = useState([]);
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
+  const [emergencyPinEdit, setEmergencyPinEdit] = useState(null);
+  const [emergencyPin, setEmergencyPin] = useState("");
+  const [emergencyPinError, setEmergencyPinError] = useState("");
   const visibleEmployees = activeEmployees(data);
   useEffect(() => {
     let cancelled = false;
@@ -10430,6 +10433,9 @@ function UsersTab({ data, update, isAdmin }) {
     if (message.includes("duplicate_pin")) return "That PIN is already assigned to another employee.";
     if (message.includes("branch_terminal_required")) return "This branch has no active terminal. Activate one in Terminals before creating or updating branch users.";
     if (message.includes("branch_required")) return "Select a branch for this user.";
+    if (message.includes("emergency_pin_invalid")) return "Emergency checkout PIN must be exactly 4 digits.";
+    if (message.includes("supervisor_account_required")) return "Emergency checkout PINs are only available to supervisors, managers, and administrators.";
+    if (message.includes("too_many_override_attempts")) return "Too many failed attempts. Wait 10 minutes before trying again.";
     return message || "Cloud user validation failed.";
   };
   const saveCloudCredential = (emp, secret = {}) => authApi("/api/auth/users", { ...emp, ...secret }, { session: true });
@@ -10460,6 +10466,27 @@ function UsersTab({ data, update, isAdmin }) {
     update((d) => ({ ...d, admin: { ...d.admin, password: adminPw } }));
     setAdminCred(false); setAdminPw(""); setAdminErr("");
   };
+  const openEmergencyPin = (id) => {
+    setEmergencyPinEdit((current) => current === id ? null : id);
+    setEmergencyPin("");
+    setEmergencyPinError("");
+    setCredEdit(null);
+    setEditRights(null);
+  };
+  const saveEmergencyPin = async (emp) => {
+    if (!/^\d{4}$/.test(emergencyPin)) return setEmergencyPinError("Emergency checkout PIN must be exactly 4 digits.");
+    setUserBusy(true);
+    setEmergencyPinError("");
+    try {
+      await authApi(`/api/auth/users/${encodeURIComponent(emp.id)}/emergency-pin`, { pin: emergencyPin }, { session: true });
+      setEmergencyPinEdit(null);
+      setEmergencyPin("");
+    } catch (error) {
+      setEmergencyPinError(credentialMessage(error));
+    } finally {
+      setUserBusy(false);
+    }
+  };
   const reset = () => { setF({ name: "", role: ROLES[0], pin: "", email: "", password: "", branchId: data.branches[0]?.id || "", rights: ROLE_RIGHTS.Cashier.slice() }); setErr(""); setAdding(false); };
   const setRole = (role) => setF((p) => ({
     ...p,
@@ -10483,9 +10510,11 @@ function UsersTab({ data, update, isAdmin }) {
       const em = f.email.trim().toLowerCase();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr("Enter a valid email for this user.");
       const pwIssue = passwordIssue(f.password); if (pwIssue) return setErr(pwIssue);
+      if (f.pin && !/^\d{4}$/.test(f.pin)) return setErr("Emergency checkout PIN must be exactly 4 digits.");
+      if (f.pin && visibleEmployees.some((e) => e.pin === f.pin)) return setErr("That PIN's taken.");
       if (em === data.admin.email.toLowerCase() || visibleEmployees.some((e) => (e.email || "").toLowerCase() === em)) return setErr("That email is already in use.");
       emp = { id: uid("e"), name: f.name.trim(), role: f.role, email: em, password: f.password, branchId: f.branchId || null, rights: f.rights, status: "active", synced: false };
-      secret = { password: f.password };
+      secret = { password: f.password, ...(f.pin ? { pin: f.pin } : {}) };
     }
     setUserBusy(true);
     try {
@@ -10607,6 +10636,7 @@ function UsersTab({ data, update, isAdmin }) {
       <div className="row" style={{ marginBottom: adminCred ? 8 : 14 }}><div className="avatar"><ShieldCheck style={{ width: 18, height: 18 }} /></div>
         <div className="meta"><div className="nm">Admin · {data.admin.email}</div><div className="mt2">Full access · all branches · all rights</div></div>
         <button className="btn xs btn-ghost" onClick={() => { setAdminCred((v) => !v); setAdminPw(""); setAdminErr(""); }}><Lock /> Change password</button>
+        <button className="btn xs btn-ghost" onClick={() => openEmergencyPin("admin")}><KeyRound /> Emergency PIN</button>
         <span className="ist paid">owner</span></div>
       {adminCred && (
         <div className="addpanel fade" style={{ marginBottom: 14 }}>
@@ -10617,6 +10647,18 @@ function UsersTab({ data, update, isAdmin }) {
             <button className="btn btn-ghost" style={{ width: "auto", padding: "0 16px" }} onClick={() => { setAdminCred(false); setAdminPw(""); setAdminErr(""); }}>Cancel</button>
           </div>
           {adminErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{adminErr}</div>}
+        </div>
+      )}
+      {emergencyPinEdit === "admin" && (
+        <div className="addpanel fade" style={{ marginBottom: 14 }}>
+          <div className="label" style={{ marginBottom: 8 }}>Emergency checkout PIN for the owner admin</div>
+          <div className="notice" style={{ marginBottom: 10 }}>Use only when fingerprint checkout is unavailable. The server verifies and audits every override.</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <input className="input mono" type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={emergencyPin} onChange={(event) => { setEmergencyPin(event.target.value.replace(/\D/g, "").slice(0, 4)); setEmergencyPinError(""); }} placeholder="4 digits" style={{ flex: 1 }} />
+            <button className="btn btn-primary" disabled={userBusy || !/^\d{4}$/.test(emergencyPin)} style={{ width: "auto", padding: "0 16px" }} onClick={() => saveEmergencyPin({ id: "admin", name: "Owner admin" })}><ShieldCheck /> {userBusy ? "Saving..." : "Save PIN"}</button>
+            <button className="btn btn-ghost" disabled={userBusy} style={{ width: "auto", padding: "0 16px" }} onClick={() => { setEmergencyPinEdit(null); setEmergencyPin(""); setEmergencyPinError(""); }}>Cancel</button>
+          </div>
+          {emergencyPinError && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{emergencyPinError}</div>}
         </div>
       )}
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add user</button> : (
@@ -10631,9 +10673,10 @@ function UsersTab({ data, update, isAdmin }) {
           {f.role === "Cashier" ? (
             <div className="field"><label className="label">4-digit PIN <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· cashiers sign in by PIN</span></label><input className="input mono" inputMode="numeric" maxLength={4} value={f.pin} onChange={(e) => { setF({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }); setErr(""); }} placeholder="0000" /></div>
           ) : (
-            <div className="grid2">
+            <div className="grid3">
               <div><label className="label">Email <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· signs in with password & email code</span></label><input className="input" type="email" value={f.email} onChange={(e) => { setF({ ...f, email: e.target.value }); setErr(""); }} placeholder="name@store.com" /></div>
               <div><label className="label">Password</label><input className="input" type="text" value={f.password} onChange={(e) => { setF({ ...f, password: e.target.value }); setErr(""); }} placeholder="8+ chars, upper, number, symbol" /></div>
+              <div><label className="label">Emergency checkout PIN <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· optional</span></label><input className="input mono" type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={f.pin} onChange={(e) => { setF({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }); setErr(""); }} placeholder="4 digits" /></div>
             </div>
           )}
           <div className="field"><label className="label">Access rights <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· {f.rights.length} selected · defaults from role, tap to change</span></label>
@@ -10647,6 +10690,7 @@ function UsersTab({ data, update, isAdmin }) {
             <span className="pill plain" title="Branch is fixed once a user is created" style={{ fontSize: 11 }}><Building2 style={{ width: 12, height: 12, verticalAlign: "-2px", marginRight: 4 }} />{e.branchId ? bn(e.branchId) : "All branches"}</span>
             <button className="btn xs btn-ghost" onClick={() => setEditRights(editRights === e.id ? null : e.id)}><ShieldCheck /> Rights</button>
             <button className="btn xs btn-ghost" onClick={() => openCred(credEdit === e.id ? null : e.id)}><Lock /> {e.role === "Cashier" ? "PIN" : "Password"}</button>
+            {isAdmin && ["Supervisor", "Manager", "Admin"].includes(e.role) && <button className="btn xs btn-ghost" onClick={() => openEmergencyPin(e.id)}><KeyRound /> Emergency PIN</button>}
             <button className={"btn xs btn-ghost" + (e.fingerprintEnrolled ? " fp-enrolled-btn" : "")} onClick={() => openFingerprintEnroll(e)}>
               {e.fingerprintEnrolled ? <Check /> : <Fingerprint />} {e.fingerprintEnrolled ? "Enrolled" : "Enroll"}
             </button>
@@ -10665,6 +10709,18 @@ function UsersTab({ data, update, isAdmin }) {
                 <button className="btn btn-ghost" style={{ width: "auto", padding: "0 16px" }} onClick={() => { setCredEdit(null); setCredVal(""); setCredErr(""); }}>Cancel</button>
               </div>
               {credErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{credErr}</div>}
+            </div>
+          )}
+          {emergencyPinEdit === e.id && (
+            <div className="addpanel fade" style={{ marginTop: 8 }}>
+              <div className="label" style={{ marginBottom: 8 }}>Emergency checkout PIN for {e.name}</div>
+              <div className="notice" style={{ marginBottom: 10 }}>Used only when cashier fingerprint checkout cannot be completed. Every use is branch-checked, rate-limited, and recorded in the audit log.</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <input className="input mono" type="password" inputMode="numeric" autoComplete="new-password" maxLength={4} value={emergencyPin} onChange={(ev) => { setEmergencyPin(ev.target.value.replace(/\D/g, "").slice(0, 4)); setEmergencyPinError(""); }} onKeyDown={(ev) => { if (ev.key === "Enter") saveEmergencyPin(e); }} placeholder="4 digits" style={{ flex: 1 }} />
+                <button className="btn btn-primary" disabled={userBusy || !/^\d{4}$/.test(emergencyPin)} style={{ width: "auto", padding: "0 16px" }} onClick={() => saveEmergencyPin(e)}><ShieldCheck /> {userBusy ? "Saving..." : "Save PIN"}</button>
+                <button className="btn btn-ghost" disabled={userBusy} style={{ width: "auto", padding: "0 16px" }} onClick={() => { setEmergencyPinEdit(null); setEmergencyPin(""); setEmergencyPinError(""); }}>Cancel</button>
+              </div>
+              {emergencyPinError && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{emergencyPinError}</div>}
             </div>
           )}
           {editRights === e.id && (
