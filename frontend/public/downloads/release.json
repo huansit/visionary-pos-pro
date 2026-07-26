@@ -1,15 +1,15 @@
 {
-  "version": "2.0.54",
+  "version": "2.0.55",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.54_x64-setup.exe",
-  "size": 3167901,
-  "sha512": "EA0EED4875D8EE4A8D7A8AD928CA20D712B9AB014D0AC4A1431A1519BC868983720B1DAD2DF2603E965C4FDDA9D988F706DED862ADF278B23C9F72361FD9AC6A",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.55_x64-setup.exe",
+  "size": 3170345,
+  "sha512": "18464E66DCB539536B81B37938BB8C14090D189D048C16BF4DF8FF7273F5CE71073DA87AF6D49D80D4055425FDB77E47B8E14D2D88F0FE03C7F9E5C3EA733D84",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.54",
-    "Receipt printing now sends an 80 mm thermal job directly to the Windows default printer.",
-    "Printing no longer opens an empty browser page before showing the receipt.",
-    "Receipts use compact thermal columns with automatic feed and cutter commands where supported.",
-    "If direct printing is unavailable, VisionPOS falls back to a single correctly sized system print dialog.",
+    "VISIONPOS Cashier 2.0.55",
+    "Cashier receipts now use an 80 mm portrait thermal layout.",
+    "The branch name prints centered, bold, and larger, with an emphasized receipt total.",
+    "Product names wrap above quantity and price details instead of being truncated.",
+    "Automatic printing, paper feed, cutter support, and the portrait print-dialog fallback remain available.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

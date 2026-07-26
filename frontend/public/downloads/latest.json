@@ -1,11 +1,11 @@
 {
-  "version": "2.0.54",
-  "notes": "VISIONPOS Cashier 2.0.54\nReceipt printing now sends an 80 mm thermal job directly to the Windows default printer.\nPrinting no longer opens an empty browser page before showing the receipt.\nReceipts use compact thermal columns with automatic feed and cutter commands where supported.\nIf direct printing is unavailable, VisionPOS falls back to a single correctly sized system print dialog.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-26T06:46:41.258Z",
+  "version": "2.0.55",
+  "notes": "VISIONPOS Cashier 2.0.55\nCashier receipts now use an 80 mm portrait thermal layout.\nThe branch name prints centered, bold, and larger, with an emphasized receipt total.\nProduct names wrap above quantity and price details instead of being truncated.\nAutomatic printing, paper feed, cutter support, and the portrait print-dialog fallback remain available.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-26T11:37:26.619Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdlk5ZGkxRzZRVUZyUWZnemNCSkI1ZlhlalBrbUo0djErNW04Z0hielFFK3FWaDNsUnhOWHBnUXI0UVRQdmkyYXVRdG1TUlhxV2VSQVpyTGpEb2MzcXd3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDQ4NDAxCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU0X3g2NC1zZXR1cC5leGUKcHlESkF2NWtSdi9sbUpKK0tzUzZxK05FeXhhOE96VFpQeUFxZzdvNnJzNnBqbFk0KzBLSFdYNFFOWVdlQlNxTUI0L0UxY3M2UUxSWk9nSEFualZjQ0E9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.54_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdlYyQUtldmVYSkkveFZwemZJQTNlOWEvQTI0eStjMTIwWXhDMUdKRDFKSXRJUE4rbFBHR2UvSHE3VWF2Yyt2Sy9hYUVNR2dBbnhoeUVweEl3MnpTd3drPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDY1ODQ2CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU1X3g2NC1zZXR1cC5leGUKeDhlOVhjcjJIREdrcmNFVFNxSitNdDlSQmlCc1hkSHNnL3dKa0dya1FEU0tQYzUxRG5yZGZoTUhHUWdDM1d5YnpyN2cyS05BZG1EeDVGTFVQWXNFQVE9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.55_x64-setup.exe"
     }
   }
 }

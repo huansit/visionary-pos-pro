@@ -103,10 +103,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Receipt printing now sends an 80 mm thermal job directly to the Windows default printer.",
-  "Printing no longer opens an empty browser page before showing the receipt.",
-  "Receipts use compact thermal columns with automatic feed and cutter commands where supported.",
-  "If direct printing is unavailable, VisionPOS falls back to a single correctly sized system print dialog.",
+  "Cashier receipts now use an 80 mm portrait thermal layout.",
+  "The branch name prints centered, bold, and larger, with an emphasized receipt total.",
+  "Product names wrap above quantity and price details instead of being truncated.",
+  "Automatic printing, paper feed, cutter support, and the portrait print-dialog fallback remain available.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 
