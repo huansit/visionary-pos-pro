@@ -12,6 +12,11 @@ use zeroize::Zeroizing;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Graphics::Printing::{
+    ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, GetDefaultPrinterW,
+    OpenPrinterW, PRINTER_HANDLE, StartDocPrinterW, StartPagePrinter, WritePrinter,
+};
 
 const SERVICE: &str = "cloud.visionarypos.cashier";
 const TERMINAL_ACCOUNT: &str = "terminal-credentials";
@@ -165,6 +170,130 @@ fn close_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+#[cfg(target_os = "windows")]
+fn wide_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn default_printer_name() -> Result<Vec<u16>, String> {
+    let mut length = 0_u32;
+    unsafe {
+        GetDefaultPrinterW(std::ptr::null_mut(), &mut length);
+    }
+    if length == 0 {
+        return Err("default_printer_not_configured".into());
+    }
+
+    let mut name = vec![0_u16; length as usize];
+    let result = unsafe { GetDefaultPrinterW(name.as_mut_ptr(), &mut length) };
+    if result == 0 {
+        return Err(format!(
+            "default_printer_lookup_failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(name)
+}
+
+#[cfg(target_os = "windows")]
+fn print_raw_to_default_printer(receipt_text: &str) -> Result<String, String> {
+    if receipt_text.is_empty() || receipt_text.len() > 64 * 1024 {
+        return Err("invalid_receipt_payload".into());
+    }
+
+    let printer_name = default_printer_name()?;
+    let mut printer = PRINTER_HANDLE::default();
+    let opened = unsafe {
+        OpenPrinterW(
+            printer_name.as_ptr(),
+            &mut printer,
+            std::ptr::null(),
+        )
+    };
+    if opened == 0 {
+        return Err(format!(
+            "default_printer_open_failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let document_name = wide_string("VISIONPOS receipt");
+    let raw_type = wide_string("RAW");
+    let document = DOC_INFO_1W {
+        pDocName: document_name.as_ptr() as *mut u16,
+        pOutputFile: std::ptr::null_mut(),
+        pDatatype: raw_type.as_ptr() as *mut u16,
+    };
+
+    let job = unsafe { StartDocPrinterW(printer, 1, &document) };
+    if job == 0 {
+        unsafe { ClosePrinter(printer) };
+        return Err(format!(
+            "receipt_print_job_failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    if unsafe { StartPagePrinter(printer) } == 0 {
+        unsafe {
+            EndDocPrinter(printer);
+            ClosePrinter(printer);
+        }
+        return Err(format!(
+            "receipt_print_page_failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    // Only plain receipt text is accepted from the webview. Printer control
+    // bytes are appended here so receipt data cannot inject spooler commands.
+    let safe_text: String = receipt_text
+        .chars()
+        .filter(|character| *character == '\n' || *character == '\r' || *character == '\t' || !character.is_control())
+        .collect();
+    let mut payload = Vec::with_capacity(safe_text.len() + 16);
+    payload.extend_from_slice(&[0x1b, 0x40]); // ESC @: initialize printer.
+    payload.extend_from_slice(safe_text.as_bytes());
+    payload.extend_from_slice(b"\n\n\n\n");
+    payload.extend_from_slice(&[0x1d, 0x56, 0x00]); // GS V: full cut when supported.
+
+    let mut written = 0_u32;
+    let write_result = unsafe {
+        WritePrinter(
+            printer,
+            payload.as_ptr().cast(),
+            payload.len() as u32,
+            &mut written,
+        )
+    };
+    unsafe {
+        EndPagePrinter(printer);
+        EndDocPrinter(printer);
+        ClosePrinter(printer);
+    }
+
+    if write_result == 0 || written != payload.len() as u32 {
+        return Err(format!(
+            "receipt_print_write_failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let end = printer_name.iter().position(|value| *value == 0).unwrap_or(printer_name.len());
+    Ok(String::from_utf16_lossy(&printer_name[..end]))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn print_raw_to_default_printer(_receipt_text: &str) -> Result<String, String> {
+    Err("direct_receipt_printing_unsupported".into())
+}
+
+#[tauri::command]
+fn print_thermal_receipt(receipt_text: String) -> Result<String, String> {
+    print_raw_to_default_printer(&receipt_text)
+}
+
 #[tauri::command]
 async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     if !req.path.starts_with("/api/") {
@@ -260,6 +389,7 @@ pub fn run() {
             load_terminal_credentials,
             clear_terminal_credentials,
             close_app,
+            print_thermal_receipt,
             api_request,
             secugen_request
         ])

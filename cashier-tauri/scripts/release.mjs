@@ -103,15 +103,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Checkout fingerprint capture now starts automatically when confirmation opens.",
-  "The checkout prompt has been simplified to show only scan status and the supervisor PIN fallback guidance.",
-  "VisionPOS now starts the installed SecuGen WebAPI Client automatically when fingerprint authentication is needed.",
-  "Fingerprint capture now supports SecuGen's standard local WebAPI port 8000.",
-  "Missing WebAPI Client and disconnected fingerprint reader errors are reported separately.",
-  "Cashiers can sign in with either their PIN or enrolled fingerprint.",
-  "Checkout now requires the signed-in cashier's enrolled fingerprint.",
-  "A branch-authorized supervisor emergency PIN can approve checkout when biometric scanning is unavailable.",
-  "Emergency checkout approvals are rate-limited, server-verified, and recorded in the security audit log.",
+  "Receipt printing now sends an 80 mm thermal job directly to the Windows default printer.",
+  "Printing no longer opens an empty browser page before showing the receipt.",
+  "Receipts use compact thermal columns with automatic feed and cutter commands where supported.",
+  "If direct printing is unavailable, VisionPOS falls back to a single correctly sized system print dialog.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 

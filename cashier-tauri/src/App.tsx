@@ -174,21 +174,38 @@ function receiptPrintHtml(receipt: Receipt) {
   <meta charset="utf-8" />
   <title>Receipt ${escapeHtml(receipt.number)}</title>
   <style>
-    @page { size: 76mm auto; margin: 4mm; }
+    @page { size: 80mm auto; margin: 3mm; }
     * { box-sizing: border-box; }
+    html { width: 74mm; background: #fff; }
     body {
       margin: 0;
-      width: 68mm;
-      color: #111827;
+      width: 74mm;
+      min-height: 1px;
+      color: #000;
+      background: #fff;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 12px;
+      font-size: 11px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
     }
-    h1 { margin: 0 0 8px; text-align: center; font-size: 17px; }
-    p { margin: 4px 0; text-align: center; }
-    hr { border: 0; border-top: 1px dashed #9CA3AF; margin: 10px 0; }
-    .line, .total { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; break-inside: avoid; }
-    .line span { max-width: 42mm; }
-    .total { font-size: 15px; font-weight: 900; }
+    h1 { margin: 0 0 5px; text-align: center; font-size: 16px; }
+    p { margin: 2px 0; text-align: center; }
+    hr { border: 0; border-top: 1px dashed #000; margin: 7px 0; }
+    .line, .total {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 3mm;
+      padding: 3px 0;
+      break-inside: avoid;
+    }
+    .line span { min-width: 0; }
+    .line b, .total b { white-space: nowrap; text-align: right; }
+    .total { font-size: 14px; font-weight: 900; }
+    @media print {
+      html, body { width: 74mm; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body>
@@ -204,31 +221,95 @@ function receiptPrintHtml(receipt: Receipt) {
   <div class="total"><span>Total</span><b>${escapeHtml(money(receipt.totalCents))}</b></div>
   <p>Open invoice - not paid at checkout.</p>
   <p>Thank you.</p>
-  <script>window.onload = () => { window.focus(); window.print(); setTimeout(() => window.close(), 500); };</script>
 </body>
 </html>`;
 }
 
-function printReceipt(receipt: Receipt) {
+const THERMAL_RECEIPT_COLUMNS = 42;
+
+function thermalCenter(value: string) {
+  const text = value.trim().slice(0, THERMAL_RECEIPT_COLUMNS);
+  return `${" ".repeat(Math.max(0, Math.floor((THERMAL_RECEIPT_COLUMNS - text.length) / 2)))}${text}`;
+}
+
+function thermalLine(left: string, right: string) {
+  const amount = right.trim();
+  const available = Math.max(1, THERMAL_RECEIPT_COLUMNS - amount.length - 1);
+  const label = left.trim().slice(0, available);
+  return `${label}${" ".repeat(Math.max(1, THERMAL_RECEIPT_COLUMNS - label.length - amount.length))}${amount}`;
+}
+
+function receiptPrintText(receipt: Receipt) {
+  const separator = "-".repeat(THERMAL_RECEIPT_COLUMNS);
+  return [
+    thermalCenter(receipt.branchName),
+    thermalCenter(new Date(receipt.ts).toLocaleString()),
+    "",
+    `Receipt: ${receipt.number}`,
+    `Cashier: ${receipt.cashierName}`,
+    `Customer: ${receipt.customerName}`,
+    ...(receipt.note ? [`Note: ${receipt.note}`] : []),
+    separator,
+    ...receipt.items.map((item) => thermalLine(`${item.qty} x ${item.name}`, money(item.qty * item.priceCents))),
+    separator,
+    thermalLine("TOTAL", money(receipt.totalCents)),
+    "",
+    thermalCenter("OPEN INVOICE - NOT PAID"),
+    thermalCenter("Thank you"),
+  ].join("\n");
+}
+
+function printReceiptWithDialog(receipt: Receipt) {
   const frame = document.createElement("iframe");
   frame.title = "Receipt print";
   frame.style.position = "fixed";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  frame.style.width = "0";
-  frame.style.height = "0";
+  frame.style.left = "-10000px";
+  frame.style.top = "0";
+  frame.style.width = "80mm";
+  frame.style.height = "1px";
   frame.style.border = "0";
-  frame.onload = () => {
-    frame.contentWindow?.focus();
-    frame.contentWindow?.print();
-    window.setTimeout(() => frame.remove(), 1000);
+  frame.style.opacity = "0";
+  frame.style.pointerEvents = "none";
+
+  let printed = false;
+  let cleanupTimer = 0;
+  const cleanup = () => {
+    if (cleanupTimer) window.clearTimeout(cleanupTimer);
+    frame.remove();
   };
+
+  frame.onload = async () => {
+    if (printed) return;
+    printed = true;
+    const printWindow = frame.contentWindow;
+    const printDocument = frame.contentDocument;
+    if (!printWindow || !printDocument) {
+      cleanup();
+      return;
+    }
+
+    await printDocument.fonts?.ready.catch(() => undefined);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    });
+
+    printWindow.addEventListener("afterprint", cleanup, { once: true });
+    printWindow.focus();
+    printWindow.print();
+    cleanupTimer = window.setTimeout(cleanup, 30_000);
+  };
+
+  frame.srcdoc = receiptPrintHtml(receipt);
   document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  if (!doc) return;
-  doc.open();
-  doc.write(receiptPrintHtml(receipt));
-  doc.close();
+}
+
+async function printReceipt(receipt: Receipt) {
+  try {
+    await invoke<string>("print_thermal_receipt", { receiptText: receiptPrintText(receipt) });
+  } catch (error) {
+    console.warn("Direct receipt printing unavailable; opening the system print dialog.", error);
+    printReceiptWithDialog(receipt);
+  }
 }
 
 function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[], dayClosedAt: number | null) {
