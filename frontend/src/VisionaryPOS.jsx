@@ -1391,11 +1391,12 @@ async function provisionCloudEmployeeCredentials(data) {
 }
 async function aiComplete({ system, messages, maxTokens = 400, sessionToken = "" }) {
   const cfg = syncConfig();
+  const token = syncSessionToken(sessionToken);
   const response = await fetch(cfg.apiBaseUrl + "/api/ai/ask", {
     method: "POST",
-    headers: sessionAuthHeaders({ "Content-Type": "application/json" }, sessionToken),
+    headers: sessionAuthHeaders({ "Content-Type": "application/json" }, token),
     cache: "no-store",
-    body: JSON.stringify({ system, messages, maxTokens }),
+    body: JSON.stringify({ system, messages, maxTokens, sessionToken: token }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
