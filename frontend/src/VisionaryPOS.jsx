@@ -2273,8 +2273,11 @@ const css = `
   --font-ui:'Plus Jakarta Sans',system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --font-mono:'JetBrains Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   font-family:var(--font-ui);color:var(--text);min-height:100dvh;width:100%;background:var(--bg);
-  display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow-x:hidden}
+  display:flex;align-items:center;justify-content:center;
+  padding:calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+  position:relative;overflow-x:hidden}
 .vpos.app{align-items:flex-start;padding:0}
+.vpos.auth-root{padding:0}
 .vpos.theme-dark{
   --bg:#0B1014;--surface:#131C22;--surface-2:#1A252C;--surface-3:#243038;--border:#2A3741;--border-soft:#212E37;
   --text:#E9F1F3;--muted:#9DAEBA;--muted-2:#6B7C89;--accent:#2DD4DE;--accent-2:#3FE0C8;--accent-press:#1FB8C4;
@@ -2376,7 +2379,7 @@ const css = `
 @media (max-width:860px){.login{grid-template-columns:1fr;max-width:420px}.loginbrand{min-height:0;padding:26px 26px 22px}.lb-feats{display:none}.lb-p{display:none}.lb-h{font-size:24px;margin:10px 0 0}.loginpanel{padding:28px 24px}}
 
 /* ===== login (v4 — Aronium terminal) ===== */
-.authstage{width:100%;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:30px 24px;background:radial-gradient(circle at 50% 0%,rgba(43,182,196,.18),transparent 34%),linear-gradient(135deg,#20252d 0%,#2b2f36 52%,#1f232a 100%)}
+.authstage{width:100%;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:calc(30px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(30px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));background:radial-gradient(circle at 50% 0%,rgba(43,182,196,.18),transparent 34%),linear-gradient(135deg,#20252d 0%,#2b2f36 52%,#1f232a 100%)}
 .authwrap{width:100%;max-width:520px;display:flex;flex-direction:column;align-items:center;animation:rise .28s ease}
 .authlogo{display:flex;flex-direction:column;align-items:center;margin-bottom:28px}
 .authhex{position:relative;width:78px;height:86px;display:grid;place-items:center;margin-bottom:14px}
@@ -2487,7 +2490,7 @@ const css = `
 
 
 .shell{width:100%;max-width:1500px;margin:0 auto;height:100dvh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px;border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:calc(14px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) 14px calc(22px + env(safe-area-inset-left));border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30}
 .envbadge{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:850;letter-spacing:.08em;white-space:nowrap}
 .envbadge.compact{height:32px;font-size:10.5px}
 .envbadge.test{background:rgba(217,138,28,.14);border-color:rgba(217,138,28,.35);color:#b56d00}
@@ -2539,7 +2542,7 @@ const css = `
 .sync.syncing .led{animation:syncpulse 1s ease-in-out infinite}
 @keyframes syncpulse{50%{opacity:.3}}
 .sync svg{width:15px;height:15px}
-.content{position:relative;flex:1;min-height:0;padding:18px;overflow:auto}
+.content{position:relative;flex:1;min-height:0;padding:18px calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));overflow:auto}
 .env-watermark{position:fixed;inset:auto 32px 32px auto;font-size:110px;font-weight:950;letter-spacing:.14em;color:rgba(217,138,28,.08);pointer-events:none;z-index:0}
 
 /* register 3-col */
@@ -2743,8 +2746,8 @@ const css = `
   .complete.enterprise{height:54px;font-size:16px}
 }
 @media (max-height:820px) and (min-width:981px){
-  .topbar{padding:10px 18px}
-  .content{padding:14px 18px}
+  .topbar{padding:calc(10px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) 10px calc(18px + env(safe-area-inset-left))}
+  .content{padding:14px calc(18px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left))}
   .pos{height:calc(100dvh - 96px);gap:12px;grid-template-columns:minmax(180px,.95fr) minmax(300px,2.5fr) minmax(290px,1.35fr)}
   .possearch{height:46px}
   .poscard,.posright{padding:12px}
@@ -3640,7 +3643,7 @@ export default function VisionPOS() {
   const syncTitle = !online ? "Offline — changes are saved locally and will sync when you reconnect" : syncError ? "Sync failed: " + syncError : syncing ? "Syncing your data to the cloud…" : pending > 0 ? pending + " change(s) waiting to sync" : "All data synced to the cloud";
 
   if (view === "pin" || view === "adminLogin") {
-    return (<div className={"vpos" + themeCls}><style>{css}</style><div className="authstage">
+    return (<div className={"vpos auth-root" + themeCls}><style>{css}</style><div className="authstage">
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
       {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignedIn={(emp) => {
         signInSession("admin", emp || null);
