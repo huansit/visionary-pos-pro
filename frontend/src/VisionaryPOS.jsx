@@ -1103,7 +1103,9 @@ function syncSessionToken(tokenOverride = "") {
 }
 function sessionAuthHeaders(base = {}, tokenOverride = "") {
   const token = syncSessionToken(tokenOverride);
-  return token ? { ...base, "X-Session-Token": token } : { ...base };
+  return token
+    ? { ...base, Authorization: `Bearer ${token}`, "X-Session-Token": token }
+    : { ...base };
 }
 async function authApi(path, body, options = {}) {
   const cfg = syncConfig();
