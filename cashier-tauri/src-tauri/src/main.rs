@@ -99,7 +99,17 @@ async fn try_secugen_request(
 
     for base in SECUGEN_ENDPOINTS {
         let url = format!("{}{}", base, req.path);
-        match client.post(url).form(&req.params).send().await {
+        match client
+            .post(url)
+            // SecuGen rejects native HTTP clients with ErrorCode 10004 when
+            // the browser-origin header is absent. Use the licensed VisionPOS
+            // application origin for this loopback-only request.
+            .header(reqwest::header::ORIGIN, API_BASE_URL)
+            .header(reqwest::header::REFERER, format!("{API_BASE_URL}/"))
+            .form(&req.params)
+            .send()
+            .await
+        {
             Ok(response) => {
                 let status = response.status();
                 let text = response.text().await.map_err(|err| err.to_string())?;

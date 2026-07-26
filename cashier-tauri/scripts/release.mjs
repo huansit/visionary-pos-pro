@@ -103,6 +103,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Checkout fingerprint capture now starts automatically when confirmation opens.",
+  "The checkout prompt has been simplified to show only scan status and the supervisor PIN fallback guidance.",
   "VisionPOS now starts the installed SecuGen WebAPI Client automatically when fingerprint authentication is needed.",
   "Fingerprint capture now supports SecuGen's standard local WebAPI port 8000.",
   "Missing WebAPI Client and disconnected fingerprint reader errors are reported separately.",

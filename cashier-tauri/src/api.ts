@@ -498,6 +498,8 @@ function secugenErrorMessage(error: unknown) {
   if (message.includes("secugen_webapi_unreachable")) {
     return "SecuGen WebAPI Client could not be reached. VisionPOS tried to start it automatically; restart Windows and try again.";
   }
+  if (message.includes("capture_timeout")) return "Fingerprint capture timed out. Try again when the finger is ready.";
+  if (message.includes("origin_required")) return "Fingerprint service rejected the application request. Restart VisionPOS and try again.";
   if (message.includes("not_connected")) return "Fingerprint reader not detected. Connect the SecuGen reader and try again.";
   if (message.includes("low_quality")) return "Fingerprint quality was too low. Place the enrolled finger flat and scan again.";
   if (message.includes("not_enrolled")) return "No fingerprint is enrolled for this cashier.";
@@ -526,8 +528,10 @@ async function captureFingerprint(): Promise<FingerprintCapture> {
     });
     const code = secugenErrorCode(data);
     if (code !== 0) {
-      if ([54, 55, 56, 57, 10004].includes(code)) throw new Error("not_connected");
-      if ([51, 52, 53].includes(code)) throw new Error("low_quality");
+      if (code === 54) throw new Error("capture_timeout");
+      if (code === 10004) throw new Error("origin_required");
+      if ([55, 56, 60, 61].includes(code)) throw new Error("not_connected");
+      if ([57, 101, 105].includes(code)) throw new Error("low_quality");
       throw new Error(`secugen_error_${code}`);
     }
     const template = String(data.TemplateBase64 || data.templateBase64 || data.Template || data.template || "");

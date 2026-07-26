@@ -2856,13 +2856,13 @@ function FingerprintCheckoutPrompt({
   onConfirm: () => Promise<void>;
   onSupervisorConfirm: (pin: string) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [fallbackOpen, setFallbackOpen] = useState(false);
   const [supervisorPin, setSupervisorPin] = useState("");
+  const automaticScanStarted = useRef(false);
 
   async function scanAndConfirm() {
-    if (busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -2872,6 +2872,15 @@ function FingerprintCheckoutPrompt({
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (automaticScanStarted.current) return;
+    automaticScanStarted.current = true;
+    const timer = window.setTimeout(() => {
+      void scanAndConfirm();
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   async function confirmSupervisorPin() {
     if (busy || !/^\d{4}$/.test(supervisorPin)) return;
@@ -2900,7 +2909,6 @@ function FingerprintCheckoutPrompt({
               <i />
             </div>
             <h2 id="fingerprint-checkout-title">Confirm {cashierName}'s fingerprint</h2>
-            <p>Checkout requires the enrolled fingerprint of the cashier currently signed in.</p>
           </>
         ) : (
           <>
@@ -2926,14 +2934,13 @@ function FingerprintCheckoutPrompt({
         {message && <div className="pin-confirm-error">{message}</div>}
         {!fallbackOpen ? (
           <>
-            <button className="pin-confirm-primary" type="button" disabled={busy} onClick={scanAndConfirm}>
+            <button className="pin-confirm-primary" type="button" disabled={busy || !message} onClick={scanAndConfirm}>
               {busy ? <span className="spinner" /> : <Fingerprint size={22} />}
-              {busy ? "Reading fingerprint..." : message ? "Try fingerprint again" : "Scan fingerprint and issue invoice"}
+              {busy ? "Reading fingerprint..." : "Try fingerprint again"}
             </button>
             <button className="supervisor-fallback-toggle" type="button" disabled={busy} onClick={() => { setFallbackOpen(true); setMessage(""); }}>
               <KeyRound size={16} /> Scanner unavailable? Use supervisor PIN
             </button>
-            <small className="fingerprint-required-note"><Lock size={14} /> Cashier PIN checkout is disabled.</small>
           </>
         ) : (
           <>
@@ -2941,10 +2948,15 @@ function FingerprintCheckoutPrompt({
               {busy ? <span className="spinner" /> : <ShieldCheck size={22} />}
               {busy ? "Verifying supervisor..." : "Approve and issue invoice"}
             </button>
-            <button className="supervisor-fallback-toggle" type="button" disabled={busy} onClick={() => { setFallbackOpen(false); setSupervisorPin(""); setMessage(""); }}>
+            <button className="supervisor-fallback-toggle" type="button" disabled={busy} onClick={() => {
+              setFallbackOpen(false);
+              setSupervisorPin("");
+              setMessage("");
+              setBusy(true);
+              window.setTimeout(() => { void scanAndConfirm(); }, 150);
+            }}>
               <Fingerprint size={16} /> Return to fingerprint
             </button>
-            <small className="fingerprint-required-note"><Lock size={14} /> PIN is verified by the server and never stored on this terminal.</small>
           </>
         )}
       </section>
