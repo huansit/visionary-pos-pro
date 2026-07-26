@@ -9152,7 +9152,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
   const openSales = invs.reduce((s, i) => s + invOutstanding(i), 0);
   const overdueSales = invs.filter((i) => invIsDebt(i)).reduce((s, i) => s + invOutstanding(i), 0);
-  const overdueCreditInvoices = activeInvoices.filter((invoice) => inBranch(invoice.branchId) && invIsDebt(invoice));
+  const overdueCreditInvoices = invs.filter((invoice) => invIsDebt(invoice));
   const overdueCredits = overdueCreditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const grossProfit = totalSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
