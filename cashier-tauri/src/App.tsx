@@ -36,6 +36,7 @@ import {
 import {
   APP_VERSION,
   activateTerminal,
+  clearFingerprintTemplateCache,
   connectSyncStream,
   dedupeCatalogProducts,
   type SyncVersionChange,
@@ -43,6 +44,7 @@ import {
   loginCashierWithFingerprint,
   logout,
   patchInvoiceNote,
+  preloadCashierFingerprintTemplate,
   pullCatalog,
   pushCheckout,
   pushExpense,
@@ -56,6 +58,7 @@ import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredenti
 import type { Account, Branch, CartLine, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
+const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
 const DEFAULT_CASHIER_EXPENSE_CATEGORIES: ExpenseCategory[] = [
@@ -114,6 +117,26 @@ function escapeHtml(value: string) {
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
+}
+
+function lastFingerprintUserKey(terminal: TerminalCredentials) {
+  return `${LAST_FINGERPRINT_USER_KEY_PREFIX}${terminal.uuid}`;
+}
+
+function readLastFingerprintUserId(terminal: TerminalCredentials) {
+  try {
+    return localStorage.getItem(lastFingerprintUserKey(terminal)) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLastFingerprintUserId(terminal: TerminalCredentials, accountId: string) {
+  try {
+    localStorage.setItem(lastFingerprintUserKey(terminal), accountId);
+  } catch {
+    // Login must keep working even when localStorage is unavailable.
+  }
 }
 
 function productStock(product: Product) {
@@ -1086,6 +1109,7 @@ export default function App() {
       await logout(sessionToken);
     } finally {
       resetCashierSessionUi();
+      clearFingerprintTemplateCache();
       setAccount(null);
       setSessionToken("");
       setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
@@ -1134,7 +1158,7 @@ export default function App() {
     return (
       <>
         <ActivationScreen
-          onActivated={(next) => { setTerminal(next); refreshCatalog(next); }}
+          onActivated={(next) => { clearFingerprintTemplateCache(); setTerminal(next); refreshCatalog(next); }}
           error={error}
           status={status}
           lastSyncAt={lastSyncAt}
@@ -1162,15 +1186,20 @@ export default function App() {
             setAccount(result.account);
             setSessionToken(result.sessionToken);
             setStatus(`Signed in as ${result.account.name}.`);
+            writeLastFingerprintUserId(terminal, result.account.id);
+            void preloadCashierFingerprintTemplate(terminal, result.account.id);
             await refreshCatalog(terminal);
           }}
-          onFingerprintLogin={async () => {
+          onFingerprintLogin={async (employeeNumber) => {
             setError("");
-            const result = await loginCashierWithFingerprint(terminal);
+            const preferredUserId = String(employeeNumber || "").trim() || readLastFingerprintUserId(terminal);
+            const result = await loginCashierWithFingerprint(terminal, preferredUserId || undefined);
             resetCashierSessionUi();
             setAccount(result.account);
             setSessionToken(result.sessionToken);
             setStatus(`Signed in as ${result.account.name}.`);
+            writeLastFingerprintUserId(terminal, result.account.id);
+            void preloadCashierFingerprintTemplate(terminal, result.account.id);
             await refreshCatalog(terminal);
           }}
         />
@@ -2665,7 +2694,7 @@ function LoginScreen({
   error: string;
   onClose: () => void;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
-  onFingerprintLogin: () => Promise<void>;
+  onFingerprintLogin: (employeeNumber?: string) => Promise<void>;
 }) {
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
@@ -2692,7 +2721,7 @@ function LoginScreen({
     setFingerprintBusy(true);
     setMessage("");
     try {
-      await onFingerprintLogin();
+      await onFingerprintLogin(employeeNumber.trim());
     } catch (err) {
       setMessage(String(err).replace(/^Error:\s*/, ""));
     } finally {

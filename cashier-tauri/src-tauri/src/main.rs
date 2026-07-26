@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -43,18 +44,24 @@ struct SecugenRequest {
     params: HashMap<String, String>,
 }
 
-const SECUGEN_ENDPOINTS: [&str; 4] = [
-    "http://127.0.0.1:8000",
-    "https://localhost:8000",
-    "https://localhost:8443",
-    "http://127.0.0.1:8080",
+const SECUGEN_ENDPOINTS: [(&str, u16); 4] = [
+    ("https://localhost:8443", 8443),
+    ("http://127.0.0.1:8000", 8000),
+    ("https://localhost:8000", 8000),
+    ("http://127.0.0.1:8080", 8080),
 ];
+const NO_SECUGEN_ENDPOINT: usize = usize::MAX;
+static SECUGEN_ENDPOINT_INDEX: AtomicUsize = AtomicUsize::new(NO_SECUGEN_ENDPOINT);
+
+fn secugen_port_is_ready(port: u16) -> bool {
+    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    TcpStream::connect_timeout(&address, Duration::from_millis(40)).is_ok()
+}
 
 fn secugen_client_is_ready() -> bool {
-    [8000_u16, 8443, 8080].into_iter().any(|port| {
-        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-        TcpStream::connect_timeout(&address, Duration::from_millis(80)).is_ok()
-    })
+    [8443_u16, 8000, 8080]
+        .into_iter()
+        .any(secugen_port_is_ready)
 }
 
 #[cfg(target_os = "windows")]
@@ -101,8 +108,18 @@ async fn try_secugen_request(
     req: &SecugenRequest,
 ) -> Result<Value, String> {
     let mut last_error = "secugen_webapi_unreachable".to_string();
+    let preferred = SECUGEN_ENDPOINT_INDEX.load(Ordering::Relaxed);
+    let mut endpoint_indices = Vec::with_capacity(SECUGEN_ENDPOINTS.len());
+    if preferred < SECUGEN_ENDPOINTS.len() {
+        endpoint_indices.push(preferred);
+    }
+    endpoint_indices.extend((0..SECUGEN_ENDPOINTS.len()).filter(|index| *index != preferred));
 
-    for base in SECUGEN_ENDPOINTS {
+    for index in endpoint_indices {
+        let (base, port) = SECUGEN_ENDPOINTS[index];
+        if !secugen_port_is_ready(port) {
+            continue;
+        }
         let url = format!("{}{}", base, req.path);
         match client
             .post(url)
@@ -123,6 +140,7 @@ async fn try_secugen_request(
                     continue;
                 }
                 if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                    SECUGEN_ENDPOINT_INDEX.store(index, Ordering::Relaxed);
                     return Ok(value);
                 }
                 let parsed = text
@@ -130,9 +148,15 @@ async fn try_secugen_request(
                     .filter_map(|pair| pair.split_once('='))
                     .map(|(key, value)| (key.to_string(), Value::String(value.to_string())))
                     .collect::<serde_json::Map<String, Value>>();
+                SECUGEN_ENDPOINT_INDEX.store(index, Ordering::Relaxed);
                 return Ok(Value::Object(parsed));
             }
-            Err(error) => last_error = error.to_string(),
+            Err(error) => {
+                if index == preferred {
+                    SECUGEN_ENDPOINT_INDEX.store(NO_SECUGEN_ENDPOINT, Ordering::Relaxed);
+                }
+                last_error = error.to_string();
+            }
         }
     }
 
@@ -388,8 +412,8 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     }
 
     start_secugen_client()?;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    for _ in 0..12 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
         if let Ok(value) = try_secugen_request(&client, &req).await {
             return Ok(value);
         }

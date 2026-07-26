@@ -2021,6 +2021,17 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     });
 
   await request(app)
+    .post("/api/auth/fingerprints/templates")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ userId: state.cashierId })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.templates.length, 1);
+      assert.equal(res.body.templates[0].userId, state.cashierId);
+      assert.equal(res.body.templates[0].template, template);
+    });
+
+  await request(app)
     .post("/api/auth/fingerprints/login")
     .send({ userId: state.cashierId, deviceSerial: "HAMSTER-001" })
     .expect(401);

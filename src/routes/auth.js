@@ -1302,20 +1302,23 @@ router.post("/fingerprints/remove", requireAdminOrSupervisor, async (req, res) =
 
 router.post("/fingerprints/templates", requireDevice, async (req, res) => {
   await ensureAuthSchema();
+  const requestedUserId = String(req.body?.userId || "").trim();
   try {
     const result = await q(
       isMySql
         ? `SELECT f.user_id AS userId, f.finger_template AS fingerTemplate, f.device_serial AS deviceSerial,
                   c.kind, c.name, c.email, c.phone, c.branch_id AS branchId, c.rights, c.status
-             FROM user_fingerprints f
+            FROM user_fingerprints f
              JOIN credentials c ON c.id = f.user_id
-            WHERE c.status = 'active'`
+            WHERE c.status = 'active'
+              AND ($1 IS NULL OR f.user_id = $2)`
         : `SELECT f.user_id AS "userId", f.finger_template AS "fingerTemplate", f.device_serial AS "deviceSerial",
                   c.kind, c.name, c.email, c.phone, c.branch_id AS "branchId", c.rights, c.status
              FROM user_fingerprints f
              JOIN credentials c ON c.id = f.user_id
-            WHERE c.status = 'active'`,
-      []
+            WHERE c.status = 'active'
+              AND ($1 IS NULL OR f.user_id = $2)`,
+      [requestedUserId || null, requestedUserId || null]
     );
     const branchId = req.deviceBranchId || null;
     const visibleRows = branchId

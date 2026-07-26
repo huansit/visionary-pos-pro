@@ -494,6 +494,8 @@ type FingerprintTemplate = {
 
 const SECUGEN_TEMPLATE_FORMAT = "ISO";
 const SECUGEN_MATCH_THRESHOLD = 80;
+const FINGERPRINT_TEMPLATE_CACHE_MS = 5 * 60 * 1000;
+const fingerprintTemplateCache = new Map<string, { expiresAt: number; templates: FingerprintTemplate[] }>();
 
 function secugenErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
@@ -568,14 +570,41 @@ async function fingerprintScore(templateA: string, templateB: string) {
   return Number.isFinite(score) ? score : 0;
 }
 
-async function fingerprintTemplates(terminal: TerminalCredentials): Promise<FingerprintTemplate[]> {
+function fingerprintTemplateCacheKey(terminal: TerminalCredentials, preferredUserId?: string) {
+  return [
+    terminal.uuid,
+    terminal.branchId,
+    preferredUserId || "all"
+  ].join(":");
+}
+
+export function clearFingerprintTemplateCache() {
+  fingerprintTemplateCache.clear();
+}
+
+export async function preloadCashierFingerprintTemplate(terminal: TerminalCredentials, accountId: string) {
+  await fingerprintTemplates(terminal, accountId).catch(() => undefined);
+}
+
+async function fingerprintTemplates(terminal: TerminalCredentials, preferredUserId?: string, forceRefresh = false): Promise<FingerprintTemplate[]> {
+  const cacheKey = fingerprintTemplateCacheKey(terminal, preferredUserId);
+  const cached = fingerprintTemplateCache.get(cacheKey);
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+    return cached.templates;
+  }
+
   const data = await jsonFetch<{ templates?: FingerprintTemplate[] }>("/api/auth/fingerprints/templates", {
     method: "POST",
     headers: terminalHeaders(terminal),
-    body: JSON.stringify({ branchId: terminal.branchId })
+    body: JSON.stringify({ branchId: terminal.branchId, userId: preferredUserId || null })
   });
-  return (Array.isArray(data.templates) ? data.templates : [])
+  const templates = (Array.isArray(data.templates) ? data.templates : [])
     .filter((entry) => String(entry?.account?.kind || "").toLowerCase() === "cashier");
+  fingerprintTemplateCache.set(cacheKey, {
+    expiresAt: Date.now() + FINGERPRINT_TEMPLATE_CACHE_MS,
+    templates
+  });
+  return templates;
 }
 
 async function recordFingerprintFailure(
@@ -598,34 +627,54 @@ async function recordFingerprintFailure(
 
 async function matchFingerprint(
   terminal: TerminalCredentials,
-  preferredUserId?: string
+  preferredUserId?: string,
+  options: { fallbackToAll?: boolean } = {}
 ): Promise<{ capture: FingerprintCapture; match: FingerprintTemplate }> {
-  const capture = await captureFingerprint();
-  const templates = (await fingerprintTemplates(terminal))
-    .filter((entry) => !preferredUserId || entry.userId === preferredUserId);
+  const [capture, templates] = await Promise.all([
+    captureFingerprint(),
+    fingerprintTemplates(terminal, preferredUserId)
+  ]);
   if (!templates.length) {
     await recordFingerprintFailure(terminal, capture, "fingerprint_not_enrolled", preferredUserId);
     throw new Error(secugenErrorMessage(new Error("not_enrolled")));
   }
-  let best: FingerprintTemplate | null = null;
-  let bestScore = -1;
-  for (const entry of templates) {
-    const score = await fingerprintScore(capture.template, entry.template);
-    if (score > bestScore) {
-      best = entry;
-      bestScore = score;
-    }
-    if (score >= SECUGEN_MATCH_THRESHOLD) return { capture, match: entry };
+
+  const match = await bestFingerprintMatch(capture.template, templates);
+  if (match) return { capture, match };
+
+  const freshTemplates = await fingerprintTemplates(terminal, preferredUserId, true);
+  const freshMatch = await bestFingerprintMatch(capture.template, freshTemplates);
+  if (freshMatch) return { capture, match: freshMatch };
+
+  if (preferredUserId && options.fallbackToAll) {
+    const fallbackTemplates = await fingerprintTemplates(terminal, undefined, true);
+    const fallbackMatch = await bestFingerprintMatch(capture.template, fallbackTemplates);
+    if (fallbackMatch) return { capture, match: fallbackMatch };
   }
+
   await recordFingerprintFailure(terminal, capture, "fingerprint_not_recognized", preferredUserId);
   throw new Error(secugenErrorMessage(new Error("not_recognized")));
 }
 
-export async function loginCashierWithFingerprint(terminal: TerminalCredentials): Promise<{
+async function bestFingerprintMatch(capturedTemplate: string, templates: FingerprintTemplate[]) {
+  let best: FingerprintTemplate | null = null;
+  let bestScore = -1;
+  for (const entry of templates) {
+    const score = await fingerprintScore(capturedTemplate, entry.template);
+    if (score > bestScore) {
+      best = entry;
+      bestScore = score;
+    }
+    if (score >= SECUGEN_MATCH_THRESHOLD) return entry;
+  }
+  return bestScore >= SECUGEN_MATCH_THRESHOLD ? best : null;
+}
+
+export async function loginCashierWithFingerprint(terminal: TerminalCredentials, preferredUserId?: string): Promise<{
   account: Account;
   sessionToken: string;
 }> {
-  const { capture, match } = await matchFingerprint(terminal);
+  const { capture, match } = await matchFingerprint(terminal, preferredUserId, { fallbackToAll: true });
   return jsonFetch("/api/auth/fingerprints/login", {
     method: "POST",
     headers: terminalHeaders(terminal),
