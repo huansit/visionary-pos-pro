@@ -4929,6 +4929,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "tokio",
  "zeroize",
 ]
 

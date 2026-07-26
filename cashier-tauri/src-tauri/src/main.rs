@@ -4,8 +4,14 @@ use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 use zeroize::Zeroizing;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 const SERVICE: &str = "cloud.visionarypos.cashier";
 const TERMINAL_ACCOUNT: &str = "terminal-credentials";
@@ -30,6 +36,92 @@ struct ApiResponse {
 struct SecugenRequest {
     path: String,
     params: HashMap<String, String>,
+}
+
+const SECUGEN_ENDPOINTS: [&str; 4] = [
+    "http://127.0.0.1:8000",
+    "https://localhost:8000",
+    "https://localhost:8443",
+    "http://127.0.0.1:8080",
+];
+
+fn secugen_client_is_ready() -> bool {
+    [8000_u16, 8443, 8080].into_iter().any(|port| {
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        TcpStream::connect_timeout(&address, Duration::from_millis(80)).is_ok()
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn secugen_client_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for root in [std::env::var_os("ProgramFiles"), std::env::var_os("ProgramFiles(x86)")]
+        .into_iter()
+        .flatten()
+    {
+        paths.push(PathBuf::from(root).join("SecuGen/SgiBioSrv/sgibiosrv.exe"));
+    }
+    paths
+}
+
+#[cfg(target_os = "windows")]
+fn start_secugen_client() -> Result<(), String> {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    if secugen_client_is_ready() {
+        return Ok(());
+    }
+    let executable = secugen_client_paths()
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| "secugen_webapi_not_installed".to_string())?;
+    let working_directory = executable
+        .parent()
+        .ok_or_else(|| "secugen_webapi_invalid_install".to_string())?;
+
+    Command::new(&executable)
+        .current_dir(working_directory)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("secugen_webapi_start_failed: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn start_secugen_client() -> Result<(), String> {
+    Err("secugen_webapi_unsupported_platform".into())
+}
+
+async fn try_secugen_request(
+    client: &reqwest::Client,
+    req: &SecugenRequest,
+) -> Result<Value, String> {
+    let mut last_error = "secugen_webapi_unreachable".to_string();
+
+    for base in SECUGEN_ENDPOINTS {
+        let url = format!("{}{}", base, req.path);
+        match client.post(url).form(&req.params).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.map_err(|err| err.to_string())?;
+                if !status.is_success() {
+                    last_error = format!("secugen_webapi_http_{}", status.as_u16());
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                    return Ok(value);
+                }
+                let parsed = text
+                    .split('&')
+                    .filter_map(|pair| pair.split_once('='))
+                    .map(|(key, value)| (key.to_string(), Value::String(value.to_string())))
+                    .collect::<serde_json::Map<String, Value>>();
+                return Ok(Value::Object(parsed));
+            }
+            Err(error) => last_error = error.to_string(),
+        }
+    }
+
+    Err(last_error)
 }
 
 #[tauri::command]
@@ -127,38 +219,30 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
         .danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| err.to_string())?;
-    let mut last_error = "secugen_webapi_unreachable".to_string();
+    if let Ok(value) = try_secugen_request(&client, &req).await {
+        return Ok(value);
+    }
 
-    for base in ["https://localhost:8443", "http://127.0.0.1:8080"] {
-        let url = format!("{}{}", base, req.path);
-        match client.post(url).form(&req.params).send().await {
-            Ok(response) => {
-                let status = response.status();
-                let text = response.text().await.map_err(|err| err.to_string())?;
-                if !status.is_success() {
-                    last_error = format!("secugen_webapi_http_{}", status.as_u16());
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(&text) {
-                    return Ok(value);
-                }
-                let parsed = text
-                    .split('&')
-                    .filter_map(|pair| pair.split_once('='))
-                    .map(|(key, value)| (key.to_string(), Value::String(value.to_string())))
-                    .collect::<serde_json::Map<String, Value>>();
-                return Ok(Value::Object(parsed));
-            }
-            Err(error) => last_error = error.to_string(),
+    start_secugen_client()?;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(value) = try_secugen_request(&client, &req).await {
+            return Ok(value);
         }
     }
 
-    Err(format!("secugen_webapi_unreachable: {last_error}"))
+    Err("secugen_webapi_start_timeout".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_| {
+            // Starting the installed vendor client here removes the need for
+            // cashiers to run PowerShell or launch SecuGen manually.
+            let _ = start_secugen_client();
+            Ok(())
+        })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
