@@ -10394,6 +10394,8 @@ function UsersTab({ data, update, isAdmin }) {
   const [fpErr, setFpErr] = useState("");
   const [fpMsg, setFpMsg] = useState("");
   const [fpPreview, setFpPreview] = useState(null);
+  const [fpComplete, setFpComplete] = useState(false);
+  const fpCloseTimer = useRef(null);
   const [terminals, setTerminals] = useState([]);
   const [terminalBusy, setTerminalBusy] = useState(false);
   const [userBusy, setUserBusy] = useState(false);
@@ -10401,6 +10403,9 @@ function UsersTab({ data, update, isAdmin }) {
   const [emergencyPin, setEmergencyPin] = useState("");
   const [emergencyPinError, setEmergencyPinError] = useState("");
   const visibleEmployees = activeEmployees(data);
+  useEffect(() => () => {
+    if (fpCloseTimer.current) clearTimeout(fpCloseTimer.current);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     authGet("/api/auth/users", { session: true }).then((result) => {
@@ -10539,18 +10544,24 @@ function UsersTab({ data, update, isAdmin }) {
     });
   };
   const openFingerprintEnroll = (emp) => {
+    if (fpCloseTimer.current) clearTimeout(fpCloseTimer.current);
+    fpCloseTimer.current = null;
     setFpEnroll(emp);
     setFpFirst(null);
     setFpPreview(null);
+    setFpComplete(false);
     setFpErr("");
     setFpMsg(emp.fingerprintEnrolled
       ? "This user already has an enrolled fingerprint. Capture twice to replace it."
       : "Capture 1 of 2. Ask the user to place their finger on the SecuGen Hamster reader.");
   };
   const closeFingerprintEnroll = () => {
+    if (fpCloseTimer.current) clearTimeout(fpCloseTimer.current);
+    fpCloseTimer.current = null;
     setFpEnroll(null);
     setFpFirst(null);
     setFpPreview(null);
+    setFpComplete(false);
     setFpErr("");
     setFpMsg("");
   };
@@ -10581,8 +10592,10 @@ function UsersTab({ data, update, isAdmin }) {
           : employee),
       }));
       setFpEnroll((current) => current ? { ...current, fingerprintEnrolled: true } : current);
-      setFpMsg("Fingerprint enrolled for " + fpEnroll.name + ".");
+      setFpComplete(true);
+      setFpMsg("Fingerprint enrolled successfully. Closing...");
       setFpFirst(null);
+      fpCloseTimer.current = setTimeout(closeFingerprintEnroll, 1100);
     } catch (error) {
       setFpErr(secugenMessage(error));
     } finally {
@@ -10733,7 +10746,7 @@ function UsersTab({ data, update, isAdmin }) {
       {fpEnroll && (
         <div className="scrim" onClick={closeFingerprintEnroll}>
           <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>SecuGen Hamster</div><div className="title" style={{ fontSize: 21, display: "flex", alignItems: "center", gap: 8 }}><Fingerprint style={{ width: 20, height: 20 }} /> Enroll Fingerprint</div></div><button className="iconbtn" onClick={closeFingerprintEnroll}><X /></button></div>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>SecuGen Hamster</div><div className="title" style={{ fontSize: 21, display: "flex", alignItems: "center", gap: 8 }}>{fpComplete ? <Check style={{ width: 20, height: 20, color: "var(--success)" }} /> : <Fingerprint style={{ width: 20, height: 20 }} />} {fpComplete ? "Fingerprint Enrolled" : "Enroll Fingerprint"}</div></div><button className="iconbtn" onClick={closeFingerprintEnroll}><X /></button></div>
             <div className="notice" style={{ marginTop: 12, textAlign: "left" }}>
               <b>{fpEnroll.name}</b><br />
               {fpMsg || "Capture fingerprint twice to verify it belongs to this user. Only the encrypted fingerprint template is stored."}
@@ -10751,8 +10764,8 @@ function UsersTab({ data, update, isAdmin }) {
             </div>
             {fpErr && <div className="alert"><AlertCircle />{fpErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button className="btn btn-primary" style={{ flex: 1, minWidth: 190 }} disabled={fpBusy} onClick={captureFingerprintEnrollment}><Fingerprint /> {fpBusy ? "Scanning..." : fpFirst ? "Capture second scan" : "Capture first scan"}</button>
-              <button className="btn btn-ghost" style={{ flex: 1, minWidth: 160 }} disabled={fpBusy} onClick={removeFingerprintEnrollment}><Trash2 /> Remove fingerprint</button>
+              <button className="btn btn-primary" style={{ flex: 1, minWidth: 190 }} disabled={fpBusy || fpComplete} onClick={captureFingerprintEnrollment}>{fpComplete ? <Check /> : <Fingerprint />} {fpComplete ? "Enrolled" : fpBusy ? "Scanning..." : fpFirst ? "Capture second scan" : "Capture first scan"}</button>
+              <button className="btn btn-ghost" style={{ flex: 1, minWidth: 160 }} disabled={fpBusy || fpComplete} onClick={removeFingerprintEnrollment}><Trash2 /> Remove fingerprint</button>
             </div>
             <div className="cust-meta" style={{ marginTop: 12 }}>After the one-time SecuGen driver and WebAPI Client setup, enrollment is completed here with the Capture buttons. No PowerShell command is required.</div>
           </div>
