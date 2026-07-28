@@ -2168,10 +2168,11 @@ function cameraScannerError(error) {
   if (name === "SecurityError") return "Camera access is unavailable for this connection.";
   return "The camera could not start. You can still type the barcode or use a paired scanner.";
 }
-function CameraBarcodeScanner({ onClose, onScan }) {
+function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "Products", title = "Scan product barcode" }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
   const foundRef = useRef(false);
+  const scanStateRef = useRef({ code: "", lastDetectedAt: 0, armed: true });
   const onCloseRef = useRef(onClose);
   const onScanRef = useRef(onScan);
   const [attempt, setAttempt] = useState(0);
@@ -2188,6 +2189,7 @@ function CameraBarcodeScanner({ onClose, onScan }) {
   useEffect(() => {
     let disposed = false;
     foundRef.current = false;
+    scanStateRef.current = { code: "", lastDetectedAt: 0, armed: true };
     setError("");
     setStatus("Starting camera...");
 
@@ -2217,17 +2219,39 @@ function CameraBarcodeScanner({ onClose, onScan }) {
           audio: false,
           video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
         }, videoRef.current, (result, _scanError, activeControls) => {
-          if (!result || disposed || foundRef.current) return;
+          if (disposed) return;
+          if (!result) {
+            const scanState = scanStateRef.current;
+            if (continuous && !scanState.armed && Date.now() - scanState.lastDetectedAt > 700) {
+              scanState.armed = true;
+              scanState.code = "";
+            }
+            return;
+          }
+          if (!continuous && foundRef.current) return;
           const barcode = normalizeBarcode(result.getText());
           if (!isValidBarcode(barcode)) {
             setStatus("Keep the product barcode inside the frame.");
             return;
           }
+          const detectedAt = Date.now();
+          const scanState = scanStateRef.current;
+          if (continuous && scanState.code === barcode && !scanState.armed) {
+            scanState.lastDetectedAt = detectedAt;
+            return;
+          }
+          scanState.code = barcode;
+          scanState.lastDetectedAt = detectedAt;
+          scanState.armed = false;
+          try { navigator.vibrate?.(45); } catch (_) {}
+          const accepted = onScanRef.current?.(barcode);
+          if (continuous) {
+            setStatus(accepted === false ? "Product was not counted. Check the message and try again." : "Counted " + barcode + ". Move to the next product.");
+            return;
+          }
           foundRef.current = true;
           try { activeControls.stop(); } catch (_) {}
           setStatus("Barcode captured: " + barcode);
-          try { navigator.vibrate?.(45); } catch (_) {}
-          onScanRef.current?.(barcode);
           onCloseRef.current?.();
         });
         if (disposed) controls.stop();
@@ -2244,13 +2268,13 @@ function CameraBarcodeScanner({ onClose, onScan }) {
     };
     startCamera();
     return () => { disposed = true; stopCamera(); };
-  }, [attempt]);
+  }, [attempt, continuous]);
 
   return (
     <div className="scrim camera-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="modal camera-modal" role="dialog" aria-modal="true" aria-labelledby="camera-scanner-title">
         <div className="camera-head">
-          <div><div className="eyebrow">Products</div><div className="section-title" id="camera-scanner-title">Scan product barcode</div></div>
+          <div><div className="eyebrow">{eyebrow}</div><div className="section-title" id="camera-scanner-title">{title}</div></div>
           <button type="button" className="iconbtn" onClick={onClose} aria-label="Close camera scanner"><X /></button>
         </div>
         <div className="camera-preview">
@@ -2260,7 +2284,7 @@ function CameraBarcodeScanner({ onClose, onScan }) {
         </div>
         <div className="camera-status" aria-live="polite">{error ? "" : status}</div>
         <div className="camera-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>{continuous ? "Done" : "Cancel"}</button>
           {error && <button type="button" className="btn btn-primary" onClick={() => setAttempt((value) => value + 1)}><RefreshCw /> Try again</button>}
         </div>
       </div>
@@ -6920,6 +6944,7 @@ function StockTab({ data, update, branch }) {
   const [report, setReport] = useState(null);
   const [lossOpen, setLossOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(true);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
@@ -7048,31 +7073,32 @@ function StockTab({ data, update, branch }) {
     if (!isValidBarcode(barcode)) {
       setScanMsg("Invalid barcode: " + barcode);
       appendBarcodeScanLog({ barcode, status: "stock:invalid" });
-      return;
+      return false;
     }
     if (!session || session.status !== "open") {
       setScanMsg("Start or resume a stock count session before scanning.");
       appendBarcodeScanLog({ barcode, status: "stock:no_session" });
-      return;
+      return false;
     }
     const hit = barcodeLookup(data, barcode, bId);
     if (!hit || hit.unavailable) {
       setScanMsg(hit?.message || "Barcode not found: " + barcode);
       appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "stock:branch_unavailable" : "stock:not_found" });
-      return;
+      return false;
     }
     const item = (session.items || []).find((x) => x.productId === hit.product.id);
     if (!item) {
       setScanMsg(hit.name + " is not part of this session snapshot.");
       appendBarcodeScanLog({ barcode, status: "stock:not_in_session", productId: hit.product.id });
-      return;
+      return false;
     }
     const nextQty = (Number(item.countedQty) || 0) + 1;
     upsertSession(updateStockCountSessionItem(session, hit.product.id, nextQty, operator));
     setScanMsg("Counted " + hit.name + " - running count " + nextQty + ".");
     appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
+    return true;
   };
-  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen, mode: "stock", onScan: handleStockScan });
+  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
   const recordLoss = () => {
     const qty = parseInt(lf.qty, 10);
     if (!lf.productId || !qty || qty <= 0) return;
@@ -7098,7 +7124,8 @@ function StockTab({ data, update, branch }) {
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <button className="btn sm btn-primary" onClick={() => setInventoryMode("quick")}><ClipboardCheck /> Quick inventory</button>
-        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><ClipboardCheck /> Scanner</button>
+        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> USB scanner</button>
+        <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
         <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
       </div>
       {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
@@ -7173,6 +7200,15 @@ function StockTab({ data, update, branch }) {
           </div>
         </div>
       )}
+      {cameraOpen && (
+        <CameraBarcodeScanner
+          continuous
+          eyebrow="Inventory count"
+          title={"Count products - " + bname}
+          onClose={() => setCameraOpen(false)}
+          onScan={handleStockScan}
+        />
+      )}
       {lossOpen && (
         <div className="scrim" onClick={() => setLossOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -7199,6 +7235,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const [q, setQ] = useState("");
   const [counts, setCounts] = useState({});
   const [scannerOn, setScannerOn] = useState(true);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [report, setReport] = useState(null);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
@@ -7251,24 +7288,25 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
     const barcode = normalizeBarcode(code);
     if (lockedSession) {
       setMessage("Quick inventory is unavailable while " + lockedSession.code + " is active for " + bname + ".");
-      return;
+      return false;
     }
     if (!isValidBarcode(barcode)) {
       setMessage("Invalid barcode: " + barcode);
       appendBarcodeScanLog({ barcode, status: "quick_inventory:invalid" });
-      return;
+      return false;
     }
     const hit = barcodeLookup(data, barcode, bId);
     if (!hit || hit.unavailable) {
       setMessage(hit?.message || "Barcode not found: " + barcode);
       appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "quick_inventory:branch_unavailable" : "quick_inventory:not_found" });
-      return;
+      return false;
     }
     setCounts((existing) => ({ ...existing, [hit.product.id]: String((parseInt(existing[hit.product.id], 10) || 0) + 1) }));
     setMessage("Counted " + hit.name + ". Scan again to increase its physical count.");
     appendBarcodeScanLog({ barcode, status: "quick_inventory:counted", productId: hit.product.id });
+    return true;
   };
-  useBarcodeScanner({ enabled: scannerOn && !lockedSession, mode: "stock", onScan: handleQuickScan });
+  useBarcodeScanner({ enabled: scannerOn && !lockedSession && !cameraOpen, mode: "stock", onScan: handleQuickScan });
 
   const applyCounts = () => {
     if (lockedSession) {
@@ -7325,7 +7363,8 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
           {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} disabled={!!lockedSession} onClick={() => setScannerOn((value) => !value)}><ClipboardCheck /> Scanner</button>
+        <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} disabled={!!lockedSession} onClick={() => setScannerOn((value) => !value)}><Barcode /> USB scanner</button>
+        <button className="btn sm btn-ghost" disabled={!!lockedSession} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
       </div>
 
       {lockedSession ? (
@@ -7370,6 +7409,15 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         </div>
       </div>
 
+      {cameraOpen && (
+        <CameraBarcodeScanner
+          continuous
+          eyebrow="Quick inventory"
+          title={"Count selected products - " + bname}
+          onClose={() => setCameraOpen(false)}
+          onScan={handleQuickScan}
+        />
+      )}
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
         <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
@@ -7670,6 +7718,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   const [f, setF] = useState({ supplierId: rec0 ? rec0.supplierId : (data.suppliers[0]?.id || ""), productId: initProd, branchId: branch.id, qty: "", cost: rec0 ? String(rec0.costCents / 100) : "", lineTotal: "", amountMode: "unit", received: true });
   const [scannerOn, setScannerOn] = useState(true);
   const [scanCode, setScanCode] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
   const scanInputRef = useRef(null);
   const qtyInputRef = useRef(null);
@@ -7761,7 +7810,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
     setScanCode("");
     window.setTimeout(() => qtyInputRef.current?.focus(), 0);
   };
-  useBarcodeScanner({ enabled: adding && scannerOn, mode: "purchase", onScan: handlePurchaseScan });
+  useBarcodeScanner({ enabled: adding && scannerOn && !cameraOpen, mode: "purchase", onScan: handlePurchaseScan });
   useEffect(() => {
     if (adding && scannerOn) focusPurchaseScan();
   }, [adding, scannerOn]);
@@ -7909,9 +7958,10 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           <div><label className="label">Product</label><select className="select" value={f.productId} onChange={(e) => onProduct(e.target.value)}>{purchaseProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Scan product barcode</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input ref={scanInputRef} className="input" inputMode="numeric" autoComplete="off" value={scanCode} onChange={(e) => setScanCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handlePurchaseScan(e.currentTarget.value); } }} placeholder="Scan barcode to select product" />
-              <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) focusPurchaseScan(); return next; })}><Barcode /> Scanner</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input ref={scanInputRef} className="input" style={{ flex: "1 1 220px", minWidth: 0 }} inputMode="numeric" autoComplete="off" value={scanCode} onChange={(e) => setScanCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handlePurchaseScan(e.currentTarget.value); } }} placeholder="Scan barcode to select product" />
+              <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) focusPurchaseScan(); return next; })}><Barcode /> USB scanner</button>
+              <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
             </div>
           </div>
           {scanMsg && <div className="notice" style={{ marginTop: 10 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
@@ -8070,6 +8120,14 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           </div>
         );
       })()}
+      {cameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Purchases"
+          title="Scan product for purchase"
+          onClose={() => setCameraOpen(false)}
+          onScan={handlePurchaseScan}
+        />
+      )}
       {receiptCorrection && (
         <div className="scrim" onClick={() => setReceiptCorrection(null)}>
           <div className="modal" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
@@ -8430,8 +8488,10 @@ function BorrowingTab({ data, update }) {
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [transferScannerOn, setTransferScannerOn] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [transferScanMessage, setTransferScanMessage] = useState("");
   const transferSearchRef = useRef(null);
+  const transferQtyRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -8470,11 +8530,12 @@ function BorrowingTab({ data, update }) {
     setErr("");
     setTransferScanMessage("Selected " + match.name + " from " + bn(fromB) + ".");
     appendBarcodeScanLog({ barcode, status: "transfer:found", productId: match.id, branchId: fromB });
+    window.setTimeout(() => transferQtyRef.current?.focus(), 0);
     return true;
   };
 
   useBarcodeScanner({
-    enabled: transferScannerOn,
+    enabled: transferScannerOn && !cameraOpen,
     mode: "stock-transfer",
     onScan: selectScannedTransferProduct,
   });
@@ -8606,7 +8667,7 @@ function BorrowingTab({ data, update }) {
             <select className="select" value={toB} onChange={(e) => { setToB(e.target.value); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         </div>
         <div className="field"><label className="label">Product search</label>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input ref={transferSearchRef} className="input" placeholder="Search name, SKU, or scan barcode" value={product ? product.name + " · " + product.sku : q}
               onChange={(e) => { setProductId(""); setQ(e.target.value); setTransferScanMessage(""); setErr(""); }}
               onKeyDown={(event) => {
@@ -8628,8 +8689,9 @@ function BorrowingTab({ data, update }) {
               aria-pressed={transferScannerOn}
               title="Scan a product barcode for this stock transfer"
             >
-              <Barcode size={17} /> {transferScannerOn ? "Scanner on" : "Scanner"}
+              <Barcode size={17} /> {transferScannerOn ? "USB on" : "USB scanner"}
             </button>
+            <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera size={17} /> Camera scan</button>
           </div>
           {transferScanMessage ? <div className="sub" role="status" style={{ marginTop: 6, color: transferScannerOn ? "var(--ok)" : "var(--muted)" }}>{transferScanMessage}</div> : null}
           {!productId && matches.length > 0 && (
@@ -8645,7 +8707,7 @@ function BorrowingTab({ data, update }) {
           <div><label className="label">Available stock</label>
             <input className="input" readOnly value={product ? available : ""} placeholder="—" style={{ fontFamily: "var(--font-mono)", color: product && available <= 0 ? "var(--danger)" : "var(--text)" }} /></div>
           <div><label className="label">Quantity to transfer</label>
-            <input className="input" inputMode="numeric" value={qty} onChange={(e) => { setQty(e.target.value.replace(/\D/g, "")); setErr(""); }} placeholder="0" /></div>
+            <input ref={transferQtyRef} className="input" inputMode="numeric" value={qty} onChange={(e) => { setQty(e.target.value.replace(/\D/g, "")); setErr(""); }} placeholder="0" /></div>
         </div>
         {err && <div className="alert"><AlertCircle />{err}</div>}
         <button className="btn btn-ghost" style={{ marginTop: 14 }} onClick={addLine}><Plus /> Add to transfer</button>
@@ -8678,6 +8740,14 @@ function BorrowingTab({ data, update }) {
         </div>); })}
         {data.borrowings.length === 0 && <div className="notice">No transfers yet.</div>}</div>
 
+      {cameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Stock transfer"
+          title={"Select product from " + bn(fromB)}
+          onClose={() => setCameraOpen(false)}
+          onScan={selectScannedTransferProduct}
+        />
+      )}
       {repairTransfer && (
         <div className="scrim" onClick={() => setRepairTransfer(null)}>
           <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
@@ -8709,7 +8779,17 @@ function PricingTab({ data, update, branch }) {
   const [q, setQ] = useState("");
   const [priceDrafts, setPriceDrafts] = useState({});
   const [priceErr, setPriceErr] = useState("");
-  useEffect(() => { setBId(branch.id); }, [branch.id]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scannerOn, setScannerOn] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
+  const [scannedPricingKey, setScannedPricingKey] = useState("");
+  const priceInputRefs = useRef(new Map());
+  useEffect(() => {
+    setBId(branch.id);
+    setQ("");
+    setScannedPricingKey("");
+    setScanMessage("");
+  }, [branch.id]);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const query = q.trim().toLowerCase();
   const pricingKey = (p) => {
@@ -8735,10 +8815,45 @@ function PricingTab({ data, update, branch }) {
     products.forEach((p) => byKey.set(pricingKey(p), preferPricingRow(byKey.get(pricingKey(p)), p)));
     return sortProductsAZ(Array.from(byKey.values()));
   };
-  const list = dedupePricingProducts(data.products.filter((p) =>
-    productVisibleInBranch(p, data, bId) &&
-    (query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query)))
-  ));
+  const allPricingProducts = dedupePricingProducts(data.products.filter((p) => productVisibleInBranch(p, data, bId)));
+  const list = allPricingProducts.filter((p) => scannedPricingKey
+    ? pricingKey(p) === scannedPricingKey
+    : query === "" || p.name.toLowerCase().includes(query) || p.sku.toLowerCase().includes(query) || productMatchesBarcode(p, query) || productMatchesCatalog(p, findBarcodeCatalogEntry(data, query))
+  );
+  const selectScannedPricingProduct = (value) => {
+    const barcode = normalizeBarcode(value);
+    if (!isValidBarcode(barcode)) {
+      setScanMessage("Invalid barcode. Try again or type the product name.");
+      appendBarcodeScanLog({ barcode, status: "pricing:invalid" });
+      return false;
+    }
+    const direct = findProductByBarcode(data, barcode, bId);
+    const catalogEntry = findBarcodeCatalogEntry(data, barcode);
+    const match = allPricingProducts.find((candidate) =>
+      (direct && productDedupeKey(candidate) === productDedupeKey(direct)) ||
+      productMatchesBarcode(candidate, barcode) ||
+      productMatchesCatalog(candidate, catalogEntry)
+    );
+    if (!match) {
+      setScannedPricingKey("");
+      setQ(barcode);
+      setScanMessage("Barcode not found for " + bname + ".");
+      appendBarcodeScanLog({ barcode, status: "pricing:not_found" });
+      return false;
+    }
+    setQ("");
+    setScannedPricingKey(pricingKey(match));
+    setPriceErr("");
+    setScanMessage("Selected " + match.name + " for pricing.");
+    appendBarcodeScanLog({ barcode, productId: match.id, status: "pricing:matched" });
+    window.setTimeout(() => {
+      const input = priceInputRefs.current.get(match.id);
+      input?.focus();
+      input?.select();
+    }, 0);
+    return true;
+  };
+  useBarcodeScanner({ enabled: scannerOn && !cameraOpen, mode: "pricing", onScan: selectScannedPricingProduct });
   const draftFor = (p) => {
     const price = branchProductPriceCents(p, bId);
     return priceDrafts[p.id] ?? (price > 0 ? String(price / 100) : "");
@@ -8769,10 +8884,15 @@ function PricingTab({ data, update, branch }) {
       {priceErr && <div className="alert error" style={{ marginBottom: 12 }}>{priceErr}</div>}
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div><label className="label">Select branch</label>
-          <select className="select" style={{ minWidth: 220 }} value={bId} onChange={(e) => setBId(e.target.value)}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <select className="select" style={{ minWidth: 220 }} value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         <div style={{ flex: 1, minWidth: 220 }}><label className="label">Search products</label>
-          <input className="input" placeholder="Filter product name or SKU" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <input className="input" placeholder="Filter product name or SKU" value={q} onChange={(e) => { setQ(e.target.value); setScannedPricingKey(""); setScanMessage(""); }} /></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignSelf: "end" }}>
+          <button type="button" className={"btn sm " + (scannerOn ? "primary" : "btn-ghost")} onClick={() => { const next = !scannerOn; setScannerOn(next); setScanMessage(next ? "USB scanner ready for " + bname + "." : "Scanner off."); }} aria-pressed={scannerOn} title="Use a USB barcode scanner to select a product"><Barcode size={17} /> {scannerOn ? "USB on" : "USB scanner"}</button>
+          <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera size={17} /> Camera scan</button>
+        </div>
       </div>
+      {scanMessage ? <div className="sub" role="status" style={{ margin: "-8px 0 12px", color: scanMessage.startsWith("Selected") || scannerOn ? "var(--ok)" : "var(--muted)" }}>{scanMessage}</div> : null}
       <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
         <tbody>{list.map((p) => {
           const price = branchProductPriceCents(p, bId); const cost = branchInventoryCostCents(data, p, bId);
@@ -8783,6 +8903,7 @@ function PricingTab({ data, update, branch }) {
             <td className="amt">{fmt(cost, cur)}</td>
             <td className="amt">
               <input
+                ref={(node) => { if (node) priceInputRefs.current.set(p.id, node); else priceInputRefs.current.delete(p.id); }}
                 className="input"
                 style={{ width: 130, height: 38, textAlign: "right", fontFamily: "var(--font-mono)" }}
                 inputMode="decimal"
@@ -8798,6 +8919,14 @@ function PricingTab({ data, update, branch }) {
           </tr>);
         })}
         {list.length === 0 && <tr><td colSpan="5"><div className="notice">No products match for {bname}.</div></td></tr>}</tbody></table></div>
+      {cameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Pricing"
+          title={"Select product - " + bname}
+          onClose={() => setCameraOpen(false)}
+          onScan={selectScannedPricingProduct}
+        />
+      )}
     </div>
   );
 }
@@ -9444,6 +9573,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const [scannedPnlProductKey, setScannedPnlProductKey] = useState("");
   const [productScannerOn, setProductScannerOn] = useState(false);
   const [productScanMessage, setProductScanMessage] = useState("");
+  const [reportCameraOpen, setReportCameraOpen] = useState(false);
   const productSearchRef = useRef(null);
   const pnlProductSearchRef = useRef(null);
   const [reorderWeeks, setReorderWeeks] = useState(2); // weeks of demand to cover in the reorder forecast
@@ -9476,8 +9606,8 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (match) {
       if (sub === "pnl") {
         setScannedPnlProductKey(productDedupeKey(match));
-        setPnlProductSearch(match.sku || match.name || barcode);
-      } else setProductSearch(barcode);
+        setPnlProductSearch("");
+      } else setProductSearch("");
       setProductScanMessage("Scanned " + match.name + ".");
       if (sub === "products") setProdSel(match.id);
       appendBarcodeScanLog({ barcode, status: "reports:found", productId: match.id });
@@ -9494,7 +9624,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   };
 
   useBarcodeScanner({
-    enabled: productScannerOn && ((sub === "products" && !prodSel) || sub === "pnl"),
+    enabled: productScannerOn && !reportCameraOpen && ((sub === "products" && !prodSel) || sub === "pnl"),
     mode: "reports",
     onScan: openScannedReportProduct,
   });
@@ -10066,8 +10196,8 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         }
         return (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, marginBottom: 12 }}>
-              <div className="possearch" style={{ height: 44 }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+              <div className="possearch" style={{ height: 44, flex: "1 1 260px", minWidth: 0 }}>
                 <Search size={18} />
                 <input
                   ref={productSearchRef}
@@ -10110,8 +10240,9 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                 aria-pressed={productScannerOn}
                 title="Use a barcode scanner to open a product report"
               >
-                <Barcode size={17} /> {productScannerOn ? "Scanner on" : "Scanner"}
+                <Barcode size={17} /> {productScannerOn ? "USB on" : "USB scanner"}
               </button>
+              <button type="button" className="btn sm btn-ghost" onClick={() => setReportCameraOpen(true)}><Camera size={17} /> Camera scan</button>
             </div>
             {productScanMessage ? <div className="sub" role="status" style={{ margin: "-4px 0 10px", color: productScannerOn ? "var(--ok)" : "var(--muted)" }}>{productScanMessage}</div> : null}
             <div className="cfilter" style={{ marginBottom: 12 }}>
@@ -10148,7 +10279,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
               <div className="section-title" style={{ margin: 0 }}>Profit &amp; loss by product</div>
               <div className="sub">Sales and cost are assigned per product. Shared operating expenses remain in the summary above.</div>
             </div>
-            <div style={{ display: "flex", gap: 8, width: "min(100%, 500px)" }}>
+            <div style={{ display: "flex", gap: 8, width: "min(100%, 620px)", flexWrap: "wrap" }}>
               <div className="searchbox" style={{ flex: "1 1 260px", minWidth: 0 }}>
                 <Search size={18} />
                 <input
@@ -10186,8 +10317,9 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                 aria-pressed={productScannerOn}
                 title="Use a barcode scanner to find product profit and loss"
               >
-                <Barcode size={17} /> {productScannerOn ? "Scanner on" : "Scanner"}
+                <Barcode size={17} /> {productScannerOn ? "USB on" : "USB scanner"}
               </button>
+              <button type="button" className="btn sm btn-ghost" onClick={() => setReportCameraOpen(true)}><Camera size={17} /> Camera scan</button>
             </div>
           </div>
           {productScanMessage ? <div className="sub" role="status" style={{ margin: "-4px 0 10px", color: productScannerOn ? "var(--ok)" : "var(--muted)" }}>{productScanMessage}</div> : null}
@@ -10353,6 +10485,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
               <div className="mt2">{bname(t.fromBranchId)} → {bname(t.toBranchId)} · {items.map((item) => item.productName + " × " + item.qty).join(", ")}{items.length > 1 ? " · " + units + " units total" : ""}</div></div>
             <span className="ist paid">{t.status || "completed"}</span><span className="pill plain">{dt(t.ts)}</span></div>); })}</div>)
+      )}
+      {reportCameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Reports"
+          title={sub === "pnl" ? "Find product profit report" : "Open product report"}
+          onClose={() => setReportCameraOpen(false)}
+          onScan={openScannedReportProduct}
+        />
       )}
       <ReportPreviewDialog
         report={printPreview}
