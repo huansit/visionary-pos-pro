@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -23,6 +23,8 @@ use windows_sys::Win32::Graphics::Printing::{
 const SERVICE: &str = "cloud.visionarypos.cashier";
 const TERMINAL_ACCOUNT: &str = "terminal-credentials";
 const API_BASE_URL: &str = "https://visionarypos.cloud";
+const API_HOST: &str = "visionarypos.cloud";
+const API_ORIGIN_IPV4: Ipv4Addr = Ipv4Addr::new(187, 124, 43, 10);
 
 #[derive(Debug, Deserialize)]
 struct ApiRequest {
@@ -55,6 +57,8 @@ const NO_SECUGEN_ENDPOINT: usize = usize::MAX;
 const SECUGEN_START_ATTEMPTS: usize = 40;
 static SECUGEN_ENDPOINT_INDEX: AtomicUsize = AtomicUsize::new(NO_SECUGEN_ENDPOINT);
 static API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static API_ORIGIN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static API_ORIGIN_PREFERRED: AtomicBool = AtomicBool::new(false);
 static SECUGEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn api_client() -> Result<&'static reqwest::Client, String> {
@@ -63,12 +67,32 @@ fn api_client() -> Result<&'static reqwest::Client, String> {
     }
     let client = reqwest::Client::builder()
         .https_only(true)
+        .connect_timeout(Duration::from_secs(4))
         .build()
         .map_err(|err| err.to_string())?;
     let _ = API_CLIENT.set(client);
     API_CLIENT
         .get()
         .ok_or_else(|| "api_client_initialization_failed".to_string())
+}
+
+fn api_origin_client() -> Result<&'static reqwest::Client, String> {
+    if let Some(client) = API_ORIGIN_CLIENT.get() {
+        return Ok(client);
+    }
+    let origin = SocketAddr::new(IpAddr::V4(API_ORIGIN_IPV4), 443);
+    let client = reqwest::Client::builder()
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(4))
+        // Keep the production hostname for TLS and HTTP while bypassing a
+        // broken DNS or Cloudflare route on an affected workstation.
+        .resolve(API_HOST, origin)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let _ = API_ORIGIN_CLIENT.set(client);
+    API_ORIGIN_CLIENT
+        .get()
+        .ok_or_else(|| "api_origin_client_initialization_failed".to_string())
 }
 
 fn secugen_client() -> Result<&'static reqwest::Client, String> {
@@ -430,6 +454,34 @@ fn is_allowed_api_header(name: &str) -> bool {
     )
 }
 
+fn build_api_request(
+    client: &reqwest::Client,
+    method: &reqwest::Method,
+    url: &str,
+    headers: &Option<HashMap<String, String>>,
+    body: &Option<Value>,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .request(method.clone(), url)
+        .timeout(Duration::from_secs(20))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json");
+
+    if let Some(headers) = headers {
+        for (key, value) in headers {
+            if is_allowed_api_header(key) {
+                request = request.header(key, value);
+            }
+        }
+    }
+
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+
+    request
+}
+
 #[tauri::command]
 async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     if !req.path.starts_with("/api/") {
@@ -439,27 +491,50 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     let method = reqwest::Method::from_bytes(req.method.to_uppercase().as_bytes())
         .map_err(|_| "invalid_http_method".to_string())?;
     let url = format!("{}{}", API_BASE_URL, req.path);
-    let client = api_client()?;
+    let cloud_client = api_client()?;
+    let origin_client = api_origin_client()?;
+    let prefer_origin = API_ORIGIN_PREFERRED.load(Ordering::Relaxed);
+    let (first_client, first_route, second_client, second_route) = if prefer_origin {
+        (origin_client, "direct_origin", cloud_client, "cloudflare")
+    } else {
+        (cloud_client, "cloudflare", origin_client, "direct_origin")
+    };
 
-    let mut request = client
-        .request(method, url)
-        .timeout(Duration::from_secs(20))
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json");
-
-    if let Some(headers) = req.headers {
-        for (key, value) in headers {
-            if is_allowed_api_header(&key) {
-                request = request.header(key, value);
-            }
+    let response = match build_api_request(
+        first_client,
+        &method,
+        &url,
+        &req.headers,
+        &req.body,
+    )
+    .send()
+    .await
+    {
+        Ok(response) => {
+            API_ORIGIN_PREFERRED.store(first_route == "direct_origin", Ordering::Relaxed);
+            response
         }
-    }
-
-    if let Some(body) = req.body {
-        request = request.json(&body);
-    }
-
-    let response = request.send().await.map_err(|err| err.to_string())?;
+        Err(first_error) => match build_api_request(
+            second_client,
+            &method,
+            &url,
+            &req.headers,
+            &req.body,
+        )
+        .send()
+        .await
+        {
+            Ok(response) => {
+                API_ORIGIN_PREFERRED.store(second_route == "direct_origin", Ordering::Relaxed);
+                response
+            }
+            Err(second_error) => {
+                return Err(format!(
+                    "api_connectivity_failed: {first_route}={first_error}; {second_route}={second_error}"
+                ));
+            }
+        },
+    };
     let status = response.status();
     let status_code = status.as_u16();
     let ok = status.is_success();
@@ -542,7 +617,9 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_api_header, SECUGEN_ENDPOINTS};
+    use super::{
+        is_allowed_api_header, API_BASE_URL, API_HOST, API_ORIGIN_IPV4, SECUGEN_ENDPOINTS,
+    };
 
     #[test]
     fn native_api_bridge_forwards_terminal_version_header() {
@@ -555,5 +632,12 @@ mod tests {
     fn secugen_https_endpoints_preserve_vendor_localhost_host_name() {
         assert_eq!(SECUGEN_ENDPOINTS[0], ("https://localhost:8443", 8443));
         assert_eq!(SECUGEN_ENDPOINTS[2], ("https://localhost:8000", 8000));
+    }
+
+    #[test]
+    fn direct_origin_fallback_preserves_the_production_tls_hostname() {
+        assert_eq!(API_BASE_URL, "https://visionarypos.cloud");
+        assert_eq!(API_HOST, "visionarypos.cloud");
+        assert_eq!(API_ORIGIN_IPV4.to_string(), "187.124.43.10");
     }
 }

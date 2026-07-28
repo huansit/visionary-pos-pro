@@ -782,7 +782,7 @@ export default function App() {
     if (manual) setStatus("Checking for desktop updates...");
     try {
       logUpdateEvent("check_started", { manual, currentVersion: APP_VERSION });
-      const update = await check();
+      const update = await check({ timeout: 5_000 });
 
       if (!update) {
         logUpdateEvent("already_current", { manual, currentVersion: APP_VERSION });

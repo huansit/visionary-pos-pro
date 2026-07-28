@@ -13,7 +13,7 @@ const outDir = path.join(root, "release-out");
 const frontendDownloadsDir = path.resolve(root, "..", "frontend", "public", "downloads");
 const trustCertificatePath = path.join(root, "signing", "visionpos-internal-code-signing.cer");
 const trustInstallerPath = path.join(root, "scripts", "install-internal-trust.ps1");
-const downloadsBaseUrl = process.env.VISIONPOS_DOWNLOADS_BASE_URL || "https://visionarypos.cloud/downloads";
+const downloadsBaseUrl = process.env.VISIONPOS_DOWNLOADS_BASE_URL || "https://www.visionarypos.cloud/downloads";
 const platform = "windows-x86_64";
 
 function fail(message) {
@@ -221,7 +221,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Fingerprint capture again uses SecuGen's vendor localhost HTTPS endpoint, restoring reader compatibility on updated terminals.",
+  "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
+  "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",
   "Active cashier sessions now renew during normal use to prevent overnight login failures.",
   "Expired checkout sessions recover from the same verified fingerprint without requiring a second scan.",
   "Fingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.",
