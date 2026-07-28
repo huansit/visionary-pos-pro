@@ -43,6 +43,18 @@ CREATE INDEX events_server_ts_idx ON events (server_ts);
 CREATE INDEX events_type_idx ON events (type);
 CREATE INDEX events_branch_idx ON events (branch_id);
 
+CREATE TABLE IF NOT EXISTS invoice_sequences (
+  branch_id    varchar(191) PRIMARY KEY,
+  last_number  bigint NOT NULL DEFAULT 0,
+  updated_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS transfer_sequences (
+  sequence_key varchar(191) PRIMARY KEY,
+  last_number  bigint NOT NULL DEFAULT 0,
+  updated_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS records (
   id          varchar(191) NOT NULL,
   type        varchar(80) NOT NULL,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizedTransferItems, transferUnitCount } from "../frontend/src/transferRecords.js";
+import { nextTransferNumber, normalizedTransferItems, transferUnitCount } from "../frontend/src/transferRecords.js";
 
 test("multi-product transfers retain every product and quantity", () => {
   const transfer = {
@@ -34,4 +34,12 @@ test("legacy single-product transfers use current product details when needed", 
   assert.deepEqual(items.map(({ productId, productName, sku, qty }) => ({ productId, productName, sku, qty })), [
     { productId: "p1", productName: "Cabernet", sku: "CAB", qty: 3 },
   ]);
+});
+
+test("transfer drafts advance canonical numbers and ignore legacy timestamp numbers", () => {
+  assert.equal(nextTransferNumber([
+    { number: "TRF-1785087555738" },
+    { number: "TRF-000004", transferSequence: 4 },
+    { number: "TRF-000005" },
+  ]), "TRF-000006");
 });

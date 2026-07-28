@@ -34,3 +34,13 @@ export function transferUnitCount(transfer, products = []) {
   return normalizedTransferItems(transfer, products)
     .reduce((total, item) => total + Number(item.qty || 0), 0);
 }
+
+export function nextTransferNumber(transfers = []) {
+  const lastNumber = transfers.reduce((max, transfer) => {
+    const explicit = Number(transfer?.transferSequence || 0);
+    if (Number.isSafeInteger(explicit) && explicit > 0) return Math.max(max, explicit);
+    const match = /^TRF-(\d{6,9})$/.exec(String(transfer?.number || "").trim());
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return `TRF-${String(lastNumber + 1).padStart(6, "0")}`;
+}

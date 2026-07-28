@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS invoice_sequences (
   updated_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- Transfers span branches, so they share one server-allocated sequence.
+CREATE TABLE IF NOT EXISTS transfer_sequences (
+  sequence_key text PRIMARY KEY,
+  last_number  bigint NOT NULL DEFAULT 0 CHECK (last_number >= 0),
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS records (
   id          text NOT NULL,
   type        text NOT NULL,

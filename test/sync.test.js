@@ -229,7 +229,82 @@ test("1ab. renamed expense categories retain their ID and reach cashier terminal
   });
 });
 
-test("1ac. received purchase status replaces the ordered version and cannot be reverted by a stale write", async () => {
+test("1ac. transfers receive sequential server numbers and idempotent retries keep their number", async () => {
+  const createdAt = Date.now();
+  const first = {
+    id: "transfer-sequence-1",
+    type: "borrowing",
+    branchId: "b_sip",
+    clientTs: createdAt,
+    payload: {
+      number: `TRF-${createdAt}`,
+      fromBranchId: "b_sip",
+      toBranchId: "b_cpt",
+      items: [{ productId: "transfer-product-1", productName: "Transfer Product", qty: 1 }],
+      qty: 1,
+      status: "completed",
+      ts: createdAt,
+    },
+  };
+  const second = {
+    ...first,
+    id: "transfer-sequence-2",
+    clientTs: createdAt + 1,
+    payload: { ...first.payload, number: `TRF-${createdAt + 1}`, ts: createdAt + 1 },
+  };
+  const movement = {
+    id: "transfer-sequence-movement",
+    type: "stockMovement",
+    branchId: "b_sip",
+    clientTs: createdAt + 2,
+    payload: {
+      transferId: second.id,
+      transferNumber: second.payload.number,
+      productId: "transfer-product-1",
+      branchId: "b_sip",
+      qty: -1,
+      reason: `Transfer to Cape Town (${second.payload.number})`,
+      ts: createdAt + 2,
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [first, second, movement] })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.transferNumbers[first.id], "TRF-000001");
+      assert.equal(res.body.transferNumbers[second.id], "TRF-000002");
+      assert.deepEqual(res.body.rejected, []);
+    });
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [first] })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.transferNumbers[first.id], "TRF-000001");
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const firstTransfer = res.body.events.find((event) => event.id === first.id);
+      const secondTransfer = res.body.events.find((event) => event.id === second.id);
+      const storedMovement = res.body.events.find((event) => event.id === movement.id);
+      assert.equal(firstTransfer?.payload?.number, "TRF-000001");
+      assert.equal(firstTransfer?.payload?.transferSequence, 1);
+      assert.equal(secondTransfer?.payload?.number, "TRF-000002");
+      assert.equal(secondTransfer?.payload?.transferSequence, 2);
+      assert.equal(storedMovement?.payload?.transferNumber, "TRF-000002");
+      assert.equal(storedMovement?.payload?.reason, "Transfer to Cape Town (TRF-000002)");
+    });
+
+  const sequence = await pool.query("SELECT last_number FROM transfer_sequences WHERE sequence_key = 'global'");
+  assert.equal(Number(sequence.rows[0]?.last_number), 2);
+});
+
+test("1ad. received purchase status replaces the ordered version and cannot be reverted by a stale write", async () => {
   const purchaseId = "purchase-received-sync";
   const orderedAt = Date.now();
   const ordered = {

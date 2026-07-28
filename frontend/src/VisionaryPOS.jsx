@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { buildReportDocument, ReportPreviewDialog } from "./components/reports/ReportEngine.jsx";
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import { productDisplayImage } from "./productImages.js";
-import { normalizedTransferItems, transferUnitCount } from "./transferRecords.js";
+import { nextTransferNumber, normalizedTransferItems, transferUnitCount } from "./transferRecords.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -915,8 +915,8 @@ const SYNC_APPEND = new Map([
   ["invoiceVoidRequests", "invoiceVoidRequest"],
   ["invoiceVoidDecisions", "invoiceVoidDecision"],
   ["payments", "payment"],
-  ["stockMovements", "stockMovement"],
   ["borrowings", "borrowing"],
+  ["stockMovements", "stockMovement"],
   ["endOfDays", "endOfDay"],
   ["cashMovements", "cashMovement"],
   ["orders", "order"],
@@ -1687,6 +1687,14 @@ async function runSyncClient(currentData, options = {}) {
           invoices: (data.invoices || []).map((invoice) => body.invoiceNumbers[invoice.id]
             ? { ...invoice, number: body.invoiceNumbers[invoice.id], synced: true }
             : invoice),
+        };
+      }
+      if (body.transferNumbers && typeof body.transferNumbers === "object") {
+        data = {
+          ...data,
+          borrowings: (data.borrowings || []).map((transfer) => body.transferNumbers[transfer.id]
+            ? { ...transfer, number: body.transferNumbers[transfer.id], synced: true }
+            : transfer),
         };
       }
       const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
@@ -8368,8 +8376,10 @@ function BorrowingTab({ data, update }) {
     setErr("");
     if (fromB === toB) return setErr("Source and destination branches must be different.");
     if (lines.length === 0) return setErr("Add at least one product to the transfer.");
-    const ts = now(); const number = "TRF-" + ts;
+    const ts = now();
     update((d) => {
+      const number = nextTransferNumber(d.borrowings);
+      const transferId = uid("trf");
       let products = [...d.products];
       const movements = [];
       const transferItems = lines.map((l) => {
@@ -8387,12 +8397,12 @@ function BorrowingTab({ data, update }) {
           products = withBranchProductCostForKey(products, currentProduct, toB, destinationMovingAverageCents);
         }
 
-        movements.push({ id: uid("mv"), productId: l.productId, branchId: fromB, qty: -l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer to " + bn(toB) + " (" + number + ")", ts, synced: false });
-        movements.push({ id: uid("mv"), productId: l.productId, branchId: toB, qty: l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer from " + bn(fromB) + " (" + number + ")", ts, synced: false });
+        movements.push({ id: uid("mv"), transferId, productId: l.productId, branchId: fromB, qty: -l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer to " + bn(toB) + " (" + number + ")", ts, synced: false });
+        movements.push({ id: uid("mv"), transferId, productId: l.productId, branchId: toB, qty: l.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer from " + bn(fromB) + " (" + number + ")", ts, synced: false });
         return { productId: l.productId, productName: l.productName, sku: l.sku, qty: l.qty, costCents: sourceCostCents, valueCents: l.qty * sourceCostCents };
       });
       const tr = {
-        id: uid("trf"), number, fromBranchId: fromB, toBranchId: toB, note: note.trim(), status: "completed", ts, synced: false,
+        id: transferId, number, fromBranchId: fromB, toBranchId: toB, note: note.trim(), status: "completed", ts, synced: false,
         items: transferItems,
         productName: lines.length === 1 ? lines[0].productName : lines.length + " products",
         qty: lines.reduce((s, l) => s + l.qty, 0),

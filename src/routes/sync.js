@@ -969,6 +969,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const serverTs = {};
   const rejected = [];
   const invoiceNumbers = {};
+  const transferNumbers = {};
   const client = await pool.connect();
   let lastIssuedTs = serverNow();
   const actorId = syncActorId(req);
@@ -1044,15 +1045,20 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           acceptedTs = result.ts;
           acceptedId = result.id;
         } else if (isAppendOnlyEvent) {
-          let eventToStore = ["stockMovement", "invoice", "purchase", "countLog"].includes(type)
+          let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
           if (type === "invoice") {
             const numberedInvoice = await assignInvoiceNumber(client, eventToStore);
             eventToStore = numberedInvoice.event;
             invoiceNumbers[eventToStore.id] = numberedInvoice.number;
+          } else if (type === "borrowing") {
+            const numberedTransfer = await assignTransferNumber(client, eventToStore);
+            eventToStore = numberedTransfer.event;
+            transferNumbers[eventToStore.id] = numberedTransfer.number;
           } else if (type === "stockMovement") {
             eventToStore = attachCanonicalInvoiceNumber(eventToStore, invoiceNumbers);
+            eventToStore = attachCanonicalTransferNumber(eventToStore, transferNumbers);
           }
           acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
@@ -1124,7 +1130,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         types: changedTypes,
       });
     }
-    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch, invoiceNumbers });
+    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch, invoiceNumbers, transferNumbers });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("push failed:", error);
@@ -1231,6 +1237,98 @@ async function assignInvoiceNumber(client, event) {
   };
 }
 
+function transferSequenceFromPayload(payload = {}) {
+  const explicit = Number(payload.transferSequence || 0);
+  if (Number.isSafeInteger(explicit) && explicit > 0) return explicit;
+  const match = /^TRF-(\d{6,9})$/.exec(String(payload.number || "").trim());
+  return match ? Number(match[1]) : 0;
+}
+
+async function maxStoredTransferSequence(client) {
+  const result = await client.query("SELECT payload FROM events WHERE type = 'borrowing'");
+  return result.rows.reduce((max, row) => Math.max(max, transferSequenceFromPayload(row.payload || {})), 0);
+}
+
+async function nextTransferSequence(client) {
+  const sequenceKey = "global";
+  const current = await client.query(
+    "SELECT last_number AS lastNumber FROM transfer_sequences WHERE sequence_key = $1",
+    [sequenceKey]
+  );
+  const seed = current.rows[0] ? 0 : await maxStoredTransferSequence(client);
+  if (isMySql) {
+    await client.query(
+      `INSERT IGNORE INTO transfer_sequences (sequence_key, last_number, updated_at)
+       VALUES ($1, $2, NOW())`,
+      [sequenceKey, seed]
+    );
+    await client.query(
+      `UPDATE transfer_sequences
+          SET last_number = last_number + 1,
+              updated_at = NOW()
+        WHERE sequence_key = $1`,
+      [sequenceKey]
+    );
+    const result = await client.query(
+      "SELECT last_number AS lastNumber FROM transfer_sequences WHERE sequence_key = $1",
+      [sequenceKey]
+    );
+    return Number(result.rows[0]?.lastNumber || result.rows[0]?.last_number || 0);
+  }
+
+  await client.query(
+    `INSERT INTO transfer_sequences (sequence_key, last_number, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (sequence_key) DO NOTHING`,
+    [sequenceKey, seed]
+  );
+  const result = await client.query(
+    `UPDATE transfer_sequences
+        SET last_number = last_number + 1,
+            updated_at = now()
+      WHERE sequence_key = $1
+      RETURNING last_number AS "lastNumber"`,
+    [sequenceKey]
+  );
+  return Number(result.rows[0]?.lastNumber || 0);
+}
+
+async function assignTransferNumber(client, event) {
+  const existing = await client.query(
+    "SELECT branch_id, payload FROM events WHERE id = $1 AND type = 'borrowing' LIMIT 1",
+    [event.id]
+  );
+  if (existing.rows[0]) {
+    const payload = existing.rows[0].payload || {};
+    const number = String(payload.number || event.payload?.number || event.id);
+    return {
+      number,
+      event: {
+        ...event,
+        branchId: existing.rows[0].branch_id || existing.rows[0].branchId || event.branchId,
+        payload: { ...payload, number },
+      },
+    };
+  }
+
+  const sequence = await nextTransferSequence(client);
+  if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("transfer_sequence_failed");
+  const number = `TRF-${String(sequence).padStart(6, "0")}`;
+  const clientNumber = String(event.payload?.number || "").trim();
+  return {
+    number,
+    event: {
+      ...event,
+      payload: {
+        ...(event.payload || {}),
+        ...(clientNumber && clientNumber !== number ? { clientNumber } : {}),
+        number,
+        transferSequence: sequence,
+      },
+    },
+  };
+}
+
 function attachCanonicalInvoiceNumber(event, invoiceNumbers) {
   const invoiceId = String(event.payload?.invoiceId || "").trim();
   const number = invoiceId ? invoiceNumbers[invoiceId] : "";
@@ -1241,6 +1339,21 @@ function attachCanonicalInvoiceNumber(event, invoiceNumbers) {
       ...(event.payload || {}),
       invoiceNumber: number,
       reason: `Sale ${number}`,
+    },
+  };
+}
+
+function attachCanonicalTransferNumber(event, transferNumbers) {
+  const transferId = String(event.payload?.transferId || "").trim();
+  const number = transferId ? transferNumbers[transferId] : "";
+  if (!number) return event;
+  const reason = String(event.payload?.reason || "").replace(/\s*\(TRF-[^)]+\)\s*$/, ` (${number})`);
+  return {
+    ...event,
+    payload: {
+      ...(event.payload || {}),
+      transferNumber: number,
+      ...(reason ? { reason } : {}),
     },
   };
 }
