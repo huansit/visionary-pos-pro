@@ -11,7 +11,7 @@ import {
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
-  Wrench, Phone, Zap, Home, Circle,
+  Wrench, Phone, Zap, Home, Circle, Camera,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -2159,6 +2159,114 @@ function useBarcodeScanner({ enabled, mode, onScan }) {
     return () => window.removeEventListener("keydown", listener, true);
   }, [enabled, mode]);
 }
+function cameraScannerError(error) {
+  const name = String(error?.name || "");
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") return "Camera access was blocked. Allow camera access for VISIONPOS, then try again.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "No camera was found on this device.";
+  if (name === "NotReadableError" || name === "TrackStartError") return "The camera is already in use by another app. Close it there, then try again.";
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") return "The available camera cannot use the requested scan mode.";
+  if (name === "SecurityError") return "Camera access is unavailable for this connection.";
+  return "The camera could not start. You can still type the barcode or use a paired scanner.";
+}
+function CameraBarcodeScanner({ onClose, onScan }) {
+  const videoRef = useRef(null);
+  const controlsRef = useRef(null);
+  const foundRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  const onScanRef = useRef(onScan);
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState("Starting camera...");
+  const [error, setError] = useState("");
+
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { onScanRef.current = onScan; }, [onScan]);
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === "Escape") onCloseRef.current?.(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+  useEffect(() => {
+    let disposed = false;
+    foundRef.current = false;
+    setError("");
+    setStatus("Starting camera...");
+
+    const stopCamera = () => {
+      try { controlsRef.current?.stop?.(); } catch (_) {}
+      controlsRef.current = null;
+      const stream = videoRef.current?.srcObject;
+      if (stream?.getTracks) stream.getTracks().forEach((track) => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+    const startCamera = async () => {
+      if (!window.isSecureContext) {
+        setStatus("");
+        setError("Camera scanning requires a secure HTTPS connection.");
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus("");
+        setError("This browser does not support live camera scanning. Use a paired scanner or enter the barcode manually.");
+        return;
+      }
+      try {
+        const { BrowserMultiFormatOneDReader } = await import("@zxing/browser");
+        if (disposed || !videoRef.current) return;
+        const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 90, delayBetweenScanSuccess: 500 });
+        const controls = await reader.decodeFromConstraints({
+          audio: false,
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        }, videoRef.current, (result, _scanError, activeControls) => {
+          if (!result || disposed || foundRef.current) return;
+          const barcode = normalizeBarcode(result.getText());
+          if (!isValidBarcode(barcode)) {
+            setStatus("Keep the product barcode inside the frame.");
+            return;
+          }
+          foundRef.current = true;
+          try { activeControls.stop(); } catch (_) {}
+          setStatus("Barcode captured: " + barcode);
+          try { navigator.vibrate?.(45); } catch (_) {}
+          onScanRef.current?.(barcode);
+          onCloseRef.current?.();
+        });
+        if (disposed) controls.stop();
+        else {
+          controlsRef.current = controls;
+          setStatus("Point the rear camera at the product barcode.");
+        }
+      } catch (cameraError) {
+        if (disposed) return;
+        stopCamera();
+        setStatus("");
+        setError(cameraScannerError(cameraError));
+      }
+    };
+    startCamera();
+    return () => { disposed = true; stopCamera(); };
+  }, [attempt]);
+
+  return (
+    <div className="scrim camera-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="modal camera-modal" role="dialog" aria-modal="true" aria-labelledby="camera-scanner-title">
+        <div className="camera-head">
+          <div><div className="eyebrow">Products</div><div className="section-title" id="camera-scanner-title">Scan product barcode</div></div>
+          <button type="button" className="iconbtn" onClick={onClose} aria-label="Close camera scanner"><X /></button>
+        </div>
+        <div className="camera-preview">
+          <video ref={videoRef} autoPlay muted playsInline aria-label="Live camera barcode preview" />
+          {!error && <div className="camera-target" aria-hidden="true"><span /></div>}
+          {error && <div className="camera-error" role="alert"><AlertCircle /><span>{error}</span></div>}
+        </div>
+        <div className="camera-status" aria-live="polite">{error ? "" : status}</div>
+        <div className="camera-actions">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          {error && <button type="button" className="btn btn-primary" onClick={() => setAttempt((value) => value + 1)}><RefreshCw /> Try again</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
 function invOutstanding(inv) { return Math.max(0, inv.totalCents - inv.paidCents); }
 function invoiceCashierName(invoice) {
   return String(invoice?.cashier || invoice?.cashierName || invoice?.soldBy || "Cashier").trim() || "Cashier";
@@ -3012,6 +3120,21 @@ body{overscroll-behavior:none}
 /* modal */
 .scrim{position:fixed;inset:0;background:rgba(6,8,14,.66);backdrop-filter:blur(3px);display:grid;place-items:center;z-index:60;padding:20px;overflow-y:auto}
 .modal{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:24px;box-shadow:0 30px 80px -30px rgba(20,30,70,.4);animation:rise .2s ease;max-height:min(88vh,calc(100dvh - 40px));overflow:auto}
+.camera-scrim{z-index:90}
+.camera-modal{max-width:560px;padding:18px;overflow:hidden}
+.camera-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
+.camera-head .section-title{margin:4px 0 0}
+.camera-preview{position:relative;width:100%;aspect-ratio:4/3;max-height:60dvh;overflow:hidden;border:1px solid var(--border);border-radius:12px;background:#071015}
+.camera-preview video{display:block;width:100%;height:100%;object-fit:cover}
+.camera-target{position:absolute;inset:27% 8%;border:2px solid rgba(255,255,255,.92);border-radius:8px;box-shadow:0 0 0 999px rgba(0,0,0,.28);pointer-events:none}
+.camera-target span{position:absolute;left:7%;right:7%;top:50%;height:2px;background:var(--accent-2);box-shadow:0 0 9px rgba(34,199,214,.9)}
+.camera-error{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;color:#fff;background:#10191f;font-size:13px;line-height:1.5}
+.camera-error svg{width:22px;height:22px;flex:0 0 auto;color:var(--warn)}
+.camera-status{min-height:38px;padding:11px 2px 4px;color:var(--muted);font-size:13px;line-height:1.45}
+.camera-status.error{color:var(--danger)}
+.camera-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.camera-actions .btn{width:auto;min-width:112px}
+.barcode-input-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
 .fp-reader-preview{position:relative;min-height:224px;margin-top:14px;border:1px solid color-mix(in srgb,var(--accent) 65%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,var(--bg));display:grid;place-items:center;overflow:hidden}
 .fp-reader-preview img{display:block;width:100%;height:224px;object-fit:contain;background:#f4f7f8}
 .fp-reader-empty{display:grid;place-items:center;gap:8px;color:var(--muted);text-align:center;padding:24px}
@@ -6386,6 +6509,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [delMsg, setDelMsg] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [scannerOn, setScannerOn] = useState(true);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [barcodeLocked, setBarcodeLocked] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyFrom, setCopyFrom] = useState(data.branches.find((b) => b.id !== branch.id)?.id || "");
@@ -6440,7 +6564,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setErr(catalogEntry ? "Barcode exists in the shared catalog. Add this branch's product details to link it." : "");
     appendBarcodeScanLog({ barcode, status: catalogEntry ? "products:catalog_found" : "products:prefilled" });
   };
-  useBarcodeScanner({ enabled: scannerOn, mode: "products", onScan: handleProductScan });
+  useBarcodeScanner({ enabled: scannerOn && !cameraOpen, mode: "products", onScan: handleProductScan });
   useEffect(() => {
     if (!adding || !scannerOn) return;
     const id = window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
@@ -6649,7 +6773,8 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     <div>
       <PageHead title="Products" sub={visibleBranchProducts.length + " items · wines & spirits"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> Scanner</button>
+          <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> USB scanner</button>
+          <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
           <button className="btn sm btn-ghost" onClick={() => { setCopyOpen((v) => !v); setCopyMsg(""); }}><ArrowLeftRight /> Copy from branch</button>
           <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
           <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
@@ -6700,7 +6825,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
           <div className="field" style={{ marginTop: 12 }}>
             <label className="label">Barcode scan</label>
-            <input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, code))) setErr("Barcode already exists in this branch."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Click here and scan barcode" />
+            <div className="barcode-input-row"><input ref={barcodeInputRef} className="input" inputMode="numeric" autoComplete="off" readOnly={barcodeLocked} value={f.barcode} onChange={(e) => { setF({ ...f, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const code = cleanCode(f.barcode); if (code && data.products.some((p) => isBranchProduct(p) && productCodeMatch(p, code))) setErr("Barcode already exists in this branch."); else if (code && !f.name.trim()) e.currentTarget.closest(".addpanel")?.querySelector("input")?.focus(); } }} placeholder="Scan or enter barcode" /><button type="button" className="iconbtn" onClick={() => setCameraOpen(true)} aria-label="Scan barcode with camera" title="Scan barcode with camera"><Camera /></button></div>
           </div>
           <div className="grid2" style={{ marginTop: 12 }}>
             <div><label className="label">Additional barcodes</label><input className="input" value={f.extraBarcodes} onChange={(e) => setF({ ...f, extraBarcodes: e.target.value })} placeholder="Comma separated" /></div>
@@ -6752,6 +6877,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <input className="input" style={{ width: 220, height: 38 }} value={ef.name} onChange={(e) => { setEf({ ...ef, name: e.target.value }); setErr(""); }} placeholder="Product name" aria-label="Product name" />
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
+                          <button type="button" className="iconbtn" onClick={() => setCameraOpen(true)} aria-label="Replace barcode using camera" title="Replace barcode using camera"><Camera /></button>
                           <input className="input" style={{ width: 220, height: 38, fontFamily: "var(--font-mono)" }} value={ef.extraBarcodes} onChange={(e) => setEf({ ...ef, extraBarcodes: e.target.value })} placeholder="Extra barcodes" />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={(branchPrice / 100).toString()} readOnly disabled title="Selling price is managed from Inventory > Pricing." />
                           <input className="input" style={{ width: 100, height: 38, fontFamily: "var(--font-mono)" }} value={(branchCost / 100).toString()} readOnly disabled title="Buying cost is calculated from branch purchases." />
@@ -6779,6 +6905,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           </div>
         );
       })()}
+      {cameraOpen && <CameraBarcodeScanner onClose={() => setCameraOpen(false)} onScan={(barcode) => { setCameraOpen(false); handleProductScan(barcode); }} />}
     </div>
   );
 }
