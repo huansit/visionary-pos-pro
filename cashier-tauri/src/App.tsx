@@ -828,6 +828,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!account && updatePrompt && updateState === "ready") {
+      setUpdateToastDismissed(true);
+      setUpdateInstallOpen(true);
+    }
+  }, [account, updatePrompt, updateState]);
+
+  useEffect(() => {
     if (restartWhenCartEmpty && updateState === "ready" && cartLines.length === 0) {
       void restartForUpdate();
     }
@@ -1174,6 +1181,10 @@ export default function App() {
           status={status}
           lastSyncAt={lastSyncAt}
           onClose={handleCloseApp}
+          updateState={updateState}
+          updateVersion={updatePrompt?.version}
+          onCheckForUpdates={() => checkForUpdates(true)}
+          onInstallUpdate={restartForUpdate}
         />
         {updateModal}
       </>
@@ -1190,6 +1201,10 @@ export default function App() {
           status={status}
           error={error}
           onClose={handleCloseApp}
+          updateState={updateState}
+          updateVersion={updatePrompt?.version}
+          onCheckForUpdates={() => checkForUpdates(true)}
+          onInstallUpdate={restartForUpdate}
           onLogin={async (employeeNumber, pin) => {
             setError("");
             let result;
@@ -2564,7 +2579,7 @@ function StatusPanel({
         <div><span>Branch Name</span><b>{branch?.name || terminal?.branchId || "Pending activation"}</b></div>
         <div><span>Terminal Name</span><b>{terminal?.terminalName || "Not registered"}</b></div>
         <div><span>Last Synchronization</span><b>{syncLabel(lastSyncAt)}</b></div>
-        <div><span>Current Version</span><b>v0.1.0</b></div>
+        <div><span>Current Version</span><b>v{APP_VERSION}</b></div>
       </div>
     </section>
   );
@@ -2575,7 +2590,7 @@ function Footer() {
     <footer className="auth-footer">
       <span>VisionPOS</span>
       <span>Business in Focus</span>
-      <span>Version 0.1.0</span>
+      <span>Version {APP_VERSION}</span>
       <span>Copyright {new Date().getFullYear()}</span>
     </footer>
   );
@@ -2660,12 +2675,59 @@ function LoginCard({ eyebrow, title, subtitle, children }: { eyebrow: string; ti
   );
 }
 
-function ActivationScreen({ onActivated, error, status, lastSyncAt, onClose }: {
+function PreLoginUpdateControl({
+  updateState,
+  updateVersion,
+  onCheckForUpdates,
+  onInstallUpdate
+}: {
+  updateState: CashierUpdateState;
+  updateVersion?: string;
+  onCheckForUpdates: () => Promise<void> | void;
+  onInstallUpdate: () => void;
+}) {
+  const checking = updateState === "downloading";
+  return (
+    <div className={`prelogin-update ${updateVersion ? "available" : ""}`}>
+      <div>
+        <span>VISIONPOS Cashier</span>
+        <b>v{APP_VERSION}</b>
+      </div>
+      {updateVersion ? (
+        <button type="button" onClick={onInstallUpdate}>
+          <Download size={16} />
+          Install v{updateVersion}
+        </button>
+      ) : (
+        <button type="button" disabled={checking} onClick={() => void onCheckForUpdates()}>
+          <Check size={16} />
+          {checking ? "Checking..." : "Check for updates"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ActivationScreen({
+  onActivated,
+  error,
+  status,
+  lastSyncAt,
+  onClose,
+  updateState,
+  updateVersion,
+  onCheckForUpdates,
+  onInstallUpdate
+}: {
   onActivated: (terminal: TerminalCredentials) => void;
   error: string;
   status: string;
   lastSyncAt?: number;
   onClose: () => void;
+  updateState: CashierUpdateState;
+  updateVersion?: string;
+  onCheckForUpdates: () => Promise<void> | void;
+  onInstallUpdate: () => void;
 }) {
   const [code, setCode] = useState("");
   const [terminalName, setTerminalName] = useState(`Till ${new Date().toLocaleDateString()}`);
@@ -2695,6 +2757,7 @@ function ActivationScreen({ onActivated, error, status, lastSyncAt, onClose }: {
         <div className="premium-input"><KeyRound size={20} /><input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCD-1234-EFGH" /></div>
         {message && <div className="error">{message}</div>}
         <button className="premium-primary" disabled={busy || code.length < 8} onClick={submit}>{busy ? <span className="spinner" /> : <ShieldCheck size={20} />}{busy ? "Registering..." : "Activate Terminal"}</button>
+        <PreLoginUpdateControl updateState={updateState} updateVersion={updateVersion} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
       </LoginCard>
     </AuthShell>
   );
@@ -2707,6 +2770,10 @@ function LoginScreen({
   status,
   error,
   onClose,
+  updateState,
+  updateVersion,
+  onCheckForUpdates,
+  onInstallUpdate,
   onLogin,
   onFingerprintLogin
 }: {
@@ -2716,6 +2783,10 @@ function LoginScreen({
   status: string;
   error: string;
   onClose: () => void;
+  updateState: CashierUpdateState;
+  updateVersion?: string;
+  onCheckForUpdates: () => Promise<void> | void;
+  onInstallUpdate: () => void;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
   onFingerprintLogin: (employeeNumber?: string) => Promise<void>;
 }) {
@@ -2771,6 +2842,7 @@ function LoginScreen({
           {fingerprintBusy ? <span className="spinner" /> : <Fingerprint size={22} />}
           {fingerprintBusy ? "Place finger on reader..." : "Sign in with fingerprint"}
         </button>
+        <PreLoginUpdateControl updateState={updateState} updateVersion={updateVersion} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
       </LoginCard>
     </AuthShell>
   );

@@ -225,7 +225,8 @@ const releaseNotes = [
   "Expired checkout sessions recover from the same verified fingerprint without requiring a second scan.",
   "Fingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.",
   "An unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.",
-  "The admin terminal dashboard now receives the installed cashier app version during normal terminal activity.",
+  "Updates are now detected and can be installed before cashier sign-in or terminal activation.",
+  "The native API bridge now forwards the installed cashier version so the admin terminal dashboard updates during normal activity.",
   "The cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.",
   "Native in-app updater package with automatic signature verification and restart."
 ];

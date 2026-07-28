@@ -319,7 +319,7 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
   await withTerminalAuth(
     request(app).get("/api/sync/pull?since=0"),
     state.terminal,
-    "2.0.58"
+    "2.0.59"
   )
     .expect(200);
 
@@ -330,7 +330,7 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
     .expect((res) => {
       const terminal = res.body.terminals.find((item) => item.uuid === state.terminal.uuid);
       assert.ok(terminal);
-      assert.equal(terminal.appVersion, "2.0.58");
+      assert.equal(terminal.appVersion, "2.0.59");
     });
 });
 
@@ -1956,7 +1956,7 @@ test("11. cloud login sessions can be validated and revoked", async () => {
 
 test("11b. revoking a terminal invalidates employee sessions from that terminal", async () => {
   const terminal = await activateTestTerminal("Session Revoke Till");
-  const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal, "2.0.58")
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal, "2.0.59")
     .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip" })
     .expect(200);
 
@@ -1964,7 +1964,7 @@ test("11b. revoking a terminal invalidates employee sessions from that terminal"
     .expect(200)
     .expect((res) => {
       const refreshed = res.body.terminals.find((item) => item.uuid === terminal.uuid);
-      assert.equal(refreshed?.appVersion, "2.0.58");
+      assert.equal(refreshed?.appVersion, "2.0.59");
     });
 
   await withAdminSession(request(app)

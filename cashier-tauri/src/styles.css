@@ -358,6 +358,65 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   font-size: 12px;
   font-weight: 750;
 }
+.prelogin-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148,163,184,.16);
+}
+.prelogin-update > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.prelogin-update span {
+  color: #94A3B8;
+  font-size: 11px;
+  font-weight: 800;
+}
+.prelogin-update b {
+  color: #E2E8F0;
+  font-size: 13px;
+}
+.prelogin-update button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid rgba(96,165,250,.3);
+  border-radius: 7px;
+  background: rgba(59,130,246,.12);
+  color: #BFDBFE;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prelogin-update.available button {
+  border-color: rgba(34,197,94,.32);
+  background: rgba(34,197,94,.13);
+  color: #BBF7D0;
+}
+.prelogin-update button:disabled {
+  opacity: .62;
+  cursor: wait;
+}
+@media (max-width: 520px) {
+  .prelogin-update {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .prelogin-update button {
+    width: 100%;
+  }
+}
 h1, h2, h3, p { margin-top: 0; }
 label {
   display: block;

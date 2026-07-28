@@ -417,6 +417,19 @@ fn print_thermal_receipt(receipt_text: String) -> Result<String, String> {
     print_raw_to_default_printer(&receipt_text)
 }
 
+fn is_allowed_api_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "x-terminal-uuid"
+            | "x-terminal-secret"
+            | "x-visionpos-app-version"
+            | "content-type"
+            | "accept"
+            | "cache-control"
+            | "pragma"
+    )
+}
+
 #[tauri::command]
 async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     if !req.path.starts_with("/api/") {
@@ -436,11 +449,7 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
 
     if let Some(headers) = req.headers {
         for (key, value) in headers {
-            let normalized = key.to_ascii_lowercase();
-            if matches!(
-                normalized.as_str(),
-                "x-terminal-uuid" | "x-terminal-secret" | "content-type" | "accept" | "cache-control" | "pragma"
-            ) {
+            if is_allowed_api_header(&key) {
                 request = request.header(key, value);
             }
         }
@@ -529,4 +538,16 @@ pub fn run() {
 
 fn main() {
     run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_api_header;
+
+    #[test]
+    fn native_api_bridge_forwards_terminal_version_header() {
+        assert!(is_allowed_api_header("X-VISIONPOS-App-Version"));
+        assert!(is_allowed_api_header("x-visionpos-app-version"));
+        assert!(!is_allowed_api_header("authorization"));
+    }
 }
