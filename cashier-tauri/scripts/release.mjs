@@ -221,6 +221,7 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Fingerprint operations are serialized to prevent overlapping scans; a busy SecuGen reader is retried immediately, then the stale WebAPI client is restarted once before VisionPOS reports a clear device-busy message.",
   "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
   "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",
   "Active cashier sessions now renew during normal use to prevent overnight login failures.",

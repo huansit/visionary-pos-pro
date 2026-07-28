@@ -60,6 +60,7 @@ static API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static API_ORIGIN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static API_ORIGIN_PREFERRED: AtomicBool = AtomicBool::new(false);
 static SECUGEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static SECUGEN_REQUEST_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
 fn api_client() -> Result<&'static reqwest::Client, String> {
     if let Some(client) = API_CLIENT.get() {
@@ -108,6 +109,10 @@ fn secugen_client() -> Result<&'static reqwest::Client, String> {
     SECUGEN_CLIENT
         .get()
         .ok_or_else(|| "secugen_client_initialization_failed".to_string())
+}
+
+fn secugen_request_lock() -> &'static tokio::sync::Mutex<()> {
+    SECUGEN_REQUEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 fn secugen_port_is_ready(port: u16) -> bool {
@@ -259,6 +264,20 @@ async fn try_secugen_request(
     }
 
     Err(last_error)
+}
+
+fn secugen_response_error_code(value: &Value) -> Option<i64> {
+    ["ErrorCode", "errorCode", "error_code"]
+        .into_iter()
+        .find_map(|key| {
+            let raw = value.get(key)?;
+            raw.as_i64()
+                .or_else(|| raw.as_str().and_then(|text| text.trim().parse::<i64>().ok()))
+        })
+}
+
+fn secugen_device_is_busy(value: &Value) -> bool {
+    secugen_response_error_code(value) == Some(59)
 }
 
 #[tauri::command]
@@ -553,6 +572,7 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     if !matches!(req.path.as_str(), "/SGIFPCapture" | "/SGIMatchScore") {
         return Err("invalid_secugen_path".into());
     }
+    let _request_guard = secugen_request_lock().lock().await;
 
     let request_timeout = if req.path == "/SGIFPCapture" {
         let capture_timeout = req
@@ -572,8 +592,20 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     }
 
     let client = secugen_client()?;
-    if let Ok(value) = try_secugen_request(client, &req, request_timeout).await {
-        return Ok(value);
+    match try_secugen_request(client, &req, request_timeout).await {
+        Ok(value) if !secugen_device_is_busy(&value) => return Ok(value),
+        Ok(_) => {
+            // ErrorCode 59 is a successful HTTP response from a busy reader.
+            // Give a concurrent capture time to release the device before
+            // restarting the vendor client.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if let Ok(value) = try_secugen_request(client, &req, request_timeout).await {
+                if !secugen_device_is_busy(&value) {
+                    return Ok(value);
+                }
+            }
+        }
+        Err(_) => {}
     }
 
     // A stale SecuGen process can keep its port open while no longer answering
@@ -582,9 +614,13 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     if !wait_for_secugen_client().await {
         return Err("secugen_webapi_start_timeout".into());
     }
-    try_secugen_request(client, &req, request_timeout)
+    let value = try_secugen_request(client, &req, request_timeout)
         .await
-        .map_err(|_| "secugen_webapi_unreachable".to_string())
+        .map_err(|_| "secugen_webapi_unreachable".to_string())?;
+    if secugen_device_is_busy(&value) {
+        return Err("secugen_device_busy".into());
+    }
+    Ok(value)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -618,7 +654,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_allowed_api_header, API_BASE_URL, API_HOST, API_ORIGIN_IPV4, SECUGEN_ENDPOINTS,
+        is_allowed_api_header, secugen_device_is_busy, secugen_response_error_code, API_BASE_URL,
+        API_HOST, API_ORIGIN_IPV4, SECUGEN_ENDPOINTS,
     };
 
     #[test]
@@ -632,6 +669,18 @@ mod tests {
     fn secugen_https_endpoints_preserve_vendor_localhost_host_name() {
         assert_eq!(SECUGEN_ENDPOINTS[0], ("https://localhost:8443", 8443));
         assert_eq!(SECUGEN_ENDPOINTS[2], ("https://localhost:8000", 8000));
+    }
+
+    #[test]
+    fn secugen_device_busy_accepts_numeric_and_string_error_codes() {
+        let numeric = serde_json::json!({ "ErrorCode": 59 });
+        let string = serde_json::json!({ "errorCode": "59" });
+        let ready = serde_json::json!({ "ErrorCode": 0 });
+
+        assert_eq!(secugen_response_error_code(&numeric), Some(59));
+        assert!(secugen_device_is_busy(&numeric));
+        assert!(secugen_device_is_busy(&string));
+        assert!(!secugen_device_is_busy(&ready));
     }
 
     #[test]

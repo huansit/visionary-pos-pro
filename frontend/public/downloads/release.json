@@ -1,11 +1,12 @@
 {
-  "version": "2.0.61",
+  "version": "2.0.62",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.61_x64-setup.exe",
-  "size": 3236584,
-  "sha512": "AC572B1FE6E171B87E4C5661D225CE105ACB584A11A537EFD614248281515E189B90E0A424C45B54C44A4D8CDE0A356EB370A3769D75769A2E5E226CA189EDCF",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.62_x64-setup.exe",
+  "size": 3237600,
+  "sha512": "AAAC8640827289389FC6EA2984F921EFE320A45587B26706071B0D32BFA173B5AD52E67D48CD037269869620086150F51D10E05FDF26E64E7DDB637770EC0AA7",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.61",
+    "VISIONPOS Cashier 2.0.62",
+    "Fingerprint operations are serialized to prevent overlapping scans; a busy SecuGen reader is retried immediately, then the stale WebAPI client is restarted once before VisionPOS reports a clear device-busy message.",
     "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
     "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",
     "Active cashier sessions now renew during normal use to prevent overnight login failures.",

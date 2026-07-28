@@ -515,6 +515,9 @@ function secugenErrorMessage(error: unknown) {
   if (message.includes("secugen_webapi_unreachable")) {
     return "SecuGen WebAPI Client could not be reached. VisionPOS tried to start it automatically; restart Windows and try again.";
   }
+  if (message.includes("secugen_device_busy") || message.includes("secugen_error_59")) {
+    return "Fingerprint reader is busy. Close any other fingerprint or Windows Hello window, then try again.";
+  }
   if (message.includes("capture_timeout")) return "Fingerprint capture timed out. Try again when the finger is ready.";
   if (message.includes("origin_required")) return "Fingerprint service rejected the application request. Restart VisionPOS and try again.";
   if (message.includes("not_connected")) return "Fingerprint reader not detected. Connect the SecuGen reader and try again.";
