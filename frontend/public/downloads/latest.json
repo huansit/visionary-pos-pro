@@ -1,11 +1,11 @@
 {
-  "version": "2.0.59",
-  "notes": "VISIONPOS Cashier 2.0.59\nActive cashier sessions now renew during normal use to prevent overnight login failures.\nExpired checkout sessions recover from the same verified fingerprint without requiring a second scan.\nFingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.\nAn unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.\nUpdates are now detected and can be installed before cashier sign-in or terminal activation.\nThe native API bridge now forwards the installed cashier version so the admin terminal dashboard updates during normal activity.\nThe cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-28T13:37:30.370Z",
+  "version": "2.0.60",
+  "notes": "VISIONPOS Cashier 2.0.60\nFingerprint capture again uses SecuGen's vendor localhost HTTPS endpoint, restoring reader compatibility on updated terminals.\nActive cashier sessions now renew during normal use to prevent overnight login failures.\nExpired checkout sessions recover from the same verified fingerprint without requiring a second scan.\nFingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.\nAn unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.\nUpdates are now detected and can be installed before cashier sign-in or terminal activation.\nThe native API bridge now forwards the installed cashier version so the admin terminal dashboard updates during normal activity.\nThe cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-28T16:40:09.098Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdlFZcE8vMmhIVk5Ja3RxTUlnZEtYVTZrMDVKTyt2WmpwbytYc2huYm4wY2Z4ekFuYVhYYkIxS0sya0FUQ3JYd1laNC9kTlk0Tjk2UzJrNThURHg3RFFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjQ1ODQ5CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU5X3g2NC1zZXR1cC5leGUKeEhuK1BKQnE4a2NtMnlDQlJSazBkYmNJL3NPcWFneVZ3N0RvaUdyRVpSb2l3cFZIMVo0RmZRMitvWmRhK3h1emRWWXZrQ240TjhjZmRrVnN6d2FlQlE9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.59_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdlJMdUlFbmp4MEpBVDVsMUJpSTdTaURaa0dXWWVHeWs0WCtnVmxNSkRNS2NaYTlLZmM3dWhXRkpmb3lMNXcyczFjbXVPY1dBWXpiVUxYeUo2RzlOSXc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjU2ODA4CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjYwX3g2NC1zZXR1cC5leGUKRC9nSGRZUmM5azdCUlZROW0vOStwSXdpSjgyaHlIZjdNTDQ3ZnUzd0tOT0JZOFo2VjkzdEtFLzFmTVRkY0syakwzYndWR2FLK0sxdXNUMTZOcERKQ2c9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.60_x64-setup.exe"
     }
   }
 }

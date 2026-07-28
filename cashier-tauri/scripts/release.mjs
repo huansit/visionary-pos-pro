@@ -221,6 +221,7 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Fingerprint capture again uses SecuGen's vendor localhost HTTPS endpoint, restoring reader compatibility on updated terminals.",
   "Active cashier sessions now renew during normal use to prevent overnight login failures.",
   "Expired checkout sessions recover from the same verified fingerprint without requiring a second scan.",
   "Fingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.",

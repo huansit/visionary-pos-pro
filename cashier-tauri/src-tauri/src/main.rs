@@ -46,9 +46,9 @@ struct SecugenRequest {
 }
 
 const SECUGEN_ENDPOINTS: [(&str, u16); 4] = [
-    ("https://127.0.0.1:8443", 8443),
+    ("https://localhost:8443", 8443),
     ("http://127.0.0.1:8000", 8000),
-    ("https://127.0.0.1:8000", 8000),
+    ("https://localhost:8000", 8000),
     ("http://127.0.0.1:8080", 8080),
 ];
 const NO_SECUGEN_ENDPOINT: usize = usize::MAX;
@@ -542,12 +542,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_api_header;
+    use super::{is_allowed_api_header, SECUGEN_ENDPOINTS};
 
     #[test]
     fn native_api_bridge_forwards_terminal_version_header() {
         assert!(is_allowed_api_header("X-VISIONPOS-App-Version"));
         assert!(is_allowed_api_header("x-visionpos-app-version"));
         assert!(!is_allowed_api_header("authorization"));
+    }
+
+    #[test]
+    fn secugen_https_endpoints_preserve_vendor_localhost_host_name() {
+        assert_eq!(SECUGEN_ENDPOINTS[0], ("https://localhost:8443", 8443));
+        assert_eq!(SECUGEN_ENDPOINTS[2], ("https://localhost:8000", 8000));
     }
 }
