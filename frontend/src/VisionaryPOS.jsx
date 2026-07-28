@@ -5212,21 +5212,13 @@ function invoiceReceiptStatus(inv, cur) {
   if (Number(inv?.paidCents || 0) > 0) return `Part paid - balance ${fmt(outstanding, cur)}.`;
   return "Open invoice - not paid at checkout.";
 }
-function receiptPageHeightMm(inv) {
-  const items = normalizedReceiptItems(inv);
-  const itemLines = items.reduce((total, item) => total + Math.max(2, Math.ceil(item.name.length / 30)), 0);
-  const noteLines = inv?.note ? Math.max(1, Math.ceil(String(inv.note).length / 34)) : 0;
-  return Math.max(120, Math.min(1000, 78 + itemLines * 7 + noteLines * 6));
-}
 function invoiceReceiptPrintHtml(receipts, cur) {
-  const pageRules = receipts.map(({ inv }, index) => `@page receipt-${index}{size:80mm ${receiptPageHeightMm(inv)}mm;margin:0}`).join("");
   const sections = receipts.map(({ inv, store }, index) => {
     const items = normalizedReceiptItems(inv);
     const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.qty)} x ${escapeReceiptHtml(fmt(item.priceCents, cur))}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
     return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(new Date(inv.ts).toLocaleString())}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p><p>Thank you.</p></main>`;
   }).join("");
-  return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style>
-${pageRules}
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style id="receipt-page-rules"></style><style>
 *{box-sizing:border-box}html,body{margin:0;width:80mm;background:#fff;color:#000}body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.35;overflow-wrap:anywhere;writing-mode:horizontal-tb}
 .receipt{width:80mm;min-height:1px;padding:3mm;break-after:page;page-break-after:always}.receipt:last-child{break-after:auto;page-break-after:auto}
 ${receipts.map((_, index) => `.receipt-${index}{page:receipt-${index}}`).join("")}
@@ -5249,6 +5241,13 @@ function printInvoiceReceipts(receipts, cur) {
     if (!printWindow || !printDocument) { cleanup(); return; }
     await printDocument.fonts?.ready.catch(() => undefined);
     await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+    const measuredPageRules = Array.from(printDocument.querySelectorAll(".receipt")).map((receipt, index) => {
+      const heightMm = Math.max(1, Math.ceil(receipt.getBoundingClientRect().height * 25.4 / 96 + 1));
+      return `@page receipt-${index}{size:80mm ${heightMm}mm;margin:0}`;
+    }).join("");
+    const pageRuleElement = printDocument.getElementById("receipt-page-rules");
+    if (pageRuleElement) pageRuleElement.textContent = measuredPageRules;
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
     printWindow.addEventListener("afterprint", cleanup, { once: true });
     printWindow.focus();
     printWindow.print();
