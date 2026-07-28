@@ -1318,6 +1318,7 @@ router.post("/fingerprints/templates", requireDevice, async (req, res) => {
   await ensureAuthSchema();
   const requestedUserId = String(req.body?.userId || "").trim();
   try {
+    const userFilter = requestedUserId ? " AND f.user_id = $1" : "";
     const result = await q(
       isMySql
         ? `SELECT f.user_id AS userId, f.finger_template AS fingerTemplate, f.device_serial AS deviceSerial,
@@ -1325,25 +1326,35 @@ router.post("/fingerprints/templates", requireDevice, async (req, res) => {
             FROM user_fingerprints f
              JOIN credentials c ON c.id = f.user_id
             WHERE c.status = 'active'
-              AND ($1 IS NULL OR f.user_id = $2)`
+              ${userFilter}`
         : `SELECT f.user_id AS "userId", f.finger_template AS "fingerTemplate", f.device_serial AS "deviceSerial",
                   c.kind, c.name, c.email, c.phone, c.branch_id AS "branchId", c.rights, c.status
              FROM user_fingerprints f
              JOIN credentials c ON c.id = f.user_id
             WHERE c.status = 'active'
-              AND ($1 IS NULL OR f.user_id = $2)`,
-      [requestedUserId || null, requestedUserId || null]
+              ${userFilter}`,
+      requestedUserId ? [requestedUserId] : []
     );
     const branchId = req.deviceBranchId || null;
     const visibleRows = branchId
       ? result.rows.filter((row) => row.kind === "admin" || (row.branchId || row.branch_id || null) === branchId)
       : result.rows;
-    const templates = visibleRows.map((row) => ({
-      userId: row.userId,
-      template: decryptFingerprintTemplate(row.fingerTemplate),
-      deviceSerial: row.deviceSerial || "",
-      account: publicAccount({ ...row, id: row.userId, branch_id: row.branchId }),
-    }));
+    const templates = visibleRows.flatMap((row) => {
+      try {
+        return [{
+          userId: row.userId,
+          template: decryptFingerprintTemplate(row.fingerTemplate),
+          deviceSerial: row.deviceSerial || "",
+          account: publicAccount({ ...row, id: row.userId, branch_id: row.branchId }),
+        }];
+      } catch (error) {
+        console.warn("skipping unreadable fingerprint template:", {
+          userId: row.userId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
+    });
     res.json({ ok: true, templates });
   } catch (error) {
     console.error("fingerprint template list failed:", error);

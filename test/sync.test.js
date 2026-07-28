@@ -2208,6 +2208,34 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     .post("/api/auth/fingerprints/checkout")
     .send({ userId: state.cashierId, sessionToken: renewedLogin.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
+
+  await withAdminSession(request(app)
+    .post("/api/auth/users")
+    .send({
+      id: "unreadable-fingerprint",
+      name: "Unreadable Fingerprint",
+      role: "Cashier",
+      pin: "8811",
+      branchId: "b_sip",
+      rights: ["sell"],
+    }))
+    .expect(200);
+  await pool.query(
+    `INSERT INTO user_fingerprints
+      (id, user_id, finger_template, finger_template_hash, device_serial, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now(), now())`,
+    ["fp-unreadable", "unreadable-fingerprint", "v1:invalid", "invalid", "HAMSTER-BAD"]
+  );
+
+  await request(app)
+    .post("/api/auth/fingerprints/templates")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({})
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.templates.some((row) => row.userId === "unreadable-fingerprint"), false);
+      assert.equal(res.body.templates.some((row) => row.userId === state.cashierId), true);
+    });
 });
 
 test("15. sync stream notifies clients after a committed push", async () => {
