@@ -1215,17 +1215,18 @@ async function logoutSessionToken(sessionToken, options = {}) {
     });
   } catch (_) {}
 }
-// SecuGen WebAPI uses HTTPS on port 8000 by default. Keep the legacy ports as
-// fallbacks for terminals whose local client was installed with custom ports.
+// Most current SecuGen WebAPI installations listen on 8443. Keep alternate
+// ports as fallbacks and remember the working endpoint after the first call.
 const SECUGEN_BASES = [
+  "https://localhost:8443",
+  "https://127.0.0.1:8443",
   "http://127.0.0.1:8000",
   "http://localhost:8000",
   "https://localhost:8000",
   "https://127.0.0.1:8000",
-  "https://localhost:8443",
-  "https://127.0.0.1:8443",
   "http://localhost:8080",
 ];
+let secugenPreferredBase = "";
 const SECUGEN_CAPTURE_PATH = "/SGIFPCapture";
 const SECUGEN_MATCH_PATH = "/SGIMatchScore";
 const SECUGEN_TEMPLATE_FORMAT = "ISO";
@@ -1243,7 +1244,10 @@ function secugenMessage(error) {
 async function secugenPost(path, params, timeoutMs = 12000) {
   const body = new URLSearchParams(params);
   let lastError = null;
-  for (const base of SECUGEN_BASES) {
+  const bases = secugenPreferredBase
+    ? [secugenPreferredBase, ...SECUGEN_BASES.filter((base) => base !== secugenPreferredBase)]
+    : SECUGEN_BASES;
+  for (const base of bases) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -1255,8 +1259,10 @@ async function secugenPost(path, params, timeoutMs = 12000) {
       });
       const text = await response.text();
       if (!response.ok) throw new Error("webapi_http_" + response.status);
+      secugenPreferredBase = base;
       try { return JSON.parse(text); } catch (_) { return Object.fromEntries(new URLSearchParams(text)); }
     } catch (error) {
+      if (base === secugenPreferredBase) secugenPreferredBase = "";
       lastError = error;
     } finally {
       window.clearTimeout(timeout);
@@ -10413,17 +10419,17 @@ function TerminalsTab({ data, isAdmin }) {
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const currentBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
   const [activation, setActivation] = useState({ terminalName: "", code: "" });
-  const loadTerminals = async () => {
+  const loadTerminals = async (silent = false) => {
     if (!isAdmin) return;
-    setBusy(true);
+    if (!silent) setBusy(true);
     try {
       const result = await authGet("/api/auth/terminals", { session: true });
       setTerminals(result.terminals || []);
-      setMsg("");
+      if (!silent) setMsg("");
     } catch (error) {
-      setMsg("Could not load terminals: " + error.message);
+      if (!silent) setMsg("Could not load terminals: " + error.message);
     } finally {
-      setBusy(false);
+      if (!silent) setBusy(false);
     }
   };
   const generateActivation = async () => {
@@ -10453,7 +10459,12 @@ function TerminalsTab({ data, isAdmin }) {
       setBusy(false);
     }
   };
-  useEffect(() => { loadTerminals(); }, [isAdmin]); // eslint-disable-line
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    loadTerminals();
+    const refreshTimer = window.setInterval(() => loadTerminals(true), 15000);
+    return () => window.clearInterval(refreshTimer);
+  }, [isAdmin]); // eslint-disable-line
   if (!isAdmin) return <div><PageHead title="Terminals" sub="Only the owner admin can manage cashier terminals." /><div className="notice">Sign in as the owner admin to generate terminal activation codes.</div></div>;
   return (
     <div>

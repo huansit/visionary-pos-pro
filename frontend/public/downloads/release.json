@@ -1,14 +1,17 @@
 {
-  "version": "2.0.57",
+  "version": "2.0.58",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.57_x64-setup.exe",
-  "size": 3178213,
-  "sha512": "F60A430F4FE3063A82AC2984C8D47B8D59CF53D490AA6B7AB870E701E5973BFEB0BCA4DCD102C022712C422CBBA6F58C81EDFE81B2692F703DD0D800C9524539",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.58_x64-setup.exe",
+  "size": 3228328,
+  "sha512": "6096BF626D6907E56F99164FF3875B4B285DF8980B1B6F526D75D86D3E19EFCBE263928D8811D03141FD2351F813B3AA2C6A4DABBF1E40E0BC7105DA32AEBF79",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.57",
-    "Cashier fingerprint login and checkout now use a shorter, warmed fast path.",
-    "Fingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.",
-    "SecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.",
+    "VISIONPOS Cashier 2.0.58",
+    "Active cashier sessions now renew during normal use to prevent overnight login failures.",
+    "Expired checkout sessions recover from the same verified fingerprint without requiring a second scan.",
+    "Fingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.",
+    "An unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.",
+    "The admin terminal dashboard now receives the installed cashier app version during normal terminal activity.",
+    "The cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

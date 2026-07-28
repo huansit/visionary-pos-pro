@@ -68,10 +68,11 @@ function withAdminSession(req) {
   return req.set("X-Session-Token", state.adminSessionToken);
 }
 
-function withTerminalAuth(req, terminal) {
-  return req
+function withTerminalAuth(req, terminal, appVersion = "") {
+  const authenticated = req
     .set("X-Terminal-UUID", terminal.uuid)
     .set("X-Terminal-Secret", terminal.secret);
+  return appVersion ? authenticated.set("X-VISIONPOS-App-Version", appVersion) : authenticated;
 }
 
 test("public owner registration is disabled", async () => {
@@ -315,10 +316,11 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
   assert.ok(activated.body.terminalSecret);
   state.terminal = { ...activated.body.terminal, secret: activated.body.terminalSecret };
 
-  await request(app)
-    .get("/api/sync/pull?since=0")
-    .set("X-Terminal-UUID", state.terminal.uuid)
-    .set("X-Terminal-Secret", state.terminal.secret)
+  await withTerminalAuth(
+    request(app).get("/api/sync/pull?since=0"),
+    state.terminal,
+    "2.0.58"
+  )
     .expect(200);
 
   await withAdminSession(request(app)
@@ -326,7 +328,9 @@ test("1b. activates a desktop terminal and authenticates sync with terminal head
     )
     .expect(200)
     .expect((res) => {
-      assert.ok(res.body.terminals.some((terminal) => terminal.uuid === state.terminal.uuid));
+      const terminal = res.body.terminals.find((item) => item.uuid === state.terminal.uuid);
+      assert.ok(terminal);
+      assert.equal(terminal.appVersion, "2.0.58");
     });
 });
 
@@ -1919,6 +1923,11 @@ test("11. cloud login sessions can be validated and revoked", async () => {
   const token = login.body.sessionToken;
   assert.ok(token);
 
+  await pool.query(
+    "UPDATE user_sessions SET expires_at = now() + interval '1 minute' WHERE id = $1",
+    [login.body.sessionId]
+  );
+
   await request(app)
     .post("/api/auth/session")
     .send({ sessionToken: token })
@@ -1927,6 +1936,12 @@ test("11. cloud login sessions can be validated and revoked", async () => {
       assert.equal(res.body.account.id, state.cashierId);
       assert.equal(res.body.account.status, "active");
     });
+
+  const renewed = await pool.query("SELECT expires_at FROM user_sessions WHERE id = $1", [login.body.sessionId]);
+  assert.ok(
+    new Date(renewed.rows[0].expires_at).getTime() > Date.now() + 13 * 24 * 60 * 60 * 1000,
+    "active cashier sessions should receive a fresh rolling expiry"
+  );
 
   await request(app)
     .post("/api/auth/logout")
@@ -1941,9 +1956,16 @@ test("11. cloud login sessions can be validated and revoked", async () => {
 
 test("11b. revoking a terminal invalidates employee sessions from that terminal", async () => {
   const terminal = await activateTestTerminal("Session Revoke Till");
-  const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal)
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), terminal, "2.0.58")
     .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip" })
     .expect(200);
+
+  await withAdminSession(request(app).get("/api/auth/terminals"))
+    .expect(200)
+    .expect((res) => {
+      const refreshed = res.body.terminals.find((item) => item.uuid === terminal.uuid);
+      assert.equal(refreshed?.appVersion, "2.0.58");
+    });
 
   await withAdminSession(request(app)
     .post(`/api/auth/terminals/${terminal.uuid}`)
@@ -2041,9 +2063,21 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     .expect(200);
   assert.ok(login.body.sessionToken);
 
+  await pool.query("UPDATE user_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1", [login.body.sessionId]);
+
   await request(app)
     .post("/api/auth/fingerprints/checkout")
     .send({ userId: state.cashierId, sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .expect(401)
+    .expect((res) => assert.equal(res.body.error, "invalid_session"));
+
+  const renewedLogin = await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
+    .send({ userId: state.cashierId, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .expect(200);
+
+  await request(app)
+    .post("/api/auth/fingerprints/checkout")
+    .send({ userId: state.cashierId, sessionToken: renewedLogin.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
     .expect(200);
 });
 

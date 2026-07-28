@@ -696,6 +696,24 @@ export default function App() {
     return dayClosedAtRef.current;
   }
 
+  async function resetInvalidTerminalRegistration() {
+    await clearTerminalCredentials();
+    clearFingerprintTemplateCache();
+    setTerminal(null);
+    setAccount(null);
+    setSessionToken("");
+    setBranches([]);
+    setProducts([]);
+    setInvoices([]);
+    setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
+    dayClosedAtRef.current = null;
+    setDayClosedAt(null);
+    resetCashierSessionUi();
+    catalogSyncPending.current = false;
+    setStatus("Terminal registration reset.");
+    setError("This terminal is no longer registered. Enter a new activation code.");
+  }
+
   useEffect(() => {
     loadTerminalCredentials().then((stored) => {
       const cached = loadCatalog();
@@ -936,21 +954,7 @@ export default function App() {
           setError("");
         } catch (err) {
           if (isTerminalRegistrationError(err)) {
-            await clearTerminalCredentials();
-            setTerminal(null);
-            setAccount(null);
-            setSessionToken("");
-            setBranches([]);
-            setProducts([]);
-            setInvoices([]);
-            setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
-            dayClosedAtRef.current = null;
-            setDayClosedAt(null);
-            setCart({});
-            setCustomerName("");
-            catalogSyncPending.current = false;
-            setStatus("Terminal registration reset.");
-            setError("This terminal is no longer registered. Enter a new activation code.");
+            await resetInvalidTerminalRegistration();
             return;
           }
           if (!options.silent) setStatus("Using last cached catalog.");
@@ -1083,7 +1087,14 @@ export default function App() {
 
   async function issueInvoiceAfterFingerprint() {
     if (!terminal || !account) return;
-    await issueInvoiceAfterAuthorization(() => verifyCashierFingerprint(terminal, account, sessionToken));
+    await issueInvoiceAfterAuthorization(async () => {
+      const verification = await verifyCashierFingerprint(terminal, account, sessionToken);
+      if (verification.renewedSessionToken) {
+        setSessionToken(verification.renewedSessionToken);
+        if (verification.account) setAccount(verification.account);
+        setStatus("Cashier session renewed.");
+      }
+    });
   }
 
   async function issueInvoiceAfterSupervisorPin(pin: string) {
@@ -1181,7 +1192,13 @@ export default function App() {
           onClose={handleCloseApp}
           onLogin={async (employeeNumber, pin) => {
             setError("");
-            const result = await loginCashier(terminal, employeeNumber, pin);
+            let result;
+            try {
+              result = await loginCashier(terminal, employeeNumber, pin);
+            } catch (err) {
+              if (isTerminalRegistrationError(err)) await resetInvalidTerminalRegistration();
+              throw err;
+            }
             resetCashierSessionUi();
             setAccount(result.account);
             setSessionToken(result.sessionToken);
@@ -1193,7 +1210,13 @@ export default function App() {
           onFingerprintLogin={async (employeeNumber) => {
             setError("");
             const preferredUserId = String(employeeNumber || "").trim() || readLastFingerprintUserId(terminal);
-            const result = await loginCashierWithFingerprint(terminal, preferredUserId || undefined);
+            let result;
+            try {
+              result = await loginCashierWithFingerprint(terminal, preferredUserId || undefined);
+            } catch (err) {
+              if (isTerminalRegistrationError(err)) await resetInvalidTerminalRegistration();
+              throw err;
+            }
             resetCashierSessionUi();
             setAccount(result.account);
             setSessionToken(result.sessionToken);

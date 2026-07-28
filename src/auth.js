@@ -5,6 +5,10 @@ import { isMySql, q } from "./db.js";
 import { ensureEnvironmentSchema, getActiveEnvironmentMode, sameEnvironment } from "./environment.js";
 
 const MANAGEMENT_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
+const configuredSessionDays = Number.parseInt(process.env.AUTH_SESSION_DAYS || "14", 10);
+const SESSION_DAYS = Number.isFinite(configuredSessionDays)
+  ? Math.max(1, Math.min(90, configuredSessionDays))
+  : 14;
 
 function hashTerminalSecret(secret) {
   return crypto.createHash("sha256").update(String(secret || ""), "utf8").digest("hex");
@@ -22,6 +26,22 @@ function sameHash(a, b) {
 
 function isActiveStatus(status) {
   return String(status || "ACTIVE").toUpperCase() === "ACTIVE";
+}
+
+function terminalAppVersion(req) {
+  return String(req.get("x-visionpos-app-version") || "").trim().slice(0, 80);
+}
+
+export async function touchTerminalPresence(req, deviceId) {
+  const appVersion = terminalAppVersion(req);
+  if (appVersion) {
+    await q(
+      `UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"}, app_version = $2 WHERE device_id = $1`,
+      [deviceId, appVersion]
+    );
+    return;
+  }
+  await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [deviceId]);
 }
 
 function sessionTokenFromRequest(req) {
@@ -86,7 +106,7 @@ async function requireTerminalHeaders(req) {
     return { error: "terminal_not_authorized" };
   }
 
-  await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [terminal.device_id ?? terminal.deviceId]);
+  await touchTerminalPresence(req, terminal.device_id ?? terminal.deviceId);
   return terminal;
 }
 
@@ -128,7 +148,12 @@ export async function loadUserSession(token) {
       return null;
     }
   }
-  await q(`UPDATE user_sessions SET last_seen = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.session_id ?? row.sessionId]);
+  await q(
+    isMySql
+      ? "UPDATE user_sessions SET last_seen = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL $2 DAY) WHERE id = $1"
+      : "UPDATE user_sessions SET last_seen = now(), expires_at = now() + ($2 || ' days')::interval WHERE id = $1",
+    [row.session_id ?? row.sessionId, SESSION_DAYS]
+  );
   return { sessionId: row.session_id ?? row.sessionId, account: publicAccount(row) };
 }
 

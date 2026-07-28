@@ -1,11 +1,11 @@
 {
-  "version": "2.0.57",
-  "notes": "VISIONPOS Cashier 2.0.57\nCashier fingerprint login and checkout now use a shorter, warmed fast path.\nFingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.\nSecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.\nNative in-app updater package with automatic signature verification and restart.",
-  "pub_date": "2026-07-26T18:35:48.453Z",
+  "version": "2.0.58",
+  "notes": "VISIONPOS Cashier 2.0.58\nActive cashier sessions now renew during normal use to prevent overnight login failures.\nExpired checkout sessions recover from the same verified fingerprint without requiring a second scan.\nFingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.\nAn unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.\nThe admin terminal dashboard now receives the installed cashier app version during normal terminal activity.\nThe cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.\nNative in-app updater package with automatic signature verification and restart.",
+  "pub_date": "2026-07-28T13:08:13.604Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdmJveU5GdmZvNkxmaTVFd2NsY2FxMXc3ei83Zms3d1lLcjdZNlFrTmhyTlJuSithaXgvdXJWNUpPVW5FRm9uVHBVSm9ITG5jakY3Um9pWXJvQjNhWGdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MDkwOTQ3CWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU3X3g2NC1zZXR1cC5leGUKdjVWRW10MUNJV3pGUG1sdGw2Z2hPZWNHQ1YwWGRBU2xjTEt5RE5Jdm5zYVlvZXhua3E2ZUJPNkZrWXdNdm4zTFhXUW5GUC8xcFZmcUdBNnNMRTZhQ2c9PQo=",
-      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.57_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSL0ZwZXBIZEVWdlEzNHZMUU9tRTBjSGl4NW45Nm5DaE5kcUhlNHc2bCt6eVpwUTYzaU5rZGh4VHhhMDhia3dobVBkNTcrK2V4MWVRNURSN0VGOWdYYTZXYmNweG1qSFFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg1MjQ0MDkyCWZpbGU6VklTSU9OUE9TIENhc2hpZXJfMi4wLjU4X3g2NC1zZXR1cC5leGUKMnF5d05Ta3A1c0ZTdEM0MUhPZUVKYjFzVkFnczJHSGdmdXdDVHVzSDFFWndrUXZrNitKOUJjV2luNDFubVBaWHVlYWp3bS80aTROclRrQklxb3ZEQnc9PQo=",
+      "url": "https://visionarypos.cloud/downloads/VISIONPOS-Cashier_2.0.58_x64-setup.exe"
     }
   }
 }

@@ -128,7 +128,8 @@ function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
     "Cache-Control": "no-store",
     "Pragma": "no-cache",
     "X-Terminal-UUID": terminal.uuid,
-    "X-Terminal-Secret": terminal.terminalSecret
+    "X-Terminal-Secret": terminal.terminalSecret,
+    "X-VISIONPOS-App-Version": APP_VERSION
   };
 }
 
@@ -504,7 +505,11 @@ function secugenErrorMessage(error: unknown) {
   if (message.includes("secugen_webapi_not_installed")) {
     return "SecuGen WebAPI Client is not installed on this terminal. Install it once, then VisionPOS will start it automatically.";
   }
-  if (message.includes("secugen_webapi_start_failed") || message.includes("secugen_webapi_start_timeout")) {
+  if (
+    message.includes("secugen_webapi_start_failed")
+    || message.includes("secugen_webapi_start_timeout")
+    || message.includes("secugen_webapi_restart_failed")
+  ) {
     return "VisionPOS could not start the installed SecuGen WebAPI Client. Restart Windows once, then try again.";
   }
   if (message.includes("secugen_webapi_unreachable")) {
@@ -649,6 +654,21 @@ async function matchFingerprint(
     fingerprintTemplates(terminal, preferredUserId)
   ]);
   if (!templates.length) {
+    if (preferredUserId && options.fallbackToAll) {
+      const fallbackTemplates = await fingerprintTemplates(terminal, undefined);
+      const fallbackMatch = await bestFingerprintMatch(capture.template, fallbackTemplates);
+      if (fallbackMatch) {
+        fingerprintPerf("match-complete-after-empty-preference", startedAt, {
+          userId: fallbackMatch.userId,
+          preferredUserId
+        });
+        return { capture, match: fallbackMatch };
+      }
+      if (fallbackTemplates.length) {
+        await recordFingerprintFailure(terminal, capture, "fingerprint_not_recognized", preferredUserId);
+        throw new Error(secugenErrorMessage(new Error("not_recognized")));
+      }
+    }
     await recordFingerprintFailure(terminal, capture, "fingerprint_not_enrolled", preferredUserId);
     throw new Error(secugenErrorMessage(new Error("not_enrolled")));
   }
@@ -704,13 +724,20 @@ export async function loginCashierWithFingerprint(terminal: TerminalCredentials,
     captureTimeoutMs: FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS,
     retryFresh: true
   });
+  return issueFingerprintSession(terminal, match.userId, capture.deviceSerial);
+}
+
+function issueFingerprintSession(terminal: TerminalCredentials, userId: string, deviceSerial: string): Promise<{
+  account: Account;
+  sessionToken: string;
+}> {
   return jsonFetch("/api/auth/fingerprints/login", {
     method: "POST",
     headers: terminalHeaders(terminal),
     body: JSON.stringify({
-      userId: match.userId,
+      userId,
       branchId: terminal.branchId,
-      deviceSerial: capture.deviceSerial,
+      deviceSerial,
       deviceName: terminal.terminalName
     })
   });
@@ -720,21 +747,35 @@ export async function verifyCashierFingerprint(
   terminal: TerminalCredentials,
   account: Account,
   sessionToken: string
-): Promise<void> {
-  const { capture } = await matchFingerprint(terminal, account.id, {
+): Promise<{ renewedSessionToken?: string; account?: Account }> {
+  const { capture, match } = await matchFingerprint(terminal, account.id, {
     captureTimeoutMs: FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS,
     retryFresh: false
   });
-  await jsonFetch("/api/auth/fingerprints/checkout", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({
-      sessionToken,
-      userId: account.id,
-      branchId: terminal.branchId,
-      deviceSerial: capture.deviceSerial
-    })
-  });
+  try {
+    await jsonFetch("/api/auth/fingerprints/checkout", {
+      method: "POST",
+      headers: terminalHeaders(terminal),
+      body: JSON.stringify({
+        sessionToken,
+        userId: account.id,
+        branchId: terminal.branchId,
+        deviceSerial: capture.deviceSerial
+      })
+    });
+    return {};
+  } catch (error) {
+    const sessionExpired = error instanceof ApiRequestError
+      && error.status === 401
+      && error.message === "invalid_session";
+    if (!sessionExpired) throw error;
+
+    // The finger already matched this cashier locally. Reuse that proof to
+    // recover an expired overnight session without requiring a second scan.
+    const renewed = await issueFingerprintSession(terminal, match.userId, capture.deviceSerial);
+    if (renewed.account.id !== account.id) throw new Error("fingerprint_account_mismatch");
+    return { renewedSessionToken: renewed.sessionToken, account: renewed.account };
+  }
 }
 
 export async function verifyCheckoutWithSupervisorPin(

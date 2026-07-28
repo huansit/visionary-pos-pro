@@ -2,14 +2,17 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { isMySql, q } from "../db.js";
-import { requireAdminOrSupervisor, requireDevice, requireOwnerOrAdmin } from "../auth.js";
+import { requireAdminOrSupervisor, requireDevice, requireOwnerOrAdmin, touchTerminalPresence } from "../auth.js";
 import { ensureEnvironmentSchema, getActiveEnvironmentMode, sameEnvironment } from "../environment.js";
 import { signDeviceToken, verifyDeviceToken } from "../token.js";
 import { generateCode, normalizeTarget, sendPasswordResetEmail, sendVerificationCode, validTarget } from "../verification.js";
 
 const router = Router();
 const ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || "12", 10);
-const SESSION_DAYS = Math.max(1, Math.min(90, parseInt(process.env.AUTH_SESSION_DAYS || "14", 10)));
+const configuredSessionDays = Number.parseInt(process.env.AUTH_SESSION_DAYS || "14", 10);
+const SESSION_DAYS = Number.isFinite(configuredSessionDays)
+  ? Math.max(1, Math.min(90, configuredSessionDays))
+  : 14;
 const SINGLE_SESSION = process.env.AUTH_SINGLE_SESSION === "1";
 let authSchemaReady = null;
 const FINGERPRINT_ALGO = "aes-256-gcm";
@@ -178,7 +181,7 @@ async function verifiedTerminalFromRequest(req, options = {}) {
     if (!terminal || terminal.revoked_at || terminalStatus(terminal.status) !== "ACTIVE") return { error: "terminal_not_authorized" };
     if (!sameEnvironment(terminal.environment, activeEnvironment)) return { error: "terminal_environment_mismatch" };
     if (!safeHashEqual(terminalSecretHash(terminalSecret), terminal.terminal_secret_hash ?? terminal.terminalSecretHash)) return { error: "terminal_not_authorized" };
-    await q(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [terminal.device_id ?? terminal.deviceId]);
+    await touchTerminalPresence(req, terminal.device_id ?? terminal.deviceId);
     return {
       deviceId: terminal.device_id ?? terminal.deviceId,
       terminalUuid,
@@ -277,7 +280,7 @@ function uniqueViolation(error) {
 
 async function ensureAuthSchema() {
   if (authSchemaReady) return authSchemaReady;
-  authSchemaReady = (async () => {
+  const initialization = (async () => {
     const pgMem = process.env.PG_MEM === "1";
     const statements = isMySql
       ? [
@@ -524,7 +527,13 @@ async function ensureAuthSchema() {
       }
     }
   })();
-  return authSchemaReady;
+  authSchemaReady = initialization;
+  try {
+    await initialization;
+  } catch (error) {
+    if (authSchemaReady === initialization) authSchemaReady = null;
+    throw error;
+  }
 }
 
 async function audit(event, req, userId = null, detail = {}) {
@@ -605,7 +614,12 @@ async function accountForSessionToken(token) {
       return null;
     }
   }
-  await q(`UPDATE user_sessions SET last_seen = ${isMySql ? "NOW()" : "now()"} WHERE id = $1`, [row.session_id ?? row.sessionId]);
+  await q(
+    isMySql
+      ? "UPDATE user_sessions SET last_seen = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL $2 DAY) WHERE id = $1"
+      : "UPDATE user_sessions SET last_seen = now(), expires_at = now() + ($2 || ' days')::interval WHERE id = $1",
+    [row.session_id ?? row.sessionId, SESSION_DAYS]
+  );
   return { sessionId: row.session_id ?? row.sessionId, account: publicAccount(row) };
 }
 
@@ -1417,10 +1431,10 @@ router.post("/fingerprints/failed", async (req, res) => {
 });
 
 router.post("/login", async (req, res) => {
-  await ensureAuthSchema();
   const { identifier, password, pin, branchId } = req.body || {};
   const loginCode = String(req.body?.code || req.body?.otpCode || "").trim();
   try {
+    await ensureAuthSchema();
     if (pin) {
       const terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
       if (terminal.error) {

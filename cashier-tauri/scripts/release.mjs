@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -10,6 +11,8 @@ const keyPath = path.join(tauriDir, "gen", "visionpos-updater.key");
 const nsisDir = path.join(tauriDir, "target", "release", "bundle", "nsis");
 const outDir = path.join(root, "release-out");
 const frontendDownloadsDir = path.resolve(root, "..", "frontend", "public", "downloads");
+const trustCertificatePath = path.join(root, "signing", "visionpos-internal-code-signing.cer");
+const trustInstallerPath = path.join(root, "scripts", "install-internal-trust.ps1");
 const downloadsBaseUrl = process.env.VISIONPOS_DOWNLOADS_BASE_URL || "https://visionarypos.cloud/downloads";
 const platform = "windows-x86_64";
 
@@ -56,9 +59,16 @@ if (!fs.existsSync(tauriConfigPath)) {
 
 const tauriConfig = readJson(tauriConfigPath);
 const version = tauriConfig.version;
+const expectedAuthenticodeThumbprint = String(
+  tauriConfig.bundle?.windows?.certificateThumbprint || ""
+).replace(/\s/g, "").toUpperCase();
 
 if (!version) {
   fail("src-tauri/tauri.conf.json does not contain a version.");
+}
+
+if (!/^[A-F0-9]{40}$/.test(expectedAuthenticodeThumbprint)) {
+  fail("bundle.windows.certificateThumbprint must contain one SHA-1 certificate thumbprint.");
 }
 
 if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
@@ -72,6 +82,111 @@ const npmCli = process.env.npm_execpath;
 if (!npmCli || !fs.existsSync(npmCli)) {
   fail("npm CLI path is unavailable. Run this script through `npm run release`.");
 }
+
+function powershellJson(command) {
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+    cwd: root,
+    encoding: "utf8",
+    shell: false
+  });
+  if (result.status !== 0) {
+    fail(String(result.stderr || result.stdout || "PowerShell command failed.").trim());
+  }
+  try {
+    return JSON.parse(String(result.stdout).trim());
+  } catch {
+    fail(`PowerShell returned invalid JSON: ${String(result.stdout).trim()}`);
+  }
+}
+
+function assertSigningCertificateReady() {
+  if (process.platform !== "win32") {
+    fail("Windows releases must be built and Authenticode-signed on Windows.");
+  }
+  const certificate = powershellJson([
+    `$certificate = Get-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${expectedAuthenticodeThumbprint}' -ErrorAction Stop`,
+    "[ordered]@{ HasPrivateKey = $certificate.HasPrivateKey; NotAfter = $certificate.NotAfter.ToUniversalTime().ToString('o'); Subject = $certificate.Subject; Thumbprint = $certificate.Thumbprint } | ConvertTo-Json -Compress"
+  ].join("; "));
+  if (!certificate.HasPrivateKey) {
+    fail(`Signing certificate ${expectedAuthenticodeThumbprint} does not have its private key.`);
+  }
+  if (new Date(certificate.NotAfter) <= new Date()) {
+    fail(`Signing certificate expired at ${certificate.NotAfter}.`);
+  }
+  if (String(certificate.Thumbprint).toUpperCase() !== expectedAuthenticodeThumbprint) {
+    fail(`Unexpected signing certificate thumbprint ${certificate.Thumbprint}.`);
+  }
+  console.log(`Authenticode signer ready: ${certificate.Subject} (${certificate.Thumbprint})`);
+}
+
+function assertValidAuthenticode(file) {
+  if (!fs.existsSync(file)) {
+    fail(`Windows release file was not found: ${file}`);
+  }
+  const escapedPath = file.replaceAll("'", "''");
+  const signature = powershellJson([
+    `$signature = Get-AuthenticodeSignature -LiteralPath '${escapedPath}'`,
+    "[ordered]@{ Status = $signature.Status.ToString(); Subject = $signature.SignerCertificate.Subject; Thumbprint = $signature.SignerCertificate.Thumbprint; TimestampSubject = $signature.TimeStamperCertificate.Subject } | ConvertTo-Json -Compress"
+  ].join("; "));
+  if (signature.Status !== "Valid") {
+    fail(`Windows Authenticode signature is not valid for ${file} (status: ${signature.Status}).`);
+  }
+  if (String(signature.Thumbprint).toUpperCase() !== expectedAuthenticodeThumbprint) {
+    fail(`Unexpected Authenticode signer for ${file}: ${signature.Subject} (${signature.Thumbprint}).`);
+  }
+  if (!signature.TimestampSubject) {
+    fail(`Authenticode signature is not timestamped: ${file}`);
+  }
+}
+
+function findSevenZip() {
+  const candidates = [
+    process.env.VISIONPOS_7ZIP_PATH,
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "7-Zip", "7z.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "7-Zip", "7z.exe")
+  ].filter(Boolean);
+
+  const where = spawnSync("where.exe", ["7z.exe"], { encoding: "utf8", shell: false });
+  if (where.status === 0) {
+    candidates.push(...String(where.stdout).split(/\r?\n/).filter(Boolean));
+  }
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  const discovery = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }; Get-ChildItem -LiteralPath $roots -Filter 7z.exe -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName"
+    ],
+    { encoding: "utf8", shell: false }
+  );
+  const discovered = String(discovery.stdout || "").trim();
+  if (discovery.status === 0 && discovered && fs.existsSync(discovered)) return discovered;
+
+  fail("7z.exe is required to verify the signed application embedded in the NSIS installer. Set VISIONPOS_7ZIP_PATH.");
+}
+
+function assertEmbeddedAppAuthenticode(installerPath) {
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "visionpos-nsis-"));
+  try {
+    const sevenZip = findSevenZip();
+    run(sevenZip, ["e", "-y", `-o${extractDir}`, installerPath, "visionpos_cashier.exe"]);
+    const embeddedAppPath = path.join(extractDir, "visionpos_cashier.exe");
+    if (!fs.existsSync(embeddedAppPath)) {
+      fail(`The NSIS installer does not contain visionpos_cashier.exe: ${installerPath}`);
+    }
+    assertValidAuthenticode(embeddedAppPath);
+  } finally {
+    fs.rmSync(extractDir, { recursive: true, force: true });
+  }
+}
+
+assertSigningCertificateReady();
 run(process.execPath, [npmCli, "run", "build"]);
 run(process.execPath, [npmCli, "exec", "--", "tauri", "build"]);
 
@@ -83,6 +198,9 @@ const installer = latestFile(nsisDir, (name) => name.endsWith(".exe"));
 if (!installer) {
   fail(`No NSIS installer .exe found in ${nsisDir}`);
 }
+
+assertValidAuthenticode(installer.fullPath);
+assertEmbeddedAppAuthenticode(installer.fullPath);
 
 const signaturePath = `${installer.fullPath}.sig`;
 if (!fs.existsSync(signaturePath)) {
@@ -103,9 +221,12 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
-  "Cashier fingerprint login and checkout now use a shorter, warmed fast path.",
-  "Fingerprint checkout avoids unnecessary template refreshes so it responds more like phone biometric unlock.",
-  "SecuGen reader waits are capped to prevent long stalls when a finger or reader is unavailable.",
+  "Active cashier sessions now renew during normal use to prevent overnight login failures.",
+  "Expired checkout sessions recover from the same verified fingerprint without requiring a second scan.",
+  "Fingerprint login and checkout reuse warmed connections and avoid unnecessary template refreshes.",
+  "An unresponsive SecuGen service is restarted automatically and the fingerprint operation is retried once.",
+  "The admin terminal dashboard now receives the installed cashier app version during normal terminal activity.",
+  "The cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 
@@ -158,9 +279,14 @@ const frontendReleaseFiles = [
   [versionedInstallerPath, path.join(frontendDownloadsDir, versionedInstallerName)],
   [stableInstallerPath, path.join(frontendDownloadsDir, "VISIONPOS-Cashier-Setup.exe")],
   [latestJsonPath, path.join(frontendDownloadsDir, "latest.json")],
-  [compatibilityJsonPath, path.join(frontendDownloadsDir, "release.json")]
+  [compatibilityJsonPath, path.join(frontendDownloadsDir, "release.json")],
+  [trustCertificatePath, path.join(frontendDownloadsDir, "VISIONPOS-Cashier-Internal-Trust.cer")],
+  [trustInstallerPath, path.join(frontendDownloadsDir, "Install-VISIONPOS-Cashier-Trust.ps1")]
 ];
 for (const [source, destination] of frontendReleaseFiles) {
+  if (!fs.existsSync(source)) {
+    fail(`Required release file was not found: ${source}`);
+  }
   fs.copyFileSync(source, destination);
 }
 

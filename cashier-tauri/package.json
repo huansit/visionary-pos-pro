@@ -1,6 +1,6 @@
 {
   "name": "visionpos-tauri-cashier",
-  "version": "2.0.57",
+  "version": "2.0.58",
   "private": true,
   "type": "module",
   "description": "Tauri cashier workstation for VISIONPOS",
@@ -8,6 +8,9 @@
     "dev": "vite --host 127.0.0.1 --port 5174",
     "build": "tsc && vite build --configLoader runner",
     "release": "node scripts/release.mjs",
+    "release:signed": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-signed-release.ps1",
+    "signing:backup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/backup-internal-signing-certificate.ps1",
+    "signing:install-trust": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-internal-trust.ps1",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

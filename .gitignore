@@ -6,6 +6,8 @@ node_modules/
 !.env.test.example
 *.log
 npm-debug.log*
+*.pfx
+*.p12
 .DS_Store
 frontend/dist/
 desktop/dist/

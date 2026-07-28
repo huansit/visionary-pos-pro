@@ -8,6 +8,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -45,13 +46,45 @@ struct SecugenRequest {
 }
 
 const SECUGEN_ENDPOINTS: [(&str, u16); 4] = [
-    ("https://localhost:8443", 8443),
+    ("https://127.0.0.1:8443", 8443),
     ("http://127.0.0.1:8000", 8000),
-    ("https://localhost:8000", 8000),
+    ("https://127.0.0.1:8000", 8000),
     ("http://127.0.0.1:8080", 8080),
 ];
 const NO_SECUGEN_ENDPOINT: usize = usize::MAX;
+const SECUGEN_START_ATTEMPTS: usize = 40;
 static SECUGEN_ENDPOINT_INDEX: AtomicUsize = AtomicUsize::new(NO_SECUGEN_ENDPOINT);
+static API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static SECUGEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn api_client() -> Result<&'static reqwest::Client, String> {
+    if let Some(client) = API_CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        .https_only(true)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let _ = API_CLIENT.set(client);
+    API_CLIENT
+        .get()
+        .ok_or_else(|| "api_client_initialization_failed".to_string())
+}
+
+fn secugen_client() -> Result<&'static reqwest::Client, String> {
+    if let Some(client) = SECUGEN_CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        // This client is used only with the fixed loopback endpoint list.
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|err| err.to_string())?;
+    let _ = SECUGEN_CLIENT.set(client);
+    SECUGEN_CLIENT
+        .get()
+        .ok_or_else(|| "secugen_client_initialization_failed".to_string())
+}
 
 fn secugen_port_is_ready(port: u16) -> bool {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
@@ -98,14 +131,54 @@ fn start_secugen_client() -> Result<(), String> {
         .map_err(|error| format!("secugen_webapi_start_failed: {error}"))
 }
 
+#[cfg(target_os = "windows")]
+fn restart_secugen_client() -> Result<(), String> {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    SECUGEN_ENDPOINT_INDEX.store(NO_SECUGEN_ENDPOINT, Ordering::Relaxed);
+    let result = Command::new("taskkill.exe")
+        .args(["/F", "/IM", "sgibiosrv.exe"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| format!("secugen_webapi_restart_failed: {error}"))?;
+    if !result.success() && secugen_client_is_ready() {
+        return Err("secugen_webapi_restart_failed".into());
+    }
+    for _ in 0..20 {
+        if !secugen_client_is_ready() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if secugen_client_is_ready() {
+        return Err("secugen_webapi_restart_failed".into());
+    }
+    start_secugen_client()
+}
+
 #[cfg(not(target_os = "windows"))]
 fn start_secugen_client() -> Result<(), String> {
     Err("secugen_webapi_unsupported_platform".into())
 }
 
+#[cfg(not(target_os = "windows"))]
+fn restart_secugen_client() -> Result<(), String> {
+    Err("secugen_webapi_unsupported_platform".into())
+}
+
+async fn wait_for_secugen_client() -> bool {
+    for _ in 0..SECUGEN_START_ATTEMPTS {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if secugen_client_is_ready() {
+            return true;
+        }
+    }
+    false
+}
+
 async fn try_secugen_request(
     client: &reqwest::Client,
     req: &SecugenRequest,
+    request_timeout: Duration,
 ) -> Result<Value, String> {
     let mut last_error = "secugen_webapi_unreachable".to_string();
     let preferred = SECUGEN_ENDPOINT_INDEX.load(Ordering::Relaxed);
@@ -123,6 +196,7 @@ async fn try_secugen_request(
         let url = format!("{}{}", base, req.path);
         match client
             .post(url)
+            .timeout(request_timeout)
             // SecuGen rejects native HTTP clients with ErrorCode 10004 when
             // the browser-origin header is absent. Use the licensed VisionPOS
             // application origin for this loopback-only request.
@@ -352,14 +426,11 @@ async fn api_request(req: ApiRequest) -> Result<ApiResponse, String> {
     let method = reqwest::Method::from_bytes(req.method.to_uppercase().as_bytes())
         .map_err(|_| "invalid_http_method".to_string())?;
     let url = format!("{}{}", API_BASE_URL, req.path);
-    let client = reqwest::Client::builder()
-        .https_only(true)
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|err| err.to_string())?;
+    let client = api_client()?;
 
     let mut request = client
         .request(method, url)
+        .timeout(Duration::from_secs(20))
         .header("Accept", "application/json")
         .header("Content-Type", "application/json");
 
@@ -409,27 +480,27 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     } else {
         Duration::from_secs(4)
     };
-    let client = reqwest::Client::builder()
-        .timeout(request_timeout)
-        // SecuGen installs a local certificate. Restricting this client to the
-        // two loopback WebAPI endpoints prevents this exception from weakening
-        // any cloud request made by the cashier app.
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|err| err.to_string())?;
-    if let Ok(value) = try_secugen_request(&client, &req).await {
-        return Ok(value);
-    }
-
-    start_secugen_client()?;
-    for _ in 0..12 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        if let Ok(value) = try_secugen_request(&client, &req).await {
-            return Ok(value);
+    if !secugen_client_is_ready() {
+        start_secugen_client()?;
+        if !wait_for_secugen_client().await {
+            return Err("secugen_webapi_start_timeout".into());
         }
     }
 
-    Err("secugen_webapi_start_timeout".into())
+    let client = secugen_client()?;
+    if let Ok(value) = try_secugen_request(client, &req, request_timeout).await {
+        return Ok(value);
+    }
+
+    // A stale SecuGen process can keep its port open while no longer answering
+    // requests. Restart it once, then retry this operation once.
+    restart_secugen_client()?;
+    if !wait_for_secugen_client().await {
+        return Err("secugen_webapi_start_timeout".into());
+    }
+    try_secugen_request(client, &req, request_timeout)
+        .await
+        .map_err(|_| "secugen_webapi_unreachable".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
