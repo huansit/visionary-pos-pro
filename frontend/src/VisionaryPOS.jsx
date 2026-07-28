@@ -5220,7 +5220,7 @@ function invoiceReceiptPrintHtml(receipts, cur) {
   }).join("");
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style id="receipt-page-rules"></style><style>
 *{box-sizing:border-box}html,body{margin:0;width:80mm;background:#fff;color:#000}body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.35;overflow-wrap:anywhere;writing-mode:horizontal-tb}
-.receipt{width:80mm;min-height:1px;padding:3mm;break-after:page;page-break-after:always}.receipt:last-child{break-after:auto;page-break-after:auto}
+.receipt{width:80mm;min-height:1px;padding:3mm 4mm;break-after:page;page-break-after:always}.receipt:last-child{break-after:auto;page-break-after:auto}
 ${receipts.map((_, index) => `.receipt-${index}{page:receipt-${index}}`).join("")}
 h1{margin:0 0 6px;text-align:center;font-size:20px;line-height:1.15;font-weight:900}p{margin:2px 0;text-align:center}hr{border:0;border-top:1px dashed #000;margin:7px 0}.line{display:block;padding:3px 0;break-inside:avoid;page-break-inside:avoid}.line strong{display:block;font-weight:700}.line-detail,.total{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:3mm}.line-detail{margin-top:1px}.line-detail span{min-width:0}.line-detail b,.total b{white-space:nowrap;text-align:right}.total{margin-top:2px;font-size:18px;line-height:1.2;font-weight:900}@media print{html,body{width:80mm}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>${sections}</body></html>`;
@@ -5242,7 +5242,8 @@ function printInvoiceReceipts(receipts, cur) {
     await printDocument.fonts?.ready.catch(() => undefined);
     await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
     const measuredPageRules = Array.from(printDocument.querySelectorAll(".receipt")).map((receipt, index) => {
-      const heightMm = Math.max(1, Math.ceil(receipt.getBoundingClientRect().height * 25.4 / 96 + 1));
+      // Keep short 80 mm receipts taller than they are wide so Windows does not rotate them.
+      const heightMm = Math.max(82, Math.ceil(receipt.getBoundingClientRect().height * 25.4 / 96 + 1));
       return `@page receipt-${index}{size:80mm ${heightMm}mm;margin:0}`;
     }).join("");
     const pageRuleElement = printDocument.getElementById("receipt-page-rules");
