@@ -5187,85 +5187,106 @@ function qrSvg(str, px) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 ${dim} ${dim}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
   } catch (e) { return ""; }
 }
-function InvoiceReceipt({ inv, cur, store, location, till, environmentMode = "test", onClose }) {
-  const items = inv.items || [];
-  const d = new Date(inv.ts);
-  const dateStr = d.toLocaleDateString();
-  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const qrMarkup = qrSvg(inv.number, 120);
-  const isTestReceipt = normalizeEnvironmentMode(environmentMode) === "test";
-  const printReceipt = () => {
-    const esc = (v) => String(v == null ? "" : v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-    const itemRows = items.map((it) => `<div class="r"><span>${esc(it.qty)}× ${esc(it.name)}</span><span>${esc(fmt(it.qty * it.priceCents, cur))}</span></div><div class="rp">@ ${esc(fmt(it.priceCents, cur))}</div>`).join("");
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(inv.number)}</title>
-<style>*{font-family:ui-monospace,Menlo,Consolas,monospace;box-sizing:border-box}body{width:300px;margin:0 auto;padding:14px;color:#111}
-h1{font-size:17px;text-align:center;margin:0 0 1px;letter-spacing:.5px}.loc{text-align:center;font-size:11px;color:#444;margin-bottom:6px}
-.s{text-align:center;font-size:11px;color:#555;margin-bottom:8px;line-height:1.5}
-.dash{border-top:1px dotted #999;margin:8px 0}
-.qr{text-align:center;margin:8px 0}.qr svg{width:120px;height:120px}.qn{text-align:center;font-size:12px;font-weight:700;margin-bottom:8px}
-.r{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0}.rp{font-size:10px;color:#777;margin:-2px 0 4px;border-bottom:1px dotted #ccc;padding-bottom:4px}
-.items{border-top:1px dashed #111;border-bottom:1px dashed #111;margin:8px 0;padding:6px 0}
-.t{display:flex;justify-content:space-between;font-weight:800;font-size:16px;padding:6px 0;border-bottom:1px dotted #999}
-.till{text-align:center;margin-top:14px;padding:10px;border:2px dotted #111;border-radius:8px}
-.till .lab{font-size:11px;letter-spacing:.5px}.till .no{font-size:30px;font-weight:900;letter-spacing:2px;margin-top:2px}
-.testmark{text-align:center;font-weight:900;color:#a16207;line-height:1.35;margin:0 0 10px;font-size:12px}
-.ty{text-align:center;font-weight:700;font-size:13px;margin-top:12px;border-top:1px dotted #999;padding-top:12px}.f{text-align:center;font-size:10px;color:#777;margin-top:6px}</style></head>
-<body>${isTestReceipt ? '<div class="testmark">*********************<br/>TEST RECEIPT<br/>NOT A REAL SALE<br/>*********************</div>' : ""}<h1>${esc(store)}</h1>${location ? `<div class="loc">${esc(location)}</div>` : ""}
-<div class="s">${esc(dateStr)} · ${esc(timeStr)}<br/>Served by ${esc(inv.cashier)}</div>
-<div class="dash"></div>
-<div class="qr">${qrMarkup}</div><div class="qn">${esc(inv.number)}</div>
-<div class="r"><span>Customer</span><span>${esc(inv.customerName)}</span></div>${inv.note ? `<div class="r"><span>Note</span><span>${esc(inv.note)}</span></div>` : ""}
-<div class="items">${itemRows || '<div class="r"><span>No items</span><span></span></div>'}</div>
-<div class="t"><span>TOTAL</span><span>${esc(fmt(inv.totalCents, cur))}</span></div>
-${till ? `<div class="till"><div class="lab">LIPA NA M-PESA · BUY GOODS TILL</div><div class="no">${esc(till)}</div></div>` : ""}
-<div class="ty">Thank you for your business!</div></body></html>`;
-    try {
-      const fr = document.createElement("iframe");
-      fr.setAttribute("aria-hidden", "true");
-      fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
-      document.body.appendChild(fr);
-      const doc = fr.contentWindow.document; doc.open(); doc.write(html); doc.close();
-      const go = () => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { try { window.print(); } catch (_) {} } setTimeout(() => { try { document.body.removeChild(fr); } catch (_) {} }, 1500); };
-      setTimeout(go, 450);
-    } catch (e) { try { window.print(); } catch (_) {} }
+function escapeReceiptHtml(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[char]));
+}
+function normalizedReceiptItems(inv) {
+  return (Array.isArray(inv?.items) ? inv.items : []).map((item) => {
+    const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+    const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
+    return {
+      name: String(item?.name || item?.productName || "Product").trim() || "Product",
+      qty,
+      priceCents,
+      totalCents: Math.max(0, Math.round(Number(item?.totalCents ?? qty * priceCents))),
+    };
+  }).filter((item) => item.qty > 0);
+}
+function invoiceReceiptStatus(inv, cur) {
+  const status = String(inv?.status || "").toLowerCase();
+  if (status.includes("void")) return "Invoice voided.";
+  const outstanding = invOutstanding(inv);
+  if (outstanding <= 0) return "Paid in full.";
+  if (Number(inv?.paidCents || 0) > 0) return `Part paid - balance ${fmt(outstanding, cur)}.`;
+  return "Open invoice - not paid at checkout.";
+}
+function receiptPageHeightMm(inv) {
+  const items = normalizedReceiptItems(inv);
+  const itemLines = items.reduce((total, item) => total + Math.max(2, Math.ceil(item.name.length / 30)), 0);
+  const noteLines = inv?.note ? Math.max(1, Math.ceil(String(inv.note).length / 34)) : 0;
+  return Math.max(120, Math.min(1000, 78 + itemLines * 7 + noteLines * 6));
+}
+function invoiceReceiptPrintHtml(receipts, cur) {
+  const pageRules = receipts.map(({ inv }, index) => `@page receipt-${index}{size:80mm ${receiptPageHeightMm(inv)}mm;margin:0}`).join("");
+  const sections = receipts.map(({ inv, store }, index) => {
+    const items = normalizedReceiptItems(inv);
+    const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.qty)} x ${escapeReceiptHtml(fmt(item.priceCents, cur))}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
+    return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(new Date(inv.ts).toLocaleString())}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p><p>Thank you.</p></main>`;
+  }).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style>
+${pageRules}
+*{box-sizing:border-box}html,body{margin:0;width:80mm;background:#fff;color:#000}body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.35;overflow-wrap:anywhere;writing-mode:horizontal-tb}
+.receipt{width:80mm;min-height:1px;padding:3mm;break-after:page;page-break-after:always}.receipt:last-child{break-after:auto;page-break-after:auto}
+${receipts.map((_, index) => `.receipt-${index}{page:receipt-${index}}`).join("")}
+h1{margin:0 0 6px;text-align:center;font-size:20px;line-height:1.15;font-weight:900}p{margin:2px 0;text-align:center}hr{border:0;border-top:1px dashed #000;margin:7px 0}.line{display:block;padding:3px 0;break-inside:avoid;page-break-inside:avoid}.line strong{display:block;font-weight:700}.line-detail,.total{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:3mm}.line-detail{margin-top:1px}.line-detail span{min-width:0}.line-detail b,.total b{white-space:nowrap;text-align:right}.total{margin-top:2px;font-size:18px;line-height:1.2;font-weight:900}@media print{html,body{width:80mm}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>${sections}</body></html>`;
+}
+function printInvoiceReceipts(receipts, cur) {
+  if (!receipts.length) return;
+  const frame = document.createElement("iframe");
+  frame.title = receipts.length === 1 ? "Invoice receipt print" : "Invoice receipts print";
+  frame.style.cssText = "position:fixed;left:-10000px;top:0;width:80mm;height:1px;border:0;opacity:0;pointer-events:none;";
+  let printed = false;
+  let cleanupTimer = 0;
+  const cleanup = () => { if (cleanupTimer) window.clearTimeout(cleanupTimer); frame.remove(); };
+  frame.onload = async () => {
+    if (printed) return;
+    printed = true;
+    const printWindow = frame.contentWindow;
+    const printDocument = frame.contentDocument;
+    if (!printWindow || !printDocument) { cleanup(); return; }
+    await printDocument.fonts?.ready.catch(() => undefined);
+    await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+    printWindow.addEventListener("afterprint", cleanup, { once: true });
+    printWindow.focus();
+    printWindow.print();
+    cleanupTimer = window.setTimeout(cleanup, 30000);
   };
+  frame.srcdoc = invoiceReceiptPrintHtml(receipts, cur);
+  document.body.appendChild(frame);
+}
+function InvoiceReceipt({ inv, cur, store, onClose }) {
+  const items = normalizedReceiptItems(inv);
+  const printReceipt = () => printInvoiceReceipts([{ inv, store }], cur);
   return (
     <div className="scrim" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Receipt style={{ width: 18, height: 18 }} /> Invoice issued</div>
+        <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Receipt style={{ width: 18, height: 18 }} /> Invoice receipt</div>
           <button className="iconbtn" onClick={onClose}><X /></button></div>
-        <div style={{ textAlign: "center", marginTop: 8 }}><span className="badge pend"><FileText /> Open invoice</span></div>
+        <div style={{ textAlign: "center", marginTop: 8 }}><span className="badge pend"><FileText /> {invoiceReceiptStatus(inv, cur)}</span></div>
         <div className="rcpt">
-          {isTestReceipt && (
-            <div className="test-receipt-mark">*********************<br />TEST RECEIPT<br />NOT A REAL SALE<br />*********************</div>
-          )}
           <div className="rc-h">{store}</div>
-          {location && <div className="rc-s" style={{ marginBottom: 2 }}>{location}</div>}
-          <div className="rc-s">{dateStr} · {timeStr} · Served by {inv.cashier}</div>
-          <div style={{ borderTop: "1px dotted var(--border)", margin: "8px 0" }} />
-          <div style={{ textAlign: "center", margin: "4px 0 4px" }}><span style={{ display: "inline-block", width: 110, height: 110, background: "#fff", borderRadius: 6, padding: 4 }} dangerouslySetInnerHTML={{ __html: qrSvg(inv.number, 102) }} /></div>
-          <div style={{ textAlign: "center", fontWeight: 700, fontSize: 12.5, marginBottom: 8 }}>{inv.number}</div>
-          <div className="rrow"><span>Customer</span><span>{inv.customerName}</span></div>
-          {inv.note && <div className="rrow"><span>Note</span><span>{inv.note}</span></div>}
+          <div className="rc-s">{new Date(inv.ts).toLocaleString()}</div>
+          <div className="rc-s">Receipt: {inv.number || inv.receiptNo}</div>
+          <div className="rc-s">Cashier: {invoiceCashierName(inv)}</div>
+          <div className="rc-s">Customer: {inv.customerName || "Walk-in"}</div>
+          {inv.note && <div className="rc-s">Note: {inv.note}</div>}
           <div style={{ borderTop: "1px dashed var(--text)", borderBottom: "1px dashed var(--text)", margin: "8px 0", padding: "6px 0" }}>
-            {items.length === 0 ? <div className="rrow"><span>No items recorded</span><span /></div> : items.map((it, i) => (
-              <div key={i} style={{ paddingBottom: 4, marginBottom: 4, borderBottom: i < items.length - 1 ? "1px dotted var(--border)" : "none" }}>
-                <div className="rrow" style={{ borderBottom: "none" }}><span>{it.qty}× {it.name}</span><span>{fmt(it.qty * it.priceCents, cur)}</span></div>
-                <div style={{ fontSize: 10.5, color: "var(--muted-2)" }}>@ {fmt(it.priceCents, cur)}</div>
+            {items.length === 0 ? <div className="rrow"><span>No items recorded</span><span /></div> : items.map((item, index) => (
+              <div key={index} style={{ paddingBottom: 4, marginBottom: 4, borderBottom: index < items.length - 1 ? "1px dotted var(--border)" : "none" }}>
+                <div style={{ fontWeight: 700 }}>{item.name}</div>
+                <div className="rrow" style={{ borderBottom: "none" }}><span>{item.qty} x {fmt(item.priceCents, cur)}</span><span>{fmt(item.totalCents, cur)}</span></div>
               </div>))}
           </div>
-          <div className="rrow t" style={{ fontSize: 16, borderTop: "none", borderBottom: "1px dotted var(--border)", paddingBottom: 8 }}><span>TOTAL</span><span>{fmt(inv.totalCents, cur)}</span></div>
-          {till && (
-            <div style={{ textAlign: "center", marginTop: 12, padding: "10px 8px", border: "2px dotted var(--text)", borderRadius: 10 }}>
-              <div style={{ fontSize: 10.5, letterSpacing: ".5px", color: "var(--muted)" }}>LIPA NA M-PESA · BUY GOODS TILL</div>
-              <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: 2, lineHeight: 1.1 }}>{till}</div>
-            </div>
-          )}
-          <div style={{ textAlign: "center", fontWeight: 700, fontSize: 13, marginTop: 14, borderTop: "1px dotted var(--border)", paddingTop: 12 }}>Thank you for your business!</div>
+          <div className="rrow t" style={{ fontSize: 16, borderTop: "none", paddingBottom: 8 }}><span>Total</span><span>{fmt(inv.totalCents, cur)}</span></div>
+          <div className="rc-s">{invoiceReceiptStatus(inv, cur)}</div>
+          <div className="rc-s">Thank you.</div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
           <button className="btn btn-ghost" onClick={printReceipt}><Printer /> Print</button>
-          <button className="btn btn-primary" onClick={onClose}><Check /> New sale</button>
+          <button className="btn btn-primary" onClick={onClose}><Check /> Close</button>
         </div>
       </div>
     </div>
@@ -5529,6 +5550,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [bulkSettlementOpen, setBulkSettlementOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const invoices = operationalInvoices(data);
   const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
   const invoiceIssuedTs = (invoice) => {
@@ -5593,6 +5615,36 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     })
     .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
   const filteredBalanceDue = filtered.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const selectedInvoices = filtered.filter((invoice) => selectedInvoiceIds.has(invoice.id));
+  const allFilteredSelected = filtered.length > 0 && selectedInvoices.length === filtered.length;
+  const toggleInvoiceSelection = (invoiceId) => {
+    setSelectedInvoiceIds((current) => {
+      const next = new Set(current);
+      if (next.has(invoiceId)) next.delete(invoiceId);
+      else next.add(invoiceId);
+      return next;
+    });
+  };
+  const toggleAllFilteredInvoices = () => {
+    setSelectedInvoiceIds((current) => {
+      const next = new Set(current);
+      filtered.forEach((invoice) => {
+        if (allFilteredSelected) next.delete(invoice.id);
+        else next.add(invoice.id);
+      });
+      return next;
+    });
+  };
+  const printSelectedInvoices = () => {
+    const receipts = selectedInvoices.map((invoice) => {
+      const invoiceBranch = branchForInvoice(invoice);
+      return {
+        inv: { ...invoice, items: invoiceSoldLines(data, invoice, invoiceBranch.id) },
+        store: invoiceBranch.name,
+      };
+    });
+    printInvoiceReceipts(receipts, cur);
+  };
 
   // cashier debts = overdue carried-over invoices, grouped by cashier.
   const debts = overdue;
@@ -5608,6 +5660,12 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     <div>
       <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            className="btn sm btn-ghost"
+            disabled={selectedInvoices.length === 0}
+            title={selectedInvoices.length === 0 ? "Select invoices from the table to print them together." : `Print ${selectedInvoices.length} selected invoice(s)`}
+            onClick={printSelectedInvoices}
+          ><Printer /> {selectedInvoices.length ? `Print selected (${selectedInvoices.length})` : "Print selected"}</button>
           <button
             className="btn sm btn-ghost"
             disabled={currentDayOpenInvoices.length === 0}
@@ -5667,8 +5725,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th>Customer</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
-          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
 
@@ -6232,7 +6290,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     </div>
   );
 }
-function InvoiceRow({ inv, cur, voidInfo, onOpen }) {
+function InvoiceRow({ inv, cur, voidInfo, selected, onToggle, onOpen }) {
   const status = invStatus(inv);
   const out = invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
@@ -6246,6 +6304,7 @@ function InvoiceRow({ inv, cur, voidInfo, onOpen }) {
       : voidStatus === "rejected" ? "open" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
+      <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
       <td><div className="nm">{inv.customerName || "Walk-in"}</div></td>
       <td><div className="nm">{invoiceCashierName(inv) || "Unknown cashier"}</div></td>
       <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
@@ -6276,10 +6335,10 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
-  const items = data.stockMovements.filter((m) => m.reason === "Sale " + live.number).map((m, i) => {
-    const p = data.products.find((x) => x.id === m.productId);
-    return { key: i, name: p ? p.name : "Item", qty: -m.qty, price: p ? priceFor(data, p) : 0 };
-  });
+  const items = invoiceSoldLines(data, live, live.branchId).map((item, index) => ({
+    ...item,
+    key: item.productId || `${item.name}-${index}`,
+  }));
   const pays = data.payments.filter((p) => p.orderId === live.id || p.invoiceId === live.id);
   const recordPayment = () => {
     if (voidPending || voidApproved || paymentCents <= 0 || out <= 0) return;
@@ -6355,8 +6414,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         <div className="sideh" style={{ margin: "16px 0 8px" }}>Items</div>
         {items.length ? (
           <div className="list">{items.map((it) => (
-            <div className="row" key={it.key}><div className="meta"><div className="nm">{it.name}</div><div className="mt2">{it.qty} x {fmt(it.price, cur)}</div></div>
-              <span className="pill plain">{fmt(it.price * it.qty, cur)}</span></div>))}</div>
+            <div className="row" key={it.key}><div className="meta"><div className="nm">{it.name}</div><div className="mt2">{it.qty} x {fmt(it.priceCents, cur)}</div></div>
+              <span className="pill plain">{fmt(it.totalCents, cur)}</span></div>))}</div>
         ) : <div className="notice">No itemised lines recorded for this invoice.</div>}
         <div className="settlement-totals">
           <div><span>Invoice total</span><b>{fmt(live.totalCents, cur)}</b></div>
@@ -6417,7 +6476,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         <div className="field" style={{ marginTop: 16 }}><label className="label">Employee tracking note</label>
           <textarea className="input" style={{ minHeight: 72, paddingTop: 10, resize: "vertical" }} placeholder="Track this invoice - who collected, follow-up, reason for credit, etc." value={tnote} onChange={(e) => { setTnote(e.target.value); setSaved(false); }} /></div>
         <div className="grid2">
-          <button className="btn btn-ghost" onClick={() => onReprint({ ...live, items: items.map((it) => ({ name: it.name, qty: it.qty, priceCents: it.price })) })}><Printer /> Reprint receipt</button>
+          <button className="btn btn-ghost" onClick={() => onReprint({ ...live, items })}><Printer /> Reprint receipt</button>
           <button className="btn btn-primary" onClick={saveNote}><Check /> {saved ? "Saved" : "Save note"}</button>
         </div>
       </div>
