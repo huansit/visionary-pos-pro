@@ -226,7 +226,61 @@ test("1ab. renamed expense categories retain their ID and reach cashier terminal
       const expense = res.body.events.find((event) => event.type === "expense" && event.id === expenseId);
       assert.equal(expense?.payload?.categoryId, categoryId);
       assert.equal(expense?.payload?.category, "Current category name");
+  });
+});
+
+test("1ac. received purchase status replaces the ordered version and cannot be reverted by a stale write", async () => {
+  const purchaseId = "purchase-received-sync";
+  const orderedAt = Date.now();
+  const ordered = {
+    id: purchaseId,
+    type: "purchase",
+    branchId: "b_sip",
+    clientTs: orderedAt,
+    payload: {
+      batchId: "purchase-batch-sync",
+      batchNo: "PO-SYNC",
+      branchId: "b_sip",
+      productId: "purchase-product-sync",
+      productName: "Sync Test Product",
+      supplierName: "Sync Test Supplier",
+      qty: 2,
+      status: "ordered",
+      ts: orderedAt,
+    },
+  };
+  const receivedAt = orderedAt + 100;
+  const received = {
+    ...ordered,
+    clientTs: undefined,
+    updatedAt: receivedAt,
+    payload: { ...ordered.payload, status: "received", receivedAt, updatedAt: receivedAt },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [ordered, received, { ...ordered, clientTs: orderedAt + 10 }] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.deepEqual(res.body.accepted, [purchaseId, purchaseId, purchaseId]);
     });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const purchases = res.body.events.filter((event) => event.type === "purchase" && event.id === purchaseId);
+      assert.equal(purchases.length, 1);
+      assert.equal(purchases[0].payload.status, "received");
+      assert.equal(purchases[0].payload.receivedAt, receivedAt);
+      assert.equal(purchases[0].updatedAt, receivedAt);
+    });
+
+  const eventRows = await pool.query("SELECT id FROM events WHERE id = $1 AND type = 'purchase'", [purchaseId]);
+  const recordRows = await pool.query("SELECT id FROM records WHERE id = $1 AND type = 'purchase'", [purchaseId]);
+  assert.equal(eventRows.rowCount, 0);
+  assert.equal(recordRows.rowCount, 1);
 });
 
 test("1aa. branch users require an active terminal in their branch", async () => {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { buildReportDocument, ReportPreviewDialog } from "./components/reports/ReportEngine.jsx";
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import { productDisplayImage } from "./productImages.js";
+import { normalizedTransferItems, transferUnitCount } from "./transferRecords.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -919,7 +920,6 @@ const SYNC_APPEND = new Map([
   ["endOfDays", "endOfDay"],
   ["cashMovements", "cashMovement"],
   ["orders", "order"],
-  ["purchases", "purchase"],
   ["countLog", "countLog"],
 ]);
 const SYNC_MUTABLE = new Map([
@@ -932,6 +932,7 @@ const SYNC_MUTABLE = new Map([
   ["branches", "branch"],
   ["suppliers", "supplier"],
   ["supplierPrices", "supplierPrice"],
+  ["purchases", "purchase"],
   ["stockCountSessions", "stockCountSession"],
 ]);
 const AUTH_SYNC_TYPES = new Set([
@@ -1481,6 +1482,20 @@ function diffToSyncEvents(prev, next) {
       if (!old || recordChanged(old, record, type)) {
         const ev = eventFromRecord(collection, { ...record, updatedAt: record.updatedAt || record.ts || now() }, next);
         if (ev) events.push(ev);
+      }
+    }
+    if (collection === "purchases") {
+      const afterIds = new Set((next[collection] || []).map((record) => record?.id).filter(Boolean));
+      for (const old of prev[collection] || []) {
+        if (!old?.id || afterIds.has(old.id)) continue;
+        events.push({
+          id: String(old.id),
+          type,
+          branchId: branchIdFor(old, next),
+          updatedAt: now(),
+          deleted: true,
+          payload: {},
+        });
       }
     }
   }
@@ -7461,6 +7476,7 @@ function StockTabLegacy({ data, update, branch }) {
 function PurchasesTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
+  const [receiptCorrection, setReceiptCorrection] = useState(null);
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
@@ -7570,13 +7586,13 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
     const sup = data.suppliers.find((s) => s.id === f.supplierId); const prod = data.products.find((p) => p.id === f.productId);
     const lbr = f.branchId || branch.id; const ts = now(); const received = f.received;
     update((d) => {
-      const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false };
+      const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: received ? ts : null, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
       const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchInventoryCostCents(d, cur, lbr) : cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -7605,7 +7621,8 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
       };
       for (const l of list) {
         const lbr = l.branchId || branch.id;
-        purchases.push({ id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, synced: false });
+        const po = { id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: l.received ? ts : null, synced: false };
+        purchases.push(po);
         if (l.received) {
           const idx = products.findIndex((p) => p.id === l.productId);
           const curCost = idx >= 0 ? branchInventoryCostCents({ ...d, products }, products[idx], lbr) : l.costCents;
@@ -7613,24 +7630,63 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
+          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
       return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
     });
     setList([]); setAdding(false);
   };
-  const receive = (po) => update((d) => {
-    const cur = d.products.find((p) => p.id === po.productId);
-    const targetBranchId = po.branchId || branch.id;
-    const receivedUnitCost = purchaseUnitCostCents(po);
-    const newCost = wacCost(onHand(d, po.productId, targetBranchId), cur ? branchInventoryCostCents(d, cur, targetBranchId) : receivedUnitCost, po.qty, receivedUnitCost);
-    return { ...d,
-      purchases: d.purchases.map((x) => x.id === po.id ? { ...x, status: "received", synced: false } : x),
-      products: withBranchProductCostForKey(d.products, cur, targetBranchId, newCost),
-      stockMovements: [...d.stockMovements, { id: uid("mv"), productId: po.productId, branchId: targetBranchId, qty: po.qty, costCents: purchaseUnitCostCents(po), valueCents: purchaseLineTotalCents(po), reason: "Purchase " + po.supplierName, ts: now(), synced: false }],
+  const receivePurchases = (d, purchaseIds) => {
+    const requested = new Set(purchaseIds);
+    const pending = d.purchases.filter((po) => requested.has(po.id) && po.status !== "received");
+    if (pending.length === 0) return d;
+    const receivedAt = now();
+    const receivedIds = new Set(pending.map((po) => po.id));
+    const onHandByProduct = {};
+    const movements = [];
+    let products = [...d.products];
+
+    for (const po of pending) {
+      const targetBranchId = po.branchId || branch.id;
+      const stockKey = targetBranchId + ":" + po.productId;
+      const currentOnHand = onHandByProduct[stockKey] ?? onHand(d, po.productId, targetBranchId);
+      const currentProduct = products.find((product) => product.id === po.productId);
+      const receivedUnitCost = purchaseUnitCostCents(po);
+      const workingData = { ...d, products };
+      const currentCost = currentProduct ? branchInventoryCostCents(workingData, currentProduct, targetBranchId) : receivedUnitCost;
+      const newCost = wacCost(currentOnHand, currentCost, po.qty, receivedUnitCost);
+      if (currentProduct) products = withBranchProductCostForKey(products, currentProduct, targetBranchId, newCost);
+      onHandByProduct[stockKey] = currentOnHand + Number(po.qty || 0);
+      movements.push({
+        id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null,
+        productId: po.productId, branchId: targetBranchId, qty: po.qty,
+        costCents: receivedUnitCost, valueCents: purchaseLineTotalCents(po),
+        reason: "Purchase " + po.supplierName, ts: receivedAt, synced: false,
+      });
+    }
+
+    return {
+      ...d,
+      purchases: d.purchases.map((po) => receivedIds.has(po.id)
+        ? { ...po, status: "received", receivedAt, updatedAt: receivedAt, synced: false }
+        : po),
+      products,
+      stockMovements: [...d.stockMovements, ...movements],
     };
-  });
+  };
+  const receive = (po) => update((d) => receivePurchases(d, [po.id]));
+  const correctReceiptStatus = (purchaseIds) => {
+    const correctedAt = now();
+    const ids = new Set(purchaseIds);
+    update((d) => ({
+      ...d,
+      purchases: d.purchases.map((po) => ids.has(po.id) && po.status !== "received"
+        ? { ...po, status: "received", receivedAt: correctedAt, receiptStatusCorrectedAt: correctedAt, updatedAt: correctedAt, synced: false }
+        : po),
+    }));
+    setReceiptCorrection(null);
+  };
   const remove = (id) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
   const removeBatch = (key) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
   const [plan, setPlan] = useState(null);
@@ -7651,10 +7707,10 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   };
   const setLine = (pid, patch) => setPlan((ls) => ls.map((l) => l.productId === pid ? { ...l, ...patch } : l));
   const lineSupplier = (l, sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === l.productId); setLine(l.productId, { supplierId: sid, costCents: e ? e.costCents : l.costCents }); };
-  const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, synced: false }; };
+  const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, updatedAt: ts, receivedAt: null, synced: false }; };
   const createLine = (l) => { if (!l.qty || l.qty <= 0) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(l, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((ls) => ls.filter((x) => x.productId !== l.productId)); };
   const createAll = () => { const ts = now(); const valid = plan.filter((l) => l.qty > 0); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((l) => poFromLine(l, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); };
-  const receiveBatch = (items) => { const ordered = items.filter((x) => x.status !== "received"); ordered.forEach((po) => receive(po)); };
+  const receiveBatch = (items) => update((d) => receivePurchases(d, items.map((po) => po.id)));
   const [poView, setPoView] = useState(null); // batch key being viewed
   return (
     <div>
@@ -7822,7 +7878,8 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
                 <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only · only an admin can delete a purchase record.</span>}</div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive all</button>}
+                  {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => setReceiptCorrection({ ids: items.filter((po) => po.status !== "received").map((po) => po.id), label: head.batchNo || "this purchase" })}><Wrench /> Fix stale status</button>}
+                  {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive stock</button>}
                   {isAdmin && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
                 </div>
               </div>
@@ -7830,6 +7887,20 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           </div>
         );
       })()}
+      {receiptCorrection && (
+        <div className="scrim" onClick={() => setReceiptCorrection(null)}>
+          <div className="modal" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18, color: "var(--warn)" }} /> Fix stale receipt status?</div>
+              <button className="iconbtn" onClick={() => setReceiptCorrection(null)}><X /></button></div>
+            <div className="sub" style={{ margin: "4px 0" }}>Use this only when stock for <b>{receiptCorrection.label}</b> was already added previously.</div>
+            <div className="notice" style={{ marginTop: 8 }}>The purchase document will be marked received. Inventory quantities and purchase costs will not be changed.</div>
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button className="btn btn-ghost" onClick={() => setReceiptCorrection(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => correctReceiptStatus(receiptCorrection.ids)}><Check /> Mark received</button>
+            </div>
+          </div>
+        </div>
+      )}
       {delConfirm && (
         <div className="scrim" onClick={() => setDelConfirm(null)}>
           <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
@@ -8239,11 +8310,8 @@ function BorrowingTab({ data, update }) {
   };
   const removeLine = (pid) => setLines((ls) => ls.filter((l) => l.productId !== pid));
 
-  const transferItems = (transfer) => Array.isArray(transfer?.items) && transfer.items.length
-    ? transfer.items
-    : [{ productId: transfer?.productId, productName: transfer?.productName, qty: transfer?.qty }];
-  const transferNeedsCostRepair = (transfer) => transferItems(transfer).some((item) => !(Number(item.costCents) > 0));
-  const repairPreview = repairTransfer ? transferItems(repairTransfer).map((item) => {
+  const transferNeedsCostRepair = (transfer) => normalizedTransferItems(transfer, data.products).some((item) => !(Number(item.costCents) > 0));
+  const repairPreview = repairTransfer ? normalizedTransferItems(repairTransfer, data.products).map((item) => {
     const currentProduct = data.products.find((p) => p.id === item.productId);
     return {
       ...item,
@@ -8257,7 +8325,7 @@ function BorrowingTab({ data, update }) {
     const repairedAt = now();
     update((d) => {
       let products = [...d.products];
-      const repairedItems = transferItems(repairTransfer).map((item) => {
+      const repairedItems = normalizedTransferItems(repairTransfer, d.products).map((item) => {
         const productIndex = products.findIndex((p) => p.id === item.productId);
         const currentProduct = productIndex >= 0 ? products[productIndex] : null;
         const workingData = { ...d, products };
@@ -8414,11 +8482,11 @@ function BorrowingTab({ data, update }) {
       </div>
 
       <div className="section-title">Recent transfers</div>
-      <div className="list">{data.borrowings.map((t) => { const items = transferItems(t);
+      <div className="list">{data.borrowings.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
         return (
         <div className="row" key={t.id}>
           <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
-            <div className="mt2">{bn(t.fromBranchId)} → {bn(t.toBranchId)} · {items.length === 1 ? items[0].productName + " × " + items[0].qty : items.length + " products · " + items.reduce((s, i) => s + i.qty, 0) + " units"}{t.note ? " · " + t.note : ""}</div></div>
+            <div className="mt2">{bn(t.fromBranchId)} → {bn(t.toBranchId)} · {items.map((item) => item.productName + " × " + item.qty).join(", ")}{items.length > 1 ? " · " + units + " units total" : ""}{t.note ? " · " + t.note : ""}</div></div>
           {transferNeedsCostRepair(t) && <button className="btn xs btn-ghost" onClick={() => setRepairTransfer(t)}><Wrench /> Repair cost</button>}
           <span className="ist paid">{t.status || "completed"}</span>
           <span className="pill plain">{dt(t.ts)}</span>
@@ -8902,7 +8970,12 @@ function aiDigest(data) {
   });
   const expT = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.ts >= startToday); const expCat = {}; expT.forEach((e) => { expCat[e.category] = (expCat[e.category] || 0) + e.amountCents; });
   const shrink = data.stockMovements.filter((m) => m.ts >= startToday && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); return { branch: bname(m.branchId), product: p ? p.name : "?", unitsLost: Math.abs(m.qty) }; });
-  const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({ from: bname(t.fromBranchId), to: bname(t.toBranchId), product: t.productName, qty: t.qty }));
+  const transfers = data.borrowings.filter((t) => t.ts >= startToday).map((t) => ({
+    from: bname(t.fromBranchId),
+    to: bname(t.toBranchId),
+    items: normalizedTransferItems(t, data.products).map((item) => ({ product: item.productName, sku: item.sku, qty: item.qty })),
+    totalUnits: transferUnitCount(t, data.products),
+  }));
   const totalToday = branches.reduce((s, b) => s + b.salesTodayKES, 0); const totalProfit = branches.reduce((s, b) => s + b.grossProfitKES, 0); const totalExp = k(expT.reduce((s, e) => s + e.amountCents, 0));
   return {
     currency: cur, date: new Date().toLocaleString(), company: data.settings.store || "VISIONPOS",
@@ -9588,7 +9661,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
     if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
-    if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "Qty", "Date", "Status"], rows: transfers.map((t) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), t.productName, t.qty, new Date(t.ts).toLocaleString(), t.status || "completed"]) };
+    if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
     return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue balance", m(overdueSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
@@ -9657,7 +9730,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       ];
       if (sub === "transfers") return [
         { label: "Transfers", value: transfers.length },
-        { label: "Units transferred", value: transfers.reduce((sum, transfer) => sum + Number(transfer.qty || 0), 0) },
+        { label: "Units transferred", value: transfers.reduce((sum, transfer) => sum + transferUnitCount(transfer, data.products), 0) },
       ];
       return [
         { label: "Gross Sales", value: fmt(grossSales, cur) },
@@ -10091,10 +10164,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
       {sub === "transfers" && (
         transfers.length === 0 ? <div className="notice">No transfers in this period.</div> : (
-          <div className="list">{transfers.map((t) => (<div className="row" key={t.id}>
+          <div className="list">{transfers.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products); return (<div className="row" key={t.id}>
             <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
-              <div className="mt2">{bname(t.fromBranchId)} → {bname(t.toBranchId)} · {t.productName} × {t.qty}</div></div>
-            <span className="ist paid">{t.status || "completed"}</span><span className="pill plain">{dt(t.ts)}</span></div>))}</div>)
+              <div className="mt2">{bname(t.fromBranchId)} → {bname(t.toBranchId)} · {items.map((item) => item.productName + " × " + item.qty).join(", ")}{items.length > 1 ? " · " + units + " units total" : ""}</div></div>
+            <span className="ist paid">{t.status || "completed"}</span><span className="pill plain">{dt(t.ts)}</span></div>); })}</div>)
       )}
       <ReportPreviewDialog
         report={printPreview}
@@ -10185,8 +10258,8 @@ function DocumentsTab({ data }) {
         detail: [["Product", p ? p.name : ""], ["SKU", p ? p.sku : ""], ["Branch", bname(m.branchId)], ["Units lost", Math.abs(m.qty)], ["Cost value", fmt(Math.abs(val), cur)], ["Source", m.reason], ["When", new Date(m.ts).toLocaleString()]] }; });
   } else if (type === "transfers") {
     eyebrow = "Inventory"; title = "Stock Transfer Reports";
-    docs = data.borrowings.filter((t) => inRange(t.ts) && transferInBranch(t)).map((t) => { const items = t.items || [{ productName: t.productName, sku: "", qty: t.qty }]; const units = items.reduce((s, i) => s + i.qty, 0);
-      return { id: t.id, label: t.number, meta: bname(t.fromBranchId) + " → " + bname(t.toBranchId) + " · " + (items.length === 1 ? items[0].productName + " ×" + items[0].qty : items.length + " products · " + units + " units"), date: dt(t.ts), ts: t.ts, amountCents: 0,
+    docs = data.borrowings.filter((t) => inRange(t.ts) && transferInBranch(t)).map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
+      return { id: t.id, label: t.number, meta: bname(t.fromBranchId) + " → " + bname(t.toBranchId) + " · " + items.map((item) => item.productName + " × " + item.qty).join(", ") + (items.length > 1 ? " · " + units + " units total" : ""), date: dt(t.ts), ts: t.ts, amountCents: 0,
         detail: [["Transfer", t.number], ["From", bname(t.fromBranchId)], ["To", bname(t.toBranchId)], ["Products", items.length], ["Total units", units], ...items.map((i, idx) => ["Item " + (idx + 1), i.productName + " × " + i.qty]), ["Status", t.status || "completed"], ["Note", t.note || "—"], ["When", dt(t.ts)]] }; });
   } else if (type === "expenses") {
     eyebrow = "Expenses"; title = "Expense Reports";

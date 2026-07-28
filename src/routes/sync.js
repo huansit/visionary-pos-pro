@@ -673,7 +673,6 @@ const EVENT_TYPES = new Set([
   "endOfDay",
   "cashMovement",
   "order",
-  "purchase",
   "countLog",
 ]);
 
@@ -709,6 +708,8 @@ const RECORD_TYPE_ALIASES = new Map([
   ["suppliers", "supplier"],
   ["supplierPrice", "supplierPrice"],
   ["supplierPrices", "supplierPrice"],
+  ["purchase", "purchase"],
+  ["purchases", "purchase"],
   ["stockCountSession", "stockCountSession"],
   ["stockCountSessions", "stockCountSession"],
   ["stock_count_session", "stockCountSession"],
@@ -1066,12 +1067,14 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           }
           const recordToStore = type === "expense"
             ? await canonicalizeExpenseCategory(client, guardedEvent)
-            : guardedEvent;
+            : type === "purchase"
+              ? remapEventProductReferences(guardedEvent, await getProductAliases())
+              : guardedEvent;
           acceptedTs = await upsertMutableRecord(client, recordToStore, type, recordDeviceId, nextServerTs());
-          if (type === "expense") {
-            // Older cashier builds stored expenses as append-only events. Once an
-            // expense is updated, the mutable record becomes the canonical copy.
-            await client.query("DELETE FROM events WHERE id = $1 AND type = 'expense'", [guardedEvent.id]);
+          if (type === "expense" || type === "purchase") {
+            // Older builds stored these status-changing records as append-only
+            // events. The mutable record is now their canonical copy.
+            await client.query("DELETE FROM events WHERE id = $1 AND type = $2", [guardedEvent.id, type]);
           }
           if (type === "product") {
             await propagateProductGlobalFields(client, guardedEvent, recordDeviceId, acceptedTs);
