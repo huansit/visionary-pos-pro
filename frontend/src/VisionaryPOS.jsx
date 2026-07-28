@@ -6529,6 +6529,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [f, setF] = useState(blankProductForm());
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
+  const [scannedProductId, setScannedProductId] = useState("");
   const [catF, setCatF] = useState("All");
   const [delMsg, setDelMsg] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -6545,6 +6546,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const isBranchProduct = (p) => productVisibleInBranch(p, data, branch.id);
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
+  const scannedProduct = visibleBranchProducts.find((p) => p.id === scannedProductId) || null;
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
@@ -6572,16 +6574,19 @@ function ProductsTab({ data, update, branch, isAdmin }) {
       window.setTimeout(() => editBarcodeInputRef.current?.focus(), 0);
       return;
     }
-    const existing = data.products.find((p) => isBranchProduct(p) && productCodeMatch(p, barcode));
+    const existing = visibleBranchProducts.find((p) => productCodeMatch(p, barcode));
     if (existing) {
       reset();
-      startEdit(existing);
-      setQ(barcode);
-      setErr("Found " + existing.name + ". You can update its barcode below.");
+      setEditId(null);
+      setQ("");
+      setScannedProductId(existing.id);
+      setErr("");
       appendBarcodeScanLog({ barcode, status: "products:found_existing", productId: existing.id });
-      return;
+      return true;
     }
     const catalogEntry = findBarcodeCatalogEntry(data, barcode);
+    setScannedProductId("");
+    setQ("");
     setF((prev) => ({ ...prev, barcode }));
     setAdding(true);
     setBarcodeLocked(true);
@@ -6589,6 +6594,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     appendBarcodeScanLog({ barcode, status: catalogEntry ? "products:catalog_found" : "products:prefilled" });
   };
   useBarcodeScanner({ enabled: scannerOn && !cameraOpen, mode: "products", onScan: handleProductScan });
+  useEffect(() => {
+    setScannedProductId("");
+    setQ("");
+  }, [branch.id]);
   useEffect(() => {
     if (!adding || !scannerOn) return;
     const id = window.setTimeout(() => barcodeInputRef.current?.focus(), 0);
@@ -6843,7 +6852,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           <button className="btn xs" style={{ background: "var(--danger)", color: "#fff" }} onClick={() => remove(deleteTarget.id)}>Yes, delete</button>
         </div>
       </div>}
-      {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add product</button> : (
+      {!adding ? <button className="row-add" onClick={() => { setScannedProductId(""); setAdding(true); }}><Plus /> Add product</button> : (
         <div className="addpanel fade"><div className="section-title" style={{ margin: "0 0 12px" }}>New product</div>
           <div className="grid2"><div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => { setF({ ...f, name: e.target.value }); setErr(""); }} placeholder="e.g. Jameson Whisky 750ML" /></div>
             <div><label className="label">SKU</label><input className="input" value={f.sku} onChange={(e) => { setF({ ...f, sku: e.target.value }); setErr(""); }} placeholder="SIP0068" /></div></div>
@@ -6875,14 +6884,45 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         </div>
       )}
       <div className="ptools">
-        <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => setCatF(e.target.value)}>
+        <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => { setQ(e.target.value); setScannedProductId(""); }} /></div>
+        <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => { setCatF(e.target.value); setScannedProductId(""); }}>
           {["All", ...Array.from(new Set(visibleBranchProducts.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
       </div>
+      {scannedProduct && (() => {
+        const quantity = productOnHand(data, scannedProduct, branch.id);
+        const cost = branchInventoryCostCents(data, scannedProduct, branch.id);
+        const price = branchProductPriceCents(scannedProduct, branch.id);
+        const margin = price > 0 ? Math.round((price - cost) / price * 100) : 0;
+        const supplier = data.suppliers.find((item) => item.id === scannedProduct.supplierId)?.name || "No supplier";
+        const codes = [scannedProduct.barcode, ...(scannedProduct.barcodes || [])].filter(Boolean).join(", ") || "No barcode";
+        return (
+          <div className="xferinfo fade" role="status" style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div><div className="nm" style={{ fontSize: 16 }}>{scannedProduct.name}</div><div className="sub" style={{ marginTop: 3 }}>{branch.name} product details</div></div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="btn xs btn-ghost" onClick={() => startEdit(scannedProduct)}>Edit product</button>
+                <button className="iconbtn" onClick={() => setScannedProductId("")} aria-label="Clear scanned product" title="Clear scanned product"><X /></button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 12, marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
+              <div><div className="sub">Quantity on hand</div><div className="nm" style={{ fontSize: 18 }}>{quantity} {scannedProduct.unit || "unit"}{quantity === 1 ? "" : "s"}</div></div>
+              <div><div className="sub">Selling price</div><div className="nm">{fmt(price, cur)}</div></div>
+              <div><div className="sub">Moving avg cost</div><div className="nm">{fmtExact(cost, cur, 6)}</div></div>
+              <div><div className="sub">Margin</div><div className="nm">{margin}%</div></div>
+              <div><div className="sub">Low stock alert</div><div className="nm">{scannedProduct.reorderLevel ?? data.settings.reorderLevel}</div></div>
+            </div>
+            <div className="sub" style={{ marginTop: 12, lineHeight: 1.65, overflowWrap: "anywhere" }}>
+              SKU: <b>{scannedProduct.sku}</b> · Barcode: <b>{codes}</b> · Size: <b>{scannedProduct.size || "Not set"}</b> · Category: <b>{scannedProduct.category || "Other"}</b> · Supplier: <b>{supplier}</b>
+            </div>
+          </div>
+        );
+      })()}
       {(() => {
         const reorder = data.settings.reorderLevel || 4;
         const query = q.trim();
-        const list = sortProductsAZ(visibleBranchProducts.filter((p) => (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
+        const list = sortProductsAZ(visibleBranchProducts.filter((p) => scannedProductId
+          ? p.id === scannedProductId
+          : (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
