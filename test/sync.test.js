@@ -1859,6 +1859,73 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
       assert.deepEqual(res.body.rejected, []);
       assert.ok(res.body.accepted.includes("mv-stock-count-commit"));
       assert.ok(res.body.accepted.includes("cl-stock-count-commit"));
+  });
+});
+
+test("9b. inventory shortage joint debts sync by branch and cannot be created by terminals", async () => {
+  const debtId = "cjd_sc-test-lock-a";
+  const createdAt = Date.now();
+  const jointDebt = {
+    id: debtId,
+    type: "cashierJointDebt",
+    branchId: "b_sip",
+    clientTs: createdAt,
+    payload: {
+      branchId: "b_sip",
+      stockCountSessionId: "sc-test-lock-a",
+      stockCountCode: "SC-TEST",
+      status: "open",
+      shortageUnits: 2,
+      totalCents: 10001,
+      cashierCount: 2,
+      items: [{ productId: "prod-stock-count-1", productName: "Counted Product", missingQty: 2, unitCostCents: 5000.5, amountCents: 10001 }],
+      shares: [
+        { cashierId: "cashier-a", cashierName: "Cashier A", amountCents: 5001, paidCents: 0 },
+        { cashierId: "cashier-b", cashierName: "Cashier B", amountCents: 5000, paidCents: 0 },
+      ],
+      createdBy: "Admin",
+      ts: createdAt,
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [jointDebt] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(debtId));
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.events.find((event) => event.id === debtId && event.type === "cashierJointDebt");
+      assert.ok(synced);
+      assert.equal(synced.branchId, "b_sip");
+      assert.equal(synced.payload.totalCents, 10001);
+      assert.equal(synced.payload.shares.reduce((sum, share) => sum + share.amountCents, 0), 10001);
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenC}`)
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.events.some((event) => event.id === debtId), false);
+    });
+
+  const terminal = await activateTestTerminal("Joint Debt Till");
+  await withTerminalAuth(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{ ...jointDebt, id: "cjd-terminal-blocked" }] }), terminal)
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
 });
 

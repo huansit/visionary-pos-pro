@@ -498,6 +498,7 @@ const SEED = () => {
     supplierPrices: [],
     products,
     barcodeCatalog,
+    cashierJointDebts: [],
     stockMovements,
     stockCountSessions: [],
     orders: [],
@@ -530,6 +531,7 @@ const CLEAN_SETUP = () => {
     supplierPrices: [],
     products: [],
     barcodeCatalog: [],
+    cashierJointDebts: [],
     stockMovements: [],
     stockCountSessions: [],
     orders: [],
@@ -722,6 +724,7 @@ function normalizeLoadedData(data) {
     supplierPrices: Array.isArray(data.supplierPrices) ? data.supplierPrices : [],
     products: Array.isArray(data.products) ? data.products : [],
     barcodeCatalog: Array.isArray(data.barcodeCatalog) ? data.barcodeCatalog : [],
+    cashierJointDebts: Array.isArray(data.cashierJointDebts) ? data.cashierJointDebts : [],
     stockMovements: Array.isArray(data.stockMovements) ? data.stockMovements : [],
     stockCountSessions: Array.isArray(data.stockCountSessions) ? data.stockCountSessions : [],
     orders: Array.isArray(data.orders) ? data.orders : [],
@@ -921,6 +924,7 @@ const SYNC_APPEND = new Map([
   ["cashMovements", "cashMovement"],
   ["orders", "order"],
   ["countLog", "countLog"],
+  ["cashierJointDebts", "cashierJointDebt"],
 ]);
 const SYNC_MUTABLE = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
@@ -1378,6 +1382,66 @@ function activeEmployees(data) {
 }
 function activeCashiers(data) {
   return activeEmployees(data).filter((e) => e.role === "Cashier");
+}
+function branchCashiers(data, branchId) {
+  return activeCashiers(data)
+    .filter((cashier) => cashier.branchId === branchId)
+    .sort((a, b) => String(a.id || a.name || "").localeCompare(String(b.id || b.name || "")));
+}
+function cashierJointDebtOutstanding(debt) {
+  const shares = debt?.shares || [];
+  if (!shares.length) return Math.max(0, Number(debt?.totalCents) || 0);
+  return shares.reduce((sum, share) => sum + Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0)), 0);
+}
+function cashierJointDebtEntries(data, cashierId, branchId = null) {
+  return (data?.cashierJointDebts || []).flatMap((debt) => {
+    if (branchId && debt.branchId !== branchId) return [];
+    const share = (debt.shares || []).find((entry) => entry.cashierId === cashierId);
+    if (!share) return [];
+    const outstandingCents = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
+    return outstandingCents > 0 ? [{ debt, share, outstandingCents }] : [];
+  });
+}
+function createCashierJointDebt(data, session, rows, operator, ts = now()) {
+  const branchId = session?.branchId;
+  const items = (rows || []).filter((row) => Number(row.varianceQty) < 0).map((row) => {
+    const missingQty = Math.abs(Number(row.varianceQty) || 0);
+    const unitCostCents = branchInventoryCostCents(data, row.product, branchId);
+    return {
+      productId: row.productId,
+      productName: row.product?.name || row.productId,
+      sku: row.product?.sku || "",
+      missingQty,
+      unitCostCents,
+      amountCents: Math.max(0, Math.round(missingQty * unitCostCents)),
+    };
+  }).filter((item) => item.amountCents > 0);
+  const totalCents = items.reduce((sum, item) => sum + item.amountCents, 0);
+  if (!branchId || totalCents <= 0) return null;
+  const cashiers = branchCashiers(data, branchId);
+  const baseShare = cashiers.length ? Math.floor(totalCents / cashiers.length) : 0;
+  const remainder = cashiers.length ? totalCents % cashiers.length : 0;
+  const shares = cashiers.map((cashier, index) => ({
+    cashierId: cashier.id,
+    cashierName: cashier.name,
+    amountCents: baseShare + (index < remainder ? 1 : 0),
+    paidCents: 0,
+  }));
+  return {
+    id: "cjd_" + session.id,
+    branchId,
+    stockCountSessionId: session.id,
+    stockCountCode: session.code,
+    status: shares.length ? "open" : "unallocated",
+    shortageUnits: items.reduce((sum, item) => sum + item.missingQty, 0),
+    totalCents,
+    cashierCount: shares.length,
+    items,
+    shares,
+    createdBy: operator,
+    ts,
+    synced: false,
+  };
 }
 async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
@@ -4709,10 +4773,14 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const mine = operationalInvoices(data).filter((i) => i.cashierId === employee.id);
   const myDebts = mine.filter((i) => invIsDebt(i));
   const myOpen = mine.filter((i) => !i.carriedOver && invOutstanding(i) > 0);
+  const myMissingInventoryDebts = cashierJointDebtEntries(data, employee.id, branch.id);
   const openOnly = myOpen;
-  const openTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
+  const invoiceOutstandingTotal = mine.reduce((s, i) => s + invOutstanding(i), 0);
   const openOnlyTotal = openOnly.reduce((s, i) => s + invOutstanding(i), 0);
-  const debtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
+  const invoiceDebtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
+  const missingInventoryDebtTotal = myMissingInventoryDebts.reduce((s, entry) => s + entry.outstandingCents, 0);
+  const debtTotal = invoiceDebtTotal + missingInventoryDebtTotal;
+  const totalOutstanding = invoiceOutstandingTotal + missingInventoryDebtTotal;
   const shownList = openOnly;
 
   const add = (p) => {
@@ -4990,6 +5058,18 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       </span>
     </button>
   );
+  const jointDebtRow = ({ debt, outstandingCents }) => (
+    <div className="qabtn" key={debt.id} style={{ justifyContent: "space-between" }}>
+      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+        <span style={{ fontWeight: 700 }}>Missing inventory · {debt.stockCountCode}</span>
+        <span className="cust-meta">{debt.shortageUnits} missing unit{debt.shortageUnits === 1 ? "" : "s"} · {dt(debt.ts)}</span>
+      </span>
+      <span style={{ textAlign: "right" }}>
+        <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 12, display: "block" }}>{fmt(outstandingCents, cur)}</span>
+        <span className="ist overdue" style={{ fontSize: 10 }}>joint debt</span>
+      </span>
+    </div>
+  );
 
   return (
     <div className="fade cashier-workstation">
@@ -5037,12 +5117,13 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <span>Debt Tracker</span>
               <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
             </div>
-            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Carried-over debts</span><span className="v">{fmt(debtTotal, cur)}</span></div>
-            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} unpaid carried-over invoice{myDebts.length === 1 ? "" : "s"}</div>
-            {myDebts.length === 0 ? (
-              <div className="cust-meta" style={{ padding: "8px 2px" }}>No carried-over debts for your login.</div>
+            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
+            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} overdue invoice{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
+            {myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
+              <div className="cust-meta" style={{ padding: "8px 2px" }}>No cashier debts for your login.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 160, overflowY: "auto" }}>
+                {myMissingInventoryDebts.slice(0, 6).map(jointDebtRow)}
                 {myDebts.slice(0, 6).map((i) => invRow(i))}
               </div>
             )}
@@ -5147,14 +5228,21 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
         <div className="scrim" onClick={() => setDebtsOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{employee.name}</div><div className="title" style={{ fontSize: 21 }}>Debts &amp; Open Invoices</div></div><button className="iconbtn" onClick={() => setDebtsOpen(false)}><X /></button></div>
-            <div className="cashtiles" style={{ gridTemplateColumns: "1fr 1fr", margin: "12px 0 4px" }}>
-              <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total outstanding</div><div className="cv">{fmt(openTotal, cur)}</div><div className="cs">{myOpen.length} open invoice{myOpen.length === 1 ? "" : "s"}</div></div></div>
-              <div className={"ctile" + (debtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Carried-over debt</div><div className="cv">{fmt(debtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
+            <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", margin: "12px 0 4px" }}>
+              <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total outstanding</div><div className="cv">{fmt(totalOutstanding, cur)}</div><div className="cs">Invoices and joint debt</div></div></div>
+              <div className={"ctile" + (invoiceDebtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Carried-over invoices</div><div className="cv">{fmt(invoiceDebtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
+              <div className={"ctile" + (missingInventoryDebtTotal > 0 ? " warn" : "")}><div className="ic"><Boxes /></div><div><div className="cl">Missing inventory</div><div className="cv">{fmt(missingInventoryDebtTotal, cur)}</div><div className="cs">Equal branch share</div></div></div>
             </div>
-            {myOpen.length === 0 ? (
+            {myOpen.length === 0 && myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
               <div className="notice" style={{ marginTop: 10 }}>You have no open invoices or debts. Nicely done.</div>
             ) : (
               <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 14, maxHeight: "48vh", overflowY: "auto" }}>
+                {myMissingInventoryDebts.length > 0 && (
+                  <div>
+                    <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6, color: "var(--danger)" }}>Missing inventory · joint branch debt ({myMissingInventoryDebts.length})</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{myMissingInventoryDebts.map(jointDebtRow)}</div>
+                  </div>
+                )}
                 {myDebts.length > 0 && (
                   <div>
                     <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6, color: "var(--danger)" }}>Debts · carried over ({myDebts.length})</div>
@@ -5169,7 +5257,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
                 )}
               </div>
             )}
-            <div className="cust-meta" style={{ marginTop: 12 }}>Includes all your open invoices and carried-over debts — cleared by an admin or supervisor. Tap one to view its details.</div>
+            <div className="cust-meta" style={{ marginTop: 12 }}>Missing inventory is valued at branch cost and shared equally among the active branch cashiers recorded when the stock count was committed.</div>
           </div>
         </div>
       )}
@@ -5786,14 +5874,33 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     printInvoiceReceipts(receipts, cur);
   };
 
-  // cashier debts = overdue carried-over invoices, grouped by cashier.
+  // Cashier debt combines overdue sales invoices with audited stock-count shortages.
   const debts = overdue;
-  const byCashier = {};
+  const invoiceDebtByCashier = {};
   debts.forEach((i) => {
     const cashier = invoiceCashierName(i);
-    byCashier[cashier] = (byCashier[cashier] || 0) + invOutstanding(i);
+    invoiceDebtByCashier[cashier] = (invoiceDebtByCashier[cashier] || 0) + invOutstanding(i);
   });
-  const debtRows = Object.entries(byCashier);
+  const branchJointDebts = (data.cashierJointDebts || [])
+    .filter((debt) => debt.branchId === branch.id && cashierJointDebtOutstanding(debt) > 0)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  const missingDebtByCashier = {};
+  branchJointDebts.forEach((debt) => (debt.shares || []).forEach((share) => {
+    const outstandingCents = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
+    if (outstandingCents <= 0) return;
+    const name = share.cashierName || share.cashierId || "Unassigned cashier";
+    const current = missingDebtByCashier[name] || { amountCents: 0, count: 0 };
+    missingDebtByCashier[name] = { amountCents: current.amountCents + outstandingCents, count: current.count + 1 };
+  }));
+  const debtRows = Array.from(new Set([...Object.keys(invoiceDebtByCashier), ...Object.keys(missingDebtByCashier)]))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({
+      name,
+      invoiceAmountCents: invoiceDebtByCashier[name] || 0,
+      invoiceCount: debts.filter((invoice) => invoiceCashierName(invoice) === name).length,
+      missingAmountCents: missingDebtByCashier[name]?.amountCents || 0,
+      missingCount: missingDebtByCashier[name]?.count || 0,
+    }));
   const closes = (data.endOfDays || []).filter((e) => e.branchId === branch.id);
 
   return (
@@ -5873,11 +5980,28 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       <div className="invsummary">
         <div>
           <div className="section-title">Cashier Debts <span style={{ color: "var(--muted)", fontWeight: 500 }}>· carried over until cleared</span></div>
-          {debtRows.length === 0 ? <div className="notice">No carried-over cashier debts.</div> : (
-            <div className="list mini">{debtRows.map(([name, amt]) => (
-              <div className="row" key={name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{name.charAt(0)}</div>
-                <div className="meta"><div className="nm">{name}</div><div className="mt2">{debts.filter((i) => invoiceCashierName(i) === name).length} overdue invoice(s)</div></div>
-                <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(amt, cur)} owed</span></div>))}</div>
+          {debtRows.length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
+            <div className="list mini">{debtRows.map((row) => (
+              <div className="row" key={row.name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.name.charAt(0)}</div>
+                <div className="meta"><div className="nm">{row.name}</div><div className="mt2">{row.invoiceCount} overdue invoice(s) · {row.missingCount} missing inventory count(s)</div></div>
+                <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(row.invoiceAmountCents + row.missingAmountCents, cur)} owed</span></div>))}</div>
+          )}
+          <div className="section-title" style={{ marginTop: 18 }}>Missing Inventory <span style={{ color: "var(--muted)", fontWeight: 500 }}>· joint cashier debt</span></div>
+          {branchJointDebts.length === 0 ? <div className="notice">No missing inventory debt has been recorded for {branch.name}.</div> : (
+            <div className="list mini">{branchJointDebts.map((debt) => (
+              <details className="row" key={debt.id} style={{ display: "block" }}>
+                <summary style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", listStyle: "none" }}>
+                  <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
+                  <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {debt.cashierCount || 0} cashier(s) · {dt(debt.ts)}</div></div>
+                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(debt), cur)}</span>
+                </summary>
+                <div style={{ margin: "10px 0 0 44px", display: "grid", gap: 6 }}>
+                  {(debt.items || []).map((item) => <div className="mt2" key={item.productId}>{item.productName} · {item.missingQty} × {fmt(item.unitCostCents, cur)} = {fmt(item.amountCents, cur)}</div>)}
+                  {(debt.shares || []).map((share) => <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> · equal share {fmt(Math.max(0, (share.amountCents || 0) - (share.paidCents || 0)), cur)}</div>)}
+                  {debt.cashierCount === 0 && <div className="alert"><AlertCircle />No active cashier was assigned to this branch when the count was committed. This debt remains unallocated.</div>}
+                </div>
+              </details>
+            ))}</div>
           )}
         </div>
         <div>
@@ -7304,6 +7428,7 @@ function StockTab({ data, update, branch }) {
       ts,
       synced: false,
     }));
+    const jointDebt = createCashierJointDebt(data, session, rows, operator, ts);
     const committed = {
       ...session,
       status: "committed",
@@ -7316,13 +7441,26 @@ function StockTab({ data, update, branch }) {
         salesDuringCount,
         adjustments: movements.length,
         valueImpact: rows.reduce((s, row) => s + row.valueImpact, 0),
+        missingInventoryDebtCents: jointDebt?.totalCents || 0,
+        jointDebtCashiers: jointDebt?.cashierCount || 0,
       },
       synced: false,
       updatedAt: ts,
     };
-    update((d) => ({ ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...movements], countLog: [...(d.countLog || []), ...logs] }));
+    update((d) => {
+      const existingJointDebts = d.cashierJointDebts || [];
+      const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === session.id)
+        ? [...existingJointDebts, jointDebt]
+        : existingJointDebts;
+      return { ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...movements], countLog: [...(d.countLog || []), ...logs], cashierJointDebts };
+    });
     setReport(buildStockCountReport(committed, rows, movements, data, bname));
-    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied.");
+    const debtMessage = jointDebt
+      ? jointDebt.cashierCount > 0
+        ? " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " was shared across " + jointDebt.cashierCount + " cashier(s)."
+        : " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " is unallocated because this branch has no active cashiers."
+      : "";
+    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied." + debtMessage);
   };
   const handleStockScan = (code) => {
     const barcode = normalizeBarcode(code);
@@ -10323,10 +10461,23 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
   const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
-  const debtByCashier = {};
+  const invoiceDebtByCashierReport = {};
   openInv.filter((i) => invIsDebt(i)).forEach((i) => {
     const cashier = invoiceCashierName(i);
-    debtByCashier[cashier] = (debtByCashier[cashier] || 0) + invOutstanding(i);
+    invoiceDebtByCashierReport[cashier] = (invoiceDebtByCashierReport[cashier] || 0) + invOutstanding(i);
+  });
+  const missingDebtByCashierReport = {};
+  const missingDebtCountByCashier = {};
+  (data.cashierJointDebts || []).filter((debt) => inBranch(debt.branchId)).forEach((debt) => (debt.shares || []).forEach((share) => {
+    const amount = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
+    if (amount <= 0) return;
+    const cashier = share.cashierName || share.cashierId || "Unassigned cashier";
+    missingDebtByCashierReport[cashier] = (missingDebtByCashierReport[cashier] || 0) + amount;
+    missingDebtCountByCashier[cashier] = (missingDebtCountByCashier[cashier] || 0) + 1;
+  }));
+  const debtByCashier = {};
+  new Set([...Object.keys(invoiceDebtByCashierReport), ...Object.keys(missingDebtByCashierReport)]).forEach((cashier) => {
+    debtByCashier[cashier] = (invoiceDebtByCashierReport[cashier] || 0) + (missingDebtByCashierReport[cashier] || 0);
   });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
@@ -10363,7 +10514,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       const rws = branchProductsUnique(data, bId).map((p) => { const wk = duplicateProductIds(data, p, bId).reduce((s, id) => s + (sbp[id] || 0), 0) / wkObs; if (wk <= 0) return null; const oh = productOnHand(data, p, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel; const cover = oh / wk; const need = Math.max(0, Math.ceil(wk * reorderWeeks - oh)); return { p, oh, lvl, wk, cover, need }; }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
       return { name: "reorder-forecast", headers: ["Product", "SKU", "On hand", "Weekly demand", "Weeks of cover", "Reorder level", "Suggested order (" + reorderWeeks + "wk cover)"], rows: rws.map((r) => [r.p.name, r.p.sku, r.oh, r.wk.toFixed(2), r.cover.toFixed(1), r.lvl, r.need]) };
     }
-    if (sub === "cashier") return { name: "cashier-credit", headers: ["Cashier", "Overdue invoices", "Owed"], rows: Object.entries(debtByCashier).map(([n, v]) => [n, openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length, m(v)]) };
+    if (sub === "cashier") return {
+      name: "cashier-credit",
+      headers: ["Cashier", "Overdue invoices", "Missing inventory counts", "Invoice debt", "Missing inventory debt", "Total owed"],
+      rows: Object.entries(debtByCashier).map(([n, v]) => [n, openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length, missingDebtCountByCashier[n] || 0, m(invoiceDebtByCashierReport[n] || 0), m(missingDebtByCashierReport[n] || 0), m(v)]),
+    };
     if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
     if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
@@ -10803,12 +10958,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       })()}
 
       {sub === "cashier" && (
-        Object.keys(debtByCashier).length === 0 ? <div className="notice">No overdue cashier debts.</div> : (
+        Object.keys(debtByCashier).length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
-            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} overdue invoice(s)</div></div>
+            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} overdue invoice(s) · {missingDebtCountByCashier[n] || 0} missing inventory count(s)</div></div>
             <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span>
-            {onOpenCashierCredit ? <button className="btn sm" onClick={() => onOpenCashierCredit(n)}>View invoices <ChevronRight /></button> : null}
+            {onOpenCashierCredit && (invoiceDebtByCashierReport[n] || 0) > 0 ? <button className="btn sm" onClick={() => onOpenCashierCredit(n)}>View invoices <ChevronRight /></button> : null}
           </div>))}</div>)
       )}
 

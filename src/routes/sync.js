@@ -674,6 +674,7 @@ const EVENT_TYPES = new Set([
   "cashMovement",
   "order",
   "countLog",
+  "cashierJointDebt",
 ]);
 
 const RECORD_TYPE_ALIASES = new Map([
@@ -724,6 +725,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "payment",
   "purchase",
   "invoiceVoidDecision",
+  "cashierJointDebt",
 ]);
 
 const EVENT_TYPE_ALIASES = new Map([
@@ -1398,8 +1400,11 @@ router.get("/pull", requireSyncRead, async (req, res) => {
       [since, limit]
     );
     const all = [...evs.rows, ...recs.rows].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
-    const page = all.slice(0, limit);
-    const cursor = page.length ? page[page.length - 1].serverTs : since;
+    const rawPage = all.slice(0, limit);
+    const page = rawPage.filter((event) => event.type !== "cashierJointDebt"
+      || !req.deviceBranchId
+      || event.branchId === req.deviceBranchId);
+    const cursor = rawPage.length ? rawPage[rawPage.length - 1].serverTs : since;
     const hasMore = all.length > limit || evs.rows.length === limit || recs.rows.length === limit;
     res.json({ events: page, cursor, hasMore, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
