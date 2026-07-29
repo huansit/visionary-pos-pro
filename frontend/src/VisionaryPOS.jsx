@@ -7306,6 +7306,8 @@ function StockTab({ data, update, branch }) {
   const [filter, setFilter] = useState("all");
   const [report, setReport] = useState(null);
   const [lossOpen, setLossOpen] = useState(false);
+  const [lossCameraOpen, setLossCameraOpen] = useState(false);
+  const [lossError, setLossError] = useState("");
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionCameraOpen, setCorrectionCameraOpen] = useState(false);
   const [correctionError, setCorrectionError] = useState("");
@@ -7343,7 +7345,11 @@ function StockTab({ data, update, branch }) {
     const product = data.products.find((p) => p.id === m.productId);
     return s + Math.abs(m.qty) * (product ? branchInventoryCostCents(data, product, bId) : 0);
   }, 0);
-  const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
+  const lossTerm = lf.q.trim().toLowerCase();
+  const lossProdMatches = lossTerm === "" || lf.productId ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lossTerm)
+    || p.sku.toLowerCase().includes(lossTerm)
+    || productMatchesBarcode(p, lossTerm)
+    || productMatchesCatalog(p, findBarcodeCatalogEntry(data, lossTerm)))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
   const correctionTerm = cf.q.trim().toLowerCase();
   const correctionMatches = correctionTerm === "" || cf.productId ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(correctionTerm)
@@ -7492,6 +7498,48 @@ function StockTab({ data, update, branch }) {
     appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
     return true;
   };
+  const resetLoss = () => {
+    setLf({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
+    setLossError("");
+  };
+  const openLoss = () => {
+    resetLoss();
+    setLossOpen(true);
+  };
+  const closeLoss = () => {
+    setLossCameraOpen(false);
+    setLossOpen(false);
+    resetLoss();
+  };
+  const selectLossProduct = (product) => {
+    if (!product) return false;
+    setLf((current) => ({ ...current, q: product.name, productId: product.id, qty: "" }));
+    setLossError("");
+    return true;
+  };
+  const handleLossScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setLossError("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "loss_damage:invalid" });
+      return false;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setLossError(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "loss_damage:branch_unavailable" : "loss_damage:not_found", barcodeCatalogId: hit?.barcodeCatalog?.id });
+      return false;
+    }
+    const available = productOnHand(data, hit.product, bId);
+    if (available <= 0) {
+      setLossError(hit.name + " has no stock on hand at " + bname + ".");
+      appendBarcodeScanLog({ barcode, status: "loss_damage:out_of_stock", productId: hit.product.id });
+      return false;
+    }
+    selectLossProduct(hit.product);
+    appendBarcodeScanLog({ barcode, status: "loss_damage:selected", productId: hit.product.id });
+    return true;
+  };
   const resetCorrection = () => {
     setCf({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
     setCorrectionError("");
@@ -7577,15 +7625,27 @@ function StockTab({ data, update, branch }) {
     setScanMsg(correctionProduct.name + " corrected from " + correctionCurrentQty + " to " + correctionQty + " (" + (correctionDelta > 0 ? "+" : "") + correctionDelta + ").");
     closeCorrection();
   };
-  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !correctionOpen && !correctionCameraOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
+  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !lossCameraOpen && !correctionOpen && !correctionCameraOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
   const recordLoss = () => {
     const qty = parseInt(lf.qty, 10);
-    if (!lf.productId || !qty || qty <= 0) return;
+    if (!lossProd) {
+      setLossError("Select a product to record as loss or damage.");
+      return;
+    }
+    if (!qty || qty <= 0) {
+      setLossError("Enter the quantity lost or damaged.");
+      return;
+    }
     const oh = onHand(data, lf.productId, bId);
     const dq = Math.min(qty, Math.max(0, oh));
-    if (dq <= 0) return;
+    if (dq <= 0) {
+      setLossError(lossProd.name + " has no stock on hand at " + bname + ".");
+      return;
+    }
     const reason = "Loss/Damage - " + lf.reason + (lf.note.trim() ? " - " + lf.note.trim() : "");
     update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, reason, ts: now(), synced: false }] }));
+    setScanMsg(dq + " x " + lossProd.name + " recorded as " + lf.reason.toLowerCase() + " at " + bname + ".");
+    setLossError("");
     setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
   };
   const exportReport = (kind) => report && exportDiscrepancy(report, cur, kind);
@@ -7606,7 +7666,7 @@ function StockTab({ data, update, branch }) {
         <button className="btn sm btn-ghost" disabled={!!session} onClick={openCorrection} title={session ? "Finish or cancel the active stock count first" : "Correct a wrongly entered stock quantity"}><Wrench /> Correct stock</button>
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> USB scanner</button>
         <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
-        <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
+        <button className="btn sm btn-ghost" onClick={openLoss}><TrendingDown /> Record loss / damage</button>
       </div>
       {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
@@ -7739,12 +7799,16 @@ function StockTab({ data, update, branch }) {
         />
       )}
       {lossOpen && (
-        <div className="scrim" onClick={() => setLossOpen(false)}>
+        <div className="scrim" onClick={closeLoss}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Record loss / damage</div></div><button className="iconbtn" onClick={() => setLossOpen(false)}><X /></button></div>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Record loss / damage</div></div><button className="iconbtn" onClick={closeLoss}><X /></button></div>
             <label className="label" style={{ marginTop: 12 }}>Find product</label>
-            <div className="possearch" style={{ height: 44 }}><Search /><input placeholder="Search name or SKU..." value={lf.q} onChange={(e) => setLf({ ...lf, q: e.target.value, productId: "" })} /></div>
-            {lf.q.trim() !== "" && !lossProd && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>{lossProdMatches.length === 0 ? <span className="cust-meta">No match.</span> : lossProdMatches.map((p) => <button key={p.id} className="inschip" onClick={() => setLf({ ...lf, productId: p.id, q: p.name })}>{p.name} - {productOnHand(data, p, bId)} on hand</button>)}</div>}
+            <div className="barcode-input-row">
+              <div className="possearch" style={{ height: 44 }}><Search /><input autoFocus placeholder="Search name, SKU, or barcode..." value={lf.q} onChange={(e) => { setLf({ ...lf, q: e.target.value, productId: "", qty: "" }); setLossError(""); }} /></div>
+              <button type="button" className="iconbtn" onClick={() => { setLossError(""); setLossCameraOpen(true); }} aria-label="Scan product barcode with camera" title="Scan product barcode with camera"><Camera /></button>
+            </div>
+            {lossError && <div className="alert error" style={{ marginTop: 12 }}><AlertCircle />{lossError}</div>}
+            {lossTerm !== "" && !lossProd && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>{lossProdMatches.length === 0 ? <span className="cust-meta">No match.</span> : lossProdMatches.map((p) => <button key={p.id} className="inschip" onClick={() => selectLossProduct(p)}>{p.name} - {productOnHand(data, p, bId)} on hand</button>)}</div>}
             {lossProd && <>
               <div className="notice" style={{ marginTop: 10 }}>{lossProd.name} - <b>{onHand(data, lossProd.id, bId)}</b> on hand at {bname}</div>
               <div className="grid2" style={{ marginTop: 12 }}><div><label className="label">Quantity lost</label><input className="input" inputMode="numeric" value={lf.qty} onChange={(e) => setLf({ ...lf, qty: e.target.value.replace(/\D/g, "") })} placeholder="1" /></div><div><label className="label">Reason</label><select className="select" value={lf.reason} onChange={(e) => setLf({ ...lf, reason: e.target.value })}>{LOSS_REASONS.map((r) => <option key={r}>{r}</option>)}</select></div></div>
@@ -7753,6 +7817,14 @@ function StockTab({ data, update, branch }) {
             </>}
           </div>
         </div>
+      )}
+      {lossCameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Loss & damage"
+          title={"Select product - " + bname}
+          onClose={() => setLossCameraOpen(false)}
+          onScan={(barcode) => { const accepted = handleLossScan(barcode); if (accepted) setLossCameraOpen(false); return accepted; }}
+        />
       )}
     </div>
   );
