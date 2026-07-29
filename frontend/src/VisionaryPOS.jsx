@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { buildReportDocument, ReportPreviewDialog } from "./components/reports/ReportEngine.jsx";
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import { productDisplayImage } from "./productImages.js";
@@ -2165,20 +2165,90 @@ function cameraScannerError(error) {
   if (name === "NotFoundError" || name === "DevicesNotFoundError") return "No camera was found on this device.";
   if (name === "NotReadableError" || name === "TrackStartError") return "The camera is already in use by another app. Close it there, then try again.";
   if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") return "The available camera cannot use the requested scan mode.";
+  if (name === "AbortError") return "Camera startup was interrupted. Try again.";
   if (name === "SecurityError") return "Camera access is unavailable for this connection.";
   return "The camera could not start. You can still type the barcode or use a paired scanner.";
+}
+const MOBILE_CAMERA_KEY = "visionpos_mobile_camera_id";
+let barcodeAudioContext = null;
+function storedMobileCameraId() {
+  try { return window.localStorage.getItem(MOBILE_CAMERA_KEY) || ""; } catch (_) { return ""; }
+}
+function rememberMobileCameraId(deviceId) {
+  try {
+    if (deviceId) window.localStorage.setItem(MOBILE_CAMERA_KEY, deviceId);
+    else window.localStorage.removeItem(MOBILE_CAMERA_KEY);
+  } catch (_) {}
+}
+function cameraDeviceLabel(device, index) {
+  return String(device?.label || "").trim() || `Camera ${index + 1}`;
+}
+function preferredCameraDevice(devices, probeDeviceId = "") {
+  let best = null;
+  let bestScore = -Infinity;
+  devices.forEach((device, index) => {
+    const label = cameraDeviceLabel(device, index).toLowerCase();
+    let score = -index;
+    if (/back|rear|environment|world/.test(label)) score += 100;
+    if (/front|user|selfie/.test(label)) score -= 200;
+    if (/ultra.?wide|macro|depth|telephoto|tele\b/.test(label)) score -= 60;
+    if (/camera2?\s*0\b|camera\s*0\b/.test(label)) score += 12;
+    if (device.deviceId && device.deviceId === probeDeviceId) score += 5;
+    if (score > bestScore) {
+      best = device;
+      bestScore = score;
+    }
+  });
+  return best;
+}
+function prepareBarcodeSuccessTone() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    if (!barcodeAudioContext) barcodeAudioContext = new AudioContextClass();
+    if (barcodeAudioContext.state === "suspended") barcodeAudioContext.resume().catch(() => {});
+  } catch (_) {}
+}
+
+function playBarcodeSuccessTone() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    if (!barcodeAudioContext) barcodeAudioContext = new AudioContextClass();
+    const play = () => {
+      const startedAt = barcodeAudioContext.currentTime;
+      const oscillator = barcodeAudioContext.createOscillator();
+      const gain = barcodeAudioContext.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, startedAt);
+      oscillator.frequency.exponentialRampToValueAtTime(1174, startedAt + 0.08);
+      gain.gain.setValueAtTime(0.0001, startedAt);
+      gain.gain.exponentialRampToValueAtTime(0.16, startedAt + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.13);
+      oscillator.connect(gain);
+      gain.connect(barcodeAudioContext.destination);
+      oscillator.start(startedAt);
+      oscillator.stop(startedAt + 0.14);
+    };
+    if (barcodeAudioContext.state === "suspended") barcodeAudioContext.resume().then(play).catch(() => {});
+    else play();
+  } catch (_) {}
 }
 function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "Products", title = "Scan product barcode" }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
+  const cameraDeviceIdRef = useRef(storedMobileCameraId());
   const foundRef = useRef(false);
   const scanStateRef = useRef({ code: "", lastDetectedAt: 0, armed: true });
   const onCloseRef = useRef(onClose);
   const onScanRef = useRef(onScan);
+  useLayoutEffect(() => { prepareBarcodeSuccessTone(); }, []);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("Starting camera...");
   const [error, setError] = useState("");
 
+  const [cameraDevices, setCameraDevices] = useState([]);
+  const [cameraDeviceId, setCameraDeviceId] = useState(cameraDeviceIdRef.current);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { onScanRef.current = onScan; }, [onScan]);
   useEffect(() => {
@@ -2215,10 +2285,36 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         const { BrowserMultiFormatOneDReader } = await import("@zxing/browser");
         if (disposed || !videoRef.current) return;
         const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 90, delayBetweenScanSuccess: 500 });
-        const controls = await reader.decodeFromConstraints({
-          audio: false,
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        }, videoRef.current, (result, _scanError, activeControls) => {
+        let devices = [];
+        try {
+          devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
+        } catch (_) {}
+
+        let selectedDeviceId = cameraDeviceIdRef.current;
+        if (!devices.some((device) => device.deviceId && device.deviceId === selectedDeviceId)) selectedDeviceId = "";
+        if (!selectedDeviceId) {
+          const permissionStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: { ideal: "environment" } },
+          });
+          const probeDeviceId = permissionStream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+          permissionStream.getTracks().forEach((track) => track.stop());
+          await new Promise((resolve) => window.setTimeout(resolve, 80));
+          try {
+            devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
+          } catch (_) {}
+          selectedDeviceId = preferredCameraDevice(devices, probeDeviceId)?.deviceId || probeDeviceId;
+        }
+
+        if (disposed || !videoRef.current) return;
+        setCameraDevices(devices.filter((device) => device.deviceId));
+        if (selectedDeviceId) {
+          cameraDeviceIdRef.current = selectedDeviceId;
+          setCameraDeviceId(selectedDeviceId);
+          rememberMobileCameraId(selectedDeviceId);
+        }
+
+        const handleDecode = (result, _scanError, activeControls) => {
           if (disposed) return;
           if (!result) {
             const scanState = scanStateRef.current;
@@ -2243,8 +2339,12 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           scanState.code = barcode;
           scanState.lastDetectedAt = detectedAt;
           scanState.armed = false;
-          try { navigator.vibrate?.(45); } catch (_) {}
           const accepted = onScanRef.current?.(barcode);
+          if (accepted !== false) {
+            try { navigator.vibrate?.(45); } catch (_) {}
+            playBarcodeSuccessTone();
+          }
+
           if (continuous) {
             setStatus(accepted === false ? "Product was not counted. Check the message and try again." : "Counted " + barcode + ". Move to the next product.");
             return;
@@ -2253,7 +2353,23 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           try { activeControls.stop(); } catch (_) {}
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
-        });
+        };
+        const controls = selectedDeviceId
+          ? await reader.decodeFromVideoDevice(selectedDeviceId, videoRef.current, handleDecode)
+          : await reader.decodeFromConstraints({ audio: false, video: { facingMode: "environment" } }, videoRef.current, handleDecode);
+        const videoTrack = videoRef.current?.srcObject?.getVideoTracks?.()[0];
+        if (videoTrack?.applyConstraints) {
+          const capabilities = videoTrack.getCapabilities?.() || {};
+          const advanced = [];
+          if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
+            advanced.push({ focusMode: "continuous" });
+          }
+          videoTrack.applyConstraints({
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            ...(advanced.length ? { advanced } : {}),
+          }).catch(() => {});
+        }
         if (disposed) controls.stop();
         else {
           controlsRef.current = controls;
@@ -2282,6 +2398,27 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           {!error && <div className="camera-target" aria-hidden="true"><span /></div>}
           {error && <div className="camera-error" role="alert"><AlertCircle /><span>{error}</span></div>}
         </div>
+        {cameraDevices.length > 1 && (
+          <label className="camera-device-row">
+            <Camera aria-hidden="true" />
+            <select
+              className="input"
+              aria-label="Camera"
+              value={cameraDeviceId}
+              onChange={(event) => {
+                const nextDeviceId = event.target.value;
+                cameraDeviceIdRef.current = nextDeviceId;
+                setCameraDeviceId(nextDeviceId);
+                rememberMobileCameraId(nextDeviceId);
+                setAttempt((value) => value + 1);
+              }}
+            >
+              {cameraDevices.map((device, index) => (
+                <option key={device.deviceId} value={device.deviceId}>{cameraDeviceLabel(device, index)}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="camera-status" aria-live="polite">{error ? "" : status}</div>
         <div className="camera-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>{continuous ? "Done" : "Cancel"}</button>
@@ -3154,6 +3291,9 @@ body{overscroll-behavior:none}
 .camera-target span{position:absolute;left:7%;right:7%;top:50%;height:2px;background:var(--accent-2);box-shadow:0 0 9px rgba(34,199,214,.9)}
 .camera-error{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;color:#fff;background:#10191f;font-size:13px;line-height:1.5}
 .camera-error svg{width:22px;height:22px;flex:0 0 auto;color:var(--warn)}
+.camera-device-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+.camera-device-row>svg{width:18px;height:18px;flex:0 0 auto;color:var(--muted)}
+.camera-device-row .input{height:40px;min-width:0}
 .camera-status{min-height:38px;padding:11px 2px 4px;color:var(--muted);font-size:13px;line-height:1.45}
 .camera-status.error{color:var(--danger)}
 .camera-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
