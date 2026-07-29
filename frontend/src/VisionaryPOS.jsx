@@ -7182,11 +7182,16 @@ function StockTab({ data, update, branch }) {
   const [filter, setFilter] = useState("all");
   const [report, setReport] = useState(null);
   const [lossOpen, setLossOpen] = useState(false);
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionCameraOpen, setCorrectionCameraOpen] = useState(false);
+  const [correctionError, setCorrectionError] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
+  const [cf, setCf] = useState({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
+  const CORRECTION_REASONS = ["Incorrect quantity entered", "Wrong purchase quantity", "Duplicate stock entry", "Wrong opening stock", "Wrong stock count", "Other"];
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const session = activeStockCountSession(data, bId);
   const operator = stockCountOperator(data);
@@ -7216,6 +7221,18 @@ function StockTab({ data, update, branch }) {
   }, 0);
   const lossProdMatches = lf.q.trim() === "" ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lf.q.toLowerCase()) || p.sku.toLowerCase().includes(lf.q.toLowerCase()))).slice(0, 8);
   const lossProd = data.products.find((p) => p.id === lf.productId);
+  const correctionTerm = cf.q.trim().toLowerCase();
+  const correctionMatches = correctionTerm === "" || cf.productId ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(correctionTerm)
+    || p.sku.toLowerCase().includes(correctionTerm)
+    || productMatchesBarcode(p, correctionTerm)
+    || productMatchesCatalog(p, findBarcodeCatalogEntry(data, correctionTerm)))).slice(0, 8);
+  const correctionProduct = data.products.find((p) => p.id === cf.productId);
+  const correctionCurrentQty = correctionProduct ? productOnHand(data, correctionProduct, bId) : null;
+  const correctionQty = cf.correctedQty === "" ? null : parseInt(cf.correctedQty, 10);
+  const correctionDelta = correctionQty === null || correctionCurrentQty === null ? null : correctionQty - correctionCurrentQty;
+  const correctionList = (data.stockMovements || []).filter((movement) => movement.branchId === bId
+    && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
 
   const upsertSession = (nextSession) => update((d) => {
     const existing = d.stockCountSessions || [];
@@ -7337,7 +7354,92 @@ function StockTab({ data, update, branch }) {
     appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
     return true;
   };
-  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
+  const resetCorrection = () => {
+    setCf({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
+    setCorrectionError("");
+  };
+  const openCorrection = () => {
+    if (session) {
+      setScanMsg("Finish or cancel " + session.code + " before correcting individual stock quantities.");
+      return;
+    }
+    resetCorrection();
+    setCorrectionOpen(true);
+  };
+  const closeCorrection = () => {
+    setCorrectionCameraOpen(false);
+    setCorrectionOpen(false);
+    resetCorrection();
+  };
+  const selectCorrectionProduct = (product) => {
+    if (!product) return false;
+    setCf((current) => ({ ...current, q: product.name, productId: product.id, correctedQty: "" }));
+    setCorrectionError("");
+    return true;
+  };
+  const handleCorrectionScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setCorrectionError("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "stock_correction:invalid" });
+      return false;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setCorrectionError(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "stock_correction:branch_unavailable" : "stock_correction:not_found" });
+      return false;
+    }
+    selectCorrectionProduct(hit.product);
+    appendBarcodeScanLog({ barcode, status: "stock_correction:selected", productId: hit.product.id });
+    return true;
+  };
+  const selectCorrectionSearch = () => {
+    const exact = barcodeLookup(data, cf.q, bId);
+    if (exact && !exact.unavailable) return selectCorrectionProduct(exact.product);
+    if (correctionMatches.length === 1) return selectCorrectionProduct(correctionMatches[0]);
+    setCorrectionError(correctionMatches.length ? "Select the correct product from the matches below." : "No matching product was found in " + bname + ".");
+    return false;
+  };
+  const recordCorrection = () => {
+    if (session) {
+      setCorrectionError("Finish or cancel " + session.code + " before correcting stock.");
+      return;
+    }
+    if (!correctionProduct || correctionCurrentQty === null) {
+      setCorrectionError("Select a product to correct.");
+      return;
+    }
+    if (!Number.isInteger(correctionQty) || correctionQty < 0) {
+      setCorrectionError("Enter the correct non-negative quantity on hand.");
+      return;
+    }
+    if (correctionDelta === 0) {
+      setCorrectionError("The corrected quantity is already the current quantity.");
+      return;
+    }
+    const ts = now();
+    const reason = "Stock correction - " + cf.reason + (cf.note.trim() ? " - " + cf.note.trim() : "");
+    const movement = {
+      id: uid("mv"),
+      productId: correctionProduct.id,
+      branchId: bId,
+      qty: correctionDelta,
+      mode: "correction",
+      reason,
+      correctionReason: cf.reason,
+      correctionNote: cf.note.trim(),
+      previousQty: correctionCurrentQty,
+      correctedQty: correctionQty,
+      correctedBy: operator,
+      ts,
+      synced: false,
+    };
+    update((d) => ({ ...d, stockMovements: [...(d.stockMovements || []), movement] }));
+    setScanMsg(correctionProduct.name + " corrected from " + correctionCurrentQty + " to " + correctionQty + " (" + (correctionDelta > 0 ? "+" : "") + correctionDelta + ").");
+    closeCorrection();
+  };
+  useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !correctionOpen && !correctionCameraOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
   const recordLoss = () => {
     const qty = parseInt(lf.qty, 10);
     if (!lf.productId || !qty || qty <= 0) return;
@@ -7363,6 +7465,7 @@ function StockTab({ data, update, branch }) {
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <button className="btn sm btn-primary" onClick={() => setInventoryMode("quick")}><ClipboardCheck /> Quick inventory</button>
+        <button className="btn sm btn-ghost" disabled={!!session} onClick={openCorrection} title={session ? "Finish or cancel the active stock count first" : "Correct a wrongly entered stock quantity"}><Wrench /> Correct stock</button>
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> USB scanner</button>
         <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
         <button className="btn sm btn-ghost" onClick={() => setLossOpen(true)}><TrendingDown /> Record loss / damage</button>
@@ -7439,6 +7542,21 @@ function StockTab({ data, update, branch }) {
           </div>
         </div>
       )}
+      {correctionList.length > 0 && (
+        <div className="panel fade" style={{ marginTop: 18 }}>
+          <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 17 }}>Recent stock corrections</div><div className="sub">Audited quantity corrections for {bname}</div></div><span className="pill plain">{correctionList.length}</span></div>
+          <div className="list">{correctionList.slice(0, 10).map((movement) => {
+            const product = data.products.find((p) => p.id === movement.productId);
+            const delta = Number(movement.qty || 0);
+            const previous = Number.isFinite(Number(movement.previousQty)) ? Number(movement.previousQty) : null;
+            const corrected = Number.isFinite(Number(movement.correctedQty)) ? Number(movement.correctedQty) : null;
+            return <div className="row" key={movement.id}>
+              <div className="meta"><div className="nm">{product?.name || "Product"}</div><div className="mt2">{previous === null || corrected === null ? "Quantity adjusted" : previous + " to " + corrected} - {movement.correctionReason || movement.reason} - {movement.correctedBy || "Admin"} - {dt(movement.ts)}</div></div>
+              <span className="pill plain" style={{ color: delta < 0 ? "var(--danger)" : "var(--ok)" }}>{delta > 0 ? "+" : ""}{delta}</span>
+            </div>;
+          })}</div>
+        </div>
+      )}
       {cameraOpen && (
         <CameraBarcodeScanner
           continuous
@@ -7446,6 +7564,40 @@ function StockTab({ data, update, branch }) {
           title={"Count products - " + bname}
           onClose={() => setCameraOpen(false)}
           onScan={handleStockScan}
+        />
+      )}
+      {correctionOpen && (
+        <div className="scrim" onClick={closeCorrection}>
+          <div className="modal" style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Correct stock quantity</div></div><button className="iconbtn" onClick={closeCorrection}><X /></button></div>
+            <div className="notice" style={{ marginTop: 12 }}>Use this only to repair an incorrect entry. VisionPOS will preserve the old quantity, correction reason, operator, and time in the stock ledger.</div>
+            {correctionError && <div className="alert error" style={{ marginTop: 12 }}><AlertCircle />{correctionError}</div>}
+            <label className="label" style={{ marginTop: 14 }}>Find product</label>
+            <div className="barcode-input-row">
+              <div className="possearch" style={{ height: 44 }}><Search /><input autoFocus placeholder="Search name, SKU, or scan barcode..." value={cf.q} onChange={(event) => { setCf({ ...cf, q: event.target.value, productId: "", correctedQty: "" }); setCorrectionError(""); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); selectCorrectionSearch(); } }} /></div>
+              <button type="button" className="iconbtn" onClick={() => setCorrectionCameraOpen(true)} aria-label="Scan product barcode with camera" title="Scan product barcode with camera"><Camera /></button>
+            </div>
+            {correctionTerm !== "" && !correctionProduct && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>{correctionMatches.length === 0 ? <span className="cust-meta">No match.</span> : correctionMatches.map((product) => <button key={product.id} className="inschip" onClick={() => selectCorrectionProduct(product)}>{product.name} - {productOnHand(data, product, bId)} on hand</button>)}</div>}
+            {correctionProduct && <>
+              <div className="notice" style={{ marginTop: 12 }}><b>{correctionProduct.name}</b> - {correctionProduct.sku} - currently <b>{correctionCurrentQty}</b> on hand</div>
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <div><label className="label">Current quantity</label><input className="input" value={correctionCurrentQty} readOnly /></div>
+                <div><label className="label">Correct quantity</label><input className="input" inputMode="numeric" value={cf.correctedQty} onChange={(event) => { setCf({ ...cf, correctedQty: event.target.value.replace(/\D/g, "") }); setCorrectionError(""); }} placeholder="Enter physical quantity" /></div>
+              </div>
+              <div className="field" style={{ marginTop: 12 }}><label className="label">Correction reason</label><select className="select" value={cf.reason} onChange={(event) => setCf({ ...cf, reason: event.target.value })}>{CORRECTION_REASONS.map((reasonOption) => <option key={reasonOption}>{reasonOption}</option>)}</select></div>
+              <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={cf.note} onChange={(event) => setCf({ ...cf, note: event.target.value })} placeholder="e.g. purchase quantity entered twice" /></div>
+              {correctionDelta !== null && correctionDelta !== 0 && <div className="notice" style={{ marginTop: 12 }}>This correction will {correctionDelta > 0 ? "add " + correctionDelta : "remove " + Math.abs(correctionDelta)} unit{Math.abs(correctionDelta) === 1 ? "" : "s"}.</div>}
+              <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={correctionQty === null || correctionDelta === 0} onClick={recordCorrection}><Check /> Apply stock correction</button>
+            </>}
+          </div>
+        </div>
+      )}
+      {correctionCameraOpen && (
+        <CameraBarcodeScanner
+          eyebrow="Stock correction"
+          title={"Select product - " + bname}
+          onClose={() => setCorrectionCameraOpen(false)}
+          onScan={(barcode) => { const accepted = handleCorrectionScan(barcode); if (accepted) setCorrectionCameraOpen(false); return accepted; }}
         />
       )}
       {lossOpen && (
@@ -11706,5 +11858,4 @@ function SettingsTab({ data, update }) {
     </div>
   );
 }
-
 

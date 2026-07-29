@@ -799,6 +799,43 @@ test("5. two devices sync a complete transaction sale across invoice, payment, a
     });
 });
 
+test("5a. admin stock corrections retain their audit details across devices", async () => {
+  const correction = {
+    id: "stock-correction-admin-001",
+    type: "stockMovement",
+    branchId: "b_sip",
+    clientTs: 3100,
+    payload: {
+      productId: "prod-two-device-001",
+      qty: 3,
+      mode: "correction",
+      reason: "Stock correction - Incorrect quantity entered - opening stock was keyed wrongly",
+      correctionReason: "Incorrect quantity entered",
+      correctionNote: "opening stock was keyed wrongly",
+      previousQty: 7,
+      correctedQty: 10,
+      correctedBy: "Admin Owner",
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [correction] })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(correction.id)));
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const stored = res.body.events.find((event) => event.id === correction.id);
+      assert.ok(stored, "the correction should reach another device");
+      assert.equal(stored.type, "stockMovement");
+      assert.equal(stored.branchId, correction.branchId);
+      assert.deepEqual(stored.payload, correction.payload);
+    });
+});
+
 test("5b. Cape Town terminal invoice reaches admin sync feed", async () => {
   const capeTownTerminal = await activateTestTerminal("Cape Town Till", "b_cpt");
   const saleEvents = [
