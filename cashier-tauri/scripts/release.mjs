@@ -221,6 +221,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashier inventory debt now accumulates assigned, paid, and outstanding balances across all stock counts.",
+  "Supervisor inventory-debt payments sync to the cashier dashboard and reduce each cashier's outstanding balance.",
+  "Customer balances remain in Invoice debt and no longer appear in the Inventory debt category.",
+  "Quick Inventory shortages now create joint cashier inventory credit with sequential QI references.",
   "Favorites now shows the branch's most commonly sold products from the last 30 days.",
   "Common products are ranked by units sold, invoice frequency, and latest sale, with approved voids excluded.",
   "The Sales Today Pending count now represents invoice void requests awaiting supervisor approval.",
