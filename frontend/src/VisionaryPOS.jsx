@@ -8634,11 +8634,12 @@ function StockTab({ data, update, branch }) {
     branchName: bname,
     generatedBy: operator || "VISIONPOS",
     dateRange: templateRange.label,
-    filters: [{ label: "Shop", value: bname }, { label: "Selected products", value: selectedTemplateProducts.length }],
+    filters: [{ label: "Selected products", value: selectedTemplateProducts.length }],
     headers: stockTemplateHeaders(),
     rows: stockTemplateRows(),
     totals: [],
     orientation: "landscape",
+    prominentBranch: true,
   });
   const exportStockTakingTemplate = (kind) => {
     if (!selectedTemplateProducts.length) return;

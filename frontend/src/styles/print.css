@@ -76,6 +76,26 @@
   gap: 2px;
 }
 
+.print-meta.prominent-branch {
+  flex: 1;
+  min-width: 46%;
+  gap: 4px;
+}
+
+.print-branch-name {
+  color: #111827;
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1.05;
+  text-transform: uppercase;
+}
+
+.print-document-type {
+  color: #334155 !important;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .print-title-block {
   margin-bottom: 12px;
 }

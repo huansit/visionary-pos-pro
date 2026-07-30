@@ -129,11 +129,23 @@ function simpleReportPdf(report) {
   const streams = chunks.map((chunk, pageIndex) => {
     let y = page.h - margin;
     let s = "";
-    s += pdfText(margin, y, report?.companyName || "VISIONPOS", 16, true); y -= 18;
-    s += pdfText(margin, y, report?.title || "Report", 12, true);
-    s += pdfText(page.w - margin - 190, page.h - margin, "Generated: " + new Date(report?.generatedAt || Date.now()).toLocaleString(), 8);
-    y -= 16;
-    s += pdfText(margin, y, "Branch: " + (report?.branchName || "All branches") + "    Range: " + (report?.dateRange || "All time") + "    By: " + (report?.generatedBy || "VISIONPOS"), 8);
+    const generatedLabel = "Generated: " + new Date(report?.generatedAt || Date.now()).toLocaleString();
+    s += pdfText(margin, y, report?.companyName || "VISIONPOS", 16, true);
+    if (report?.prominentBranch) {
+      const branchX = Math.max(margin + 210, page.w - margin - 300);
+      s += pdfText(branchX, y, report?.branchName || "All branches", 22, true);
+      y -= 18;
+      s += pdfText(branchX, y, report?.title || "Report", 9, true);
+      s += pdfText(margin, y, generatedLabel, 8);
+      y -= 16;
+      s += pdfText(margin, y, "Range: " + (report?.dateRange || "All time") + "    By: " + (report?.generatedBy || "VISIONPOS"), 8);
+    } else {
+      y -= 18;
+      s += pdfText(margin, y, report?.title || "Report", 12, true);
+      s += pdfText(page.w - margin - 190, page.h - margin, generatedLabel, 8);
+      y -= 16;
+      s += pdfText(margin, y, "Branch: " + (report?.branchName || "All branches") + "    Range: " + (report?.dateRange || "All time") + "    By: " + (report?.generatedBy || "VISIONPOS"), 8);
+    }
     y -= 22;
     columns.forEach((c, i) => { s += pdfText(margin + i * colW, y, c.label, 8, true); });
     y -= 10;
