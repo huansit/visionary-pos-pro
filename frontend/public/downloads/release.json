@@ -1,11 +1,13 @@
 {
-  "version": "2.0.64",
+  "version": "2.0.65",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.64_x64-setup.exe",
-  "size": 3238280,
-  "sha512": "20C3EEC69EB6BB52277434B100477503201BAAE2DAC059E59AD5909D0BD548EB7BE438A0E9FB75D5DBBB40F1AD0A62E08AB66343FC8D0BC395DAEDF176D2B2F3",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.65_x64-setup.exe",
+  "size": 3241712,
+  "sha512": "CC8BD62836D0E0E7FF60C94D6A0BA17DE56627CA58535F15DB015615A8050660E7A36149E1F2D616E8A398AFEB306A68BD7F3C14B09C7F6BD9C12F9F3F40D4AE",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.64",
+    "VISIONPOS Cashier 2.0.65",
+    "Favorites now shows the branch's most commonly sold products from the last 30 days.",
+    "Common products are ranked by units sold, invoice frequency, and latest sale, with approved voids excluded.",
     "The Sales Today Pending count now represents invoice void requests awaiting supervisor approval.",
     "Today's invoice list marks pending void requests with a distinct red treatment while keeping them available for review.",
     "Cashier dashboards now sync each cashier's missing-inventory joint debt and retain it for offline viewing.",
