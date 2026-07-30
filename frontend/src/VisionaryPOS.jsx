@@ -1462,6 +1462,17 @@ function cashierJointDebtCashierBalances(data, branchId = null) {
   });
   return [...balances.values()].sort((a, b) => b.outstandingCents - a.outstandingCents || a.cashierName.localeCompare(b.cashierName));
 }
+function nextQuickInventoryNumber(data) {
+  const references = [
+    ...(data?.countLog || []).map((entry) => entry.quickInventoryCode),
+    ...(data?.cashierJointDebts || []).filter((debt) => debt.source === "quick_inventory").map((debt) => debt.stockCountCode),
+  ];
+  const sequence = references.reduce((highest, reference) => {
+    const match = /^QI-(\d{6,9})$/.exec(String(reference || "").trim());
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0) + 1;
+  return `QI-${String(sequence).padStart(6, "0")}`;
+}
 function createCashierJointDebt(data, session, rows, operator, ts = now(), source = "stock_count") {
   const branchId = session?.branchId;
   const items = (rows || []).filter((row) => Number(row.varianceQty) < 0).map((row) => {
@@ -8285,6 +8296,7 @@ function StockTab({ data, update, branch }) {
 function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const cur = data.settings.currency;
   const countInputRefs = useRef(new Map());
+  const applyingRef = useRef(false);
   const [bId, setBId] = useState(initialBranchId || branch.id);
   const [q, setQ] = useState("");
   const [counts, setCounts] = useState({});
@@ -8393,6 +8405,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   useBarcodeScanner({ enabled: scannerOn && !lockedSession && !cameraOpen, mode: "stock", onScan: handleQuickScan });
 
   const applyCounts = () => {
+    if (applyingRef.current) return;
     if (lockedSession) {
       setMessage("Finish or cancel " + lockedSession.code + " before using Quick inventory.");
       return;
@@ -8401,11 +8414,12 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       setMessage("Search or scan at least one product and enter its physical count.");
       return;
     }
+    applyingRef.current = true;
     const ts = now();
     const quickInventoryId = uid("qi");
     const quickInventoryBatch = {
       id: quickInventoryId,
-      code: "QI-" + quickInventoryId.slice(3).toUpperCase(),
+      code: nextQuickInventoryNumber(data),
       branchId: bId,
     };
     const adjustments = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
@@ -8415,6 +8429,8 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       qty: row.variance,
       mode: "count",
       reason: "Quick inventory",
+      quickInventoryId,
+      quickInventoryCode: quickInventoryBatch.code,
       expectedQty: row.current,
       countedQty: row.counted,
       ts,
@@ -8430,18 +8446,39 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       counted: row.counted,
       variance: row.variance,
       kind: "quick",
+      quickInventoryId,
+      quickInventoryCode: quickInventoryBatch.code,
       ts,
       synced: false,
     }));
-    update((d) => ({
-      ...d,
-      stockMovements: [...(d.stockMovements || []), ...adjustments],
-      countLog: [...(d.countLog || []), ...logs],
+    const debtRows = selectedRows.map((row) => ({
+      ...row,
+      productId: row.product.id,
+      varianceQty: row.variance,
     }));
-    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length });
+    const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, operator, ts, "quick_inventory");
+    update((d) => {
+      const existingJointDebts = d.cashierJointDebts || [];
+      const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === quickInventoryId)
+        ? [...existingJointDebts, jointDebt]
+        : existingJointDebts;
+      return {
+        ...d,
+        stockMovements: [...(d.stockMovements || []), ...adjustments],
+        countLog: [...(d.countLog || []), ...logs],
+        cashierJointDebts,
+      };
+    });
+    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
     setCounts({});
     setQ("");
-    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock correction(s) applied. No cashier debt was created.");
+    const debtMessage = jointDebt
+      ? jointDebt.cashierCount > 0
+        ? " " + fmt(jointDebt.totalCents, cur) + " was added to the joint cashier inventory account."
+        : " Missing stock worth " + fmt(jointDebt.totalCents, cur) + " is awaiting cashier allocation."
+      : " No missing-stock cashier credit was created.";
+    setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + debtMessage);
+    window.setTimeout(() => { applyingRef.current = false; }, 0);
   };
 
   return (
@@ -8460,7 +8497,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {lockedSession ? (
         <div className="alert" style={{ marginBottom: 14 }}><AlertTriangle /> <div><b>Quick inventory is locked.</b><div>{lockedSession.code} is already {lockedSession.status} for {bname}. Finish or cancel that formal count first.</div></div></div>
       ) : (
-        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Quick Inventory is a stock correction only and never creates cashier debt; blank products remain unchanged.</div>
+        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Missing stock creates joint cashier inventory credit; positive corrections and blank products do not.</div>
       )}
       {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
@@ -8510,6 +8547,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
         <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.code} - {report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
+        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to cashier inventory credit</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active branch cashier(s)." : "No active branch cashier is available, so this credit is awaiting allocation."}</div></div></div>}
       </div>}
     </div>
   );
