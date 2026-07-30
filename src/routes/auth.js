@@ -1094,7 +1094,7 @@ router.get("/users", requireAdminOrSupervisor, async (_req, res) => {
     const result = await q(
       `SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified, updated_at
          FROM credentials
-        WHERE status = 'active'
+        WHERE status <> 'deleted'
           AND kind <> 'admin'
         ORDER BY name ASC`,
       []
@@ -1223,6 +1223,41 @@ router.post("/users/:id/emergency-pin", requireOwnerOrAdmin, async (req, res) =>
     if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
     console.error("emergency checkout PIN update failed:", error);
     res.status(500).json({ error: "emergency_pin_update_failed" });
+  }
+});
+
+router.post("/users/:id/status", requireAdminOrSupervisor, async (req, res) => {
+  await ensureAuthSchema();
+  const id = String(req.params.id || "").trim();
+  const status = String(req.body?.status || "").trim().toLowerCase();
+  if (!id || id === "admin") return res.status(400).json({ error: "invalid_user_id" });
+  if (!["active", "inactive"].includes(status)) return res.status(400).json({ error: "invalid_user_status" });
+  try {
+    const existing = await q(
+      "SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1 LIMIT 1",
+      [id]
+    );
+    const account = existing.rows[0];
+    if (!account) return res.status(404).json({ error: "user_not_found" });
+    if (account.status === "deleted") return res.status(409).json({ error: "deleted_user_cannot_be_enabled" });
+
+    await q(
+      `UPDATE credentials
+          SET status = $1,
+              updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $2`,
+      [status, id]
+    );
+    if (status === "inactive") {
+      await q("UPDATE user_sessions SET is_active = false WHERE user_id = $1", [id]);
+    }
+    const updated = { ...account, status };
+    const user = await persistUserRecord(updated);
+    await audit(status === "active" ? "user_enabled" : "user_disabled", req, id, { byUser: req.account?.id || null });
+    res.json({ ok: true, account: publicAccount(updated), user });
+  } catch (error) {
+    console.error("update user status failed:", error);
+    res.status(500).json({ error: "user_status_update_failed" });
   }
 });
 

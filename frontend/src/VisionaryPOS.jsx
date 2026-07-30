@@ -3467,6 +3467,15 @@ body{overscroll-behavior:none}
 .fp-enrolled-status{display:inline-flex;align-items:center;gap:5px;color:var(--ok);font-weight:800}
 .fp-enrolled-status svg{width:14px;height:14px}
 .fp-enrolled-btn{color:var(--ok)!important;border-color:color-mix(in srgb,var(--ok) 45%,var(--border))!important;background:color-mix(in srgb,var(--ok) 8%,var(--surface))!important}
+.user-security-row.disabled{background:var(--surface-2)}
+.user-security-row.disabled>.avatar{filter:grayscale(1);opacity:.65}
+.user-enable-toggle{height:34px;padding:0 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--muted-2);display:flex;align-items:center;gap:7px;font:inherit;font-size:11px;font-weight:750;cursor:pointer}
+.user-enable-toggle:disabled{opacity:.55;cursor:not-allowed}
+.user-enable-track{width:27px;height:16px;border-radius:999px;background:var(--muted-2);padding:2px;display:flex;align-items:center;transition:.15s}
+.user-enable-track>span{width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .15s}
+.user-enable-toggle.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 38%,var(--border))}
+.user-enable-toggle.on .user-enable-track{background:var(--ok)}
+.user-enable-toggle.on .user-enable-track>span{transform:translateX(11px)}
 @keyframes fpScan{0%,100%{top:18%}50%{top:82%}}
 .customer-row{width:100%;grid-template-columns:auto minmax(0,1fr) auto 24px;text-align:left;cursor:pointer;appearance:none;color:inherit}
 .customer-row:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--border));background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
@@ -6148,9 +6157,12 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       && voidStatus !== "pending";
   });
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
-  const cashierNames = Array.from(new Set(displayInvoices.map(invoiceCashierName)))
+  const cashierNames = Array.from(new Set(branchCashiers(data, branch.id).map((cashier) => String(cashier.name || "").trim())))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
+  useEffect(() => {
+    if (cashierFilter !== "all" && !cashierNames.includes(cashierFilter)) setCashierFilter("all");
+  }, [cashierFilter, cashierNames.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const needle = query.trim().toLowerCase();
   const invoiceProductLines = new Map(displayInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
   const invoiceProductSummary = (invoice) => Array.from(new Set((invoiceProductLines.get(invoice.id) || []).map((line) => line.name).filter(Boolean))).join(", ");
@@ -6389,6 +6401,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
       {bulkSettlementOpen && <BulkSettleDayModal
         invoices={currentDayOpenInvoices}
+        activeCashierNames={cashierNames}
         initialCashier={cashierFilter}
         branch={branch}
         update={update}
@@ -6597,8 +6610,9 @@ function DebtPaymentsTab({ data, update, branch, user }) {
   );
 }
 
-function BulkSettleDayModal({ invoices, initialCashier = "all", branch, update, cur, user, onClose }) {
-  const cashierNames = Array.from(new Set(invoices.map(invoiceCashierName))).filter(Boolean).sort((a, b) => a.localeCompare(b));
+function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier = "all", branch, update, cur, user, onClose }) {
+  const invoiceCashierNames = new Set(invoices.map(invoiceCashierName).filter(Boolean));
+  const cashierNames = activeCashierNames.filter((name) => invoiceCashierNames.has(name));
   const defaultCashier = initialCashier !== "all" && cashierNames.includes(initialCashier) ? initialCashier : "all";
   const initialVisibleInvoices = invoices.filter((invoice) => defaultCashier === "all" || invoiceCashierName(invoice) === defaultCashier);
   const [cashierFilter, setCashierFilter] = useState(defaultCashier);
@@ -6893,10 +6907,13 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       lines,
     };
   }
-  const cashierNames = Array.from(new Set([
+  const reportCashierNames = new Set([
     ...reportInvoices.map(invoiceCashierName),
     ...(d.cashierRows || []).map((row) => String(row.cashier || "").trim()).filter(Boolean),
-  ])).sort((a, b) => a.localeCompare(b));
+  ]);
+  const cashierNames = Array.from(new Set(branchCashiers(data, bId).map((cashier) => String(cashier.name || "").trim())))
+    .filter((name) => name && reportCashierNames.has(name))
+    .sort((a, b) => a.localeCompare(b));
   const filteredInvoices = cashierFilter === "all"
     ? reportInvoices
     : reportInvoices.filter((invoice) => invoiceCashierName(invoice) === cashierFilter);
@@ -12334,7 +12351,7 @@ function UsersTab({ data, update, isAdmin }) {
   const [emergencyPinEdit, setEmergencyPinEdit] = useState(null);
   const [emergencyPin, setEmergencyPin] = useState("");
   const [emergencyPinError, setEmergencyPinError] = useState("");
-  const visibleEmployees = activeEmployees(data);
+  const visibleEmployees = (data.employees || []).filter((employee) => employee.status !== "deleted");
   useEffect(() => () => {
     if (fpCloseTimer.current) clearTimeout(fpCloseTimer.current);
   }, []);
@@ -12474,6 +12491,30 @@ function UsersTab({ data, update, isAdmin }) {
     authApi("/api/auth/users/" + encodeURIComponent(id) + "/delete", {}, { session: true }).catch((error) => {
       setDelMsg("User hidden locally, but cloud deletion was not completed: " + error.message);
     });
+  };
+  const setEmployeeEnabled = async (employee, enabled) => {
+    const status = enabled ? "active" : "inactive";
+    setUserBusy(true);
+    setDelMsg("");
+    try {
+      const result = await authApi(`/api/auth/users/${encodeURIComponent(employee.id)}/status`, { status }, { session: true });
+      update((current) => ({
+        ...current,
+        employees: current.employees.map((item) => item.id === employee.id
+          ? { ...item, ...(result?.user || {}), status, synced: true }
+          : item),
+      }));
+      if (!enabled) {
+        setCredEdit(null);
+        setEditRights(null);
+        setEmergencyPinEdit(null);
+      }
+      setDelMsg(`${employee.name} ${enabled ? "enabled" : "disabled"} successfully.`);
+    } catch (error) {
+      setDelMsg(`Could not ${enabled ? "enable" : "disable"} ${employee.name}: ${credentialMessage(error)}`);
+    } finally {
+      setUserBusy(false);
+    }
   };
   const openFingerprintEnroll = (emp) => {
     if (fpCloseTimer.current) clearTimeout(fpCloseTimer.current);
@@ -12630,7 +12671,7 @@ function UsersTab({ data, update, isAdmin }) {
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset} disabled={userBusy}>Cancel</button><button className="btn btn-primary" onClick={add} disabled={userBusy || (f.role === "Cashier" && (terminalBusy || !selectedTerminal))}><Check /> {userBusy ? "Creating..." : "Create user"}</button></div></div>)}
       <div className="list">{visibleEmployees.map((e) => (
         <div key={e.id}>
-          <div className="row"><div className="avatar">{e.name.charAt(0)}</div>
+          <div className={"row user-security-row" + (isActiveEmployee(e) ? "" : " disabled")}><div className="avatar">{e.name.charAt(0)}</div>
             <div className="meta"><div className="nm">{e.name} {e.role === "Supervisor" && <span className="roletag sup">{e.branchId ? "Supervisor · " + bn(e.branchId) : "Supervisor"}</span>}</div><div className="mt2">{e.role} · {e.branchId ? bn(e.branchId) : "All branches"} · {(e.rights || []).length} rights</div></div>
             <span className="pill plain" title="Branch is fixed once a user is created" style={{ fontSize: 11 }}><Building2 style={{ width: 12, height: 12, verticalAlign: "-2px", marginRight: 4 }} />{e.branchId ? bn(e.branchId) : "All branches"}</span>
             <button className="btn xs btn-ghost" onClick={() => setEditRights(editRights === e.id ? null : e.id)}><ShieldCheck /> Rights</button>
@@ -12642,6 +12683,11 @@ function UsersTab({ data, update, isAdmin }) {
             {e.role === "Cashier"
               ? <button className="pill" onClick={() => setReveal((r) => ({ ...r, [e.id]: !r[e.id] }))}>{reveal[e.id] ? <EyeOff /> : <Eye />}{reveal[e.id] ? e.pin : "••••"}</button>
               : <span className="pill plain" style={{ fontSize: 11 }}>{e.email || "no email"}</span>}
+            <button type="button" role="switch" aria-checked={isActiveEmployee(e)} disabled={userBusy}
+              className={"user-enable-toggle" + (isActiveEmployee(e) ? " on" : "")}
+              onClick={() => setEmployeeEnabled(e, !isActiveEmployee(e))}>
+              <span className="user-enable-track"><span /></span><span>{isActiveEmployee(e) ? "Enabled" : "Disabled"}</span>
+            </button>
             <button className="smdel" onClick={() => remove(e.id)}><Trash2 /></button></div>
           {credEdit === e.id && (
             <div className="addpanel fade" style={{ marginTop: 8 }}>

@@ -2304,6 +2304,57 @@ test("12. deleted users are inactive immediately and cannot log in again", async
     .expect(401);
 });
 
+test("12a. disabled users cannot log in and can be enabled again", async () => {
+  const userId = "toggle-me-cashier";
+  await withAdminSession(request(app)
+    .post("/api/auth/users")
+    .send({
+      id: userId,
+      name: "Toggle Me",
+      role: "Cashier",
+      pin: "8898",
+      branchId: "b_sip",
+      rights: ["sell"],
+    }))
+    .expect(200);
+
+  const login = await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
+    .send({ identifier: userId, pin: "8898", branchId: "b_sip" })
+    .expect(200);
+
+  await withAdminSession(request(app)
+    .post(`/api/auth/users/${userId}/status`)
+    .send({ status: "inactive" }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.user.status, "inactive"));
+
+  await request(app)
+    .post("/api/auth/session")
+    .send({ sessionToken: login.body.sessionToken })
+    .expect(401);
+
+  await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
+    .send({ identifier: userId, pin: "8898", branchId: "b_sip" })
+    .expect(401);
+
+  await withAdminSession(request(app).get("/api/auth/users"))
+    .expect(200)
+    .expect((res) => {
+      const user = res.body.users.find((item) => item.id === userId);
+      assert.equal(user.status, "inactive");
+    });
+
+  await withAdminSession(request(app)
+    .post(`/api/auth/users/${userId}/status`)
+    .send({ status: "active" }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.user.status, "active"));
+
+  await withTerminalAuth(request(app).post("/api/auth/login"), state.loginTerminal)
+    .send({ identifier: userId, pin: "8898", branchId: "b_sip" })
+    .expect(200);
+});
+
 test("13. fingerprint templates are encrypted at rest and can issue cloud sessions", async () => {
   const template = "SECUGEN_TEMPLATE_BASE64_SAMPLE";
   await withAdminSession(request(app)
