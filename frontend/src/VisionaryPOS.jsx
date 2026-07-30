@@ -3990,7 +3990,17 @@ body{overscroll-behavior:none}
 .xferinfo{background:rgba(14,165,181,.08);border:1px solid var(--border-soft);border-radius:16px;padding:16px 18px;margin-bottom:14px}
 .xferinfo strong{font-size:15px}
 .transfer-suggestions{border:1px solid var(--border-soft);background:var(--surface);border-radius:16px;margin-bottom:14px;overflow:hidden}
-.transfer-suggestions-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-suggestions-toggle{width:100%;min-height:64px;border:0;background:transparent;color:var(--text);padding:12px 16px;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;font-family:var(--font-ui)}
+.transfer-suggestions-toggle:hover{background:var(--surface-2)}
+.transfer-suggestions-toggle-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.transfer-suggestions-toggle-copy strong{font-size:14px}
+.transfer-suggestions-toggle-copy>span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-suggestions-count{min-width:26px;height:26px;padding:0 7px;border-radius:999px;display:grid;place-items:center;background:var(--surface-2);color:var(--accent);font:750 11px var(--font-mono)}
+.transfer-suggestions-toggle>svg{width:17px;height:17px;color:var(--muted);transition:transform .15s}
+.transfer-suggestions-toggle>svg.open{transform:rotate(180deg)}
+.transfer-suggestions-body{border-top:1px solid var(--border-soft)}
+.transfer-suggestions-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-suggestions-head>p{font-size:12px;color:var(--muted);margin:0}
 .transfer-suggestions-title{display:flex;align-items:center;gap:12px;min-width:0}
 .transfer-suggestions-title h3{font-size:16px;margin:0 0 3px}
 .transfer-suggestions-title p{font-size:12.5px;color:var(--muted);margin:0}
@@ -4012,6 +4022,7 @@ body{overscroll-behavior:none}
 .transfer-suggestion-action{display:flex;align-items:center;gap:10px;white-space:nowrap;font-size:12.5px}
 .transfer-suggestion-action>span{font-family:var(--font-mono)}
 .transfer-suggestion-empty{padding:18px;color:var(--muted);font-size:13px}
+.transfer-suggestions-footer{display:flex;justify-content:center;padding:9px 14px;border-top:1px solid var(--border-soft)}
 .searchres{margin-top:8px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border-soft);border-radius:12px;padding:6px;background:var(--surface);box-shadow:0 12px 30px -18px rgba(20,30,70,.3)}
 .sres{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;background:transparent;border:none;padding:9px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--text);font-family:var(--font-ui)}
 .sres:hover{background:var(--surface-2)}
@@ -10292,6 +10303,8 @@ function BorrowingTab({ data, update }) {
   const [transferScanMessage, setTransferScanMessage] = useState("");
   const [analysisDays, setAnalysisDays] = useState(7);
   const [suggestionMessage, setSuggestionMessage] = useState("");
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const transferSearchRef = useRef(null);
   const transferQtyRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
@@ -10363,6 +10376,7 @@ function BorrowingTab({ data, update }) {
     });
     return rankStockTransferSuggestions(candidates, { days: analysisDays, limit: 20 });
   }, [data, analysisDays]);
+  const visibleTransferSuggestions = showAllSuggestions ? transferSuggestions : transferSuggestions.slice(0, 5);
   const product = data.products.find((p) => p.id === productId);
   // available accounts for quantities already added to the pending list for this product at this source
   const pendingQty = (pid) => lines.filter((l) => l.productId === pid).reduce((s, l) => s + l.qty, 0);
@@ -10461,6 +10475,7 @@ function BorrowingTab({ data, update }) {
     setErr("");
     setNote((current) => current || `Suggested from ${analysisDays}-day branch sales analysis`);
     setSuggestionMessage(`${suggestion.productName} added: ${suggestion.suggestedQty} unit${suggestion.suggestedQty === 1 ? "" : "s"} from ${bn(suggestion.sourceBranchId)} to ${bn(suggestion.destinationBranchId)}.`);
+    setSuggestionsOpen(false);
   };
 
   const transferNeedsCostRepair = (transfer) => normalizedTransferItems(transfer, data.products).some((item) => !(Number(item.costCents) > 0));
@@ -10563,31 +10578,6 @@ function BorrowingTab({ data, update }) {
   return (
     <div>
       <PageHead title="Move Stock Between Shops" sub="Stock Borrowing / Branch Transfer" />
-      <section className="transfer-suggestions" aria-labelledby="transfer-suggestions-title">
-        <div className="transfer-suggestions-head">
-          <div className="transfer-suggestions-title">
-            <span className="transfer-suggestions-icon"><Sparkles /></span>
-            <div><h3 id="transfer-suggestions-title">Suggested stock transfers</h3><p>Products selling in one shop but stagnant in another.</p></div>
-          </div>
-          <label className="transfer-analysis-period"><span>Sales period</span><select className="select" value={analysisDays} onChange={(event) => { setAnalysisDays(Number(event.target.value)); setSuggestionMessage(""); }}>
-            {[7, 14, 30, 60, 90].map((days) => <option key={days} value={days}>{days === 7 ? "1 week" : `${days} days`}</option>)}
-          </select></label>
-        </div>
-        {suggestionMessage && <div className="transfer-suggestion-message" role="status">{suggestionMessage}</div>}
-        {transferSuggestions.length > 0 ? <div className="transfer-suggestion-list">
-          {transferSuggestions.map((suggestion) => (
-            <div className="transfer-suggestion-row" key={`${suggestion.productKey}:${suggestion.sourceBranchId}:${suggestion.destinationBranchId}`}>
-              <div className="transfer-suggestion-product"><strong>{suggestion.productName}</strong><span>{suggestion.sku || "No SKU"} · {suggestion.confidence} confidence</span></div>
-              <div className="transfer-suggestion-route"><strong>{bn(suggestion.sourceBranchId)}</strong><ArrowRight /><strong>{bn(suggestion.destinationBranchId)}</strong></div>
-              <div className="transfer-suggestion-evidence">
-                <span><b>{suggestion.sourceSold}</b> sold · <b>{suggestion.sourceStock}</b> in stock</span>
-                <span><b>{suggestion.destinationSold}</b> sold · <b>{suggestion.destinationStock}</b> in stock</span>
-              </div>
-              <div className="transfer-suggestion-action"><span>Move <b>{suggestion.suggestedQty}</b></span><button type="button" className="btn sm btn-primary" onClick={() => useTransferSuggestion(suggestion)}>Add to transfer</button></div>
-            </div>
-          ))}
-        </div> : <div className="transfer-suggestion-empty">No safe transfer suggestions for this period. Stock is balanced, demand is too low, or the source shop needs its current reserve.</div>}
-      </section>
       <div className="xferinfo">
         <strong>This is a branch transfer, not a sale.</strong>
         <div className="sub" style={{ marginTop: 4 }}>It reduces stock at the source branch and adds it to the destination branch.</div>
@@ -10661,6 +10651,40 @@ function BorrowingTab({ data, update }) {
           <input className="input" placeholder="Reason or reference (applies to whole transfer)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
         <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
       </div>
+
+      <section className="transfer-suggestions" aria-labelledby="transfer-suggestions-title">
+        <button type="button" className="transfer-suggestions-toggle" onClick={() => setSuggestionsOpen((current) => !current)} aria-expanded={suggestionsOpen}>
+          <span className="transfer-suggestions-icon"><Sparkles /></span>
+          <span className="transfer-suggestions-toggle-copy"><strong id="transfer-suggestions-title">Suggested stock transfers</strong><span>Find slow stock that can serve a faster-selling shop.</span></span>
+          <span className="transfer-suggestions-count">{transferSuggestions.length}</span>
+          <ChevronDown className={suggestionsOpen ? "open" : ""} />
+        </button>
+        {suggestionsOpen && <div className="transfer-suggestions-body">
+          <div className="transfer-suggestions-head">
+            <p>Recommendations use sales velocity and keep reserve stock at the source branch.</p>
+            <label className="transfer-analysis-period"><span>Sales period</span><select className="select" value={analysisDays} onChange={(event) => { setAnalysisDays(Number(event.target.value)); setSuggestionMessage(""); setShowAllSuggestions(false); }}>
+              {[7, 14, 30, 60, 90].map((days) => <option key={days} value={days}>{days === 7 ? "1 week" : `${days} days`}</option>)}
+            </select></label>
+          </div>
+          {suggestionMessage && <div className="transfer-suggestion-message" role="status">{suggestionMessage}</div>}
+          {transferSuggestions.length > 0 ? <>
+            <div className="transfer-suggestion-list">
+              {visibleTransferSuggestions.map((suggestion) => (
+                <div className="transfer-suggestion-row" key={`${suggestion.productKey}:${suggestion.sourceBranchId}:${suggestion.destinationBranchId}`}>
+                  <div className="transfer-suggestion-product"><strong>{suggestion.productName}</strong><span>{suggestion.sku || "No SKU"} · {suggestion.confidence} confidence</span></div>
+                  <div className="transfer-suggestion-route"><strong>{bn(suggestion.sourceBranchId)}</strong><ArrowRight /><strong>{bn(suggestion.destinationBranchId)}</strong></div>
+                  <div className="transfer-suggestion-evidence">
+                    <span><b>{suggestion.sourceSold}</b> sold · <b>{suggestion.sourceStock}</b> in stock</span>
+                    <span><b>{suggestion.destinationSold}</b> sold · <b>{suggestion.destinationStock}</b> in stock</span>
+                  </div>
+                  <div className="transfer-suggestion-action"><span>Move <b>{suggestion.suggestedQty}</b></span><button type="button" className="btn sm btn-primary" onClick={() => useTransferSuggestion(suggestion)}>Add</button></div>
+                </div>
+              ))}
+            </div>
+            {transferSuggestions.length > 5 && <div className="transfer-suggestions-footer"><button type="button" className="btn sm btn-ghost" onClick={() => setShowAllSuggestions((current) => !current)}>{showAllSuggestions ? "Show fewer" : `Show ${transferSuggestions.length - 5} more`}</button></div>}
+          </> : <div className="transfer-suggestion-empty">No safe transfer suggestions for this period. Stock is balanced, demand is too low, or the source shop needs its current reserve.</div>}
+        </div>}
+      </section>
 
       <DocumentFile title="Transfer records" count={data.borrowings.length} meta="Completed branch stock movements">
       <div className="list">{data.borrowings.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
