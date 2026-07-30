@@ -2340,13 +2340,6 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         return;
       }
       try {
-        const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
-          import("@zxing/browser"),
-          import("@zxing/library"),
-        ]);
-        if (disposed || !videoRef.current) return;
-        const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
-        const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 75, delayBetweenScanSuccess: 250 });
         const stream = await openAutomaticRearCamera();
         streamRef.current = stream;
         if (disposed || !videoRef.current) {
@@ -2394,7 +2387,56 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
         };
-        const controls = await reader.decodeFromStream(stream, videoRef.current, handleDecode);
+        const startNativeAndroidScanner = async () => {
+          const NativeBarcodeDetector = window.BarcodeDetector;
+          if (!/Android/i.test(navigator.userAgent || "") || typeof NativeBarcodeDetector !== "function") return null;
+          const video = videoRef.current;
+          video.srcObject = stream;
+          await video.play();
+          const wantedFormats = ["aztec", "codabar", "code_39", "code_93", "code_128", "data_matrix", "ean_8", "ean_13", "itf", "pdf417", "qr_code", "upc_a", "upc_e"];
+          let supportedFormats = [];
+          try { supportedFormats = await NativeBarcodeDetector.getSupportedFormats?.() || []; } catch (_) {}
+          const formats = wantedFormats.filter((format) => supportedFormats.includes(format));
+          const detector = formats.length ? new NativeBarcodeDetector({ formats }) : new NativeBarcodeDetector();
+          await detector.detect(video);
+          let stopped = false;
+          let timerId = 0;
+          const controls = {
+            stop() {
+              stopped = true;
+              if (timerId) window.clearTimeout(timerId);
+            },
+          };
+          const videoTrack = stream.getVideoTracks()[0];
+          let capabilities = {};
+          try { capabilities = videoTrack?.getCapabilities?.() || {}; } catch (_) {}
+          if (videoTrack?.applyConstraints && Object.prototype.hasOwnProperty.call(capabilities, "torch")) {
+            controls.switchTorch = (enabled) => videoTrack.applyConstraints({ advanced: [{ fillLightMode: enabled ? "flash" : "off", torch: enabled }] });
+          }
+          const detectFrame = async () => {
+            if (stopped || disposed || !videoRef.current) return;
+            try {
+              const barcodes = await detector.detect(videoRef.current);
+              const rawValue = String(barcodes?.[0]?.rawValue || "").trim();
+              if (rawValue) handleDecode({ getText: () => rawValue }, null, controls);
+            } catch (_) {}
+            if (!stopped && !disposed) timerId = window.setTimeout(detectFrame, 70);
+          };
+          timerId = window.setTimeout(detectFrame, 40);
+          return controls;
+        };
+        const startZxingScanner = async () => {
+          const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
+            import("@zxing/browser"),
+            import("@zxing/library"),
+          ]);
+          const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
+          const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 75, delayBetweenScanSuccess: 250 });
+          return reader.decodeFromStream(stream, videoRef.current, handleDecode);
+        };
+        let controls = null;
+        try { controls = await startNativeAndroidScanner(); } catch (_) {}
+        if (!controls) controls = await startZxingScanner();
         if (disposed) {
           controls.stop();
           return;
