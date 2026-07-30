@@ -6002,7 +6002,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Products</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
+          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Products</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Invoice Total</th><th>Balance</th><th>Status</th></tr></thead>
           <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
@@ -6626,6 +6626,7 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
       <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
       <td>{dt(inv.ts)}</td>
       <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
+      <td className="amt">{fmt(Number(inv.totalCents || 0), cur)}</td>
       <td className="amt">{fmt(out, cur)}</td>
       <td>
         <span className={"ist " + displayClass}>{displayStatus}</span>
