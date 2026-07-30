@@ -1560,8 +1560,9 @@ export default function App() {
                 View
               </button>
             </div>
-            <div className="debt-line"><span>Cashier debt</span><b>{money(debtTrackerTotal)}</b></div>
-            <div className="debt-line"><span>Inventory debt accumulator</span><b>{money(inventoryDebtAccumulator.outstandingCents)}</b></div>
+            <div className="debt-line"><span>Invoice debt</span><b>{money(carriedDebtTotal)}</b></div>
+            <div className="debt-line"><span>Inventory debt</span><b>{money(inventoryDebtTotal)}</b></div>
+            <div className="debt-line debt-grand-total"><span>Total cashier debt</span><b>{money(debtTrackerTotal)}</b></div>
             <p>Assigned {money(inventoryDebtAccumulator.assignedCents)} - paid {money(inventoryDebtAccumulator.paidCents)}</p>
             <p>{carriedDebts.length} invoice debt{carriedDebts.length === 1 ? "" : "s"} - {inventoryDebtEntries.length} inventory debt{inventoryDebtEntries.length === 1 ? "" : "s"}</p>
             {carriedDebts.length === 0 && inventoryDebtEntries.length === 0 ? (
@@ -2174,7 +2175,7 @@ function DebtsCenterView({
           <p>{subline}</p>
         </div>
         <div className="debts-total">
-          <span>{mode === "debts" ? "Cashier debt" : "Outstanding"}</span>
+          <span>{mode === "debts" ? "Total invoice + inventory debt" : "Outstanding"}</span>
           <b>{money(totalForMode)}</b>
         </div>
       </header>
@@ -2279,9 +2280,28 @@ function DebtsCenterView({
         ))}
       </div>
 
-      <footer className="debts-footer-note">
-        <span>View only &middot; settlement is done by a supervisor.</span>
-        <b>{money(totalForMode)}</b>
+      <footer className={`debts-footer-note${mode === "debts" ? " debt-category-footer" : ""}`}>
+        {mode === "debts" ? (
+          <>
+            <div>
+              <span>Invoice debt total</span>
+              <b>{money(carriedTotalCents)}</b>
+            </div>
+            <div>
+              <span>Inventory debt total</span>
+              <b>{money(inventoryTotalCents)}</b>
+            </div>
+            <div className="debt-footer-grand-total">
+              <span>Total cashier debt</span>
+              <b>{money(carriedTotalCents + inventoryTotalCents)}</b>
+            </div>
+          </>
+        ) : (
+          <>
+            <span>View only &middot; settlement is done by a supervisor.</span>
+            <b>{money(totalForMode)}</b>
+          </>
+        )}
       </footer>
     </section>
   );

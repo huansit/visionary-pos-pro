@@ -4970,14 +4970,12 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const myMissingInventoryDebts = cashierJointDebtEntries(data, employee.id, branch.id);
   const myInventoryDebtAccumulator = cashierJointDebtCashierBalances(data, branch.id).find((row) => row.cashierId === employee.id);
   const openOnly = myOpen;
-  const invoiceOutstandingTotal = mine.reduce((s, i) => s + invOutstanding(i), 0);
   const openOnlyTotal = openOnly.reduce((s, i) => s + invOutstanding(i), 0);
   const invoiceDebtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
   const missingInventoryAssignedTotal = myInventoryDebtAccumulator?.assignedCents || 0;
   const missingInventoryPaidTotal = myInventoryDebtAccumulator?.paidCents || 0;
   const missingInventoryDebtTotal = myMissingInventoryDebts.reduce((s, entry) => s + entry.outstandingCents, 0);
   const debtTotal = invoiceDebtTotal + missingInventoryDebtTotal;
-  const totalOutstanding = invoiceOutstandingTotal + missingInventoryDebtTotal;
   const shownList = openOnly;
 
   const add = (p) => {
@@ -5314,8 +5312,9 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <span>Debt Tracker</span>
               <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
             </div>
+            <div className="debtbig"><span>Invoice debt</span><span className="v">{fmt(invoiceDebtTotal, cur)}</span></div>
+            <div className="debtbig"><span>Inventory debt</span><span className="v">{fmt(missingInventoryDebtTotal, cur)}</span></div>
             <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
-            <div className="debtbig"><span>Inventory debt accumulator</span><span className="v">{fmt(missingInventoryDebtTotal, cur)}</span></div>
             <div className="cust-meta" style={{ margin: "-4px 2px 8px" }}>Assigned {fmt(missingInventoryAssignedTotal, cur)} · paid {fmt(missingInventoryPaidTotal, cur)}</div>
             <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} carried-over invoice debt{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
             {myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
@@ -5428,9 +5427,10 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{employee.name}</div><div className="title" style={{ fontSize: 21 }}>Debts &amp; Open Invoices</div></div><button className="iconbtn" onClick={() => setDebtsOpen(false)}><X /></button></div>
             <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", margin: "12px 0 4px" }}>
-              <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total outstanding</div><div className="cv">{fmt(totalOutstanding, cur)}</div><div className="cs">Invoices and joint debt</div></div></div>
-              <div className={"ctile" + (invoiceDebtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Carried-over invoices</div><div className="cv">{fmt(invoiceDebtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
+              <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total cashier debt</div><div className="cv">{fmt(debtTotal, cur)}</div><div className="cs">Invoice + inventory debt</div></div></div>
+              <div className={"ctile" + (invoiceDebtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Invoice debt</div><div className="cv">{fmt(invoiceDebtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
               <div className={"ctile" + (missingInventoryDebtTotal > 0 ? " warn" : "")}><div className="ic"><Boxes /></div><div><div className="cl">Missing inventory</div><div className="cv">{fmt(missingInventoryDebtTotal, cur)}</div><div className="cs">Paid {fmt(missingInventoryPaidTotal, cur)} of {fmt(missingInventoryAssignedTotal, cur)}</div></div></div>
+              <div className={"ctile" + (openOnlyTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Open invoices</div><div className="cv">{fmt(openOnlyTotal, cur)}</div><div className="cs">Not included in cashier debt</div></div></div>
             </div>
             {myOpen.length === 0 && myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
               <div className="notice" style={{ marginTop: 10 }}>You have no open invoices or debts. Nicely done.</div>
@@ -5440,22 +5440,26 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
                   <div>
                     <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6, color: "var(--danger)" }}>Missing inventory · joint branch debt ({myMissingInventoryDebts.length})</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{myMissingInventoryDebts.map(jointDebtRow)}</div>
+                    <div className="debtbig" style={{ marginTop: 8 }}><span>Inventory debt total</span><span className="v">{fmt(missingInventoryDebtTotal, cur)}</span></div>
                   </div>
                 )}
                 {myDebts.length > 0 && (
                   <div>
                     <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6, color: "var(--danger)" }}>Debts · carried over ({myDebts.length})</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{myDebts.map(invRow)}</div>
+                    <div className="debtbig" style={{ marginTop: 8 }}><span>Invoice debt total</span><span className="v">{fmt(invoiceDebtTotal, cur)}</span></div>
                   </div>
                 )}
                 {openOnly.length > 0 && (
                   <div>
                     <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6 }}>Open / overdue invoices ({openOnly.length})</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{openOnly.map(invRow)}</div>
+                    <div className="debtbig" style={{ marginTop: 8 }}><span>Open invoice total</span><span className="v">{fmt(openOnlyTotal, cur)}</span></div>
                   </div>
                 )}
               </div>
             )}
+            <div className={"debtbig" + (debtTotal > 0 ? " has" : "")} style={{ marginTop: 12 }}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
             <div className="cust-meta" style={{ marginTop: 12 }}>Missing inventory is valued at branch cost and shared equally among the active branch cashiers when the inventory count is applied.</div>
           </div>
         </div>
