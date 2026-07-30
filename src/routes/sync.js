@@ -134,6 +134,11 @@ function productDisplayName(payload = {}) {
   return "";
 }
 
+function productPayloadIsEnabled(payload = {}) {
+  if (payload.enabled === false || payload.active === false) return false;
+  return !["disabled", "inactive", "deleted"].includes(String(payload.status || "active").trim().toLowerCase());
+}
+
 function productCatalogKey(row) {
   const payload = row.payload || {};
   const sku = normalizeCode(payload.sku);
@@ -472,6 +477,7 @@ function normalizeProduct(row, branchId, stockQty, overlay = {}) {
     barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
     category: payload.category || payload.categoryId || "Uncategorised",
     categoryId: payload.categoryId || payload.category || "",
+    status: productPayloadIsEnabled(payload) ? "active" : "disabled",
     image: payload.image || payload.imageUrl || payload.image_url || payload.photo || "",
     priceCents: overlay.priceCents ?? centsFromPayload(payload, PRODUCT_PRICE_CENT_FIELDS, PRODUCT_PRICE_MONEY_FIELDS),
     costCents: overlay.costCents ?? fieldCentsFromPayload(payload, PRODUCT_COST_CENT_FIELDS, PRODUCT_COST_MONEY_FIELDS, true) ?? 0,
@@ -537,7 +543,9 @@ router.get("/catalog", requireDevice, async (req, res) => {
       byKey.set(key, preferCatalogRecord(byKey.get(key), row));
     }
 
-    const canonicalRows = [...byKey.entries()].map(([key, row]) => hydrateCatalogRecord(row, rowsByKey.get(key)));
+    const canonicalRows = [...byKey.entries()]
+      .map(([key, row]) => hydrateCatalogRecord(row, rowsByKey.get(key)))
+      .filter((row) => productPayloadIsEnabled(row?.payload || {}));
     const productIndexes = buildCanonicalProductIndexes(records.rows, canonicalRows, productAliases);
     const overlaysByProduct = new Map();
     for (const row of overlayRows.rows || []) {
@@ -1088,6 +1096,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           }
           if (type === "product") {
             await propagateProductGlobalFields(client, guardedEvent, recordDeviceId, acceptedTs);
+            await mirrorProductStatus(client, guardedEvent);
             productAliases = null;
           }
           acceptedId = guardedEvent.id;
@@ -1648,6 +1657,8 @@ const PRODUCT_GLOBAL_FIELDS = [
   "imageUrl",
   "description",
   "status",
+  "enabled",
+  "active",
   "costCents",
   "costPrice",
   "costPriceCents",
@@ -1698,6 +1709,44 @@ async function propagateProductGlobalFields(client, ev, deviceId, ts) {
       ["product", row.id, { ...payload, ...patch }, deviceId, updatedAt, ts]
     );
   }
+}
+
+function productStatusPatch(payload = {}) {
+  if (Object.prototype.hasOwnProperty.call(payload, "status")) {
+    const status = String(payload.status || "").trim().toLowerCase();
+    if (["active", "enabled"].includes(status)) return "active";
+    if (["disabled", "inactive", "deleted"].includes(status)) return "disabled";
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "enabled")) return payload.enabled === false ? "disabled" : "active";
+  if (Object.prototype.hasOwnProperty.call(payload, "active")) return payload.active === false ? "disabled" : "active";
+  return null;
+}
+
+async function mirrorProductStatus(client, ev) {
+  const payload = ev.payload || {};
+  const status = productStatusPatch(payload);
+  if (!status) return;
+
+  const values = [status, String(ev.id || "")];
+  const conditions = ["id = $2"];
+  const catalogId = String(payload.barcodeCatalogId || payload.barcode_catalog_id || "").trim();
+  const sku = String(payload.sku || "").trim();
+  if (catalogId) {
+    values.push(catalogId);
+    conditions.push(`barcode_catalog_id = $${values.length}`);
+  }
+  if (sku) {
+    values.push(sku);
+    conditions.push(`lower(sku) = lower($${values.length})`);
+  }
+
+  await client.query(
+    `UPDATE products
+        SET status = $1,
+            updated_at = ${isMySql ? "CURRENT_TIMESTAMP" : "now()"}
+      WHERE ${conditions.join(" OR ")}`,
+    values,
+  );
 }
 
 export default router;

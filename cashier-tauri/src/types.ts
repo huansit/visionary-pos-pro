@@ -44,6 +44,7 @@ export type Product = {
   barcodeCatalogId?: string | null;
   category?: string;
   categoryId?: string;
+  status?: string;
   image?: string;
   priceCents: number;
   costCents: number;

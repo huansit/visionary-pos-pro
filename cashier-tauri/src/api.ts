@@ -349,6 +349,7 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
     barcodeCatalogId: payload.barcodeCatalogId || payload.barcode_catalog_id || null,
     category: payload.category || payload.categoryId || "Uncategorised",
     categoryId: payload.categoryId || payload.category || "",
+    status: payload.enabled === false || payload.active === false ? "disabled" : String(payload.status || "active"),
     image: productDisplayImage({
       sku,
       barcode,
@@ -359,6 +360,10 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
     stockQty: branchStock ?? directStock,
     serverTs: Number(payload.serverTs || payload.updatedAt || source?.serverTs || source?.updatedAt || 0)
   };
+}
+
+function productIsEnabled(product: Product) {
+  return !["disabled", "inactive", "deleted"].includes(String(product.status || "active").trim().toLowerCase());
 }
 
 function productDedupeKey(product: Product) {
@@ -451,7 +456,7 @@ export function dedupeCatalogProducts(products: Product[]): Product[] {
   const merged: Product[] = [];
   for (const rows of groups.values()) {
     const product = mergeProductGroup(rows);
-    if (product) merged.push(product);
+    if (product && productIsEnabled(product)) merged.push(product);
   }
   return merged.sort(
     (a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || ""))
@@ -1157,7 +1162,8 @@ export async function resolveBarcode(terminal: TerminalCredentials, barcode: str
     body: JSON.stringify({ barcode, branchId: terminal.branchId })
   });
   if (!data.available || !data.product) return null;
-  return normalizeProductForBranch({ ...data.product, barcode }, terminal.branchId);
+  const product = normalizeProductForBranch({ ...data.product, barcode }, terminal.branchId);
+  return productIsEnabled(product) ? product : null;
 }
 
 function assertSyncAccepted(

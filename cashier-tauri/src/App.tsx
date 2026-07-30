@@ -153,6 +153,9 @@ function productStock(product: Product) {
 }
 
 function productSaleBlockReason(product: Product, currentQty = 0) {
+  if (["disabled", "inactive", "deleted"].includes(String(product.status || "active").trim().toLowerCase())) {
+    return `${product.name} is disabled and cannot be sold.`;
+  }
   const stock = productStock(product);
   if (stock <= 0) return `${product.name} is out of stock and cannot be added.`;
   if (currentQty >= stock) return `Only ${stock} available for ${product.name}.`;
@@ -1105,6 +1108,11 @@ export default function App() {
           });
           setBranches(pulled.branches);
           setProducts(pulled.products);
+          const availableProductIds = new Set(pulled.products.map((product) => product.id));
+          setCart((current) => {
+            const entries = Object.entries(current).filter(([productId]) => availableProductIds.has(productId));
+            return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries) as Record<string, CartLine>;
+          });
           setInvoices(effectiveInvoices);
           setCashierJointDebts(pulled.cashierJointDebts);
           const currentExpenseCategories = cashierManagedExpenseCategories(pulled.expenseCategories);

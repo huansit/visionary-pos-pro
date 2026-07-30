@@ -1274,6 +1274,94 @@ test("6d. admin branch pricing changes reach the activated cashier catalog", asy
     });
 });
 
+test("6daa. disabled products disappear from cashier catalog and barcode lookup until enabled", async () => {
+  const terminal = await activateTestTerminal("Product Status Till", "b_sip");
+  const productId = "prod-status-toggle";
+  const barcode = "STATUS-TOGGLE-001";
+  const created = await withTerminalAuth(request(app).post("/api/barcodes/products"), terminal)
+    .send({
+      id: productId,
+      branchId: "b_sip",
+      barcode,
+      name: "Status Toggle Product",
+      sku: barcode,
+      category: "Spirits",
+      sellingPrice: 250,
+      costPrice: 150,
+      stock: 4,
+      status: "active",
+    })
+    .expect(200);
+
+  const baseProduct = {
+    id: productId,
+    type: "product",
+    branchId: "b_sip",
+    updatedAt: Date.now(),
+    payload: {
+      branchId: "b_sip",
+      name: "Status Toggle Product",
+      sku: barcode,
+      barcode,
+      barcodeCatalogId: created.body.barcodeCatalog.id,
+      category: "Spirits",
+      priceCents: 25000,
+      costCents: 15000,
+      stockQty: 4,
+      status: "active",
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [baseProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [productId]));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => assert.ok(res.body.products.some((product) => product.id === productId)));
+  await withTerminalAuth(request(app).post("/api/barcodes/resolve"), terminal)
+    .send({ barcode })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.available, true));
+
+  const disabledProduct = {
+    ...baseProduct,
+    updatedAt: baseProduct.updatedAt + 1,
+    payload: { ...baseProduct.payload, status: "disabled", enabled: false, active: false },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [disabledProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [productId]));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => assert.equal(res.body.products.some((product) => product.id === productId), false));
+  await withTerminalAuth(request(app).post("/api/barcodes/resolve"), terminal)
+    .send({ barcode })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.available, false));
+
+  const enabledProduct = {
+    ...baseProduct,
+    updatedAt: baseProduct.updatedAt + 2,
+    payload: { ...baseProduct.payload, status: "active", enabled: true, active: true },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [enabledProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [productId]));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => assert.ok(res.body.products.some((product) => product.id === productId)));
+  await withTerminalAuth(request(app).post("/api/barcodes/resolve"), terminal)
+    .send({ barcode })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.available, true));
+});
+
 test("6da. cashier catalog carries the latest branch End of Day boundary", async () => {
   const terminal = await activateTestTerminal("End of Day Catalog Till", "b_sip");
   const closedAt = Date.now() - 250;

@@ -484,7 +484,7 @@ const SEED = () => {
     "SIP0181": "sip-181-hunters-dry-330ml_tctkfo",
   };
   const products = P.map(([id, name, sku, size, category, priceCents, costCents, stock]) => ({
-    id, name, sku, size, category, priceCents, costCents, imageUrl: productDisplayImage({ sku }) || undefined, barcode: sku, barcodeCatalogId: "bc_" + sku.toLowerCase(), branchId: "b_sip", reorderLevel: 4, synced: true, _stock: stock,
+    id, name, sku, size, category, priceCents, costCents, imageUrl: productDisplayImage({ sku }) || undefined, barcode: sku, barcodeCatalogId: "bc_" + sku.toLowerCase(), branchId: "b_sip", reorderLevel: 4, status: "active", synced: true, _stock: stock,
   }));
   const barcodeCatalog = products.map((p) => ({ id: p.barcodeCatalogId, barcode: p.barcode, barcodeType: "code128", synced: true, updatedAt: t, createdAt: t }));
   const stockMovements = [];
@@ -769,6 +769,7 @@ function normalizeLoadedData(data) {
     return {
       ...product,
       branchId: product.branchId || product.branch_id || "",
+      status: product.status || (product.enabled === false || product.active === false ? "disabled" : "active"),
       barcode: primary || product.barcode || product.sku,
       barcodeCatalogId: product.barcodeCatalogId || entry?.id || null,
       barcodeCatalogIds: extraIds,
@@ -792,6 +793,10 @@ async function saveData(data) {
 
 function normalizeBarcode(value) { return String(value || "").trim().replace(/\s+/g, ""); }
 function isValidBarcode(value) { return /^[A-Za-z0-9._-]{4,64}$/.test(normalizeBarcode(value)); }
+function productIsEnabled(product) {
+  if (!product || product.enabled === false || product.active === false) return false;
+  return !["disabled", "inactive", "deleted"].includes(String(product.status || "active").trim().toLowerCase());
+}
 function productBranchId(product) { return product?.branchId || product?.branch_id || ""; }
 function productVisibleInBranch(product, data, branchId) {
   if (!branchId) return true;
@@ -858,16 +863,16 @@ function productOnHand(data, product, branchId) {
   if (!ids.length) return onHand(data, product?.id, branchId);
   return ids.reduce((sum, id) => sum + onHand(data, id, branchId), 0);
 }
-function findProductByBarcode(data, code, branchId) {
+function findProductByBarcode(data, code, branchId, { enabledOnly = false } = {}) {
   const normalized = normalizeBarcode(code);
   if (!normalized) return null;
   const catalogEntry = findBarcodeCatalogEntry(data, normalized);
-  const branchProducts = (data?.products || []).filter((p) => productVisibleInBranch(p, data, branchId));
+  const branchProducts = (data?.products || []).filter((p) => productVisibleInBranch(p, data, branchId) && (!enabledOnly || productIsEnabled(p)));
   return branchProducts.find((p) => productMatchesCatalog(p, catalogEntry)) || branchProducts.find((p) => productMatchesBarcode(p, normalized)) || null;
 }
-function barcodeLookup(data, code, branchId) {
+function barcodeLookup(data, code, branchId, options) {
   const catalogEntry = findBarcodeCatalogEntry(data, code);
-  const product = findProductByBarcode(data, code, branchId);
+  const product = findProductByBarcode(data, code, branchId, options);
   if (!product) {
     if (catalogEntry) return { product: null, unavailable: true, message: "This product is not available in this branch.", barcodeCatalog: catalogEntry };
     return null;
@@ -3476,13 +3481,15 @@ body{overscroll-behavior:none}
 .fp-enrolled-btn{color:var(--ok)!important;border-color:color-mix(in srgb,var(--ok) 45%,var(--border))!important;background:color-mix(in srgb,var(--ok) 8%,var(--surface))!important}
 .user-security-row.disabled{background:var(--surface-2)}
 .user-security-row.disabled>.avatar{filter:grayscale(1);opacity:.65}
-.user-enable-toggle{height:34px;padding:0 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--muted-2);display:flex;align-items:center;gap:7px;font:inherit;font-size:11px;font-weight:750;cursor:pointer}
-.user-enable-toggle:disabled{opacity:.55;cursor:not-allowed}
-.user-enable-track{width:27px;height:16px;border-radius:999px;background:var(--muted-2);padding:2px;display:flex;align-items:center;transition:.15s}
-.user-enable-track>span{width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .15s}
-.user-enable-toggle.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 38%,var(--border))}
-.user-enable-toggle.on .user-enable-track{background:var(--ok)}
-.user-enable-toggle.on .user-enable-track>span{transform:translateX(11px)}
+.user-enable-toggle,.product-enable-toggle{height:34px;padding:0 9px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--muted-2);display:flex;align-items:center;gap:7px;font:inherit;font-size:11px;font-weight:750;cursor:pointer;white-space:nowrap}
+.user-enable-toggle:disabled,.product-enable-toggle:disabled{opacity:.55;cursor:not-allowed}
+.user-enable-track,.product-enable-track{width:27px;height:16px;border-radius:999px;background:var(--muted-2);padding:2px;display:flex;align-items:center;transition:.15s}
+.user-enable-track>span,.product-enable-track>span{width:12px;height:12px;border-radius:50%;background:#fff;transition:transform .15s}
+.user-enable-toggle.on,.product-enable-toggle.on{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 38%,var(--border))}
+.user-enable-toggle.on .user-enable-track,.product-enable-toggle.on .product-enable-track{background:var(--ok)}
+.user-enable-toggle.on .user-enable-track>span,.product-enable-toggle.on .product-enable-track>span{transform:translateX(11px)}
+.product-row-disabled{background:var(--surface-2);color:var(--muted)}
+.product-row-disabled .ptimg{filter:grayscale(1);opacity:.6}
 @keyframes fpScan{0%,100%{top:18%}50%{top:82%}}
 .customer-page{max-width:1120px;margin:0 auto}
 .customer-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
@@ -5210,7 +5217,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     if (force || !isEditing || active === searchInputRef.current) searchInputRef.current?.focus();
   }, 0);
 
-  const branchProducts = branchProductsUnique(data, branch.id);
+  const branchProducts = branchProductsUnique(data, branch.id).filter(productIsEnabled);
   const activeExpenseCategories = cashierExpenseCategories(data);
   const defaultExpenseCategoryId = activeExpenseCategories[0]?.id || "excat_other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
@@ -5236,6 +5243,10 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 
   const add = (p) => {
     if (!p) return false;
+    if (!productIsEnabled(p)) {
+      setSaleErr(p.name + " is disabled and cannot be sold.");
+      return false;
+    }
     if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return false;
     setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 }));
     setSaleErr("");
@@ -5250,7 +5261,8 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const p = data.products.find((x) => x.id === l.productId);
     return p && l.priceCents < branchInventoryCostCents(data, p, branch.id);
   });
-  const saleBlocked = belowCostLines.length > 0;
+  const disabledSaleLine = lines.find((line) => !productIsEnabled(data.products.find((product) => product.id === line.productId)));
+  const saleBlocked = belowCostLines.length > 0 || Boolean(disabledSaleLine);
   const notifyScan = (message, kind = "success") => {
     setFlash(message);
     playScanSound(kind);
@@ -5279,7 +5291,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const last = lastSearchBarcodeRef.current;
     if (last.code === barcode && t - last.ts < 180) return true;
     lastSearchBarcodeRef.current = { code: barcode, ts: t };
-    const hit = barcodeLookup(data, barcode, branch.id);
+    const hit = barcodeLookup(data, barcode, branch.id, { enabledOnly: true });
     if (!hit) {
       notifyScan("Product not found: " + barcode, "error");
       appendBarcodeScanLog({ barcode, status: "sell:not_found" });
@@ -5301,7 +5313,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     if (e.key !== "Enter" && e.key !== "Tab") return;
     if (e.key === "Tab") e.preventDefault();
     if (processCashierBarcode(e.currentTarget.value, "input")) return;
-    const hit = data.products.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0];
+    const hit = branchProducts.find((p) => p.sku.toLowerCase() === q.trim().toLowerCase() || (p.barcode || "").toLowerCase() === q.trim().toLowerCase()) || visible[0];
     if (hit) { add(hit); setQ(""); scanFocus(true); }
   };
   const openScannedProductForm = (barcode) => {
@@ -5318,7 +5330,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       appendBarcodeScanLog({ barcode, status: "sell:invalid" });
       return;
     }
-    const hit = barcodeLookup(data, barcode, branch.id);
+    const hit = barcodeLookup(data, barcode, branch.id, { enabledOnly: true });
     if (!hit) {
       setFlash("Barcode not found. Add the product details to register it.");
       appendBarcodeScanLog({ barcode, status: "sell:not_found" });
@@ -5343,7 +5355,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const timer = window.setTimeout(() => {
       processCashierBarcode(barcode, "input");
       return;
-      const hit = barcodeLookup(data, barcode, branch.id);
+      const hit = barcodeLookup(data, barcode, branch.id, { enabledOnly: true });
       if (!hit) return;
       const t = now();
       const last = lastSearchBarcodeRef.current;
@@ -5378,7 +5390,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       id: uid("p"), name: scanProduct.name.trim(), sku, barcode, size: scanProduct.size || "750 ML",
       category: scanProduct.category || CATS[0], priceCents: price,
       costCents: 0,
-      barcodeCatalogId: catalogEntry?.id || null, branchId: branch.id, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now(),
+      barcodeCatalogId: catalogEntry?.id || null, branchId: branch.id, reorderLevel: d.settings.reorderLevel, status: "active", synced: false, updatedAt: now(),
     }] };
     });
     appendBarcodeScanLog({ barcode, status: "sell:product_created" });
@@ -5396,6 +5408,11 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   }); // eslint-disable-line
   const startCheckout = () => {
     if (lines.length === 0 || ident.trim() === "") return;
+    if (disabledSaleLine) {
+      setSaleErr("Cannot complete sale: " + disabledSaleLine.name + " has been disabled by an administrator.");
+      notifyScan("Sale blocked: a product is disabled.", "error");
+      return;
+    }
     if (saleBlocked) {
       const first = belowCostLines[0];
       setSaleErr("Cannot complete sale: " + first.name + " is priced below cost. Edit the selling price first.");
@@ -7684,6 +7701,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [q, setQ] = useState("");
   const [scannedProductId, setScannedProductId] = useState("");
   const [catF, setCatF] = useState("All");
+  const [statusF, setStatusF] = useState("all");
   const [delMsg, setDelMsg] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [scannerOn, setScannerOn] = useState(true);
@@ -7699,6 +7717,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const cleanCode = (value) => String(value || "").trim().replace(/\s+/g, "");
   const isBranchProduct = (p) => productVisibleInBranch(p, data, branch.id);
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
+  const enabledProductCount = visibleBranchProducts.filter(productIsEnabled).length;
   const scannedProduct = visibleBranchProducts.find((p) => p.id === scannedProductId) || null;
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
@@ -7795,7 +7814,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const productId = uid("p");
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
-    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, synced: false, updatedAt: ts };
+    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, status: "active", synced: false, updatedAt: ts };
     const product = withBranchProductCost(productBase, branch.id, 0);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
@@ -7857,6 +7876,17 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     });
     setEditId(null);
     setErr("");
+  };
+  const setProductEnabled = (product, enabled) => {
+    const key = productDedupeKey(product);
+    const status = enabled ? "active" : "disabled";
+    const updatedAt = now();
+    update((d) => ({
+      ...d,
+      products: d.products.map((item) => productDedupeKey(item) === key
+        ? { ...item, status, enabled, active: enabled, synced: false, updatedAt }
+        : item),
+    }));
   };
   const [impMsg, setImpMsg] = useState("");
   const copyBranches = data.branches.filter((b) => b.id !== branch.id);
@@ -7945,7 +7975,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           const result = ensureBarcodeEntries({ ...d, barcodeCatalog }, [sku]);
           const entry = result.entries[0];
           barcodeCatalog = result.barcodeCatalog;
-          const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, synced: false, updatedAt: now() };
+          const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, status: "active", synced: false, updatedAt: now() };
           products.push(withBranchProductCost(productBase, branch.id, 0));
           added++;
         }
@@ -7957,7 +7987,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const onImport = (e) => { const file = e.target.files && e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => importText(String(r.result)); r.readAsText(file); e.target.value = ""; };
   return (
     <div>
-      <PageHead title="Products" sub={visibleBranchProducts.length + " items · wines & spirits"}
+      <PageHead title="Products" sub={visibleBranchProducts.length + " items · " + enabledProductCount + " enabled"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> USB scanner</button>
           <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
@@ -8040,6 +8070,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => { setQ(e.target.value); setScannedProductId(""); }} /></div>
         <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => { setCatF(e.target.value); setScannedProductId(""); }}>
           {["All", ...Array.from(new Set(visibleBranchProducts.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
+        <select className="select" style={{ width: 145 }} value={statusF} onChange={(e) => { setStatusF(e.target.value); setScannedProductId(""); }} aria-label="Product status">
+          <option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+        </select>
       </div>
       {scannedProduct && (() => {
         const quantity = productOnHand(data, scannedProduct, branch.id);
@@ -8075,13 +8108,15 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         const query = q.trim();
         const list = sortProductsAZ(visibleBranchProducts.filter((p) => scannedProductId
           ? p.id === scannedProductId
-          : (catF === "All" || p.category === catF) && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
+          : (statusF === "all" || (statusF === "enabled" ? productIsEnabled(p) : !productIsEnabled(p)))
+            && (catF === "All" || p.category === catF)
+            && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
         return (
           <div className="ptblwrap">
             <table className="ptbl">
-              <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th></th></tr></thead>
+              <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th>Status</th><th></th></tr></thead>
               <tbody>
-                {list.length === 0 && <tr><td colSpan={8} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
+                {list.length === 0 && <tr><td colSpan={9} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
                 {list.map((p) => {
                   const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
@@ -8090,7 +8125,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   const marg = branchPrice > 0 ? Math.round((branchPrice - branchCost) / branchPrice * 100) : 0;
                   if (editId === p.id) return (
                     <tr key={p.id}>
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <input className="input" style={{ width: 220, height: 38 }} value={ef.name} onChange={(e) => { setEf({ ...ef, name: e.target.value }); setErr(""); }} placeholder="Product name" aria-label="Product name" />
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
@@ -8105,7 +8140,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                     </tr>
                   );
                   return (
-                    <tr key={p.id}>
+                    <tr key={p.id} className={productIsEnabled(p) ? "" : "product-row-disabled"}>
                       <td><div className="ptimg"><ProductImage src={productDisplayImage(p)} alt="" fit="cover" /></div></td>
                       <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div></td>
                       <td><span className="ptcat">{p.category}</span></td>
@@ -8113,6 +8148,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                       <td className="num">{fmtExact(branchCost, cur, 6)}</td>
                       <td className="num">{fmt(branchPrice, cur)}</td>
                       <td className="num">{marg}%</td>
+                      <td><button type="button" role="switch" aria-checked={productIsEnabled(p)} className={"product-enable-toggle" + (productIsEnabled(p) ? " on" : "")} onClick={() => setProductEnabled(p, !productIsEnabled(p))}>
+                        <span className="product-enable-track"><span /></span><span>{productIsEnabled(p) ? "Enabled" : "Disabled"}</span>
+                      </button></td>
                       <td><div className="ptact"><button className="btn xs btn-ghost" onClick={() => startEdit(p)}>Edit</button><button className="smdel" onClick={() => { setDelMsg(""); setDeleteTarget(p); }} aria-label={`Delete ${p.name}`}><Trash2 /></button></div></td>
                     </tr>
                   );
