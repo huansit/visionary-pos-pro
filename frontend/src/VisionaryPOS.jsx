@@ -2234,37 +2234,26 @@ function cameraScannerError(error) {
   if (name === "SecurityError") return "Camera access is unavailable for this connection.";
   return "The camera could not start. You can still type the barcode or use a paired scanner.";
 }
-const MOBILE_CAMERA_KEY = "visionpos_mobile_camera_id";
 let barcodeAudioContext = null;
-function storedMobileCameraId() {
-  try { return window.localStorage.getItem(MOBILE_CAMERA_KEY) || ""; } catch (_) { return ""; }
-}
-function rememberMobileCameraId(deviceId) {
+async function openAutomaticRearCamera() {
+  const baseVideo = {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30 },
+  };
   try {
-    if (deviceId) window.localStorage.setItem(MOBILE_CAMERA_KEY, deviceId);
-    else window.localStorage.removeItem(MOBILE_CAMERA_KEY);
-  } catch (_) {}
-}
-function cameraDeviceLabel(device, index) {
-  return String(device?.label || "").trim() || `Camera ${index + 1}`;
-}
-function preferredCameraDevice(devices, probeDeviceId = "") {
-  let best = null;
-  let bestScore = -Infinity;
-  devices.forEach((device, index) => {
-    const label = cameraDeviceLabel(device, index).toLowerCase();
-    let score = -index;
-    if (/back|rear|environment|world/.test(label)) score += 100;
-    if (/front|user|selfie/.test(label)) score -= 200;
-    if (/ultra.?wide|macro|depth|telephoto|tele\b/.test(label)) score -= 60;
-    if (/camera2?\s*0\b|camera\s*0\b/.test(label)) score += 12;
-    if (device.deviceId && device.deviceId === probeDeviceId) score += 5;
-    if (score > bestScore) {
-      best = device;
-      bestScore = score;
-    }
-  });
-  return best;
+    return await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { ...baseVideo, facingMode: { exact: "environment" } },
+    });
+  } catch (error) {
+    const name = String(error?.name || "");
+    if (!["OverconstrainedError", "ConstraintNotSatisfiedError", "NotFoundError", "DevicesNotFoundError", "TypeError"].includes(name)) throw error;
+    return navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { ...baseVideo, facingMode: { ideal: "environment" } },
+    });
+  }
 }
 function prepareBarcodeSuccessTone() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2302,7 +2291,7 @@ function playBarcodeSuccessTone() {
 function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "Products", title = "Scan product barcode" }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
-  const cameraDeviceIdRef = useRef(storedMobileCameraId());
+  const streamRef = useRef(null);
   const foundRef = useRef(false);
   const scanStateRef = useRef({ code: "", lastDetectedAt: 0, armed: true });
   const onCloseRef = useRef(onClose);
@@ -2311,9 +2300,9 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("Starting camera...");
   const [error, setError] = useState("");
+  const [torchAvailable, setTorchAvailable] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
-  const [cameraDevices, setCameraDevices] = useState([]);
-  const [cameraDeviceId, setCameraDeviceId] = useState(cameraDeviceIdRef.current);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => { onScanRef.current = onScan; }, [onScan]);
   useEffect(() => {
@@ -2326,13 +2315,16 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
     foundRef.current = false;
     scanStateRef.current = { code: "", lastDetectedAt: 0, armed: true };
     setError("");
-    setStatus("Starting camera...");
+    setStatus("Starting rear camera...");
+    setTorchAvailable(false);
+    setTorchOn(false);
 
     const stopCamera = () => {
       try { controlsRef.current?.stop?.(); } catch (_) {}
       controlsRef.current = null;
-      const stream = videoRef.current?.srcObject;
-      if (stream?.getTracks) stream.getTracks().forEach((track) => track.stop());
+      const streams = new Set([streamRef.current, videoRef.current?.srcObject].filter(Boolean));
+      streams.forEach((stream) => stream?.getTracks?.().forEach((track) => track.stop()));
+      streamRef.current = null;
       if (videoRef.current) videoRef.current.srcObject = null;
     };
     const startCamera = async () => {
@@ -2347,36 +2339,18 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         return;
       }
       try {
-        const { BrowserMultiFormatOneDReader } = await import("@zxing/browser");
+        const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
+          import("@zxing/browser"),
+          import("@zxing/library"),
+        ]);
         if (disposed || !videoRef.current) return;
-        const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 90, delayBetweenScanSuccess: 500 });
-        let devices = [];
-        try {
-          devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
-        } catch (_) {}
-
-        let selectedDeviceId = cameraDeviceIdRef.current;
-        if (!devices.some((device) => device.deviceId && device.deviceId === selectedDeviceId)) selectedDeviceId = "";
-        if (!selectedDeviceId) {
-          const permissionStream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { facingMode: { ideal: "environment" } },
-          });
-          const probeDeviceId = permissionStream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
-          permissionStream.getTracks().forEach((track) => track.stop());
-          await new Promise((resolve) => window.setTimeout(resolve, 80));
-          try {
-            devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
-          } catch (_) {}
-          selectedDeviceId = preferredCameraDevice(devices, probeDeviceId)?.deviceId || probeDeviceId;
-        }
-
-        if (disposed || !videoRef.current) return;
-        setCameraDevices(devices.filter((device) => device.deviceId));
-        if (selectedDeviceId) {
-          cameraDeviceIdRef.current = selectedDeviceId;
-          setCameraDeviceId(selectedDeviceId);
-          rememberMobileCameraId(selectedDeviceId);
+        const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
+        const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 35, delayBetweenScanSuccess: 200 });
+        const stream = await openAutomaticRearCamera();
+        streamRef.current = stream;
+        if (disposed || !videoRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
         }
 
         const handleDecode = (result, _scanError, activeControls) => {
@@ -2419,22 +2393,21 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
         };
-        const controls = selectedDeviceId
-          ? await reader.decodeFromVideoDevice(selectedDeviceId, videoRef.current, handleDecode)
-          : await reader.decodeFromConstraints({ audio: false, video: { facingMode: "environment" } }, videoRef.current, handleDecode);
-        const videoTrack = videoRef.current?.srcObject?.getVideoTracks?.()[0];
+        const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack?.applyConstraints) {
-          const capabilities = videoTrack.getCapabilities?.() || {};
-          const advanced = [];
+          let capabilities = {};
+          try { capabilities = videoTrack.getCapabilities?.() || {}; } catch (_) {}
+          let focusMode = "";
           if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
-            advanced.push({ focusMode: "continuous" });
+            focusMode = "continuous";
+          } else if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("single-shot")) {
+            focusMode = "single-shot";
           }
-          videoTrack.applyConstraints({
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            ...(advanced.length ? { advanced } : {}),
-          }).catch(() => {});
+          if (!disposed) setTorchAvailable(Boolean(capabilities.torch));
+          await videoTrack.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }).catch(() => {});
+          if (focusMode) await videoTrack.applyConstraints({ advanced: [{ focusMode }] }).catch(() => {});
         }
+        const controls = await reader.decodeFromStream(stream, videoRef.current, handleDecode);
         if (disposed) controls.stop();
         else {
           controlsRef.current = controls;
@@ -2451,6 +2424,21 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
     return () => { disposed = true; stopCamera(); };
   }, [attempt, continuous]);
 
+  const toggleTorch = async () => {
+    const track = streamRef.current?.getVideoTracks?.()[0];
+    if (!track?.applyConstraints || !torchAvailable) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next }] });
+      setTorchOn(next);
+      setStatus(next ? "Flashlight on. Point the rear camera at the barcode." : "Flashlight off. Point the rear camera at the barcode.");
+    } catch (_) {
+      setTorchAvailable(false);
+      setTorchOn(false);
+      setStatus("Flashlight control is unavailable on this phone.");
+    }
+  };
+
   return (
     <div className="scrim camera-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="modal camera-modal" role="dialog" aria-modal="true" aria-labelledby="camera-scanner-title">
@@ -2463,30 +2451,10 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           {!error && <div className="camera-target" aria-hidden="true"><span /></div>}
           {error && <div className="camera-error" role="alert"><AlertCircle /><span>{error}</span></div>}
         </div>
-        {cameraDevices.length > 1 && (
-          <label className="camera-device-row">
-            <Camera aria-hidden="true" />
-            <select
-              className="input"
-              aria-label="Camera"
-              value={cameraDeviceId}
-              onChange={(event) => {
-                const nextDeviceId = event.target.value;
-                cameraDeviceIdRef.current = nextDeviceId;
-                setCameraDeviceId(nextDeviceId);
-                rememberMobileCameraId(nextDeviceId);
-                setAttempt((value) => value + 1);
-              }}
-            >
-              {cameraDevices.map((device, index) => (
-                <option key={device.deviceId} value={device.deviceId}>{cameraDeviceLabel(device, index)}</option>
-              ))}
-            </select>
-          </label>
-        )}
         <div className="camera-status" aria-live="polite">{error ? "" : status}</div>
         <div className="camera-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>{continuous ? "Done" : "Cancel"}</button>
+          {!error && <button type="button" className={"btn " + (torchOn ? "btn-primary" : "btn-ghost")} onClick={toggleTorch} disabled={!torchAvailable} title={torchAvailable ? "Toggle the rear-camera flashlight" : "Flashlight control is unavailable on this camera"}><Zap /> {torchAvailable ? (torchOn ? "Flash off" : "Flashlight") : "Flash unavailable"}</button>}
           {error && <button type="button" className="btn btn-primary" onClick={() => setAttempt((value) => value + 1)}><RefreshCw /> Try again</button>}
         </div>
       </div>
@@ -3368,9 +3336,6 @@ body{overscroll-behavior:none}
 .camera-target span{position:absolute;left:7%;right:7%;top:50%;height:2px;background:var(--accent-2);box-shadow:0 0 9px rgba(34,199,214,.9)}
 .camera-error{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;color:#fff;background:#10191f;font-size:13px;line-height:1.5}
 .camera-error svg{width:22px;height:22px;flex:0 0 auto;color:var(--warn)}
-.camera-device-row{display:flex;align-items:center;gap:8px;margin-top:10px}
-.camera-device-row>svg{width:18px;height:18px;flex:0 0 auto;color:var(--muted)}
-.camera-device-row .input{height:40px;min-width:0}
 .camera-status{min-height:38px;padding:11px 2px 4px;color:var(--muted);font-size:13px;line-height:1.45}
 .camera-status.error{color:var(--danger)}
 .camera-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
@@ -7356,6 +7321,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
 /* ---- Stock ---- */
 function StockTab({ data, update, branch }) {
   const cur = data.settings.currency;
+  const countInputRefs = useRef(new Map());
   const [bId, setBId] = useState(branch.id);
   const [inventoryMode, setInventoryMode] = useState("full");
   const [q, setQ] = useState("");
@@ -7554,6 +7520,44 @@ function StockTab({ data, update, branch }) {
     appendBarcodeScanLog({ barcode, status: "stock:counted_session", productId: hit.product.id, sessionId: session.id });
     return true;
   };
+  const focusCountInput = (productId) => {
+    window.setTimeout(() => {
+      const input = countInputRefs.current.get(productId);
+      input?.focus();
+      input?.select();
+    }, 120);
+  };
+  const handleStockCameraScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (!isValidBarcode(barcode)) {
+      setScanMsg("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "stock_camera:invalid" });
+      return false;
+    }
+    if (!session || session.status !== "open") {
+      setScanMsg("Start or resume a stock count session before scanning.");
+      appendBarcodeScanLog({ barcode, status: "stock_camera:no_session" });
+      return false;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setScanMsg(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "stock_camera:branch_unavailable" : "stock_camera:not_found" });
+      return false;
+    }
+    const item = (session.items || []).find((entry) => entry.productId === hit.product.id);
+    if (!item) {
+      setScanMsg(hit.name + " is not part of this session snapshot.");
+      appendBarcodeScanLog({ barcode, status: "stock_camera:not_in_session", productId: hit.product.id });
+      return false;
+    }
+    setFilter("all");
+    setQ(hit.name);
+    setScanMsg("Selected " + hit.name + ". Enter its physical count manually.");
+    appendBarcodeScanLog({ barcode, status: "stock_camera:selected", productId: hit.product.id, sessionId: session.id });
+    focusCountInput(hit.product.id);
+    return true;
+  };
   const resetLoss = () => {
     setLf({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
     setLossError("");
@@ -7721,7 +7725,7 @@ function StockTab({ data, update, branch }) {
         <button className="btn sm btn-primary" onClick={() => setInventoryMode("quick")}><ClipboardCheck /> Quick inventory</button>
         <button className="btn sm btn-ghost" disabled={!!session} onClick={openCorrection} title={session ? "Finish or cancel the active stock count first" : "Correct a wrongly entered stock quantity"}><Wrench /> Correct stock</button>
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> USB scanner</button>
-        <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
+        <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
         <button className="btn sm btn-ghost" onClick={openLoss}><TrendingDown /> Record loss / damage</button>
       </div>
       {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
@@ -7771,7 +7775,7 @@ function StockTab({ data, update, branch }) {
                 <tr key={row.productId} className={row.countedQty !== null ? "rowsel" : ""}>
                   <td><div className="nm">{row.product.name}</div><div className="mt2">{row.product.sku} / {row.product.size}</div></td>
                   <td style={{ fontWeight: 700 }}>{row.expectedQty}</td>
-                  <td><input className="input" disabled={session.status !== "open"} style={{ width: 92, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" placeholder="Count" value={row.countedQty ?? ""} onChange={(e) => setCount(row.productId, e.target.value)} /></td>
+                  <td><input ref={(node) => { if (node) countInputRefs.current.set(row.productId, node); else countInputRefs.current.delete(row.productId); }} className="input" disabled={session.status !== "open"} style={{ width: 92, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" placeholder="Count" value={row.countedQty ?? ""} onChange={(e) => setCount(row.productId, e.target.value)} /></td>
                   <td style={{ fontWeight: 700, color: row.varianceQty < 0 ? "var(--danger)" : row.varianceQty > 0 ? "var(--ok)" : "var(--muted-2)" }}>{row.countedQty === null ? "-" : (row.varianceQty > 0 ? "+" : "") + row.varianceQty}</td>
                   <td className="amt">{fmt(row.valueImpact, cur)}</td>
                   <td><div className="nm">{row.finalQty === null ? "-" : row.finalQty}</div>{row.soldSince > 0 && <div className="mt2">{row.soldSince} sold after snapshot</div>}</td>
@@ -7813,11 +7817,10 @@ function StockTab({ data, update, branch }) {
       )}
       {cameraOpen && (
         <CameraBarcodeScanner
-          continuous
           eyebrow="Inventory count"
-          title={"Count products - " + bname}
+          title={"Scan product - " + bname}
           onClose={() => setCameraOpen(false)}
-          onScan={handleStockScan}
+          onScan={handleStockCameraScan}
         />
       )}
       {correctionOpen && (
@@ -7888,6 +7891,7 @@ function StockTab({ data, update, branch }) {
 
 function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const cur = data.settings.currency;
+  const countInputRefs = useRef(new Map());
   const [bId, setBId] = useState(initialBranchId || branch.id);
   const [q, setQ] = useState("");
   const [counts, setCounts] = useState({});
@@ -7961,6 +7965,36 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
     setCounts((existing) => ({ ...existing, [hit.product.id]: String((parseInt(existing[hit.product.id], 10) || 0) + 1) }));
     setMessage("Counted " + hit.name + ". Scan again to increase its physical count.");
     appendBarcodeScanLog({ barcode, status: "quick_inventory:counted", productId: hit.product.id });
+    return true;
+  };
+  const focusCountInput = (productId) => {
+    window.setTimeout(() => {
+      const input = countInputRefs.current.get(productId);
+      input?.focus();
+      input?.select();
+    }, 120);
+  };
+  const handleQuickCameraScan = (code) => {
+    const barcode = normalizeBarcode(code);
+    if (lockedSession) {
+      setMessage("Quick inventory is unavailable while " + lockedSession.code + " is active for " + bname + ".");
+      return false;
+    }
+    if (!isValidBarcode(barcode)) {
+      setMessage("Invalid barcode: " + barcode);
+      appendBarcodeScanLog({ barcode, status: "quick_inventory_camera:invalid" });
+      return false;
+    }
+    const hit = barcodeLookup(data, barcode, bId);
+    if (!hit || hit.unavailable) {
+      setMessage(hit?.message || "Barcode not found: " + barcode);
+      appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "quick_inventory_camera:branch_unavailable" : "quick_inventory_camera:not_found" });
+      return false;
+    }
+    setQ(hit.name);
+    setMessage("Selected " + hit.name + ". Enter its physical count manually.");
+    appendBarcodeScanLog({ barcode, status: "quick_inventory_camera:selected", productId: hit.product.id });
+    focusCountInput(hit.product.id);
     return true;
   };
   useBarcodeScanner({ enabled: scannerOn && !lockedSession && !cameraOpen, mode: "stock", onScan: handleQuickScan });
@@ -8044,7 +8078,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} disabled={!!lockedSession} onClick={() => setScannerOn((value) => !value)}><Barcode /> USB scanner</button>
-        <button className="btn sm btn-ghost" disabled={!!lockedSession} onClick={() => setCameraOpen(true)}><Camera /> Camera count</button>
+        <button className="btn sm btn-ghost" disabled={!!lockedSession} onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
       </div>
 
       {lockedSession ? (
@@ -8079,7 +8113,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
                 return <tr key={p.id}>
                   <td><div className="prodname"><b>{p.name}</b><span>{p.sku}{p.size ? " - " + p.size : ""}</span></div></td>
                   <td><b>{current}</b></td>
-                  <td><input className="input" style={{ height: 40, width: 130 }} inputMode="numeric" placeholder="Count" value={selected ? counts[p.id] : ""} disabled={!!lockedSession} onChange={(e) => setCount(p.id, e.target.value)} /></td>
+                  <td><input ref={(node) => { if (node) countInputRefs.current.set(p.id, node); else countInputRefs.current.delete(p.id); }} className="input" style={{ height: 40, width: 130 }} inputMode="numeric" placeholder="Count" value={selected ? counts[p.id] : ""} disabled={!!lockedSession} onChange={(e) => setCount(p.id, e.target.value)} /></td>
                   <td><b className={difference === null ? "" : difference < 0 ? "bad" : difference > 0 ? "good" : ""}>{difference === null ? "-" : (difference > 0 ? "+" : "") + difference}</b></td>
                   <td>{selected && <button className="iconbtn" title="Remove from quick inventory" onClick={() => clearSelection(p.id)}><Trash2 /></button>}</td>
                 </tr>;
@@ -8091,11 +8125,10 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
 
       {cameraOpen && (
         <CameraBarcodeScanner
-          continuous
           eyebrow="Quick inventory"
-          title={"Count selected products - " + bname}
+          title={"Scan product - " + bname}
           onClose={() => setCameraOpen(false)}
-          onScan={handleQuickScan}
+          onScan={handleQuickCameraScan}
         />
       )}
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
