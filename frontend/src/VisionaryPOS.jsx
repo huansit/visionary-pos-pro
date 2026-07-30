@@ -2237,8 +2237,9 @@ function cameraScannerError(error) {
 let barcodeAudioContext = null;
 async function openAutomaticRearCamera() {
   const baseVideo = {
-    width: { ideal: 1920 },
-    height: { ideal: 1080 },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    aspectRatio: { ideal: 16 / 9 },
     frameRate: { ideal: 30 },
   };
   try {
@@ -2345,7 +2346,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         ]);
         if (disposed || !videoRef.current) return;
         const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
-        const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 35, delayBetweenScanSuccess: 200 });
+        const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 75, delayBetweenScanSuccess: 250 });
         const stream = await openAutomaticRearCamera();
         streamRef.current = stream;
         if (disposed || !videoRef.current) {
@@ -2393,7 +2394,13 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
         };
-        const videoTrack = stream.getVideoTracks()[0];
+        const controls = await reader.decodeFromStream(stream, videoRef.current, handleDecode);
+        if (disposed) {
+          controls.stop();
+          return;
+        }
+        controlsRef.current = controls;
+        const videoTrack = videoRef.current?.srcObject?.getVideoTracks?.()[0] || stream.getVideoTracks()[0];
         if (videoTrack?.applyConstraints) {
           let capabilities = {};
           try { capabilities = videoTrack.getCapabilities?.() || {}; } catch (_) {}
@@ -2403,16 +2410,10 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           } else if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("single-shot")) {
             focusMode = "single-shot";
           }
-          if (!disposed) setTorchAvailable(Boolean(capabilities.torch));
-          await videoTrack.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } }).catch(() => {});
           if (focusMode) await videoTrack.applyConstraints({ advanced: [{ focusMode }] }).catch(() => {});
+          if (!disposed) setTorchAvailable(typeof controls.switchTorch === "function" || Object.prototype.hasOwnProperty.call(capabilities, "torch"));
         }
-        const controls = await reader.decodeFromStream(stream, videoRef.current, handleDecode);
-        if (disposed) controls.stop();
-        else {
-          controlsRef.current = controls;
-          setStatus("Point the rear camera at the product barcode.");
-        }
+        setStatus("Point the rear camera at the product barcode.");
       } catch (cameraError) {
         if (disposed) return;
         stopCamera();
@@ -2425,11 +2426,14 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
   }, [attempt, continuous]);
 
   const toggleTorch = async () => {
+    const controls = controlsRef.current;
     const track = streamRef.current?.getVideoTracks?.()[0];
-    if (!track?.applyConstraints || !torchAvailable) return;
+    if (!torchAvailable) return;
     const next = !torchOn;
     try {
-      await track.applyConstraints({ advanced: [{ torch: next }] });
+      if (typeof controls?.switchTorch === "function") await controls.switchTorch(next);
+      else if (track?.applyConstraints) await track.applyConstraints({ advanced: [{ fillLightMode: next ? "flash" : "off", torch: next }] });
+      else throw new Error("torch_unavailable");
       setTorchOn(next);
       setStatus(next ? "Flashlight on. Point the rear camera at the barcode." : "Flashlight off. Point the rear camera at the barcode.");
     } catch (_) {
