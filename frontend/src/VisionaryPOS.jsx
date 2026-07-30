@@ -3677,6 +3677,47 @@ body{overscroll-behavior:none}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
 /* invoices: credit control gets the room, other sections compact */
+.invoice-workspace-tabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--border);margin:2px 0 18px;overflow-x:auto}
+.invoice-workspace-tabs button{height:46px;display:flex;align-items:center;gap:8px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:750;white-space:nowrap;cursor:pointer}
+.invoice-workspace-tabs button:hover{color:var(--text);background:var(--surface-2)}
+.invoice-workspace-tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+.invoice-workspace-tabs svg{width:17px;height:17px}
+.invoice-workspace-tabs span,.invoice-status-tabs span{min-width:22px;height:22px;display:inline-grid;place-items:center;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--muted-2);font-size:10px;font-family:var(--font-mono)}
+.invoice-workspace-tabs button.active span,.invoice-status-tabs button.active span{background:rgba(14,165,181,.13);color:var(--accent)}
+.invoice-workspace-view{min-width:0}
+.invoice-summary-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-soft);border-left:0;border-right:0;margin-bottom:18px}
+.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.invoice-summary-strip>div{min-width:0;padding:13px 18px;border-right:1px solid var(--border-soft)}
+.invoice-summary-strip>div:last-child{border-right:0}
+.invoice-summary-strip span{display:block;color:var(--muted-2);font-size:10.5px;font-weight:750;text-transform:uppercase}
+.invoice-summary-strip b{display:block;margin-top:5px;font-family:var(--font-mono);font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invoice-summary-strip b.warn{color:var(--warn)}
+.invoice-summary-strip b.danger{color:var(--danger)}
+.invoice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 13px}
+.invoice-section-head .section-title{font-size:16px;margin:0 0 3px}
+.invoice-section-head .muted{color:var(--muted-2);font-size:12px}
+.invoice-status-tabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;margin-bottom:4px}
+.invoice-status-tabs button{height:36px;display:flex;align-items:center;gap:7px;padding:0 11px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface);color:var(--muted);font:inherit;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer}
+.invoice-status-tabs button:hover{border-color:var(--border);color:var(--text)}
+.invoice-status-tabs button.active{border-color:var(--accent);background:rgba(14,165,181,.08);color:var(--accent)}
+.invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px;gap:10px;align-items:center;margin-bottom:8px}
+.invoice-date-filter{border-bottom:1px solid var(--border-soft);padding:0 0 10px;margin-bottom:12px}
+.invoice-date-filter summary{width:max-content;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;list-style-position:inside}
+.invoice-date-filter .settledates{grid-column:auto;justify-content:flex-start;padding-top:10px}
+.invoice-selection-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;margin:8px 0 12px;border-left:3px solid var(--accent);background:rgba(14,165,181,.07)}
+.invoice-selection-bar>div{display:flex;align-items:center;gap:9px}
+.invoice-selection-bar span{font-size:12px;color:var(--muted-2)}
+.invoice-table{min-width:820px}
+.invoice-table .invoice-ref,.invoice-table .invoice-customer{display:grid;gap:4px;min-width:0}
+.invoice-table .invoice-ref span,.invoice-table .invoice-customer span{max-width:300px;color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invoice-table .invoice-customer b{font-size:13px}
+.invoice-table-wrap{max-height:calc(100dvh - 420px);min-height:250px}
+.debt-summary{margin-top:0}
+.debt-summary>section{min-width:0}
+.debt-summary .list.mini{max-height:440px}
+.inventory-debt-detail{display:grid;gap:6px;margin:10px 0 0 44px;padding:10px 0 0;border-top:1px solid var(--border-soft)}
+.day-close-list{gap:8px;max-width:920px}
+.compact-notice{padding:12px 16px;text-align:left;margin-bottom:12px}
 .stats.compact{gap:10px;margin-bottom:12px}
 .stats.compact .stat{padding:10px 13px;border-radius:12px}
 .stats.compact .stat .sl{font-size:11px}
@@ -3689,6 +3730,8 @@ body{overscroll-behavior:none}
 .list.mini .row .mt2{font-size:11px}
 .invsummary{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
 @media (max-width:820px){.invsummary{grid-template-columns:1fr}}
+@media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 390px)}}
+@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.invoice-date-filter .settledates{display:grid;grid-template-columns:1fr}.invoice-date-filter .settledates label{min-width:0}.inventory-debt-detail{margin-left:0}.day-close-list .row .btn{width:100%}}
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -5999,6 +6042,7 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
   const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
+  const [workspaceView, setWorkspaceView] = useState("invoices");
   const [cashierFilter, setCashierFilter] = useState(initialCashier);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -6145,125 +6189,158 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       missingCount: missingDebtByCashier[name]?.count || 0,
     }));
   const closes = (data.endOfDays || []).filter((e) => e.branchId === branch.id);
+  const invoiceDebtOutstanding = debtInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const inventoryDebtOutstanding = branchJointDebts.reduce((sum, debt) => sum + cashierJointDebtOutstanding(data, debt), 0);
+  const voidPendingCount = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length;
 
   return (
     <div>
-      <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
-        right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button className="btn sm btn-ghost" disabled={branchJointDebts.length === 0} onClick={onOpenDebtPayments}><CreditCard /> Inventory debt payments</button>
-          <button
-            className="btn sm btn-ghost"
-            disabled={selectedInvoices.length === 0}
-            title={selectedInvoices.length === 0 ? "Select invoices from the table to print them together." : `Print ${selectedInvoices.length} selected invoice(s)`}
-            onClick={printSelectedInvoices}
-          ><Printer /> {selectedInvoices.length ? `Print selected (${selectedInvoices.length})` : "Print selected"}</button>
+      <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
+        right={<button
+          className="btn sm btn-primary"
+          disabled={sinceEndDay.length === 0}
+          title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
+          onClick={() => setEod({ mode: "live" })}
+        ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>} />
+
+      <div className="invoice-workspace-tabs" role="tablist" aria-label="Sales and invoicing sections">
+        <button type="button" role="tab" aria-selected={workspaceView === "invoices"} className={workspaceView === "invoices" ? "active" : ""} onClick={() => setWorkspaceView("invoices")}><Receipt /> Invoices <span>{displayInvoices.length}</span></button>
+        <button type="button" role="tab" aria-selected={workspaceView === "debts"} className={workspaceView === "debts" ? "active" : ""} onClick={() => setWorkspaceView("debts")}><CreditCard /> Debts <span>{debtRows.length}</span></button>
+        <button type="button" role="tab" aria-selected={workspaceView === "closes"} className={workspaceView === "closes" ? "active" : ""} onClick={() => setWorkspaceView("closes")}><FileText /> Day closes <span>{closes.length}</span></button>
+      </div>
+
+      {workspaceView === "invoices" && <div className="invoice-workspace-view">
+        <div className="invoice-summary-strip">
+          <div><span>{hasCustomDateRange ? "Sales in selected dates" : "Current period sales"}</span><b>{fmt(totalInvoiced, cur)}</b></div>
+          <div><span>Outstanding</span><b className={balanceDue > 0 ? "danger" : ""}>{fmt(balanceDue, cur)}</b></div>
+          <div><span>Open</span><b>{open.length}</b></div>
+          <div><span>Needs attention</span><b className={overdue.length + debtInvoices.length + voidPendingCount > 0 ? "warn" : ""}>{overdue.length + debtInvoices.length + voidPendingCount}</b></div>
+        </div>
+
+        <div className="invoice-section-head">
+          <div><div className="section-title">Invoice settlement</div><div className="muted">{cashierFilter === "all" ? "All cashiers" : cashierFilter} - {filtered.length} invoice(s) - {fmt(filteredBalanceDue, cur)} due</div></div>
           <button
             className="btn sm btn-ghost"
             disabled={currentDayOpenInvoices.length === 0}
-            title={currentDayOpenInvoices.length === 0
-              ? `There are no unpaid current-day invoices for ${branch.name}.`
-              : `Settle ${currentDayOpenInvoices.length} current-day invoice(s) for ${branch.name}`}
+            title={currentDayOpenInvoices.length === 0 ? `There are no unpaid current-day invoices for ${branch.name}.` : `Settle ${currentDayOpenInvoices.length} current-day invoice(s)`}
             onClick={() => setBulkSettlementOpen(true)}
-          ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark invoices paid"}</button>
-          <button
-            className="btn sm btn-primary"
-            disabled={sinceEndDay.length === 0}
-            title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
-            onClick={() => setEod({ mode: "live" })}
-          ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>
-        </div>} />
-      <div className="stats compact">
-        <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
-        <div className="stat"><div className="sl">Overdue invoices</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
-        <div className="stat"><div className="sl">Debts</div><div className={"sv" + (debtInvoices.length ? " warn" : "")}>{debtInvoices.length}</div></div>
-        <div className="stat"><div className="sl">Voided invoices</div><div className="sv">{voidedInvoices.length}</div></div>
-        <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due · current period"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
-        <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced · current period"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
-      </div>
-      {sinceEndDay.length === 0 ? <div className="notice">No new invoice sales since the last End of Day close.</div>
-        : <div className="notice">{sinceEndDay.length} invoice(s) issued since the last End of Day close.</div>}
+          ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark day invoices paid"}</button>
+        </div>
 
-      <div className="section-title lead settlement-heading">
-        Supervisor invoice settlement
-        <span className="settlement-scope">
-          {cashierFilter === "all" ? "All cashiers" : cashierFilter} · {filtered.length} invoice(s) · {fmt(filteredBalanceDue, cur)} due
-        </span>
-      </div>
-      <div className="settlebar">
-        <div className="seg">
-          {[["void_pending", `Void pending (${activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length})`], ["open", "Open"], ["overdue", "Overdue"], ["debt", "Debts"], ["paid", "Paid"], ["voided", "Voided"], ["all", "All"]].map(([key, label]) => (
-            <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
+        <div className="invoice-status-tabs" role="tablist" aria-label="Invoice status">
+          {[
+            ["open", "Open", open.length],
+            ["overdue", "Overdue", overdue.length],
+            ["debt", "Debts", debtInvoices.length],
+            ["void_pending", "Void pending", voidPendingCount],
+            ["paid", "Paid", activeInvoices.filter((invoice) => invOutstanding(invoice) <= 0 && !invoiceIsVoided(data, invoice)).length],
+            ["voided", "Voided", voidedInvoices.length],
+            ["all", "All", displayInvoices.length],
+          ].map(([key, label, count]) => (
+            <button type="button" role="tab" aria-selected={filter === key} key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}<span>{count}</span></button>
           ))}
         </div>
-        <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, SKU, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
-        <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} title="Filter invoices by cashier">
-          <option value="all">All cashiers</option>
-          {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-        <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} title="Sort invoices">
-          <option value="oldest">Oldest first</option>
-          <option value="newest">Newest first</option>
-        </select>
-        <div className="settledates">
-          <label>
-            <span>From date</span>
-            <input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} />
-          </label>
-          <label>
-            <span>To date</span>
-            <input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
-          </label>
-          {(dateFrom || dateTo) ? <button className="btn sm" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
-        </div>
-      </div>
-      {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-        <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Products</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Invoice Total</th><th>Balance</th><th>Status</th></tr></thead>
-          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
-        </table></div>
-      )}
 
-      <div className="invsummary">
-        <div>
-          <div className="section-title">Cashier Debts <span style={{ color: "var(--muted)", fontWeight: 500 }}>· carried over until cleared</span></div>
-          {debtRows.length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
-            <div className="list mini">{debtRows.map((row) => (
-              <div className="row" key={row.name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.name.charAt(0)}</div>
-                <div className="meta"><div className="nm">{row.name}</div><div className="mt2">{row.invoiceCount} carried-over invoice(s) · {row.missingCount} missing inventory count(s)</div></div>
-                <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(row.invoiceAmountCents + row.missingAmountCents, cur)} owed</span></div>))}</div>
-          )}
-          <div className="section-title" style={{ marginTop: 18 }}>Missing Inventory <span style={{ color: "var(--muted)", fontWeight: 500 }}>· joint cashier debt</span></div>
-          {branchJointDebts.length === 0 ? <div className="notice">No missing inventory debt has been recorded for {branch.name}.</div> : (
-            <div className="list mini">{branchJointDebts.map((debt) => (
-              <details className="row" key={debt.id} style={{ display: "block" }}>
-                <summary style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", listStyle: "none" }}>
-                  <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
-                  <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {debt.cashierCount || 0} cashier(s) · {dt(debt.ts)}</div></div>
-                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(data, debt), cur)}</span>
-                </summary>
-                <div style={{ margin: "10px 0 0 44px", display: "grid", gap: 6 }}>
-                  {(debt.items || []).map((item) => <div className="mt2" key={item.productId}>{item.productName} · {item.missingQty} × {fmt(item.unitCostCents, cur)} = {fmt(item.amountCents, cur)}</div>)}
-                  {(debt.shares || []).map((share) => {
-                    const balance = cashierJointDebtShareBalance(data, debt, share);
-                    return <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> · assigned {fmt(balance.assignedCents, cur)} · paid {fmt(balance.paidCents, cur)} · balance {fmt(balance.outstandingCents, cur)}</div>;
-                  })}
-                  {debt.cashierCount === 0 && <div className="alert"><AlertCircle />No active cashier was assigned to this branch when the count was committed. This debt remains unallocated.</div>}
-                </div>
-              </details>
-            ))}</div>
-          )}
+        <div className="invoice-filter-grid">
+          <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+          <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} aria-label="Filter invoices by cashier">
+            <option value="all">All cashiers</option>
+            {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices">
+            <option value="oldest">Oldest first</option>
+            <option value="newest">Newest first</option>
+          </select>
         </div>
-        <div>
-          <div className="section-title">End of Day Closes <span style={{ color: "var(--muted)", fontWeight: 500 }}>· {branch.name}</span></div>
-          {closes.length === 0 ? <div className="notice">No End of Day closes saved yet for this branch.</div> : (
-            <div className="list mini">{closes.map((e) => (
-              <div className="row" key={e.id}><div className="avatar"><FileText style={{ width: 17, height: 17 }} /></div>
-                <div className="meta"><div className="nm">{e.date} · {e.time}</div><div className="mt2">{e.transactions} sale(s) · closed by {e.closedBy}</div></div>
-                <span className="pill plain">{fmt(e.totalSalesCents, cur)}</span>
-                <button className="btn xs btn-ghost" onClick={() => setEod({ mode: "view", doc: e })}>View / Print</button></div>))}</div>
-          )}
+
+        <details className="invoice-date-filter">
+          <summary>{hasCustomDateRange ? "Custom date range active" : "Filter by date"}</summary>
+          <div className="settledates">
+            <label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
+            <label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} /></label>
+            {hasCustomDateRange ? <button className="btn sm btn-ghost" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
+          </div>
+        </details>
+
+        {selectedInvoices.length > 0 && <div className="invoice-selection-bar">
+          <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
+          <div>
+            <button type="button" className="btn sm btn-ghost" onClick={() => setSelectedInvoiceIds(new Set())}>Clear selection</button>
+            <button type="button" className="btn sm btn-primary" onClick={printSelectedInvoices}><Printer /> Print selected</button>
+          </div>
+        </div>}
+
+        {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
+          <div className="tablewrap tblscroll lg invoice-table-wrap"><table className="tbl invoice-table">
+            <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
+            <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+          </table></div>
+        )}
+      </div>}
+
+      {workspaceView === "debts" && <div className="invoice-workspace-view">
+        <div className="invoice-summary-strip three">
+          <div><span>Invoice debts</span><b>{fmt(invoiceDebtOutstanding, cur)}</b></div>
+          <div><span>Inventory debts</span><b>{fmt(inventoryDebtOutstanding, cur)}</b></div>
+          <div><span>Total cashier debt</span><b className={invoiceDebtOutstanding + inventoryDebtOutstanding > 0 ? "danger" : ""}>{fmt(invoiceDebtOutstanding + inventoryDebtOutstanding, cur)}</b></div>
         </div>
-      </div>
+        <div className="invoice-section-head">
+          <div><div className="section-title">Cashier debt accounts</div><div className="muted">Carried-over invoices and audited inventory shortages are shown separately.</div></div>
+          <button className="btn sm btn-primary" disabled={branchJointDebts.length === 0} onClick={onOpenDebtPayments}><CreditCard /> Settle inventory debts</button>
+        </div>
+        <div className="invsummary debt-summary">
+          <section>
+            <div className="section-title">Cashier balances</div>
+            {debtRows.length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
+              <div className="list mini">{debtRows.map((row) => (
+                <div className="row" key={row.name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.name.charAt(0)}</div>
+                  <div className="meta"><div className="nm">{row.name}</div><div className="mt2">Invoices {fmt(row.invoiceAmountCents, cur)} - inventory {fmt(row.missingAmountCents, cur)}</div></div>
+                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(row.invoiceAmountCents + row.missingAmountCents, cur)} owed</span></div>))}</div>
+            )}
+          </section>
+          <section>
+            <div className="section-title">Inventory count records</div>
+            {branchJointDebts.length === 0 ? <div className="notice">No missing inventory debt has been recorded for {branch.name}.</div> : (
+              <div className="list mini inventory-debt-list">{branchJointDebts.map((debt) => (
+                <details className="row" key={debt.id} style={{ display: "block" }}>
+                  <summary style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", listStyle: "none" }}>
+                    <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
+                    <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) - {debt.cashierCount || 0} cashier(s) - {dt(debt.ts)}</div></div>
+                    <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(data, debt), cur)}</span>
+                  </summary>
+                  <div className="inventory-debt-detail">
+                    {(debt.items || []).map((item) => <div className="mt2" key={item.productId}>{item.productName} - {item.missingQty} x {fmt(item.unitCostCents, cur)} = {fmt(item.amountCents, cur)}</div>)}
+                    {(debt.shares || []).map((share) => {
+                      const balance = cashierJointDebtShareBalance(data, debt, share);
+                      return <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> - assigned {fmt(balance.assignedCents, cur)} - paid {fmt(balance.paidCents, cur)} - balance {fmt(balance.outstandingCents, cur)}</div>;
+                    })}
+                    {debt.cashierCount === 0 && <div className="alert"><AlertCircle />No active cashier was assigned when this count was committed. The debt remains unallocated.</div>}
+                  </div>
+                </details>
+              ))}</div>
+            )}
+          </section>
+        </div>
+      </div>}
+
+      {workspaceView === "closes" && <div className="invoice-workspace-view">
+        <div className="invoice-summary-strip three">
+          <div><span>Invoices since last close</span><b>{sinceEndDay.length}</b></div>
+          <div><span>Current period sales</span><b>{fmt(sinceEndDay.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)}</b></div>
+          <div><span>Open before close</span><b className={currentDayOpenInvoices.length > 0 ? "warn" : ""}>{currentDayOpenInvoices.length}</b></div>
+        </div>
+        <div className="invoice-section-head">
+          <div><div className="section-title">End of Day history</div><div className="muted">Saved closing reports for {branch.name}.</div></div>
+        </div>
+        {sinceEndDay.length === 0 ? <div className="notice compact-notice">No new invoice sales since the last End of Day close.</div> : <div className="notice compact-notice">{sinceEndDay.length} invoice(s) are ready for the next End of Day close.</div>}
+        {closes.length === 0 ? <div className="notice">No End of Day closes saved yet for this branch.</div> : (
+          <div className="list day-close-list">{closes.map((e) => (
+            <div className="row" key={e.id}><div className="avatar"><FileText style={{ width: 17, height: 17 }} /></div>
+              <div className="meta"><div className="nm">{e.date} - {e.time}</div><div className="mt2">{e.transactions} sale(s) - closed by {e.closedBy}</div></div>
+              <span className="pill plain">{fmt(e.totalSalesCents, cur)}</span>
+              <button className="btn xs btn-ghost" onClick={() => setEod({ mode: "view", doc: e })}>View / Print</button></div>))}</div>
+        )}
+      </div>}
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
       {bulkSettlementOpen && <BulkSettleDayModal
@@ -7025,7 +7102,6 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
   const status = invStatus(inv);
   const out = voidInfo?.status === "approved" ? 0 : invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
-  const ageClass = invIsDebt(inv) ? "debt" : age > 0 ? "overdue" : "open";
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
     : voidStatus === "pending" ? "void pending" : status;
@@ -7034,12 +7110,9 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
   return (
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
-      <td><div className="nm">{inv.customerName || "Walk-in"}</div></td>
-      <td><div className="nm" style={{ maxWidth: 240 }} title={products || "No product details"}>{products || "No product details"}</div></td>
+      <td><div className="invoice-ref"><b className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</b><span>{dt(inv.ts)} - {age === 0 ? "today" : age + "d old"}</span></div></td>
+      <td><div className="invoice-customer"><b>{inv.customerName || "Walk-in"}</b><span title={products || "No product details"}>{products || "No product details"}</span></div></td>
       <td><div className="nm">{invoiceCashierName(inv) || "Unknown cashier"}</div></td>
-      <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
-      <td>{dt(inv.ts)}</td>
-      <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
       <td className="amt">{fmt(Number(inv.totalCents || 0), cur)}</td>
       <td className="amt">{fmt(out, cur)}</td>
       <td>
