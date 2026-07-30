@@ -2576,10 +2576,9 @@ function branchLastEndDay(data, branchId) {
 }
 function invoiceWasCarriedOver(data, inv) {
   if (!inv) return false;
-  if (inv.carriedOver === true || Number(inv.carriedOverAt || 0) > 0) return true;
-  if (inv.archived === true) return false;
-  if (inv.closedDayId) return true;
   if (invOutstanding(inv) <= 0) return false;
+  if (inv.archived === true) return false;
+  if (Number(inv.carriedOverAt || 0) > 0 || inv.closedDayId) return true;
   const invoiceTs = Number(inv.ts || inv.issuedAt || 0);
   return invoiceTs > 0 && branchLastEndDay(data, inv.branchId) >= invoiceTs;
 }
@@ -2589,6 +2588,18 @@ function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.t
 function invIsDebt(inv) {
   if (invOutstanding(inv) <= 0) return false;
   return Boolean(inv.carriedOver);
+}
+function invoiceIssuedTimestamp(inv) {
+  const value = inv?.ts ?? inv?.issuedAt ?? inv?.createdAt ?? inv?.date;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function invIsOverdue(inv, referenceTs = now()) {
+  if (invOutstanding(inv) <= 0 || invIsDebt(inv)) return false;
+  const issuedTs = invoiceIssuedTimestamp(inv);
+  return issuedTs > 0 && Number(referenceTs) - issuedTs >= 86400000;
 }
 function saleMoveInvoice(data, move) {
   const reason = String(move?.reason || "");
@@ -2607,7 +2618,8 @@ function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").repla
 function normPhone(v) { return (v || "").replace(/[\s-]/g, ""); }
 function invStatus(inv) {
   if (invOutstanding(inv) <= 0) return "paid";
-  if (invIsDebt(inv)) return "overdue";
+  if (invIsDebt(inv)) return "debt";
+  if (invIsOverdue(inv)) return "overdue";
   return inv.paidCents > 0 ? "partial" : "open";
 }
 function latestInvoiceVoidRequest(data, invoiceId) {
@@ -4773,7 +4785,8 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 
   const mine = operationalInvoices(data).filter((i) => i.cashierId === employee.id);
   const myDebts = mine.filter((i) => invIsDebt(i));
-  const myOpen = mine.filter((i) => !i.carriedOver && invOutstanding(i) > 0);
+  const myOpen = mine.filter((i) => !invIsDebt(i) && invOutstanding(i) > 0);
+  const myOverdue = myOpen.filter((i) => invIsOverdue(i));
   const myMissingInventoryDebts = cashierJointDebtEntries(data, employee.id, branch.id);
   const openOnly = myOpen;
   const invoiceOutstandingTotal = mine.reduce((s, i) => s + invOutstanding(i), 0);
@@ -5088,7 +5101,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <span className={"scanner-pill" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((v) => { const next = !v; if (next) scanFocus(true); return next; })}><Barcode /> {scannerOn ? "On" : "Off"}</span>
             </div>
             <div className="cashier-open-head">
-              <div className="cust-meta">{openOnly.length} unpaid invoice{openOnly.length === 1 ? "" : "s"}</div>
+              <div className="cust-meta">{openOnly.length} unpaid invoice{openOnly.length === 1 ? "" : "s"}{myOverdue.length ? " - " + myOverdue.length + " overdue" : ""}</div>
               <div className="cashier-open-total">{fmt(openOnlyTotal, cur)}</div>
             </div>
             {shownList.length === 0 ? (
@@ -5119,7 +5132,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
             </div>
             <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
-            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} overdue invoice{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
+            <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} carried-over invoice debt{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
             {myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
               <div className="cust-meta" style={{ padding: "8px 2px" }}>No cashier debts for your login.</div>
             ) : (
@@ -5252,7 +5265,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
                 )}
                 {openOnly.length > 0 && (
                   <div>
-                    <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6 }}>Open invoices ({openOnly.length})</div>
+                    <div className="cust-meta" style={{ fontWeight: 700, marginBottom: 6 }}>Open / overdue invoices ({openOnly.length})</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{openOnly.map(invRow)}</div>
                   </div>
                 )}
@@ -5803,8 +5816,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     return issuedTs >= totalRangeStartTs && issuedTs <= totalRangeEndTs;
   });
   const outstanding = activeInvoices.filter((i) => invOutstanding(i) > 0);
-  const open = outstanding.filter((i) => !invIsDebt(i));
-  const overdue = outstanding.filter((i) => invIsDebt(i));
+  const debtInvoices = outstanding.filter((i) => invIsDebt(i));
+  const overdue = outstanding.filter((i) => invIsOverdue(i));
+  const open = outstanding.filter((i) => !invIsDebt(i) && !invIsOverdue(i));
   const balanceDue = totalInvoicedInvoices.reduce((s, i) => s + invOutstanding(i), 0);
   const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
   const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
@@ -5827,9 +5841,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       const voidStatus = invoiceVoidState(data, i.id).status;
       if (filter === "all") return true;
       if (voidStatus === "approved") return false;
-      if (filter === "overdue") return invIsDebt(i);
+      if (filter === "overdue") return invIsDebt(i) || invIsOverdue(i);
       return filter === "open"
-        ? invOutstanding(i) > 0 && !invIsDebt(i)
+        ? invOutstanding(i) > 0 && !invIsDebt(i) && !invIsOverdue(i)
         : invOutstanding(i) <= 0;
     })
     .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
@@ -5880,8 +5894,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     printInvoiceReceipts(receipts, cur);
   };
 
-  // Cashier debt combines overdue sales invoices with audited inventory-count shortages.
-  const debts = overdue;
+  // Cashier debt combines End-of-Day carry-overs with audited inventory-count shortages.
+  const debts = debtInvoices;
   const invoiceDebtByCashier = {};
   debts.forEach((i) => {
     const cashier = invoiceCashierName(i);
@@ -5936,7 +5950,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
-        <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
+        <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length + debtInvoices.length ? " warn" : "")}>{overdue.length + debtInvoices.length}</div></div>
         <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due · current period"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
         <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced · current period"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
       </div>
@@ -5989,7 +6003,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           {debtRows.length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
             <div className="list mini">{debtRows.map((row) => (
               <div className="row" key={row.name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.name.charAt(0)}</div>
-                <div className="meta"><div className="nm">{row.name}</div><div className="mt2">{row.invoiceCount} overdue invoice(s) · {row.missingCount} missing inventory count(s)</div></div>
+                <div className="meta"><div className="nm">{row.name}</div><div className="mt2">{row.invoiceCount} carried-over invoice(s) · {row.missingCount} missing inventory count(s)</div></div>
                 <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(row.invoiceAmountCents + row.missingAmountCents, cur)} owed</span></div>))}</div>
           )}
           <div className="section-title" style={{ marginTop: 18 }}>Missing Inventory <span style={{ color: "var(--muted)", fontWeight: 500 }}>· joint cashier debt</span></div>
@@ -10333,7 +10347,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const grossSales = invs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
   const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
   const openSales = invs.reduce((s, i) => s + invOutstanding(i), 0);
-  const overdueSales = invs.filter((i) => invIsDebt(i)).reduce((s, i) => s + invOutstanding(i), 0);
+  const overdueSales = invs.filter((i) => invIsDebt(i) || invIsOverdue(i)).reduce((s, i) => s + invOutstanding(i), 0);
   const overdueCreditInvoices = invs.filter((invoice) => invIsDebt(invoice));
   const overdueCredits = overdueCreditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const grossProfit = totalSales - cogs;
@@ -10607,7 +10621,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
-  // credit recovery — unpaid carried-over invoices become debts only after overdue.
+  // Credit recovery contains only invoices explicitly carried over by End of Day.
   const carried = activeInvoices.filter((i) => i.carriedOver && inBranch(i.branchId));
   const recoveredList = carried.filter((i) => invOutstanding(i) <= 0);
   const pendingList = carried.filter((i) => invIsDebt(i));
@@ -11087,7 +11101,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         Object.keys(debtByCashier).length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
-            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} overdue invoice(s) · {missingDebtCountByCashier[n] || 0} missing inventory count(s)</div></div>
+            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} carried-over invoice(s) · {missingDebtCountByCashier[n] || 0} missing inventory count(s)</div></div>
             <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span>
             {onOpenCashierCredit && (invoiceDebtByCashierReport[n] || 0) > 0 ? <button className="btn sm" onClick={() => onOpenCashierCredit(n)}>View invoices <ChevronRight /></button> : null}
           </div>))}</div>)
