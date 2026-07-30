@@ -7180,7 +7180,8 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const todayCOGS = data.stockMovements.filter((m) => m.branchId === branch.id && Number(m.ts || 0) > businessPeriodStart && typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m))
     .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
-  const creditTotal = branchInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const creditInvoices = branchInvoices.filter((invoice) => invIsDebt(invoice));
+  const creditTotal = creditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryDebtBalances = cashierJointDebtCashierBalances(data, branch.id);
   const inventoryDebtAssigned = inventoryDebtBalances.reduce((sum, row) => sum + row.assignedCents, 0);
   const inventoryDebtPaid = inventoryDebtBalances.reduce((sum, row) => sum + row.paidCents, 0);
@@ -7210,8 +7211,6 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
-  const openInv = branchInvoices.filter((i) => invOutstanding(i) > 0).sort((a, b) => invOutstanding(b) - invOutstanding(a)).slice(0, 5);
-
   const localSummary = () => {
     const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;
     let s = "Today's sales are " + fmt(todaySales, cur) + " with recognized profit of " + fmt(todayProfit, cur) + " (" + margin + "% margin after clearing and End of Day). ";
@@ -7233,7 +7232,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
       <div className="cashtiles" style={{ marginBottom: 0 }}>
         <div className="ctile"><div className="ic"><Receipt /></div><div><div className="cl">Sales (today)</div><div className="cv">{fmt(todaySales, cur)}</div><div className="cs">{todayInv.length} invoices</div></div></div>
         <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Profit (today)</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{recognizedTodaySales > 0 ? Math.round(todayProfit / recognizedTodaySales * 100) + "% margin" : "after EOD & clearing"}</div></div></div>
-        <div className={"ctile " + (creditTotal > 0 ? "warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Credit outstanding</div><div className="cv">{fmt(creditTotal, cur)}</div><div className="cs">{openInv.length ? openInv.length + "+ open" : "all clear"}</div></div></div>
+        <div className={"ctile " + (creditTotal > 0 ? "warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Credit outstanding</div><div className="cv">{fmt(creditTotal, cur)}</div><div className="cs">{creditInvoices.length ? creditInvoices.length + " debt invoice" + (creditInvoices.length === 1 ? "" : "s") : "all clear"}</div></div></div>
         <div className={"ctile " + (inventoryDebtOutstanding > 0 ? "warn" : "good")} role="button" tabIndex={0} onClick={onOpenPayments} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpenPayments?.(); }} style={{ cursor: "pointer" }}>
           <div className="ic"><CreditCard /></div><div><div className="cl">Inventory joint debt</div><div className="cv">{fmt(inventoryDebtOutstanding, cur)}</div><div className="cs">paid {fmt(inventoryDebtPaid, cur)} of {fmt(inventoryDebtAssigned, cur)}</div></div>
         </div>
