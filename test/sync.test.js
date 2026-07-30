@@ -1927,6 +1927,64 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.deepEqual(res.body.accepted, []);
       assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
+
+  const paymentId = "cjdp-sc-test-lock-a-cashier-a";
+  const jointDebtPayment = {
+    id: paymentId,
+    type: "cashierJointDebtPayment",
+    branchId: "b_sip",
+    clientTs: createdAt + 1,
+    payload: {
+      debtId,
+      stockCountCode: "SC-TEST",
+      branchId: "b_sip",
+      cashierId: "cashier-a",
+      cashierName: "Cashier A",
+      amountCents: 2500,
+      method: "cash",
+      status: "captured",
+      recordedBy: "Admin",
+      ts: createdAt + 1,
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [jointDebtPayment] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(paymentId));
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const payment = res.body.events.find((event) => event.id === paymentId && event.type === "cashierJointDebtPayment");
+      assert.ok(payment);
+      assert.equal(payment.payload.cashierId, "cashier-a");
+      assert.equal(payment.payload.amountCents, 2500);
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenC}`)
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.events.some((event) => event.id === paymentId), false);
+    });
+
+  await withTerminalAuth(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{ ...jointDebtPayment, id: "cjdp-terminal-blocked" }] }), terminal)
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
+    });
 });
 
 test("10. user credentials created on one device work for login on another device", async () => {

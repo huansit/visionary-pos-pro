@@ -545,6 +545,24 @@ function cashierJointDebtEntries(debts: CashierJointDebt[], account: Account | n
   }).sort((a, b) => Number(b.debt.ts || 0) - Number(a.debt.ts || 0));
 }
 
+function cashierJointDebtAccumulator(debts: CashierJointDebt[], account: Account | null, branchId?: string) {
+  if (!account) return { assignedCents: 0, paidCents: 0, outstandingCents: 0 };
+  const accountName = normalize(account.name || "");
+  return debts.reduce((totals, debt) => {
+    if (branchId && debt.branchId !== branchId) return totals;
+    const share = debt.shares.find((entry) => entry.cashierId === account.id)
+      || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
+    if (!share) return totals;
+    const assignedCents = Math.max(0, Number(share.amountCents || 0));
+    const paidCents = Math.min(assignedCents, Math.max(0, Number(share.paidCents || 0)));
+    return {
+      assignedCents: totals.assignedCents + assignedCents,
+      paidCents: totals.paidCents + paidCents,
+      outstandingCents: totals.outstandingCents + Math.max(0, assignedCents - paidCents)
+    };
+  }, { assignedCents: 0, paidCents: 0, outstandingCents: 0 });
+}
+
 function invoiceSearchText(invoice: Invoice) {
   const extra = invoice as Invoice & { customerPhone?: string; phone?: string; customerId?: string };
   return [
@@ -669,6 +687,10 @@ export default function App() {
   const carriedDebts = useMemo(() => businessDayInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [businessDayInvoices]);
   const inventoryDebtEntries = useMemo(
     () => cashierJointDebtEntries(cashierJointDebts, account, terminal?.branchId),
+    [account, cashierJointDebts, terminal?.branchId]
+  );
+  const inventoryDebtAccumulator = useMemo(
+    () => cashierJointDebtAccumulator(cashierJointDebts, account, terminal?.branchId),
     [account, cashierJointDebts, terminal?.branchId]
   );
   const activeTodayInvoices = useMemo(
@@ -1539,6 +1561,8 @@ export default function App() {
               </button>
             </div>
             <div className="debt-line"><span>Cashier debt</span><b>{money(debtTrackerTotal)}</b></div>
+            <div className="debt-line"><span>Inventory debt accumulator</span><b>{money(inventoryDebtAccumulator.outstandingCents)}</b></div>
+            <p>Assigned {money(inventoryDebtAccumulator.assignedCents)} - paid {money(inventoryDebtAccumulator.paidCents)}</p>
             <p>{carriedDebts.length} invoice debt{carriedDebts.length === 1 ? "" : "s"} - {inventoryDebtEntries.length} inventory debt{inventoryDebtEntries.length === 1 ? "" : "s"}</p>
             {carriedDebts.length === 0 && inventoryDebtEntries.length === 0 ? (
               <p>No cashier debts for your login.</p>
@@ -2143,7 +2167,7 @@ function DebtsCenterView({
   }, [filter, inventoryDebts, mode, oldestFirst, searchTerm]);
 
   return (
-    <section className={`debts-center-panel${mode === "debts" && customerDebts.length > 0 ? " has-customer-summary" : ""}`}>
+    <section className={`debts-center-panel${mode === "debts" && filter === "invoice" && customerDebts.length > 0 ? " has-customer-summary" : ""}`}>
       <header className="debts-center-header">
         <div>
           <h2 id="debts-center-title">{title}</h2>
@@ -2160,7 +2184,13 @@ function DebtsCenterView({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={mode === "debts" ? "Search customer, stock count, or product..." : "Search customer, phone, or receipt..."}
+          placeholder={mode === "debts"
+            ? filter === "inventory"
+              ? "Search stock count or product..."
+              : filter === "invoice"
+                ? "Search customer, phone, or receipt..."
+                : "Search invoice or inventory debt..."
+            : "Search customer, phone, or receipt..."}
         />
       </label>
 
@@ -2184,7 +2214,7 @@ function DebtsCenterView({
         </button>
       </div>
 
-      {mode === "debts" && customerDebts.length > 0 && (
+      {mode === "debts" && filter === "invoice" && customerDebts.length > 0 && (
         <section className="customer-debt-summary" aria-label="Customer debt balances">
           <div className="customer-debt-heading">
             <b>Customer balances</b>

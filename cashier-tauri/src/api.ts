@@ -871,6 +871,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const invoiceVoidRequests = new Map<string, { id: string; reason: string; ts: number }>();
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const cashierJointDebtRecords = new Map<string, CashierJointDebt>();
+  const cashierJointDebtPaidCents = new Map<string, number>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
   let dayClosedAt: number | null = catalogDayClosedAt;
@@ -1031,6 +1032,17 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         if (debt.id && debt.branchId === terminal.branchId) cashierJointDebtRecords.set(debt.id, debt);
       }
     }
+    if (item.type === "cashierJointDebtPayment") {
+      const payload = item.payload || {};
+      const debtId = String(payload.debtId || "");
+      const cashierId = String(payload.cashierId || "");
+      const status = String(payload.status || "captured").toLowerCase();
+      const amountCents = Math.max(0, centsFromPayload(payload, ["amountCents", "amount_cents"], moneyToCentsFromPayload(payload, ["amount"])));
+      if (debtId && cashierId && status === "captured" && amountCents > 0) {
+        const key = `${debtId}:${cashierId}`;
+        cashierJointDebtPaidCents.set(key, (cashierJointDebtPaidCents.get(key) || 0) + amountCents);
+      }
+    }
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
@@ -1122,6 +1134,16 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
   const cashierJointDebts = Array.from(cashierJointDebtRecords.values())
+    .map((debt) => ({
+      ...debt,
+      shares: debt.shares.map((share) => ({
+        ...share,
+        paidCents: Math.min(
+          Math.max(0, Number(share.amountCents || 0)),
+          Math.max(0, Number(share.paidCents || 0)) + (cashierJointDebtPaidCents.get(`${debt.id}:${share.cashierId}`) || 0)
+        )
+      }))
+    }))
     .filter((debt) => debt.branchId === terminal.branchId)
     .sort((a, b) => b.ts - a.ts);
 

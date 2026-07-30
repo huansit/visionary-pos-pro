@@ -500,6 +500,7 @@ const SEED = () => {
     products,
     barcodeCatalog,
     cashierJointDebts: [],
+    cashierJointDebtPayments: [],
     stockMovements,
     stockCountSessions: [],
     orders: [],
@@ -533,6 +534,7 @@ const CLEAN_SETUP = () => {
     products: [],
     barcodeCatalog: [],
     cashierJointDebts: [],
+    cashierJointDebtPayments: [],
     stockMovements: [],
     stockCountSessions: [],
     orders: [],
@@ -726,6 +728,7 @@ function normalizeLoadedData(data) {
     products: Array.isArray(data.products) ? data.products : [],
     barcodeCatalog: Array.isArray(data.barcodeCatalog) ? data.barcodeCatalog : [],
     cashierJointDebts: Array.isArray(data.cashierJointDebts) ? data.cashierJointDebts : [],
+    cashierJointDebtPayments: Array.isArray(data.cashierJointDebtPayments) ? data.cashierJointDebtPayments : [],
     stockMovements: Array.isArray(data.stockMovements) ? data.stockMovements : [],
     stockCountSessions: Array.isArray(data.stockCountSessions) ? data.stockCountSessions : [],
     orders: Array.isArray(data.orders) ? data.orders : [],
@@ -926,6 +929,7 @@ const SYNC_APPEND = new Map([
   ["orders", "order"],
   ["countLog", "countLog"],
   ["cashierJointDebts", "cashierJointDebt"],
+  ["cashierJointDebtPayments", "cashierJointDebtPayment"],
 ]);
 const SYNC_MUTABLE = new Map([
   ["barcodeCatalog", "barcodeCatalog"],
@@ -1389,19 +1393,74 @@ function branchCashiers(data, branchId) {
     .filter((cashier) => cashier.branchId === branchId)
     .sort((a, b) => String(a.id || a.name || "").localeCompare(String(b.id || b.name || "")));
 }
-function cashierJointDebtOutstanding(debt) {
+function cashierJointDebtCapturedCents(data, debtId, cashierId = null) {
+  return (data?.cashierJointDebtPayments || []).reduce((sum, payment) => {
+    if (payment.debtId !== debtId || (payment.status && payment.status !== "captured")) return sum;
+    if (cashierId && payment.cashierId !== cashierId) return sum;
+    return sum + Math.max(0, Number(payment.amountCents) || 0);
+  }, 0);
+}
+function cashierJointDebtShareBalance(data, debt, share) {
+  const assignedCents = Math.max(0, Number(share?.amountCents) || 0);
+  const legacyPaidCents = Math.max(0, Number(share?.paidCents) || 0);
+  const ledgerPaidCents = cashierJointDebtCapturedCents(data, debt?.id, share?.cashierId);
+  const paidCents = Math.min(assignedCents, legacyPaidCents + ledgerPaidCents);
+  return { assignedCents, paidCents, outstandingCents: Math.max(0, assignedCents - paidCents) };
+}
+function cashierJointDebtTotals(data, debt) {
   const shares = debt?.shares || [];
-  if (!shares.length) return Math.max(0, Number(debt?.totalCents) || 0);
-  return shares.reduce((sum, share) => sum + Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0)), 0);
+  if (!shares.length) {
+    const assignedCents = Math.max(0, Number(debt?.totalCents) || 0);
+    const paidCents = Math.min(assignedCents, cashierJointDebtCapturedCents(data, debt?.id));
+    return { assignedCents, paidCents, outstandingCents: Math.max(0, assignedCents - paidCents) };
+  }
+  return shares.reduce((totals, share) => {
+    const balance = cashierJointDebtShareBalance(data, debt, share);
+    return {
+      assignedCents: totals.assignedCents + balance.assignedCents,
+      paidCents: totals.paidCents + balance.paidCents,
+      outstandingCents: totals.outstandingCents + balance.outstandingCents,
+    };
+  }, { assignedCents: 0, paidCents: 0, outstandingCents: 0 });
+}
+function cashierJointDebtOutstanding(data, debt) {
+  return cashierJointDebtTotals(data, debt).outstandingCents;
 }
 function cashierJointDebtEntries(data, cashierId, branchId = null) {
   return (data?.cashierJointDebts || []).flatMap((debt) => {
     if (branchId && debt.branchId !== branchId) return [];
     const share = (debt.shares || []).find((entry) => entry.cashierId === cashierId);
     if (!share) return [];
-    const outstandingCents = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
-    return outstandingCents > 0 ? [{ debt, share, outstandingCents }] : [];
+    const balance = cashierJointDebtShareBalance(data, debt, share);
+    return balance.outstandingCents > 0 ? [{ debt, share, ...balance }] : [];
   });
+}
+function cashierJointDebtCashierBalances(data, branchId = null) {
+  const balances = new Map();
+  (data?.cashierJointDebts || []).forEach((debt) => {
+    if (branchId && debt.branchId !== branchId) return;
+    (debt.shares || []).forEach((share) => {
+      if (!share.cashierId) return;
+      const balance = cashierJointDebtShareBalance(data, debt, share);
+      const current = balances.get(share.cashierId) || {
+        cashierId: share.cashierId,
+        cashierName: share.cashierName || share.cashierId,
+        assignedCents: 0,
+        paidCents: 0,
+        outstandingCents: 0,
+        debtCount: 0,
+        allocations: [],
+      };
+      current.cashierName = share.cashierName || current.cashierName;
+      current.assignedCents += balance.assignedCents;
+      current.paidCents += balance.paidCents;
+      current.outstandingCents += balance.outstandingCents;
+      if (balance.assignedCents > 0) current.debtCount += 1;
+      current.allocations.push({ debt, share, ...balance });
+      balances.set(share.cashierId, current);
+    });
+  });
+  return [...balances.values()].sort((a, b) => b.outstandingCents - a.outstandingCents || a.cashierName.localeCompare(b.cashierName));
 }
 function createCashierJointDebt(data, session, rows, operator, ts = now(), source = "stock_count") {
   const branchId = session?.branchId;
@@ -4898,10 +4957,13 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const myOpen = mine.filter((i) => !invIsDebt(i) && invOutstanding(i) > 0);
   const myOverdue = myOpen.filter((i) => invIsOverdue(i));
   const myMissingInventoryDebts = cashierJointDebtEntries(data, employee.id, branch.id);
+  const myInventoryDebtAccumulator = cashierJointDebtCashierBalances(data, branch.id).find((row) => row.cashierId === employee.id);
   const openOnly = myOpen;
   const invoiceOutstandingTotal = mine.reduce((s, i) => s + invOutstanding(i), 0);
   const openOnlyTotal = openOnly.reduce((s, i) => s + invOutstanding(i), 0);
   const invoiceDebtTotal = myDebts.reduce((s, i) => s + invOutstanding(i), 0);
+  const missingInventoryAssignedTotal = myInventoryDebtAccumulator?.assignedCents || 0;
+  const missingInventoryPaidTotal = myInventoryDebtAccumulator?.paidCents || 0;
   const missingInventoryDebtTotal = myMissingInventoryDebts.reduce((s, entry) => s + entry.outstandingCents, 0);
   const debtTotal = invoiceDebtTotal + missingInventoryDebtTotal;
   const totalOutstanding = invoiceOutstandingTotal + missingInventoryDebtTotal;
@@ -5242,6 +5304,8 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <button className="linkc" onClick={() => setDebtsOpen(true)}>View</button>
             </div>
             <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
+            <div className="debtbig"><span>Inventory debt accumulator</span><span className="v">{fmt(missingInventoryDebtTotal, cur)}</span></div>
+            <div className="cust-meta" style={{ margin: "-4px 2px 8px" }}>Assigned {fmt(missingInventoryAssignedTotal, cur)} · paid {fmt(missingInventoryPaidTotal, cur)}</div>
             <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} carried-over invoice debt{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
             {myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
               <div className="cust-meta" style={{ padding: "8px 2px" }}>No cashier debts for your login.</div>
@@ -5355,7 +5419,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
             <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", margin: "12px 0 4px" }}>
               <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total outstanding</div><div className="cv">{fmt(totalOutstanding, cur)}</div><div className="cs">Invoices and joint debt</div></div></div>
               <div className={"ctile" + (invoiceDebtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Carried-over invoices</div><div className="cv">{fmt(invoiceDebtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
-              <div className={"ctile" + (missingInventoryDebtTotal > 0 ? " warn" : "")}><div className="ic"><Boxes /></div><div><div className="cl">Missing inventory</div><div className="cv">{fmt(missingInventoryDebtTotal, cur)}</div><div className="cs">Equal branch share</div></div></div>
+              <div className={"ctile" + (missingInventoryDebtTotal > 0 ? " warn" : "")}><div className="ic"><Boxes /></div><div><div className="cl">Missing inventory</div><div className="cv">{fmt(missingInventoryDebtTotal, cur)}</div><div className="cs">Paid {fmt(missingInventoryPaidTotal, cur)} of {fmt(missingInventoryAssignedTotal, cur)}</div></div></div>
             </div>
             {myOpen.length === 0 && myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
               <div className="notice" style={{ marginTop: 10 }}>You have no open invoices or debts. Nicely done.</div>
@@ -5661,6 +5725,7 @@ const TABS = [
   { id: "pricing", label: "Branch Pricing", icon: Tags, desc: "View product pricing and margins (prices set in Products)" },
   { id: "customers", label: "Customers", icon: Users, desc: "Customer records and outstanding balances" },
   { id: "cash", label: "Cash Management", icon: Wallet, desc: "Cash flow, pay-ins, and pay-outs" },
+  { id: "payments", label: "Payments", icon: CreditCard, desc: "Settle and audit cashier inventory-debt balances" },
   { id: "expenses", label: "Expenses", icon: TrendingDown, desc: "Daily costs, approvals, receipts, and analytics" },
   { id: "reports", label: "Reports", icon: BarChart3, desc: "Sales, profit and loss, exports" },
   { id: "documents", label: "Documents", icon: Files, desc: "Supplier invoices, damage/loss, inventory count reports" },
@@ -5691,7 +5756,7 @@ const NAV_TOP = [
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
   products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
-  cash: "cash", expenses: "expenses",
+  cash: "cash", payments: "cash", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
@@ -5710,6 +5775,7 @@ const NAV_GROUPS = [
     { id: "suppliers", label: "Suppliers", icon: Truck },
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, items: [
+    { id: "payments", label: "Payments", icon: CreditCard },
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
   ] },
@@ -5848,11 +5914,12 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     );
   };
   const render = () => {
-    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} />;
+    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={() => setTab("payments")} />;
     switch (tab) {
-      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} />;
+      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={() => setTab("payments")} />;
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
-      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} />;
+      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={() => setTab("payments")} />;
+      case "payments": return <DebtPaymentsTab data={data} update={update} branch={branch} user={user} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
@@ -5871,7 +5938,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
-      default: return <DashboardTab data={data} update={update} branch={branch} />;
+      default: return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={() => setTab("payments")} />;
     }
   };
   return (
@@ -5914,7 +5981,7 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 }
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
-function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test" }) {
+function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
   const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
   const [cashierFilter, setCashierFilter] = useState(initialCashier);
@@ -6043,11 +6110,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     invoiceDebtByCashier[cashier] = (invoiceDebtByCashier[cashier] || 0) + invOutstanding(i);
   });
   const branchJointDebts = (data.cashierJointDebts || [])
-    .filter((debt) => debt.branchId === branch.id && cashierJointDebtOutstanding(debt) > 0)
+    .filter((debt) => debt.branchId === branch.id && cashierJointDebtOutstanding(data, debt) > 0)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   const missingDebtByCashier = {};
   branchJointDebts.forEach((debt) => (debt.shares || []).forEach((share) => {
-    const outstandingCents = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
+    const { outstandingCents } = cashierJointDebtShareBalance(data, debt, share);
     if (outstandingCents <= 0) return;
     const name = share.cashierName || share.cashierId || "Unassigned cashier";
     const current = missingDebtByCashier[name] || { amountCents: 0, count: 0 };
@@ -6068,6 +6135,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     <div>
       <PageHead title="Invoices & Clearing" sub="Sales · cleared by admin and supervisors only"
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button className="btn sm btn-ghost" disabled={branchJointDebts.length === 0} onClick={onOpenDebtPayments}><CreditCard /> Inventory debt payments</button>
           <button
             className="btn sm btn-ghost"
             disabled={selectedInvoices.length === 0}
@@ -6156,11 +6224,14 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
                 <summary style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", listStyle: "none" }}>
                   <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
                   <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {debt.cashierCount || 0} cashier(s) · {dt(debt.ts)}</div></div>
-                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(debt), cur)}</span>
+                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(data, debt), cur)}</span>
                 </summary>
                 <div style={{ margin: "10px 0 0 44px", display: "grid", gap: 6 }}>
                   {(debt.items || []).map((item) => <div className="mt2" key={item.productId}>{item.productName} · {item.missingQty} × {fmt(item.unitCostCents, cur)} = {fmt(item.amountCents, cur)}</div>)}
-                  {(debt.shares || []).map((share) => <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> · equal share {fmt(Math.max(0, (share.amountCents || 0) - (share.paidCents || 0)), cur)}</div>)}
+                  {(debt.shares || []).map((share) => {
+                    const balance = cashierJointDebtShareBalance(data, debt, share);
+                    return <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> · assigned {fmt(balance.assignedCents, cur)} · paid {fmt(balance.paidCents, cur)} · balance {fmt(balance.outstandingCents, cur)}</div>;
+                  })}
                   {debt.cashierCount === 0 && <div className="alert"><AlertCircle />No active cashier was assigned to this branch when the count was committed. This debt remains unallocated.</div>}
                 </div>
               </details>
@@ -6191,6 +6262,152 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
+    </div>
+  );
+}
+
+function DebtPaymentsTab({ data, update, branch, user }) {
+  const cur = data.settings.currency;
+  const balances = cashierJointDebtCashierBalances(data, branch.id);
+  const openBalances = balances.filter((row) => row.outstandingCents > 0);
+  const [selectedCashierId, setSelectedCashierId] = useState(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
+  const selected = balances.find((row) => row.cashierId === selectedCashierId) || null;
+  const [amount, setAmount] = useState(() => moneyInputValue(selected?.outstandingCents || 0));
+  const [method, setMethod] = useState("cash");
+  const [reference, setReference] = useState("");
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const actorName = typeof user === "string"
+    ? user
+    : (user?.name || user?.displayName || user?.email || "Supervisor");
+  const paymentCents = selected ? clampPaymentCents(amount, selected.outstandingCents) : 0;
+  const branchPayments = (data.cashierJointDebtPayments || [])
+    .filter((payment) => payment.branchId === branch.id && (!payment.status || payment.status === "captured"))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  const totals = balances.reduce((summary, row) => ({
+    assignedCents: summary.assignedCents + row.assignedCents,
+    paidCents: summary.paidCents + row.paidCents,
+    outstandingCents: summary.outstandingCents + row.outstandingCents,
+  }), { assignedCents: 0, paidCents: 0, outstandingCents: 0 });
+
+  useEffect(() => {
+    if (selectedCashierId && balances.some((row) => row.cashierId === selectedCashierId)) return;
+    setSelectedCashierId(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
+  }, [balances, openBalances, selectedCashierId]);
+  useEffect(() => {
+    setAmount(moneyInputValue(selected?.outstandingCents || 0));
+    setReference("");
+    setNote("");
+    setError("");
+  }, [selectedCashierId, selected?.outstandingCents]);
+
+  const recordPayment = () => {
+    if (!selected || selected.outstandingCents <= 0) return;
+    if (paymentCents <= 0) {
+      setError("Enter a payment amount greater than zero.");
+      return;
+    }
+    let remaining = paymentCents;
+    const ts = now();
+    const paymentBatchId = uid("inventory-debt-payment");
+    const allocations = [...selected.allocations]
+      .filter((allocation) => allocation.outstandingCents > 0)
+      .sort((a, b) => Number(a.debt.ts || 0) - Number(b.debt.ts || 0));
+    const payments = [];
+    allocations.forEach((allocation) => {
+      if (remaining <= 0) return;
+      const amountCents = Math.min(remaining, allocation.outstandingCents);
+      payments.push({
+        id: uid("cjdp"),
+        debtId: allocation.debt.id,
+        stockCountCode: allocation.debt.stockCountCode,
+        branchId: branch.id,
+        cashierId: selected.cashierId,
+        cashierName: selected.cashierName,
+        amountCents,
+        method,
+        reference: reference.trim(),
+        note: note.trim(),
+        status: "captured",
+        recordedBy: actorName,
+        paymentBatchId,
+        ts,
+        synced: false,
+      });
+      remaining -= amountCents;
+    });
+    if (remaining !== 0 || payments.reduce((sum, payment) => sum + payment.amountCents, 0) !== paymentCents) {
+      setError("The payment could not be allocated exactly. Refresh the balances and retry.");
+      return;
+    }
+    update((current) => ({
+      ...current,
+      cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...payments],
+    }));
+    setMessage(`${fmt(paymentCents, cur)} recorded for ${selected.cashierName}.`);
+    setError("");
+  };
+
+  return (
+    <div>
+      <PageHead title="Payments" sub={`Cashier inventory-debt settlement · ${branch.name}`} />
+      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))" }}>
+        <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Accumulated debt</div><div className="cv">{fmt(totals.assignedCents, cur)}</div><div className="cs">All formal inventory counts</div></div></div>
+        <div className="ctile good"><div className="ic"><Check /></div><div><div className="cl">Payments captured</div><div className="cv">{fmt(totals.paidCents, cur)}</div><div className="cs">{branchPayments.length} allocation{branchPayments.length === 1 ? "" : "s"}</div></div></div>
+        <div className={"ctile" + (totals.outstandingCents > 0 ? " warn" : " good")}><div className="ic"><CreditCard /></div><div><div className="cl">Balance outstanding</div><div className="cv">{fmt(totals.outstandingCents, cur)}</div><div className="cs">{openBalances.length} cashier{openBalances.length === 1 ? "" : "s"} owing</div></div></div>
+      </div>
+
+      {message ? <div className="notice" style={{ marginTop: 14 }}>{message}</div> : null}
+      <div className="grid2" style={{ alignItems: "start", gap: 18, marginTop: 18 }}>
+        <section className="panel">
+          <div className="section-title" style={{ marginTop: 0 }}>Cashier balances</div>
+          {balances.length === 0 ? <div className="notice">No formal inventory-count debt has been assigned at {branch.name}.</div> : (
+            <div className="list mini">{balances.map((row) => (
+              <button className="row" type="button" key={row.cashierId} onClick={() => { setSelectedCashierId(row.cashierId); setMessage(""); }} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderColor: selectedCashierId === row.cashierId ? "var(--accent)" : undefined }}>
+                <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.cashierName.charAt(0)}</div>
+                <div className="meta"><div className="nm">{row.cashierName}</div><div className="mt2">{row.debtCount} inventory count{row.debtCount === 1 ? "" : "s"} · paid {fmt(row.paidCents, cur)} of {fmt(row.assignedCents, cur)}</div></div>
+                <span className={"pill plain"} style={{ color: row.outstandingCents > 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(row.outstandingCents, cur)} {row.outstandingCents > 0 ? "due" : "paid"}</span>
+              </button>
+            ))}</div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="section-title" style={{ marginTop: 0 }}>Settle inventory balance</div>
+          {!selected ? <div className="notice">Select a cashier balance to record a payment.</div> : selected.outstandingCents <= 0 ? (
+            <div className="notice">{selected.cashierName}'s inventory debt is fully paid.</div>
+          ) : (
+            <>
+              <div className="settlement-totals">
+                <div><span>Accumulated</span><b>{fmt(selected.assignedCents, cur)}</b></div>
+                <div><span>Paid</span><b>{fmt(selected.paidCents, cur)}</b></div>
+                <div className="due"><span>Balance due</span><b>{fmt(selected.outstandingCents, cur)}</b></div>
+              </div>
+              <div className="grid2" style={{ marginTop: 14 }}>
+                <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} /></div>
+                <div><label className="label">Payment method</label><select className="select" value={method} onChange={(event) => setMethod(event.target.value)}><option value="cash">Cash</option><option value="m-pesa">M-Pesa</option><option value="bank">Bank</option><option value="payroll">Payroll deduction</option></select></div>
+              </div>
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <div><label className="label">Reference</label><input className="input" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt or transaction reference" /></div>
+                <div><label className="label">Note</label><input className="input" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional settlement note" /></div>
+              </div>
+              <div className="notice" style={{ marginTop: 12 }}>Payments are allocated to {selected.cashierName}'s oldest outstanding inventory counts first.</div>
+              {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={paymentCents <= 0} onClick={recordPayment}><Check /> {paymentCents === selected.outstandingCents ? "Mark inventory debt paid" : `Record ${fmt(paymentCents, cur)} payment`}</button>
+            </>
+          )}
+        </section>
+      </div>
+
+      <section className="panel" style={{ marginTop: 18 }}>
+        <div className="section-title" style={{ marginTop: 0 }}>Inventory-debt payment history</div>
+        {branchPayments.length === 0 ? <div className="notice">No inventory-debt payments have been recorded yet.</div> : (
+          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Date</th><th>Cashier</th><th>Stock count</th><th>Method</th><th>Reference</th><th>Recorded by</th><th className="amt">Amount</th></tr></thead>
+            <tbody>{branchPayments.map((payment) => <tr key={payment.id}><td>{dt(payment.ts)}</td><td>{payment.cashierName || payment.cashierId}</td><td className="innum">{payment.stockCountCode || payment.debtId}</td><td>{payment.method || "cash"}</td><td>{payment.reference || payment.note || "—"}</td><td>{payment.recordedBy || "Supervisor"}</td><td className="amt">{fmt(payment.amountCents, cur)}</td></tr>)}</tbody>
+          </table></div>
+        )}
+      </section>
     </div>
   );
 }
@@ -6937,7 +7154,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   );
 }
 /* ---- Dashboard ---- */
-function DashboardTab({ data, update, branch }) {
+function DashboardTab({ data, update, branch, onOpenPayments }) {
   const cur = data.settings.currency;
   const [detail, setDetail] = useState(null);
   const [summary, setSummary] = useState("");
@@ -6953,6 +7170,10 @@ function DashboardTab({ data, update, branch }) {
     .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
   const todayProfit = recognizedTodaySales - todayCOGS;
   const creditTotal = branchInvoices.reduce((s, i) => s + invOutstanding(i), 0);
+  const inventoryDebtBalances = cashierJointDebtCashierBalances(data, branch.id);
+  const inventoryDebtAssigned = inventoryDebtBalances.reduce((sum, row) => sum + row.assignedCents, 0);
+  const inventoryDebtPaid = inventoryDebtBalances.reduce((sum, row) => sum + row.paidCents, 0);
+  const inventoryDebtOutstanding = inventoryDebtBalances.reduce((sum, row) => sum + row.outstandingCents, 0);
   // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
   const fastReorders = (() => {
     const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
@@ -6984,6 +7205,7 @@ function DashboardTab({ data, update, branch }) {
     const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;
     let s = "Today's sales are " + fmt(todaySales, cur) + " with recognized profit of " + fmt(todayProfit, cur) + " (" + margin + "% margin after clearing and End of Day). ";
     s += creditTotal > 0 ? "Outstanding credit stands at " + fmt(creditTotal, cur) + ". " : "No outstanding credit. ";
+    s += inventoryDebtOutstanding > 0 ? "Cashier inventory debt stands at " + fmt(inventoryDebtOutstanding, cur) + ". " : "Cashier inventory debt is clear. ";
     s += fastReorders.length > 0 ? fastReorders.length + " fast-moving product(s) need reordering — prioritise the lowest cover." : "Fast movers are well stocked.";
     return s;
   };
@@ -7001,6 +7223,9 @@ function DashboardTab({ data, update, branch }) {
         <div className="ctile"><div className="ic"><Receipt /></div><div><div className="cl">Sales (today)</div><div className="cv">{fmt(todaySales, cur)}</div><div className="cs">{todayInv.length} invoices</div></div></div>
         <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Profit (today)</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{recognizedTodaySales > 0 ? Math.round(todayProfit / recognizedTodaySales * 100) + "% margin" : "after EOD & clearing"}</div></div></div>
         <div className={"ctile " + (creditTotal > 0 ? "warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Credit outstanding</div><div className="cv">{fmt(creditTotal, cur)}</div><div className="cs">{openInv.length ? openInv.length + "+ open" : "all clear"}</div></div></div>
+        <div className={"ctile " + (inventoryDebtOutstanding > 0 ? "warn" : "good")} role="button" tabIndex={0} onClick={onOpenPayments} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpenPayments?.(); }} style={{ cursor: "pointer" }}>
+          <div className="ic"><CreditCard /></div><div><div className="cl">Inventory joint debt</div><div className="cv">{fmt(inventoryDebtOutstanding, cur)}</div><div className="cs">paid {fmt(inventoryDebtPaid, cur)} of {fmt(inventoryDebtAssigned, cur)}</div></div>
+        </div>
         <div className={"ctile " + (fastReorders.length ? "warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Reorders</div><div className="cv">{fastReorders.length}</div><div className="cs">fast movers low</div></div></div>
       </div>
 
@@ -8208,32 +8433,15 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       ts,
       synced: false,
     }));
-    const debtRows = selectedRows.map((row) => ({
-      productId: row.product.id,
-      product: row.product,
-      varianceQty: row.variance,
-    }));
-    const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, stockCountOperator(data), ts, "quick_inventory");
     update((d) => ({
       ...d,
       stockMovements: [...(d.stockMovements || []), ...adjustments],
       countLog: [...(d.countLog || []), ...logs],
-      cashierJointDebts: jointDebt && !(d.cashierJointDebts || []).some((debt) => debt.id === jointDebt.id || debt.stockCountSessionId === quickInventoryId)
-        ? [...(d.cashierJointDebts || []), jointDebt]
-        : (d.cashierJointDebts || []),
     }));
-    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
+    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length });
     setCounts({});
     setQ("");
-    const hasShortage = selectedRows.some((row) => row.variance < 0);
-    const debtMessage = jointDebt
-      ? jointDebt.cashierCount > 0
-        ? " Missing inventory of " + fmt(jointDebt.totalCents, cur) + " was shared equally across " + jointDebt.cashierCount + " branch cashier(s)."
-        : " Missing inventory of " + fmt(jointDebt.totalCents, cur) + " is unallocated because this branch has no active cashiers."
-      : hasShortage
-        ? " Missing products have no branch cost, so no monetary cashier debt was created."
-        : "";
-    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock adjustment(s) applied." + debtMessage);
+    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock correction(s) applied. No cashier debt was created.");
   };
 
   return (
@@ -8252,7 +8460,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {lockedSession ? (
         <div className="alert" style={{ marginBottom: 14 }}><AlertTriangle /> <div><b>Quick inventory is locked.</b><div>{lockedSession.code} is already {lockedSession.status} for {bname}. Finish or cancel that formal count first.</div></div></div>
       ) : (
-        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Missing quantities are valued at branch cost and shared equally across active branch cashiers; blank products remain unchanged.</div>
+        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Quick Inventory is a stock correction only and never creates cashier debt; blank products remain unchanged.</div>
       )}
       {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
@@ -8302,7 +8510,6 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
         <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.code} - {report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
-        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to missing inventory</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active cashier(s) and available in Debts reports." : "No active branch cashier was available, so this debt is awaiting allocation."}</div></div></div>}
       </div>}
     </div>
   );
@@ -10831,7 +11038,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const missingDebtByCashierReport = {};
   const missingDebtCountByCashier = {};
   (data.cashierJointDebts || []).filter((debt) => inBranch(debt.branchId)).forEach((debt) => (debt.shares || []).forEach((share) => {
-    const amount = Math.max(0, (Number(share.amountCents) || 0) - (Number(share.paidCents) || 0));
+    const amount = cashierJointDebtShareBalance(data, debt, share).outstandingCents;
     if (amount <= 0) return;
     const cashier = share.cashierName || share.cashierId || "Unassigned cashier";
     missingDebtByCashierReport[cashier] = (missingDebtByCashierReport[cashier] || 0) + amount;
