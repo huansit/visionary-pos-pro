@@ -6287,6 +6287,13 @@ function DebtPaymentsTab({ data, update, branch, user }) {
   const openBalances = balances.filter((row) => row.outstandingCents > 0);
   const [selectedCashierId, setSelectedCashierId] = useState(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
   const selected = balances.find((row) => row.cashierId === selectedCashierId) || null;
+  const openDebtAllocations = selected ? [...selected.allocations]
+    .filter((allocation) => allocation.outstandingCents > 0)
+    .sort((a, b) => Number(a.debt.ts || 0) - Number(b.debt.ts || 0)) : [];
+  const openDebtKey = openDebtAllocations.map((allocation) => `${allocation.debt.id}:${allocation.outstandingCents}`).join("|");
+  const [selectedDebtIds, setSelectedDebtIds] = useState(() => new Set(openDebtAllocations.map((allocation) => allocation.debt.id)));
+  const selectedAllocations = openDebtAllocations.filter((allocation) => selectedDebtIds.has(allocation.debt.id));
+  const selectedDebtTotal = selectedAllocations.reduce((sum, allocation) => sum + allocation.outstandingCents, 0);
   const [amount, setAmount] = useState(() => moneyInputValue(selected?.outstandingCents || 0));
   const [method, setMethod] = useState("cash");
   const [reference, setReference] = useState("");
@@ -6296,7 +6303,7 @@ function DebtPaymentsTab({ data, update, branch, user }) {
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
-  const paymentCents = selected ? clampPaymentCents(amount, selected.outstandingCents) : 0;
+  const paymentCents = clampPaymentCents(amount, selectedDebtTotal);
   const branchPayments = (data.cashierJointDebtPayments || [])
     .filter((payment) => payment.branchId === branch.id && (!payment.status || payment.status === "captured"))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
@@ -6311,14 +6318,36 @@ function DebtPaymentsTab({ data, update, branch, user }) {
     setSelectedCashierId(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
   }, [balances, openBalances, selectedCashierId]);
   useEffect(() => {
-    setAmount(moneyInputValue(selected?.outstandingCents || 0));
+    setSelectedDebtIds(new Set(openDebtAllocations.map((allocation) => allocation.debt.id)));
+    setAmount(moneyInputValue(openDebtAllocations.reduce((sum, allocation) => sum + allocation.outstandingCents, 0)));
     setReference("");
     setNote("");
     setError("");
-  }, [selectedCashierId, selected?.outstandingCents]);
+  }, [selectedCashierId, openDebtKey]);
+
+  const replaceDebtSelection = (nextIds) => {
+    const nextTotal = openDebtAllocations
+      .filter((allocation) => nextIds.has(allocation.debt.id))
+      .reduce((sum, allocation) => sum + allocation.outstandingCents, 0);
+    setSelectedDebtIds(nextIds);
+    setAmount(moneyInputValue(nextTotal));
+    setError("");
+  };
+  const toggleDebt = (debtId) => {
+    const nextIds = new Set(selectedDebtIds);
+    if (nextIds.has(debtId)) nextIds.delete(debtId);
+    else nextIds.add(debtId);
+    replaceDebtSelection(nextIds);
+  };
+  const selectAllDebts = () => replaceDebtSelection(new Set(openDebtAllocations.map((allocation) => allocation.debt.id)));
+  const clearDebtSelection = () => replaceDebtSelection(new Set());
 
   const recordPayment = () => {
     if (!selected || selected.outstandingCents <= 0) return;
+    if (selectedAllocations.length === 0) {
+      setError("Select at least one inventory debt to clear.");
+      return;
+    }
     if (paymentCents <= 0) {
       setError("Enter a payment amount greater than zero.");
       return;
@@ -6326,9 +6355,7 @@ function DebtPaymentsTab({ data, update, branch, user }) {
     let remaining = paymentCents;
     const ts = now();
     const paymentBatchId = uid("inventory-debt-payment");
-    const allocations = [...selected.allocations]
-      .filter((allocation) => allocation.outstandingCents > 0)
-      .sort((a, b) => Number(a.debt.ts || 0) - Number(b.debt.ts || 0));
+    const allocations = selectedAllocations;
     const payments = [];
     allocations.forEach((allocation) => {
       if (remaining <= 0) return;
@@ -6360,7 +6387,7 @@ function DebtPaymentsTab({ data, update, branch, user }) {
       ...current,
       cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...payments],
     }));
-    setMessage(`${fmt(paymentCents, cur)} recorded for ${selected.cashierName}.`);
+    setMessage(`${fmt(paymentCents, cur)} recorded against ${payments.length} selected inventory debt${payments.length === 1 ? "" : "s"} for ${selected.cashierName}.`);
     setError("");
   };
 
@@ -6399,6 +6426,28 @@ function DebtPaymentsTab({ data, update, branch, user }) {
                 <div><span>Paid</span><b>{fmt(selected.paidCents, cur)}</b></div>
                 <div className="due"><span>Balance due</span><b>{fmt(selected.outstandingCents, cur)}</b></div>
               </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 16 }}>
+                <label className="label" style={{ margin: 0 }}>Inventory debts to clear</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" className="btn sm btn-ghost" onClick={selectAllDebts} disabled={selectedAllocations.length === openDebtAllocations.length}>Select all</button>
+                  <button type="button" className="btn sm btn-ghost" onClick={clearDebtSelection} disabled={selectedAllocations.length === 0}>Clear</button>
+                </div>
+              </div>
+              <div className="tablewrap" style={{ marginTop: 8, maxHeight: 260, overflowY: "auto" }}>
+                <table className="tbl">
+                  <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all inventory debts" checked={openDebtAllocations.length > 0 && selectedAllocations.length === openDebtAllocations.length} onChange={(event) => event.target.checked ? selectAllDebts() : clearDebtSelection()} /></th><th>Reference</th><th>Source</th><th>Date</th><th className="amt">Balance</th></tr></thead>
+                  <tbody>{openDebtAllocations.map((allocation) => (
+                    <tr key={allocation.debt.id} className="clickable" onClick={() => toggleDebt(allocation.debt.id)}>
+                      <td><input type="checkbox" aria-label={`Select ${allocation.debt.stockCountCode || allocation.debt.id}`} checked={selectedDebtIds.has(allocation.debt.id)} onChange={() => toggleDebt(allocation.debt.id)} onClick={(event) => event.stopPropagation()} /></td>
+                      <td><b className="innum">{allocation.debt.stockCountCode || allocation.debt.id}</b><div className="muted">{allocation.debt.shortageUnits || 0} missing unit{Number(allocation.debt.shortageUnits || 0) === 1 ? "" : "s"}</div></td>
+                      <td>{allocation.debt.source === "quick_inventory" ? "Quick inventory" : "Stock count"}</td>
+                      <td>{dt(allocation.debt.ts)}</td>
+                      <td className="amt"><b>{fmt(allocation.outstandingCents, cur)}</b><div className="muted">paid {fmt(allocation.paidCents, cur)}</div></td>
+                    </tr>
+                  ))}</tbody>
+                  <tfoot><tr><td colSpan="4"><b>{selectedAllocations.length} selected</b></td><td className="amt"><b>{fmt(selectedDebtTotal, cur)}</b></td></tr></tfoot>
+                </table>
+              </div>
               <div className="grid2" style={{ marginTop: 14 }}>
                 <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} /></div>
                 <div><label className="label">Payment method</label><select className="select" value={method} onChange={(event) => setMethod(event.target.value)}><option value="cash">Cash</option><option value="m-pesa">M-Pesa</option><option value="bank">Bank</option><option value="payroll">Payroll deduction</option></select></div>
@@ -6407,9 +6456,9 @@ function DebtPaymentsTab({ data, update, branch, user }) {
                 <div><label className="label">Reference</label><input className="input" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt or transaction reference" /></div>
                 <div><label className="label">Note</label><input className="input" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional settlement note" /></div>
               </div>
-              <div className="notice" style={{ marginTop: 12 }}>Payments are allocated to {selected.cashierName}'s oldest outstanding inventory counts first.</div>
+              <div className="notice" style={{ marginTop: 12 }}>This payment will clear only the selected inventory debt{selectedAllocations.length === 1 ? "" : "s"}. A partial payment across multiple selections is allocated oldest first within the checked rows.</div>
               {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
-              <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={paymentCents <= 0} onClick={recordPayment}><Check /> {paymentCents === selected.outstandingCents ? "Mark inventory debt paid" : `Record ${fmt(paymentCents, cur)} payment`}</button>
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={selectedAllocations.length === 0 || paymentCents <= 0} onClick={recordPayment}><Check /> {paymentCents === selectedDebtTotal ? `Clear ${selectedAllocations.length === 1 ? "selected debt" : "selected debts"}` : `Record ${fmt(paymentCents, cur)} payment`}</button>
             </>
           )}
         </section>
