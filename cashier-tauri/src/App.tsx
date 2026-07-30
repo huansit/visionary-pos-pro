@@ -839,6 +839,13 @@ export default function App() {
     return dayClosedAtRef.current;
   }
 
+  function replaceDayClose(candidate: number | null | undefined) {
+    const parsed = Number(candidate || 0);
+    dayClosedAtRef.current = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    setDayClosedAt(dayClosedAtRef.current);
+    return dayClosedAtRef.current;
+  }
+
   async function resetInvalidTerminalRegistration() {
     await clearTerminalCredentials();
     clearFingerprintTemplateCache();
@@ -991,21 +998,9 @@ export default function App() {
     if (!terminal) return;
     const syncQuietly = () => refreshCatalog(terminal, { silent: true });
     let realtimeTimer: number | undefined;
-    const scheduleRealtimeSync = (change?: SyncVersionChange) => {
-      const marker = JSON.stringify(change || {}).toLowerCase();
-      if (marker.includes("day_closed") || marker.includes("endofday") || marker.includes("end_of_day")) {
-        const nestedPayload = change?.payload || {};
-        const nestedChange = change?.change || {};
-        const tsValue = Number(
-          change?.ts ||
-          nestedPayload.ts ||
-          nestedPayload.closedAt ||
-          nestedChange.ts ||
-          nestedChange.closedAt ||
-          Date.now()
-        );
-        handleDayClosed(Number.isFinite(tsValue) ? tsValue : Date.now());
-      }
+    const scheduleRealtimeSync = (_change?: SyncVersionChange) => {
+      // Realtime versions are global and do not identify the branch whose day
+      // was closed. The branch-scoped catalog is the only carry-over authority.
       window.clearTimeout(realtimeTimer);
       realtimeTimer = window.setTimeout(syncQuietly, 150);
     };
@@ -1121,7 +1116,11 @@ export default function App() {
         try {
           if (!options.silent) setStatus("Syncing products...");
           const pulled = await pullCatalog(nextTerminal);
-          const effectiveDayClosedAt = retainLatestDayClose(pulled.dayClosedAt);
+          const previousDayClosedAt = Number(dayClosedAtRef.current || 0);
+          const effectiveDayClosedAt = replaceDayClose(pulled.dayClosedAt);
+          if (effectiveDayClosedAt && effectiveDayClosedAt > previousDayClosedAt) {
+            setDayCloseNoticeAt(effectiveDayClosedAt);
+          }
           const effectiveInvoices = pulled.invoices.map((invoice) => {
             const invoiceTs = Number(invoice.ts || 0);
             return effectiveDayClosedAt && invoiceTs > 0 && invoiceTs <= effectiveDayClosedAt && outstanding(invoice) > 0
@@ -1330,18 +1329,6 @@ export default function App() {
   async function handleCloseApp() {
     if (cartLines.length && !window.confirm("Close VISIONPOS Cashier and discard the current sale?")) return;
     await invoke("close_app");
-  }
-
-  function handleDayClosed(ts = Date.now()) {
-    const effectiveTs = retainLatestDayClose(ts) || ts;
-    setDayCloseNoticeAt(effectiveTs);
-    setInvoices((current) => current
-      .map((invoice) => (
-        Number(invoice.ts || 0) <= effectiveTs && outstanding(invoice) > 0
-          ? { ...invoice, carriedOver: true }
-          : invoice
-      )));
-    setStatus("Day closed by supervisor. New day started.");
   }
 
   function restartForUpdate() {
