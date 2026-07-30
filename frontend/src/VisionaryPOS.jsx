@@ -3678,10 +3678,11 @@ body{overscroll-behavior:none}
 .invoice-detail-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .invoice-detail-title-row .title{font-size:20px;line-height:1.2}
 .invoice-carried{color:var(--warn);font-size:11px;font-weight:750;text-transform:uppercase}
-.invoice-detail-meta{display:flex;align-items:center;gap:0;margin-top:7px;color:var(--muted-2);font-size:12px;flex-wrap:wrap}
-.invoice-detail-meta span{display:flex;align-items:center}
-.invoice-detail-meta span+span:before{content:"";width:3px;height:3px;border-radius:50%;background:var(--muted-2);margin:0 9px;opacity:.65}
-.invoice-detail-meta .invoice-cleared-by{color:var(--ok);font-weight:750}
+.invoice-detail-meta{display:flex;align-items:flex-start;gap:16px;margin-top:10px;flex-wrap:wrap}
+.invoice-detail-meta>span{display:grid;gap:2px;min-width:0}
+.invoice-detail-meta small{color:var(--muted-2);font-size:9.5px;font-weight:750;text-transform:uppercase}
+.invoice-detail-meta b{color:var(--text);font-size:12px;line-height:1.25}
+.invoice-detail-meta .invoice-cleared-by b{color:var(--ok)}
 .invoice-detail-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--border-soft);margin-bottom:2px}
 .invoice-detail-totals>div{min-width:0;padding:14px 12px;border-right:1px solid var(--border-soft)}
 .invoice-detail-totals>div:first-child{padding-left:0}
@@ -3700,9 +3701,19 @@ body{overscroll-behavior:none}
 .invoice-detail-item span{color:var(--muted-2);font-size:11.5px}
 .invoice-detail-item strong{font-family:var(--font-mono);font-size:12.5px}
 .invoice-detail-empty{padding:10px 0;color:var(--muted-2);font-size:12px}
-.invoice-payment-panel{margin:12px 0;padding:13px}
+.invoice-payment-panel{margin:8px 0 0;padding:14px 0;border-width:1px 0 0;border-radius:0;background:transparent}
 .invoice-payment-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;font-size:13px}
 .invoice-payment-head span{color:var(--danger);font-family:var(--font-mono);font-size:12px;font-weight:750}
+.invoice-payment-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.invoice-payment-methods{display:grid;grid-template-columns:repeat(2,minmax(108px,1fr));gap:5px;padding:3px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface-2)}
+.invoice-method{height:34px;padding:0 12px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:750;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer}
+.invoice-method svg{width:15px;height:15px}
+.invoice-method:hover{color:var(--text)}
+.invoice-method.on{border-color:var(--border);background:var(--surface);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.invoice-payment-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;margin-top:10px}
+.invoice-payment-amount{display:grid;gap:4px}
+.invoice-payment-amount>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.invoice-payment-entry .btn{min-width:180px}
 .invoice-detail-sale-note{display:grid;gap:3px;padding:10px 0;border-top:1px solid var(--border-soft);font-size:12px}
 .invoice-detail-sale-note span{color:var(--muted-2)}
 .invoice-detail-disclosure{border-top:1px solid var(--border-soft)}
@@ -3721,7 +3732,7 @@ body{overscroll-behavior:none}
 .invoice-detail-note-form textarea{min-height:58px;padding-top:10px;resize:vertical}
 .invoice-detail-footer{display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border-soft)}
 @media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}.invoice-payment-toolbar{align-items:stretch;flex-direction:column}.invoice-payment-methods{width:100%}.invoice-payment-toolbar>.btn{width:100%}.invoice-payment-entry{grid-template-columns:1fr}.invoice-payment-entry .btn{width:100%}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -6126,6 +6137,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const debtInvoices = outstanding.filter((i) => invIsDebt(i));
   const overdue = outstanding.filter((i) => invIsOverdue(i));
   const open = outstanding.filter((i) => !invIsDebt(i) && !invIsOverdue(i));
+  const partialInvoices = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status !== "pending"
+    && Number(invoice.paidCents || 0) > 0 && invOutstanding(invoice) > 0);
   const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
   const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
     const voidStatus = invoiceVoidState(data, invoice.id).status;
@@ -6148,6 +6161,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       if (filter === "voided") return voidStatus === "approved";
       if (voidStatus === "approved") return false;
       if (filter === "void_pending") return voidStatus === "pending";
+      if (filter === "partial") return voidStatus !== "pending" && Number(i.paidCents || 0) > 0 && invOutstanding(i) > 0;
       if (filter === "debt") return invIsDebt(i);
       if (filter === "overdue") return invIsOverdue(i);
       if (filter === "open") return invOutstanding(i) > 0 && !invIsDebt(i) && !invIsOverdue(i);
@@ -6268,6 +6282,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
           <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter invoices by status">
             <option value="open">Open ({open.length})</option>
+            <option value="partial">Partially paid ({partialInvoices.length})</option>
             <option value="overdue">Overdue ({overdue.length})</option>
             <option value="debt">Debts ({debtInvoices.length})</option>
             <option value="void_pending">Void pending ({voidPendingCount})</option>
@@ -7156,7 +7171,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
   const [tnote, setTnote] = useState(live.trackingNote || "");
   const [saved, setSaved] = useState(false);
-  const [method, setMethod] = useState(live.method || "M-Pesa");
+  const [method, setMethod] = useState("M-Pesa");
   const voidInfo = invoiceVoidState(data, live.id);
   const voidPending = voidInfo.status === "pending";
   const voidApproved = voidInfo.status === "approved";
@@ -7258,10 +7273,10 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               {live.carriedOver ? <span className="invoice-carried">Carried over</span> : null}
             </div>
             <div className="invoice-detail-meta">
-              <span>{live.customerName || "Walk-in"}</span>
-              <span>{invoiceCashierName(live) || "Unknown cashier"}</span>
-              <span>{dt(live.ts)}</span>
-              {status === "paid" && clearedByName ? <span className="invoice-cleared-by">Cleared by {clearedByName}</span> : null}
+              <span><small>Customer</small><b>{live.customerName || "Walk-in"}</b></span>
+              <span><small>Cashier</small><b>{invoiceCashierName(live) || "Unknown cashier"}</b></span>
+              <span><small>Issued</small><b>{dt(live.ts)}</b></span>
+              {status === "paid" && clearedByName ? <span className="invoice-cleared-by"><small>Cleared by</small><b>{clearedByName}</b></span> : null}
             </div>
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Close invoice settlement"><X /></button>
@@ -7315,18 +7330,21 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         {!voidPending && !voidApproved && out > 0 ? (
           <div className="settlement-box invoice-payment-panel">
             <div className="invoice-payment-head"><b>Record payment</b><span>{fmt(out, cur)} due</span></div>
-            <div className="grid3">
-              <button className={"wtab" + (method === "Cash" ? " on" : "")} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
-              <button className={"wtab" + (method === "M-Pesa" ? " on" : "")} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
-              <button className={"wtab" + (method === "Card" ? " on" : "")} onClick={() => setMethod("Card")}><CreditCard />Card</button>
+            <div className="invoice-payment-toolbar">
+              <div className="invoice-payment-methods" role="group" aria-label="Payment method">
+                <button type="button" className={"invoice-method" + (method === "M-Pesa" ? " on" : "")} aria-pressed={method === "M-Pesa"} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
+                <button type="button" className={"invoice-method" + (method === "Cash" ? " on" : "")} aria-pressed={method === "Cash"} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
+              </div>
+              <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Use full balance</button>
             </div>
-            <div className="payamount">
-              <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(moneyInputValue(clampPaymentCents(e.target.value, out)))} placeholder="Payment amount" />
-              <button className="btn btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Full</button>
+            <div className="invoice-payment-entry">
+              <label className="invoice-payment-amount"><span>Payment amount</span>
+                <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(moneyInputValue(clampPaymentCents(e.target.value, out)))} placeholder="0.00" />
+              </label>
+              <button className="btn btn-primary" disabled={paymentCents <= 0} onClick={recordPayment}>
+                <Check /> {isFullPayment ? "Settle balance" : "Record " + fmt(paymentCents, cur)}
+              </button>
             </div>
-            <button className="btn btn-primary" style={{ width: "100%" }} disabled={paymentCents <= 0} onClick={recordPayment}>
-              <Check /> {isFullPayment ? "Settle full balance" : "Record " + fmt(paymentCents, cur) + " payment"}
-            </button>
           </div>
         ) : null}
 
