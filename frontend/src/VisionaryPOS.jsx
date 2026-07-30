@@ -8298,6 +8298,7 @@ function StockTab({ data, update, branch }) {
 
 function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const cur = data.settings.currency;
+  const operator = stockCountOperator(data);
   const countInputRefs = useRef(new Map());
   const applyingRef = useRef(false);
   const [bId, setBId] = useState(initialBranchId || branch.id);
@@ -8418,70 +8419,76 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       return;
     }
     applyingRef.current = true;
-    const ts = now();
-    const quickInventoryId = uid("qi");
-    const quickInventoryBatch = {
-      id: quickInventoryId,
-      code: nextQuickInventoryNumber(data),
-      branchId: bId,
-    };
-    const adjustments = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
-      id: uid("mv"),
-      productId: row.product.id,
-      branchId: bId,
-      qty: row.variance,
-      mode: "count",
-      reason: "Quick inventory",
-      quickInventoryId,
-      quickInventoryCode: quickInventoryBatch.code,
-      expectedQty: row.current,
-      countedQty: row.counted,
-      ts,
-      synced: false,
-    }));
-    const logs = selectedRows.map((row) => ({
-      id: uid("cl"),
-      productId: row.product.id,
-      branchId: bId,
-      qty: row.counted,
-      mode: "quick_count",
-      system: row.current,
-      counted: row.counted,
-      variance: row.variance,
-      kind: "quick",
-      quickInventoryId,
-      quickInventoryCode: quickInventoryBatch.code,
-      ts,
-      synced: false,
-    }));
-    const debtRows = selectedRows.map((row) => ({
-      ...row,
-      productId: row.product.id,
-      varianceQty: row.variance,
-    }));
-    const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, operator, ts, "quick_inventory");
-    update((d) => {
-      const existingJointDebts = d.cashierJointDebts || [];
-      const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === quickInventoryId)
-        ? [...existingJointDebts, jointDebt]
-        : existingJointDebts;
-      return {
-        ...d,
-        stockMovements: [...(d.stockMovements || []), ...adjustments],
-        countLog: [...(d.countLog || []), ...logs],
-        cashierJointDebts,
+    try {
+      const ts = now();
+      const quickInventoryId = uid("qi");
+      const quickInventoryBatch = {
+        id: quickInventoryId,
+        code: nextQuickInventoryNumber(data),
+        branchId: bId,
       };
-    });
-    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
-    setCounts({});
-    setQ("");
-    const debtMessage = jointDebt
-      ? jointDebt.cashierCount > 0
-        ? " " + fmt(jointDebt.totalCents, cur) + " was added to the joint cashier inventory account."
-        : " Missing stock worth " + fmt(jointDebt.totalCents, cur) + " is awaiting cashier allocation."
-      : " No missing-stock cashier credit was created.";
-    setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + debtMessage);
-    window.setTimeout(() => { applyingRef.current = false; }, 0);
+      const adjustments = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
+        id: uid("mv"),
+        productId: row.product.id,
+        branchId: bId,
+        qty: row.variance,
+        mode: "count",
+        reason: "Quick inventory",
+        quickInventoryId,
+        quickInventoryCode: quickInventoryBatch.code,
+        expectedQty: row.current,
+        countedQty: row.counted,
+        ts,
+        synced: false,
+      }));
+      const logs = selectedRows.map((row) => ({
+        id: uid("cl"),
+        productId: row.product.id,
+        branchId: bId,
+        qty: row.counted,
+        mode: "quick_count",
+        system: row.current,
+        counted: row.counted,
+        variance: row.variance,
+        kind: "quick",
+        quickInventoryId,
+        quickInventoryCode: quickInventoryBatch.code,
+        ts,
+        synced: false,
+      }));
+      const debtRows = selectedRows.map((row) => ({
+        ...row,
+        productId: row.product.id,
+        varianceQty: row.variance,
+      }));
+      const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, operator, ts, "quick_inventory");
+      update((d) => {
+        const existingJointDebts = d.cashierJointDebts || [];
+        const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === quickInventoryId)
+          ? [...existingJointDebts, jointDebt]
+          : existingJointDebts;
+        return {
+          ...d,
+          stockMovements: [...(d.stockMovements || []), ...adjustments],
+          countLog: [...(d.countLog || []), ...logs],
+          cashierJointDebts,
+        };
+      });
+      setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
+      setCounts({});
+      setQ("");
+      const debtMessage = jointDebt
+        ? jointDebt.cashierCount > 0
+          ? " " + fmt(jointDebt.totalCents, cur) + " was added to the joint cashier inventory account."
+          : " Missing stock worth " + fmt(jointDebt.totalCents, cur) + " is awaiting cashier allocation."
+        : " No missing-stock cashier credit was created.";
+      setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + debtMessage);
+    } catch (error) {
+      console.error("Quick inventory apply failed", error);
+      setMessage("Quick inventory could not be applied. No selected counts were cleared; please retry.");
+    } finally {
+      applyingRef.current = false;
+    }
   };
 
   return (
