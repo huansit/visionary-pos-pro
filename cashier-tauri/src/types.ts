@@ -71,6 +71,37 @@ export type Invoice = {
   items?: Array<{ productId?: string; name: string; qty: number; priceCents: number }>;
 };
 
+export type CashierJointDebtShare = {
+  cashierId: string;
+  cashierName: string;
+  amountCents: number;
+  paidCents: number;
+};
+
+export type CashierJointDebtItem = {
+  productId: string;
+  productName: string;
+  sku?: string;
+  missingQty: number;
+  unitCostCents: number;
+  amountCents: number;
+};
+
+export type CashierJointDebt = {
+  id: string;
+  branchId: string;
+  stockCountSessionId?: string;
+  stockCountCode: string;
+  status?: string;
+  shortageUnits: number;
+  totalCents: number;
+  cashierCount: number;
+  items: CashierJointDebtItem[];
+  shares: CashierJointDebtShare[];
+  source?: string;
+  ts: number;
+};
+
 export type CartLine = {
   product: Product;
   qty: number;

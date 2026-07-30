@@ -9,7 +9,7 @@ import {
 } from "react";
 import { pullCatalog, pushExpense } from "./api";
 import { cashierRuleSnapshot, classifyExpense, type ExpenseDecision } from "./cashierRules";
-import type { Account, Branch, CartLine, Invoice, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, CashierJointDebt, Invoice, TerminalCredentials } from "./types";
 
 export type CashierSessionState = {
   businessName: string;
@@ -44,6 +44,14 @@ export type CashierDebt = {
   carriedOver: boolean;
 };
 
+export type CashierInventoryDebt = {
+  id: string;
+  stockCountCode: string;
+  amount: number;
+  shortageUnits: number;
+  openedAt: number;
+};
+
 export type CashierCartItem = {
   id: string;
   name: string;
@@ -72,6 +80,7 @@ export type CashierState = {
   salesToday: SalesTodayState;
   openInvoicesToday: CashierInvoiceSummary[];
   debts: CashierDebt[];
+  inventoryDebts: CashierInventoryDebt[];
   cart: CashierCartState;
   updateState: CashierUpdateState;
   branch: Branch | null;
@@ -85,6 +94,7 @@ type CashierStateSource = {
   account?: Account | null;
   branches?: Branch[];
   invoices?: Invoice[];
+  cashierJointDebts?: CashierJointDebt[];
   cartLines?: CartLine[];
   customerName?: string;
   online?: boolean;
@@ -203,6 +213,22 @@ export function deriveCashierState(source: CashierStateSource): CashierState {
   const debts = activeInvoices
     .filter((invoice) => invoiceOutstanding(invoice) > 0 && invoice.carriedOver)
     .map(toDebt);
+  const accountId = String(source.account?.id || "");
+  const accountName = customerKey(source.account?.name);
+  const inventoryDebts = (source.cashierJointDebts || []).flatMap((debt) => {
+    if (branch && debt.branchId !== branch.id) return [];
+    const share = debt.shares.find((entry) => entry.cashierId === accountId)
+      || debt.shares.find((entry) => accountName && customerKey(entry.cashierName) === accountName);
+    if (!share) return [];
+    const amount = Math.max(0, Number(share.amountCents || 0) - Number(share.paidCents || 0));
+    return amount > 0 ? [{
+      id: debt.id,
+      stockCountCode: debt.stockCountCode,
+      amount,
+      shortageUnits: debt.shortageUnits,
+      openedAt: debt.ts
+    }] : [];
+  });
 
   const cart = buildCart(source.cartLines || [], source.customerName || "", visibleInvoices);
 
@@ -223,6 +249,7 @@ export function deriveCashierState(source: CashierStateSource): CashierState {
     },
     openInvoicesToday,
     debts,
+    inventoryDebts,
     cart,
     updateState: source.updateState || "idle",
     branch,
@@ -331,7 +358,8 @@ export async function fetchCashierStateFromApi(source: CashierStateSource): Prom
   return deriveCashierState({
     ...source,
     branches: catalog.branches,
-    invoices: catalog.invoices
+    invoices: catalog.invoices,
+    cashierJointDebts: catalog.cashierJointDebts
   });
 }
 
@@ -346,6 +374,7 @@ export function CashierStateProvider({
   account = null,
   branches = [],
   invoices = [],
+  cashierJointDebts = [],
   cartLines = [],
   customerName = "",
   online,
@@ -361,6 +390,7 @@ export function CashierStateProvider({
       account,
       branches,
       invoices,
+      cashierJointDebts,
       cartLines,
       customerName,
       online: online ?? browserOnline,
@@ -399,6 +429,7 @@ export function CashierStateProvider({
         account,
         branches,
         invoices,
+        cashierJointDebts,
         cartLines,
         customerName,
         online: currentOnline,
@@ -408,7 +439,7 @@ export function CashierStateProvider({
     } catch (error) {
       setState((prev) => withError(prev, error));
     }
-  }, [account, branches, businessName, cartLines, currentOnline, currentUpdateState, customerName, invoices, terminal]);
+  }, [account, branches, businessName, cartLines, cashierJointDebts, currentOnline, currentUpdateState, customerName, invoices, terminal]);
 
   useEffect(() => {
     refresh();

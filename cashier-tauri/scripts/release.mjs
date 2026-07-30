@@ -221,6 +221,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashier dashboards now sync each cashier's missing-inventory joint debt and retain it for offline viewing.",
+  "Open, overdue, carried invoice debt, and missing-inventory debt are displayed as separate categories with accurate totals.",
+  "Unpaid invoices become overdue after one day but become cashier debt only after End of Day carries them forward.",
+  "Cashier sessions now sign out after 15 minutes of inactivity, including after sleep, backgrounding, or window suspension.",
   "Fingerprint operations are serialized to prevent overlapping scans; a busy SecuGen reader is retried immediately, then the stale WebAPI client is restarted once before VisionPOS reports a clear device-busy message.",
   "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
   "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",

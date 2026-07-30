@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
-import type { Account, Branch, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -811,6 +811,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   branches: Branch[];
   products: Product[];
   invoices: Invoice[];
+  cashierJointDebts: CashierJointDebt[];
   expenseCategories: ExpenseCategory[];
   dayClosedAt: number | null;
 }> {
@@ -869,6 +870,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const invoiceNotes = new Map<string, { note: string; ts: number }>();
   const invoiceVoidRequests = new Map<string, { id: string; reason: string; ts: number }>();
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
+  const cashierJointDebtRecords = new Map<string, CashierJointDebt>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
   let dayClosedAt: number | null = catalogDayClosedAt;
@@ -995,6 +997,40 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         }
       }
     }
+    if (item.type === "cashierJointDebt") {
+      if (item.deleted) {
+        cashierJointDebtRecords.delete(item.id);
+      } else {
+        const payload = item.payload || {};
+        const debt: CashierJointDebt = {
+          id: String(item.id || payload.id || ""),
+          branchId: String(payload.branchId || item.branchId || ""),
+          stockCountSessionId: String(payload.stockCountSessionId || "") || undefined,
+          stockCountCode: String(payload.stockCountCode || payload.code || item.id || "Stock count"),
+          status: String(payload.status || "open"),
+          shortageUnits: Number(payload.shortageUnits || 0),
+          totalCents: Number(payload.totalCents || 0),
+          cashierCount: Number(payload.cashierCount || 0),
+          items: Array.isArray(payload.items) ? payload.items.map((entry: any) => ({
+            productId: String(entry.productId || ""),
+            productName: String(entry.productName || entry.name || "Product"),
+            sku: String(entry.sku || ""),
+            missingQty: Number(entry.missingQty || 0),
+            unitCostCents: Number(entry.unitCostCents || 0),
+            amountCents: Number(entry.amountCents || 0)
+          })) : [],
+          shares: Array.isArray(payload.shares) ? payload.shares.map((share: any) => ({
+            cashierId: String(share.cashierId || ""),
+            cashierName: String(share.cashierName || "Cashier"),
+            amountCents: Number(share.amountCents || 0),
+            paidCents: Number(share.paidCents || 0)
+          })) : [],
+          source: String(payload.source || "stock_count"),
+          ts: Number(payload.ts || item.clientTs || item.serverTs || 0)
+        };
+        if (debt.id && debt.branchId === terminal.branchId) cashierJointDebtRecords.set(debt.id, debt);
+      }
+    }
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
@@ -1085,8 +1121,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     }));
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
+  const cashierJointDebts = Array.from(cashierJointDebtRecords.values())
+    .filter((debt) => debt.branchId === terminal.branchId)
+    .sort((a, b) => b.ts - a.ts);
 
-  return { branches, invoices, products, expenseCategories, dayClosedAt };
+  return { branches, invoices, products, cashierJointDebts, expenseCategories, dayClosedAt };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {

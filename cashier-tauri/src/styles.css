@@ -4791,6 +4791,16 @@ body {
   transform: translateY(-1px);
 }
 
+.inventory-debt-row {
+  cursor: default;
+}
+
+.inventory-debt-row:hover {
+  border-color: #e5e7eb;
+  background: #ffffff;
+  transform: none;
+}
+
 .debts-avatar {
   width: 32px;
   height: 32px;
@@ -5324,6 +5334,15 @@ body {
   border-top: 1px solid #eef2f7;
   color: #64748b;
   font-weight: 850;
+}
+
+.rail-open-footer[role="button"] {
+  cursor: pointer;
+}
+
+.rail-open-footer[role="button"]:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .rail-open-footer b {

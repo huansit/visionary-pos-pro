@@ -4,6 +4,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import {
   Barcode,
+  Boxes,
   Building2,
   ChevronLeft,
   ChevronRight,
@@ -55,7 +56,7 @@ import {
   verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
@@ -68,7 +69,7 @@ const DEFAULT_CASHIER_EXPENSE_CATEGORIES: ExpenseCategory[] = [
 ];
 const CASHIER_EXPENSE_CATEGORY_IDS = new Set(DEFAULT_CASHIER_EXPENSE_CATEGORIES.map((category) => category.id));
 const CASHIER_EXPENSE_CATEGORY_NAMES = new Set(DEFAULT_CASHIER_EXPENSE_CATEGORIES.map((category) => category.name.toLowerCase()));
-const CASHIER_INACTIVITY_LOGOUT_MS = 5 * 60 * 1000;
+const CASHIER_INACTIVITY_LOGOUT_MS = 15 * 60 * 1000;
 
 type UpdatePrompt = {
   version: string;
@@ -79,7 +80,12 @@ type UpdatePrompt = {
 
 type CashierUpdateState = "idle" | "downloading" | "ready";
 type DrawerSide = "left" | "right";
-type InvoiceListMode = "today" | "debts";
+type InvoiceListMode = "invoices" | "debts";
+
+type CashierJointDebtEntry = {
+  debt: CashierJointDebt;
+  outstandingCents: number;
+};
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -391,12 +397,20 @@ async function printReceipt(receipt: Receipt) {
   }
 }
 
-function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[], expenseCategories: ExpenseCategory[], dayClosedAt: number | null) {
+function saveCatalog(
+  branches: Branch[],
+  products: Product[],
+  invoices: Invoice[],
+  cashierJointDebts: CashierJointDebt[],
+  expenseCategories: ExpenseCategory[],
+  dayClosedAt: number | null
+) {
   const savedAt = Date.now();
   localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify({
     branches,
     products: dedupeCatalogProducts(products),
     invoices,
+    cashierJointDebts,
     expenseCategories,
     dayClosedAt,
     savedAt
@@ -404,10 +418,18 @@ function saveCatalog(branches: Branch[], products: Product[], invoices: Invoice[
   return savedAt;
 }
 
-function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Invoice[]; expenseCategories: ExpenseCategory[]; dayClosedAt: number | null; savedAt?: number } {
+function loadCatalog(): {
+  branches: Branch[];
+  products: Product[];
+  invoices: Invoice[];
+  cashierJointDebts: CashierJointDebt[];
+  expenseCategories: ExpenseCategory[];
+  dayClosedAt: number | null;
+  savedAt?: number;
+} {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [], invoices: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    if (!raw) return { branches: [], products: [], invoices: [], cashierJointDebts: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
     const parsed = JSON.parse(raw);
     const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
     const parsedClose = Number(parsed.dayClosedAt || 0);
@@ -415,6 +437,7 @@ function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Inv
       branches: parsed.branches || [],
       products,
       invoices: parsed.invoices || [],
+      cashierJointDebts: Array.isArray(parsed.cashierJointDebts) ? parsed.cashierJointDebts : [],
       expenseCategories: Array.isArray(parsed.expenseCategories) && parsed.expenseCategories.length ? parsed.expenseCategories : DEFAULT_CASHIER_EXPENSE_CATEGORIES,
       dayClosedAt: Number.isFinite(parsedClose) && parsedClose > 0 ? parsedClose : null,
       savedAt: parsed.savedAt
@@ -422,7 +445,7 @@ function loadCatalog(): { branches: Branch[]; products: Product[]; invoices: Inv
     localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
     return repaired;
   } catch {
-    return { branches: [], products: [], invoices: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    return { branches: [], products: [], invoices: [], cashierJointDebts: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
   }
 }
 
@@ -490,20 +513,35 @@ function invoiceAgeDays(invoice: Invoice) {
   return Math.max(0, Math.floor((Date.now() - Number(invoice.ts)) / DAY_MS));
 }
 
-function isOverdueDebtInvoice(invoice: Invoice) {
-  return Boolean(invoice.carriedOver) || invoiceAgeDays(invoice) > 7;
+function isOverdueOpenInvoice(invoice: Invoice) {
+  return outstanding(invoice) > 0 && !invoice.carriedOver && invoiceAgeDays(invoice) >= 1;
 }
 
 function invoiceDueDate(invoice: Invoice) {
   if (!invoice.ts) return "Not set";
-  return new Date(Number(invoice.ts) + 7 * DAY_MS).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+  if (invoice.carriedOver) return "Carried at end of day";
+  return new Date(Number(invoice.ts) + DAY_MS).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function invoiceAgeText(invoice: Invoice) {
   const ageDays = invoiceAgeDays(invoice);
-  if (isOverdueDebtInvoice(invoice)) return `${Math.max(1, ageDays - 7)}d overdue`;
+  if (invoice.carriedOver) return "Cashier debt";
+  if (isOverdueOpenInvoice(invoice)) return `${Math.max(1, ageDays)}d overdue`;
   if (ageDays <= 0) return "Due today";
   return `${ageDays}d old`;
+}
+
+function cashierJointDebtEntries(debts: CashierJointDebt[], account: Account | null, branchId?: string): CashierJointDebtEntry[] {
+  if (!account) return [];
+  const accountName = normalize(account.name || "");
+  return debts.flatMap((debt) => {
+    if (branchId && debt.branchId !== branchId) return [];
+    const share = debt.shares.find((entry) => entry.cashierId === account.id)
+      || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
+    if (!share) return [];
+    const outstandingCents = Math.max(0, Number(share.amountCents || 0) - Number(share.paidCents || 0));
+    return outstandingCents > 0 ? [{ debt, outstandingCents }] : [];
+  }).sort((a, b) => Number(b.debt.ts || 0) - Number(a.debt.ts || 0));
 }
 
 function invoiceSearchText(invoice: Invoice) {
@@ -562,6 +600,7 @@ export default function App() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [cashierJointDebts, setCashierJointDebts] = useState<CashierJointDebt[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
@@ -624,7 +663,13 @@ export default function App() {
       : invoice;
   }), [dayClosedAt, myInvoices]);
   const openInvoices = useMemo(() => businessDayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [businessDayInvoices]);
+  const overdueInvoices = useMemo(() => openInvoices.filter(isOverdueOpenInvoice), [openInvoices]);
+  const currentOpenInvoices = useMemo(() => openInvoices.filter((invoice) => !isOverdueOpenInvoice(invoice)), [openInvoices]);
   const carriedDebts = useMemo(() => businessDayInvoices.filter((invoice) => outstanding(invoice) > 0 && invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [businessDayInvoices]);
+  const inventoryDebtEntries = useMemo(
+    () => cashierJointDebtEntries(cashierJointDebts, account, terminal?.branchId),
+    [account, cashierJointDebts, terminal?.branchId]
+  );
   const activeTodayInvoices = useMemo(
     () => businessDayInvoices.filter((invoice) => (
       invoice.voidRequestStatus !== "approved"
@@ -636,9 +681,10 @@ export default function App() {
   const paidTodayCount = activeTodayInvoices.filter((invoice) => outstanding(invoice) <= 0).length;
   const pendingTodayCount = activeTodayInvoices.filter(isPendingInvoice).length;
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
-  const openInvoicesTodayTotal = openInvoicesToday.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
-  const debtTrackerTotal = openInvoiceTotal + carriedDebtTotal;
+  const inventoryDebtTotal = inventoryDebtEntries.reduce((sum, entry) => sum + entry.outstandingCents, 0);
+  const debtTrackerTotal = carriedDebtTotal + inventoryDebtTotal;
+  const cashierDebtCount = carriedDebts.length + inventoryDebtEntries.length;
   const salesInvoiceTotal = activeTodayInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
   const customerDebtInvoices = useMemo(() => {
     const customerKey = normalize(customerName);
@@ -705,6 +751,7 @@ export default function App() {
     setBranches([]);
     setProducts([]);
     setInvoices([]);
+    setCashierJointDebts([]);
     setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
     dayClosedAtRef.current = null;
     setDayClosedAt(null);
@@ -720,6 +767,7 @@ export default function App() {
       setBranches(cached.branches);
       setProducts(cached.products);
       setInvoices(cached.invoices);
+      setCashierJointDebts(cached.cashierJointDebts);
       setExpenseCategories(cashierManagedExpenseCategories(cached.expenseCategories));
       retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
@@ -916,18 +964,48 @@ export default function App() {
   useEffect(() => {
     if (!account) return;
     let timer: number | undefined;
-    const resetTimer = () => {
+    let endingSession = false;
+    let lastActivityAt = Date.now();
+    const expireSession = () => {
+      if (endingSession) return;
+      endingSession = true;
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        void handleLogout("inactivity");
-      }, CASHIER_INACTIVITY_LOGOUT_MS);
+      void handleLogout("inactivity");
+    };
+    const checkIdle = () => {
+      if (endingSession) return;
+      const remaining = CASHIER_INACTIVITY_LOGOUT_MS - (Date.now() - lastActivityAt);
+      if (remaining <= 0) {
+        expireSession();
+        return;
+      }
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(checkIdle, remaining);
+    };
+    const recordActivity = (event: Event) => {
+      if (endingSession || event.isTrusted === false) return;
+      if (Date.now() - lastActivityAt >= CASHIER_INACTIVITY_LOGOUT_MS) {
+        expireSession();
+        return;
+      }
+      lastActivityAt = Date.now();
+      checkIdle();
+    };
+    const verifyActiveSession = () => {
+      if (!document.hidden) checkIdle();
     };
     const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "pointerdown", "wheel", "scroll"];
-    resetTimer();
-    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetTimer, { passive: true }));
+    checkIdle();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, recordActivity, { passive: true }));
+    window.addEventListener("focus", verifyActiveSession);
+    window.addEventListener("pageshow", verifyActiveSession);
+    document.addEventListener("visibilitychange", verifyActiveSession);
     return () => {
       if (timer) window.clearTimeout(timer);
-      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetTimer));
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, recordActivity));
+      window.removeEventListener("focus", verifyActiveSession);
+      window.removeEventListener("pageshow", verifyActiveSession);
+      document.removeEventListener("visibilitychange", verifyActiveSession);
     };
   }, [account?.id, sessionToken]);
 
@@ -954,10 +1032,18 @@ export default function App() {
           setBranches(pulled.branches);
           setProducts(pulled.products);
           setInvoices(effectiveInvoices);
+          setCashierJointDebts(pulled.cashierJointDebts);
           const currentExpenseCategories = cashierManagedExpenseCategories(pulled.expenseCategories);
           setExpenseCategories(currentExpenseCategories);
-          setLastSyncAt(saveCatalog(pulled.branches, pulled.products, effectiveInvoices, currentExpenseCategories, effectiveDayClosedAt));
-          setStatus(`Connected. Synced ${pulled.products.length} products and ${effectiveInvoices.length} invoices.`);
+          setLastSyncAt(saveCatalog(
+            pulled.branches,
+            pulled.products,
+            effectiveInvoices,
+            pulled.cashierJointDebts,
+            currentExpenseCategories,
+            effectiveDayClosedAt
+          ));
+          setStatus(`Connected. Synced ${pulled.products.length} products, ${effectiveInvoices.length} invoices and ${pulled.cashierJointDebts.length} inventory debts.`);
           setError("");
         } catch (err) {
           if (isTerminalRegistrationError(err)) {
@@ -1130,7 +1216,7 @@ export default function App() {
       clearFingerprintTemplateCache();
       setAccount(null);
       setSessionToken("");
-      setStatus(reason === "inactivity" ? "Signed out after 5 minutes of inactivity." : "Signed out.");
+      setStatus(reason === "inactivity" ? "Signed out after 15 minutes of inactivity." : "Signed out.");
     }
   }
 
@@ -1282,14 +1368,14 @@ export default function App() {
               </button>
               <div className="mini-sidebar">
                 <button title={`Sales today: ${money(salesInvoiceTotal)}`}><FileText size={18} /><span>{money(salesInvoiceTotal)}</span></button>
-                <button className="mini-badge-button" onClick={() => setInvoiceListMode("today")} title={`${openInvoicesToday.length} open invoices`}>
+                <button className="mini-badge-button" onClick={() => setInvoiceListMode("invoices")} title={`${currentOpenInvoices.length} open and ${overdueInvoices.length} overdue invoices`}>
                   <FileText size={18} />
-                  {openInvoicesToday.length > 0 && <b>{openInvoicesToday.length}</b>}
+                  {openInvoices.length > 0 && <b>{openInvoices.length}</b>}
                 </button>
                 <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
-                <button className="mini-badge-button" onClick={() => setInvoiceListMode("debts")} title={`${carriedDebts.length} outstanding debts`}>
+                <button className="mini-badge-button" onClick={() => setInvoiceListMode("debts")} title={`${cashierDebtCount} cashier debts`}>
                   <span className="info-dot">!</span>
-                  {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
+                  {cashierDebtCount > 0 && <b>{cashierDebtCount}</b>}
                 </button>
                 <button onClick={() => lastReceipt ? setReceipt(lastReceipt) : setStatus("No receipt to reprint yet.")} title="Reprint receipt"><FileText size={18} /></button>
                 <button className="mini-logout" onClick={() => handleLogout()} title="Logout"><LogOut size={18} /></button>
@@ -1358,9 +1444,21 @@ export default function App() {
                 );
               })}
             </div>
-            <div className="rail-open-footer">
-              <span>Open total</span>
-              <b>{money(openInvoicesTodayTotal)}</b>
+            <div
+              className="rail-open-footer"
+              role="button"
+              tabIndex={0}
+              onClick={() => setInvoiceListMode("invoices")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  setInvoiceListMode("invoices");
+                }
+              }}
+              title="View all open and overdue invoices"
+            >
+              <span>{overdueInvoices.length > 0 ? `${overdueInvoices.length} overdue - view all` : "Open total - view all"}</span>
+              <b>{money(openInvoiceTotal)}</b>
             </div>
           </section>
           <div
@@ -1387,13 +1485,26 @@ export default function App() {
                 View
               </button>
             </div>
-            <div className="debt-line"><span>Pending invoices & carried debt</span><b>{money(debtTrackerTotal)}</b></div>
-            <p>{openInvoices.length} pending invoice{openInvoices.length === 1 ? "" : "s"} · {carriedDebts.length} carried over</p>
-            {openInvoices.length === 0 ? (
-              <p>No pending invoices for your login.</p>
+            <div className="debt-line"><span>Cashier debt</span><b>{money(debtTrackerTotal)}</b></div>
+            <p>{carriedDebts.length} invoice debt{carriedDebts.length === 1 ? "" : "s"} - {inventoryDebtEntries.length} inventory debt{inventoryDebtEntries.length === 1 ? "" : "s"}</p>
+            {carriedDebts.length === 0 && inventoryDebtEntries.length === 0 ? (
+              <p>No cashier debts for your login.</p>
             ) : (
               <div className="debt-preview-list">
-                {openInvoices.slice(0, 3).map((invoice) => (
+                {inventoryDebtEntries.slice(0, 2).map(({ debt, outstandingCents }) => (
+                  <button
+                    key={debt.id}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setInvoiceListMode("debts");
+                    }}
+                  >
+                    <span><b>Missing inventory</b><small>{debt.stockCountCode}</small></span>
+                    <strong>{money(outstandingCents)}</strong>
+                  </button>
+                ))}
+                {carriedDebts.slice(0, Math.max(0, 3 - inventoryDebtEntries.length)).map((invoice) => (
                   <button
                     key={invoice.id}
                     type="button"
@@ -1408,14 +1519,13 @@ export default function App() {
                 ))}
               </div>
             )}
-            {openInvoices.length === 0 && carriedDebts.length === 0 && <p>No carried-over debts for your login.</p>}
           </div>
           <section className="rail-quick-actions">
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
             <button className="rail-action-badge" onClick={() => setInvoiceListMode("debts")}>
               <span className="info-dot">!</span>
               Debts
-              {carriedDebts.length > 0 && <b>{carriedDebts.length}</b>}
+              {cashierDebtCount > 0 && <b>{cashierDebtCount}</b>}
             </button>
             <button onClick={() => lastReceipt ? setReceipt(lastReceipt) : setStatus("No receipt to reprint yet.")}><FileText size={18} />Reprint</button>
           </section>
@@ -1594,12 +1704,14 @@ export default function App() {
         <Drawer side="left" onClose={() => { setInvoiceListMode(null); focusSearch(); }} labelledBy="debts-center-title">
           <DebtsCenterView
             mode={invoiceListMode}
-            todayInvoices={openInvoicesToday}
             openInvoices={openInvoices}
+            currentOpenInvoices={currentOpenInvoices}
+            overdueInvoices={overdueInvoices}
             carriedDebts={carriedDebts}
-            todayTotalCents={openInvoicesTodayTotal}
+            inventoryDebts={inventoryDebtEntries}
             openTotalCents={openInvoiceTotal}
             carriedTotalCents={carriedDebtTotal}
+            inventoryTotalCents={inventoryDebtTotal}
             onSelect={(invoice) => {
               setInvoiceListMode(null);
               setInvoiceDetail({ invoice, side: "left" });
@@ -1727,7 +1839,7 @@ function InvoiceDetailSlideOver({
 }) {
   const items = invoice.items || [];
   const customer = invoiceCustomerLabel(invoice);
-  const overdue = isOverdueDebtInvoice(invoice);
+  const overdue = Boolean(invoice.carriedOver) || isOverdueOpenInvoice(invoice);
   const paidCents = Number(invoice.paidCents || 0);
   const balanceCents = outstanding(invoice);
   const [openNote, setOpenNote] = useState(invoice.note || "");
@@ -1878,28 +1990,30 @@ function InvoiceDetailSlideOver({
 
 function DebtsCenterView({
   mode,
-  todayInvoices,
   openInvoices,
+  currentOpenInvoices,
+  overdueInvoices,
   carriedDebts,
-  todayTotalCents,
+  inventoryDebts,
   openTotalCents,
   carriedTotalCents,
+  inventoryTotalCents,
   onSelect
 }: {
   mode: InvoiceListMode;
-  todayInvoices: Invoice[];
   openInvoices: Invoice[];
+  currentOpenInvoices: Invoice[];
+  overdueInvoices: Invoice[];
   carriedDebts: Invoice[];
-  todayTotalCents: number;
+  inventoryDebts: CashierJointDebtEntry[];
   openTotalCents: number;
   carriedTotalCents: number;
+  inventoryTotalCents: number;
   onSelect: (invoice: Invoice) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "unpaid" | "overdue" | "carried">("all");
+  const [filter, setFilter] = useState<"all" | "open" | "overdue" | "invoice" | "inventory">("all");
   const [oldestFirst, setOldestFirst] = useState(mode === "debts");
-  const debtInvoices = useMemo(() => [...openInvoices, ...carriedDebts], [openInvoices, carriedDebts]);
-  const overdueInvoices = useMemo(() => debtInvoices.filter(isOverdueDebtInvoice), [debtInvoices]);
   const customerDebts = useMemo(() => {
     const grouped = new Map<string, {
       key: string;
@@ -1908,7 +2022,7 @@ function DebtsCenterView({
       count: number;
       oldestAgeDays: number;
     }>();
-    debtInvoices.forEach((invoice) => {
+    carriedDebts.forEach((invoice) => {
       const label = invoiceCustomerLabel(invoice);
       const name = label.trim().length > 1 ? label : invoice.number;
       const key = name.trim().toLowerCase();
@@ -1925,14 +2039,13 @@ function DebtsCenterView({
       grouped.set(key, current);
     });
     return [...grouped.values()].sort((a, b) => b.amountCents - a.amountCents);
-  }, [debtInvoices]);
-  const title = mode === "today" ? "Open invoices" : "Debts";
-  const subline = mode === "today"
-    ? `${todayInvoices.length} open today`
-    : `${openInvoices.length} pending · ${carriedDebts.length} carried over`;
-  const scopeInvoices = mode === "today" ? todayInvoices : debtInvoices;
-  const totalOwed = openTotalCents + carriedTotalCents;
-  const totalForMode = mode === "today" ? todayTotalCents : totalOwed;
+  }, [carriedDebts]);
+  const title = mode === "invoices" ? "Open & overdue invoices" : "Cashier debts";
+  const subline = mode === "invoices"
+    ? `${currentOpenInvoices.length} open - ${overdueInvoices.length} overdue`
+    : `${carriedDebts.length} invoice - ${inventoryDebts.length} missing inventory`;
+  const scopeCount = mode === "invoices" ? openInvoices.length : carriedDebts.length + inventoryDebts.length;
+  const totalForMode = mode === "invoices" ? openTotalCents : carriedTotalCents + inventoryTotalCents;
   const searchTerm = query.trim().toLowerCase();
 
   useEffect(() => {
@@ -1941,32 +2054,41 @@ function DebtsCenterView({
   }, [mode]);
 
   const visibleInvoices = useMemo(() => {
-    const source =
-      mode === "today"
-        ? (filter === "unpaid" ? todayInvoices.filter((invoice) => outstanding(invoice) > 0) : todayInvoices)
+    const source = mode === "invoices"
+      ? filter === "open"
+        ? currentOpenInvoices
         : filter === "overdue"
           ? overdueInvoices
-          : filter === "carried"
-            ? carriedDebts
-            : debtInvoices;
+          : openInvoices
+      : filter === "inventory"
+        ? []
+        : carriedDebts;
     return source
       .filter((invoice) => !searchTerm || invoiceSearchText(invoice).includes(searchTerm))
       .sort((a, b) => oldestFirst ? Number(a.ts || 0) - Number(b.ts || 0) : Number(b.ts || 0) - Number(a.ts || 0));
-  }, [carriedDebts, debtInvoices, filter, mode, oldestFirst, overdueInvoices, searchTerm, todayInvoices]);
+  }, [carriedDebts, currentOpenInvoices, filter, mode, oldestFirst, openInvoices, overdueInvoices, searchTerm]);
+  const visibleInventoryDebts = useMemo(() => {
+    if (mode !== "debts" || filter === "invoice") return [];
+    return inventoryDebts
+      .filter(({ debt }) => !searchTerm || [
+        debt.stockCountCode,
+        debt.source,
+        ...debt.items.flatMap((item) => [item.productName, item.sku || ""])
+      ].join(" ").toLowerCase().includes(searchTerm))
+      .sort((a, b) => oldestFirst ? a.debt.ts - b.debt.ts : b.debt.ts - a.debt.ts);
+  }, [filter, inventoryDebts, mode, oldestFirst, searchTerm]);
 
   return (
-    <section className={`debts-center-panel${mode === "debts" ? " has-customer-summary" : ""}`}>
+    <section className={`debts-center-panel${mode === "debts" && customerDebts.length > 0 ? " has-customer-summary" : ""}`}>
       <header className="debts-center-header">
         <div>
           <h2 id="debts-center-title">{title}</h2>
           <p>{subline}</p>
         </div>
-        {mode === "debts" && (
-          <div className="debts-total">
-            <span>Total owed</span>
-            <b>{money(totalOwed)}</b>
-          </div>
-        )}
+        <div className="debts-total">
+          <span>{mode === "debts" ? "Cashier debt" : "Outstanding"}</span>
+          <b>{money(totalForMode)}</b>
+        </div>
       </header>
 
       <label className="debts-search">
@@ -1974,19 +2096,22 @@ function DebtsCenterView({
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search customer, phone, or receipt..."
+          placeholder={mode === "debts" ? "Search customer, stock count, or product..." : "Search customer, phone, or receipt..."}
         />
       </label>
 
       <div className="debts-controls">
-        <div className="debts-filter-chips" role="tablist" aria-label="Debt filters">
-          <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({scopeInvoices.length})</button>
-          {mode === "today" ? (
-            <button className={filter === "unpaid" ? "active amber" : "amber"} type="button" onClick={() => setFilter("unpaid")}>Unpaid ({todayInvoices.length})</button>
+        <div className="debts-filter-chips" role="tablist" aria-label={mode === "debts" ? "Debt filters" : "Invoice filters"}>
+          <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({scopeCount})</button>
+          {mode === "invoices" ? (
+            <>
+              <button className={filter === "open" ? "active amber" : "amber"} type="button" onClick={() => setFilter("open")}>Open ({currentOpenInvoices.length})</button>
+              <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
+            </>
           ) : (
             <>
-              <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
-              <button className={filter === "carried" ? "active amber" : "amber"} type="button" onClick={() => setFilter("carried")}>Carried over ({carriedDebts.length})</button>
+              <button className={filter === "invoice" ? "active amber" : "amber"} type="button" onClick={() => setFilter("invoice")}>Invoice debt ({carriedDebts.length})</button>
+              <button className={filter === "inventory" ? "active danger" : "danger"} type="button" onClick={() => setFilter("inventory")}>Inventory debt ({inventoryDebts.length})</button>
             </>
           )}
         </div>
@@ -2007,7 +2132,7 @@ function DebtsCenterView({
                 <span>
                   <b>{customer.name}</b>
                   <small>
-                    {customer.count} open invoice{customer.count === 1 ? "" : "s"}
+                    {customer.count} debt invoice{customer.count === 1 ? "" : "s"}
                     {customer.oldestAgeDays > 0 ? ` · oldest ${customer.oldestAgeDays}d` : ""}
                   </small>
                 </span>
@@ -2019,17 +2144,17 @@ function DebtsCenterView({
       )}
 
       <div className="debts-list">
-        {visibleInvoices.length === 0 ? (
+        {visibleInvoices.length === 0 && visibleInventoryDebts.length === 0 ? (
           <div className="debts-empty">
-            <FileText size={28} />
-            <b>No invoices match</b>
-            <span>Try another customer, phone, receipt, or filter.</span>
+            {mode === "debts" ? <Boxes size={28} /> : <FileText size={28} />}
+            <b>No {mode === "debts" ? "debts" : "invoices"} match</b>
+            <span>Try another search or filter.</span>
           </div>
         ) : visibleInvoices.map((invoice) => {
           const label = invoiceCustomerLabel(invoice);
           const displayLabel = label.trim().length > 1 ? label : invoice.number;
           const ageDays = invoiceAgeDays(invoice);
-          const overdue = isOverdueDebtInvoice(invoice);
+          const overdue = isOverdueOpenInvoice(invoice);
           const ageText = ageDays <= 0 ? "Today" : `${ageDays}d`;
           return (
             <button className="debts-row" type="button" key={invoice.id} onClick={() => onSelect(invoice)}>
@@ -2038,17 +2163,31 @@ function DebtsCenterView({
                 <b>{displayLabel}</b>
                 <small title={invoice.number}>{middleReceipt(invoice.number)} &middot; {ageText}</small>
               </span>
-              {mode === "debts" && <span className={"debts-age " + (overdue ? "overdue" : "recent")}>{ageText}</span>}
+              <span className={"debts-age " + (mode === "debts" || overdue ? "overdue" : "recent")}>
+                {mode === "debts" ? "Invoice debt" : overdue ? "Overdue" : "Open"}
+              </span>
               <strong>{money(outstanding(invoice))}</strong>
               <ChevronRight size={18} />
             </button>
           );
         })}
+        {visibleInventoryDebts.map(({ debt, outstandingCents }) => (
+          <div className="debts-row inventory-debt-row" key={`inventory-${debt.id}`}>
+            <span className="debts-avatar"><Boxes size={17} /></span>
+            <span className="debts-main">
+              <b>Missing inventory</b>
+              <small>{debt.stockCountCode} &middot; {debt.shortageUnits} missing unit{debt.shortageUnits === 1 ? "" : "s"} &middot; {new Date(debt.ts).toLocaleDateString()}</small>
+            </span>
+            <span className="debts-age overdue">Joint debt</span>
+            <strong>{money(outstandingCents)}</strong>
+            <span aria-hidden="true" />
+          </div>
+        ))}
       </div>
 
       <footer className="debts-footer-note">
         <span>View only &middot; settlement is done by a supervisor.</span>
-        {mode === "today" && <b>{money(totalForMode)}</b>}
+        <b>{money(totalForMode)}</b>
       </footer>
     </section>
   );
