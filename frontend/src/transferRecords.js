@@ -44,3 +44,51 @@ export function nextTransferNumber(transfers = []) {
   }, 0);
   return `TRF-${String(lastNumber + 1).padStart(6, "0")}`;
 }
+
+export function rankStockTransferSuggestions(candidates = [], { days = 30, limit = 20 } = {}) {
+  const analysisDays = Math.max(1, Number(days) || 30);
+  const prepared = (candidates || []).map((candidate) => {
+    const sourceStock = Math.max(0, Math.floor(Number(candidate?.sourceStock) || 0));
+    const destinationStock = Math.max(0, Math.floor(Number(candidate?.destinationStock) || 0));
+    const sourceSold = Math.max(0, Number(candidate?.sourceSold) || 0);
+    const destinationSold = Math.max(0, Number(candidate?.destinationSold) || 0);
+    const sourceDailySales = sourceSold / analysisDays;
+    const destinationDailySales = destinationSold / analysisDays;
+    const sourceReserve = Math.max(1, Math.ceil(sourceDailySales * 30));
+    const sourceSurplus = Math.max(0, sourceStock - sourceReserve);
+    const destinationTarget = Math.max(2, Math.ceil(destinationDailySales * 21));
+    const destinationNeed = Math.max(0, destinationTarget - destinationStock);
+    const sourceIsStagnant = sourceSold <= destinationSold * 0.25;
+
+    if (destinationSold < 2 || !sourceIsStagnant || sourceSurplus <= 0 || destinationNeed <= 0) return null;
+    return {
+      ...candidate,
+      sourceStock,
+      destinationStock,
+      sourceSold,
+      destinationSold,
+      sourceReserve,
+      sourceSurplus,
+      destinationTarget,
+      destinationNeed,
+      requestedQty: Math.min(sourceSurplus, destinationNeed),
+      confidence: sourceSold === 0 && destinationSold >= 5 ? "High" : "Medium",
+      score: destinationSold * 10 + destinationNeed * 2 - sourceSold,
+    };
+  }).filter(Boolean).sort((a, b) => b.score - a.score || b.requestedQty - a.requestedQty);
+
+  const remainingSourceStock = new Map();
+  const suggestions = [];
+  prepared.forEach((candidate) => {
+    if (suggestions.length >= Math.max(1, Number(limit) || 20)) return;
+    const sourceKey = `${candidate.productKey || candidate.productId || candidate.productName}:${candidate.sourceBranchId}`;
+    const remaining = remainingSourceStock.has(sourceKey)
+      ? remainingSourceStock.get(sourceKey)
+      : candidate.sourceSurplus;
+    const suggestedQty = Math.min(candidate.requestedQty, remaining);
+    if (suggestedQty <= 0) return;
+    remainingSourceStock.set(sourceKey, remaining - suggestedQty);
+    suggestions.push({ ...candidate, suggestedQty });
+  });
+  return suggestions;
+}

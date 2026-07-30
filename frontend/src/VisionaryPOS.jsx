@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { buildReportDocument, ReportPreviewDialog } from "./components/reports/ReportEngine.jsx";
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import { productDisplayImage } from "./productImages.js";
-import { nextTransferNumber, normalizedTransferItems, transferUnitCount } from "./transferRecords.js";
+import { nextTransferNumber, normalizedTransferItems, rankStockTransferSuggestions, transferUnitCount } from "./transferRecords.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -3989,6 +3989,29 @@ body{overscroll-behavior:none}
 .ticket .totrow.grand{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:14px;padding:14px 16px;margin-top:10px}
 .xferinfo{background:rgba(14,165,181,.08);border:1px solid var(--border-soft);border-radius:16px;padding:16px 18px;margin-bottom:14px}
 .xferinfo strong{font-size:15px}
+.transfer-suggestions{border:1px solid var(--border-soft);background:var(--surface);border-radius:16px;margin-bottom:14px;overflow:hidden}
+.transfer-suggestions-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:16px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-suggestions-title{display:flex;align-items:center;gap:12px;min-width:0}
+.transfer-suggestions-title h3{font-size:16px;margin:0 0 3px}
+.transfer-suggestions-title p{font-size:12.5px;color:var(--muted);margin:0}
+.transfer-suggestions-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:rgba(14,165,181,.12);color:var(--accent);flex:0 0 auto}
+.transfer-suggestions-icon svg{width:18px;height:18px}
+.transfer-analysis-period{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.transfer-analysis-period>span{font-size:11px;color:var(--muted);font-weight:750;text-transform:uppercase}
+.transfer-analysis-period .select{height:38px;width:112px;padding:0 30px 0 11px}
+.transfer-suggestion-message{padding:10px 18px;background:rgba(36,196,135,.08);border-bottom:1px solid var(--border-soft);color:var(--ok);font-size:12.5px;font-weight:650}
+.transfer-suggestion-list{display:flex;flex-direction:column}
+.transfer-suggestion-row{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(160px,1fr) minmax(190px,1.25fr) auto;align-items:center;gap:16px;padding:13px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-suggestion-row:last-child{border-bottom:0}
+.transfer-suggestion-product,.transfer-suggestion-evidence{display:flex;flex-direction:column;gap:3px;min-width:0}
+.transfer-suggestion-product strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
+.transfer-suggestion-product span,.transfer-suggestion-evidence span{font-size:11.5px;color:var(--muted)}
+.transfer-suggestion-route{display:flex;align-items:center;gap:7px;font-size:12.5px;min-width:0}
+.transfer-suggestion-route strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-suggestion-route svg{width:14px;height:14px;color:var(--accent);flex:0 0 auto}
+.transfer-suggestion-action{display:flex;align-items:center;gap:10px;white-space:nowrap;font-size:12.5px}
+.transfer-suggestion-action>span{font-family:var(--font-mono)}
+.transfer-suggestion-empty{padding:18px;color:var(--muted);font-size:13px}
 .searchres{margin-top:8px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border-soft);border-radius:12px;padding:6px;background:var(--surface);box-shadow:0 12px 30px -18px rgba(20,30,70,.3)}
 .sres{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;background:transparent;border:none;padding:9px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--text);font-family:var(--font-ui)}
 .sres:hover{background:var(--surface-2)}
@@ -4168,6 +4191,11 @@ body{overscroll-behavior:none}
   .admincontent .wtab{flex:0 0 auto}
   .admincontent .branchwrap{gap:12px}
   .admincontent .brow{align-items:flex-start;flex-wrap:wrap}
+  .transfer-suggestions-head{align-items:stretch;flex-direction:column;padding:14px}
+  .transfer-analysis-period{justify-content:space-between}
+  .transfer-suggestion-row{grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:13px 14px}
+  .transfer-suggestion-route,.transfer-suggestion-evidence{grid-column:1}
+  .transfer-suggestion-action{grid-column:2;grid-row:1 / span 3;align-items:flex-end;flex-direction:column;justify-content:center}
 }
 @media (max-width:520px){
   .vpos{padding:8px}
@@ -10262,11 +10290,79 @@ function BorrowingTab({ data, update }) {
   const [transferScannerOn, setTransferScannerOn] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [transferScanMessage, setTransferScanMessage] = useState("");
+  const [analysisDays, setAnalysisDays] = useState(7);
+  const [suggestionMessage, setSuggestionMessage] = useState("");
   const transferSearchRef = useRef(null);
   const transferQtyRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
+  const transferSuggestions = useMemo(() => {
+    const activeBranches = (data.branches || []).filter((branch) => branch.active !== false);
+    if (activeBranches.length < 2) return [];
+    const cutoff = now() - analysisDays * 86400000;
+    const productsById = new Map((data.products || []).map((entry) => [entry.id, entry]));
+    const metricsByProduct = new Map();
+
+    activeBranches.forEach((branch) => {
+      branchProductsUnique(data, branch.id).filter(productIsEnabled).forEach((entry) => {
+        const productKey = productDedupeKey(entry);
+        const metric = metricsByProduct.get(productKey) || {
+          productKey,
+          productName: entry.name,
+          sku: entry.sku,
+          branches: new Map(),
+        };
+        metric.branches.set(branch.id, {
+          product: entry,
+          stock: Math.max(0, productOnHand(data, entry, branch.id)),
+          sold: 0,
+        });
+        metricsByProduct.set(productKey, metric);
+      });
+    });
+
+    (data.stockMovements || []).forEach((movement) => {
+      if (Number(movement.ts || 0) < cutoff || Number(movement.qty || 0) >= 0) return;
+      if (!String(movement.reason || "").startsWith("Sale ")) return;
+      const invoice = saleMoveInvoice(data, movement);
+      if (invoice && invoiceIsVoided(data, invoice)) return;
+      const movementProduct = productsById.get(movement.productId);
+      if (!movementProduct) return;
+      const metric = metricsByProduct.get(productDedupeKey(movementProduct));
+      const branchMetric = metric?.branches.get(movement.branchId);
+      if (branchMetric) branchMetric.sold += Math.abs(Number(movement.qty || 0));
+    });
+
+    const candidates = [];
+    metricsByProduct.forEach((metric) => {
+      activeBranches.forEach((sourceBranch) => {
+        const source = metric.branches.get(sourceBranch.id);
+        if (!source || source.stock <= 1) return;
+        const sourceCostCents = branchInventoryCostCents(data, source.product, sourceBranch.id);
+        if (sourceCostCents <= 0) return;
+        activeBranches.forEach((destinationBranch) => {
+          if (destinationBranch.id === sourceBranch.id) return;
+          const destination = metric.branches.get(destinationBranch.id);
+          if (!destination) return;
+          candidates.push({
+            productKey: metric.productKey,
+            productId: source.product.id,
+            productName: metric.productName,
+            sku: metric.sku,
+            sourceBranchId: sourceBranch.id,
+            destinationBranchId: destinationBranch.id,
+            sourceStock: source.stock,
+            destinationStock: destination.stock,
+            sourceSold: source.sold,
+            destinationSold: destination.sold,
+            costCents: sourceCostCents,
+          });
+        });
+      });
+    });
+    return rankStockTransferSuggestions(candidates, { days: analysisDays, limit: 20 });
+  }, [data, analysisDays]);
   const product = data.products.find((p) => p.id === productId);
   // available accounts for quantities already added to the pending list for this product at this source
   const pendingQty = (pid) => lines.filter((l) => l.productId === pid).reduce((s, l) => s + l.qty, 0);
@@ -10325,6 +10421,47 @@ function BorrowingTab({ data, update }) {
     setQty(""); setProductId(""); setQ("");
   };
   const removeLine = (pid) => setLines((ls) => ls.filter((l) => l.productId !== pid));
+
+  const useTransferSuggestion = (suggestion) => {
+    if (lines.length > 0 && (fromB !== suggestion.sourceBranchId || toB !== suggestion.destinationBranchId)) {
+      setSuggestionMessage("Save the current transfer before preparing a suggestion for another branch route.");
+      return;
+    }
+    const sourceProduct = data.products.find((entry) => entry.id === suggestion.productId);
+    if (!sourceProduct) {
+      setSuggestionMessage("This product is no longer available for transfer.");
+      return;
+    }
+    const recommendedQty = Math.min(
+      suggestion.suggestedQty,
+      Math.max(0, productOnHand(data, sourceProduct, suggestion.sourceBranchId))
+    );
+    if (recommendedQty <= 0) {
+      setSuggestionMessage("The source stock changed and is no longer available.");
+      return;
+    }
+    setFromB(suggestion.sourceBranchId);
+    setToB(suggestion.destinationBranchId);
+    setLines((current) => {
+      const index = current.findIndex((line) => line.productId === suggestion.productId);
+      if (index < 0) return [...current, {
+        productId: suggestion.productId,
+        productName: suggestion.productName,
+        sku: suggestion.sku,
+        qty: recommendedQty,
+        costCents: suggestion.costCents,
+      }];
+      const next = current.slice();
+      next[index] = { ...next[index], qty: Math.max(next[index].qty, recommendedQty) };
+      return next;
+    });
+    setProductId("");
+    setQ("");
+    setQty("");
+    setErr("");
+    setNote((current) => current || `Suggested from ${analysisDays}-day branch sales analysis`);
+    setSuggestionMessage(`${suggestion.productName} added: ${suggestion.suggestedQty} unit${suggestion.suggestedQty === 1 ? "" : "s"} from ${bn(suggestion.sourceBranchId)} to ${bn(suggestion.destinationBranchId)}.`);
+  };
 
   const transferNeedsCostRepair = (transfer) => normalizedTransferItems(transfer, data.products).some((item) => !(Number(item.costCents) > 0));
   const repairPreview = repairTransfer ? normalizedTransferItems(repairTransfer, data.products).map((item) => {
@@ -10426,6 +10563,31 @@ function BorrowingTab({ data, update }) {
   return (
     <div>
       <PageHead title="Move Stock Between Shops" sub="Stock Borrowing / Branch Transfer" />
+      <section className="transfer-suggestions" aria-labelledby="transfer-suggestions-title">
+        <div className="transfer-suggestions-head">
+          <div className="transfer-suggestions-title">
+            <span className="transfer-suggestions-icon"><Sparkles /></span>
+            <div><h3 id="transfer-suggestions-title">Suggested stock transfers</h3><p>Products selling in one shop but stagnant in another.</p></div>
+          </div>
+          <label className="transfer-analysis-period"><span>Sales period</span><select className="select" value={analysisDays} onChange={(event) => { setAnalysisDays(Number(event.target.value)); setSuggestionMessage(""); }}>
+            {[7, 14, 30, 60, 90].map((days) => <option key={days} value={days}>{days === 7 ? "1 week" : `${days} days`}</option>)}
+          </select></label>
+        </div>
+        {suggestionMessage && <div className="transfer-suggestion-message" role="status">{suggestionMessage}</div>}
+        {transferSuggestions.length > 0 ? <div className="transfer-suggestion-list">
+          {transferSuggestions.map((suggestion) => (
+            <div className="transfer-suggestion-row" key={`${suggestion.productKey}:${suggestion.sourceBranchId}:${suggestion.destinationBranchId}`}>
+              <div className="transfer-suggestion-product"><strong>{suggestion.productName}</strong><span>{suggestion.sku || "No SKU"} · {suggestion.confidence} confidence</span></div>
+              <div className="transfer-suggestion-route"><strong>{bn(suggestion.sourceBranchId)}</strong><ArrowRight /><strong>{bn(suggestion.destinationBranchId)}</strong></div>
+              <div className="transfer-suggestion-evidence">
+                <span><b>{suggestion.sourceSold}</b> sold · <b>{suggestion.sourceStock}</b> in stock</span>
+                <span><b>{suggestion.destinationSold}</b> sold · <b>{suggestion.destinationStock}</b> in stock</span>
+              </div>
+              <div className="transfer-suggestion-action"><span>Move <b>{suggestion.suggestedQty}</b></span><button type="button" className="btn sm btn-primary" onClick={() => useTransferSuggestion(suggestion)}>Add to transfer</button></div>
+            </div>
+          ))}
+        </div> : <div className="transfer-suggestion-empty">No safe transfer suggestions for this period. Stock is balanced, demand is too low, or the source shop needs its current reserve.</div>}
+      </section>
       <div className="xferinfo">
         <strong>This is a branch transfer, not a sale.</strong>
         <div className="sub" style={{ marginTop: 4 }}>It reduces stock at the source branch and adds it to the destination branch.</div>
