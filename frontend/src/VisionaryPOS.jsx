@@ -6614,11 +6614,9 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
   const ageClass = invIsDebt(inv) ? "debt" : age > 0 ? "overdue" : "open";
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
-    : voidStatus === "pending" ? "void pending"
-      : voidStatus === "rejected" ? "void rejected" : status;
+    : voidStatus === "pending" ? "void pending" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "overdue"
-      : voidStatus === "rejected" ? "open" : status;
+    : voidStatus === "pending" ? "overdue" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
@@ -6629,7 +6627,10 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
       <td>{dt(inv.ts)}</td>
       <td><span className={"ist " + ageClass}>{age === 0 ? "today" : age + "d"}</span></td>
       <td className="amt">{fmt(out, cur)}</td>
-      <td><span className={"ist " + displayClass}>{displayStatus}</span></td>
+      <td>
+        <span className={"ist " + displayClass}>{displayStatus}</span>
+        {voidStatus === "rejected" ? <div className="mt2">Void request rejected</div> : null}
+      </td>
     </tr>
   );
 }
