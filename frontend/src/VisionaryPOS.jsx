@@ -9,7 +9,7 @@ import {
   AlertCircle, Search, Wifi, WifiOff, RefreshCw, X, Package, Users, BarChart3, Tag, Tags,
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
-  Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
+  Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
   Wrench, Phone, Zap, Home, Circle, Camera,
 } from "lucide-react";
@@ -4119,6 +4119,13 @@ body{overscroll-behavior:none}
 .document-file.open .document-file-head .chevron{transform:rotate(180deg)}
 .document-file-body{padding:4px 0 10px}
 .document-file-body>.list{max-height:460px;overflow:auto}
+.transfer-record-toolbar{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:2px 0 9px}
+.transfer-record-toolbar .btn{min-width:128px;justify-content:center}
+.transfer-date-filter{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.transfer-date-filter label{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase}
+.transfer-date-filter .input{width:148px;height:34px;padding:0 9px;font-size:12px}
+.transfer-date-filter .iconbtn{width:34px;height:34px;border-radius:8px}
+@media(max-width:620px){.transfer-record-toolbar,.transfer-date-filter{align-items:stretch}.transfer-date-filter{width:100%}.transfer-date-filter label{flex:1 1 130px}.transfer-date-filter .input{width:100%}.transfer-record-toolbar>.btn{width:100%}}
 @media (max-width:900px){.expense-entry-grid{grid-template-columns:1fr 1fr}.expense-entry-grid .btn{width:100%}.expense-overview-grid{grid-template-columns:1fr}}
 @media (max-width:680px){.expense-head-actions{width:100%}.expense-head-actions .btn{flex:1}.expense-tabs{width:100%;overflow-x:auto}.expense-tab{flex:1;justify-content:center}.expense-filterbar{align-items:stretch}.expense-filterbar .segbtns{width:100%;overflow-x:auto;flex-wrap:nowrap}.expense-filterbar .seg{white-space:nowrap}.expense-filterbar .select{width:100%;margin-left:0}.expense-custom-range{width:100%}.expense-custom-range .input{min-width:0;width:100%}.expense-summary>div{padding:10px 8px}.expense-summary b{font-size:15px}.expense-summary small{font-size:10px}.expense-entry-grid,.expense-category-form{grid-template-columns:1fr}.expense-category-list .row{align-items:flex-start}.expense-category-list .category-order{margin-left:44px}.expense-queue-actions{width:100%;margin-left:44px}.expense-queue-actions .btn{flex:1}.expense-reject-form{grid-template-columns:1fr}.expense-history-list .row>.pill{margin-left:44px}.expense-tool-head{align-items:flex-start}}
 .expbtns{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;align-items:center}
@@ -10348,6 +10355,9 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [requestReviewError, setRequestReviewError] = useState("");
+  const [transferSort, setTransferSort] = useState("latest");
+  const [transferDateFrom, setTransferDateFrom] = useState("");
+  const [transferDateTo, setTransferDateTo] = useState("");
   const transferSearchRef = useRef(null);
   const transferQtyRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
@@ -10435,6 +10445,16 @@ function BorrowingTab({ data, update, approver, approverRole }) {
     return rankStockTransferSuggestions(candidates, { days: analysisDays, limit: 20 });
   }, [data, analysisDays]);
   const visibleTransferSuggestions = showAllSuggestions ? transferSuggestions : transferSuggestions.slice(0, 5);
+  const sortedTransfers = useMemo(() => {
+    const fromTs = transferDateFrom ? new Date(transferDateFrom + "T00:00:00").getTime() : -Infinity;
+    const toTs = transferDateTo ? new Date(transferDateTo + "T23:59:59.999").getTime() : Infinity;
+    return [...(data.borrowings || [])]
+      .filter((transfer) => Number(transfer.ts || 0) >= fromTs && Number(transfer.ts || 0) <= toTs)
+      .sort((a, b) => {
+        const difference = Number(b.ts || 0) - Number(a.ts || 0);
+        return transferSort === "latest" ? difference : -difference;
+      });
+  }, [data.borrowings, transferDateFrom, transferDateTo, transferSort]);
   const product = data.products.find((p) => p.id === productId);
   // available accounts for quantities already added to the pending list for this product at this source
   const pendingQty = (pid) => lines.filter((l) => l.productId === pid).reduce((s, l) => s + l.qty, 0);
@@ -10843,8 +10863,18 @@ function BorrowingTab({ data, update, approver, approverRole }) {
         </div>}
       </section>
 
-      <DocumentFile title="Transfer records" count={data.borrowings.length} meta="Completed branch stock movements">
-      <div className="list">{data.borrowings.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
+      <DocumentFile title="Transfer records" count={sortedTransfers.length} meta={transferDateFrom || transferDateTo ? `${sortedTransfers.length} of ${data.borrowings.length} completed movements` : "Completed branch stock movements"}>
+      <div className="transfer-record-toolbar">
+        <div className="transfer-date-filter">
+          <label>From<input className="input" type="date" value={transferDateFrom} max={transferDateTo || todayStr()} onChange={(event) => setTransferDateFrom(event.target.value)} /></label>
+          <label>To<input className="input" type="date" value={transferDateTo} min={transferDateFrom || undefined} max={todayStr()} onChange={(event) => setTransferDateTo(event.target.value)} /></label>
+          {(transferDateFrom || transferDateTo) && <button type="button" className="iconbtn" onClick={() => { setTransferDateFrom(""); setTransferDateTo(""); }} aria-label="Clear transfer date filter" title="Clear date filter"><X /></button>}
+        </div>
+        <button type="button" className="btn xs btn-ghost" onClick={() => setTransferSort((current) => current === "latest" ? "oldest" : "latest")} title={transferSort === "latest" ? "Showing latest transfers first" : "Showing oldest transfers first"}>
+          {transferSort === "latest" ? <ArrowDown /> : <ArrowUp />} {transferSort === "latest" ? "Latest first" : "Oldest first"}
+        </button>
+      </div>
+      <div className="list">{sortedTransfers.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
         return (
         <div className="row" key={t.id}>
           <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
@@ -10853,7 +10883,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
           <span className="ist paid">{t.status || "completed"}</span>
           <span className="pill plain">{dt(t.ts)}</span>
         </div>); })}
-        {data.borrowings.length === 0 && <div className="notice">No transfers yet.</div>}</div>
+        {sortedTransfers.length === 0 && <div className="notice">{data.borrowings.length === 0 ? "No transfers yet." : "No transfers in this date range."}</div>}</div>
       </DocumentFile>
 
       {cameraOpen && (
@@ -11757,6 +11787,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const pnlProductSearchRef = useRef(null);
   const [reorderWeeks, setReorderWeeks] = useState(2); // weeks of demand to cover in the reorder forecast
   const [printPreview, setPrintPreview] = useState(null);
+  const [transferSort, setTransferSort] = useState("latest");
 
   const reportProducts = useMemo(
     () => rb === "all" ? dedupeProductsByCode(data.products) : branchProductsUnique(data, rb),
@@ -11843,7 +11874,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       && inBranch(paymentBranchId(payment));
   });
   const periodExp = data.expenses.filter((e) => (!e.status || e.status === "approved") && inRange(e.ts) && inBranch(e.branchId));
-  const transfers = data.borrowings.filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb));
+  const transfers = data.borrowings
+    .filter((t) => inRange(t.ts) && (rb === "all" || t.fromBranchId === rb || t.toBranchId === rb))
+    .sort((a, b) => {
+      const difference = Number(b.ts || 0) - Number(a.ts || 0);
+      return transferSort === "latest" ? difference : -difference;
+    });
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
   const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); }, 0);
   const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); });
@@ -12722,10 +12758,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
       {sub === "transfers" && (
         transfers.length === 0 ? <div className="notice">No transfers in this period.</div> : (
-          <div className="list">{transfers.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products); return (<div className="row" key={t.id}>
+          <><div className="transfer-record-toolbar">
+            <button type="button" className="btn xs btn-ghost" onClick={() => setTransferSort((current) => current === "latest" ? "oldest" : "latest")} title={transferSort === "latest" ? "Showing latest transfers first" : "Showing oldest transfers first"}>
+              {transferSort === "latest" ? <ArrowDown /> : <ArrowUp />} {transferSort === "latest" ? "Latest first" : "Oldest first"}
+            </button>
+          </div><div className="list">{transfers.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products); return (<div className="row" key={t.id}>
             <div className="meta"><div className="nm" style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{t.number}</div>
               <div className="mt2">{bname(t.fromBranchId)} → {bname(t.toBranchId)} · {items.map((item) => item.productName + " × " + item.qty).join(", ")}{items.length > 1 ? " · " + units + " units total" : ""}</div></div>
-            <span className="ist paid">{t.status || "completed"}</span><span className="pill plain">{dt(t.ts)}</span></div>); })}</div>)
+            <span className="ist paid">{t.status || "completed"}</span><span className="pill plain">{dt(t.ts)}</span></div>); })}</div></>)
       )}
       {reportCameraOpen && (
         <CameraBarcodeScanner
