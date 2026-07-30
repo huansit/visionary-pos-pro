@@ -5710,7 +5710,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const reorders = reorderList(data, branch.id).length;
   const pendingExpenseCount = (data.expenses || []).filter((e) => e.status === "pending").length;
   const openCashierCreditInvoices = (cashier) => {
-    setInvoiceFocus({ cashier, filter: "overdue", key: Date.now() });
+    setInvoiceFocus({ cashier, filter: "debt", key: Date.now() });
     setTab("invoices");
   };
   const NavBtn = ({ item, main }) => { const I = item.icon; return (
@@ -5795,6 +5795,10 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const invoices = operationalInvoices(data);
   const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
+  const voidedInvoices = (data.invoices || [])
+    .filter((invoice) => invoice.branchId === branch.id && invoiceIsVoided(data, invoice))
+    .map((invoice) => ({ ...invoice, carriedOver: false }));
+  const displayInvoices = [...activeInvoices, ...voidedInvoices];
   const invoiceIssuedTs = (invoice) => {
     const value = invoice.ts ?? invoice.issuedAt ?? invoice.createdAt;
     const numeric = Number(value);
@@ -5830,21 +5834,22 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       && voidStatus !== "pending";
   });
   const branchForInvoice = (inv) => data.branches.find((b) => b.id === inv.branchId) || branch;
-  const cashierNames = Array.from(new Set(activeInvoices.map(invoiceCashierName)))
+  const cashierNames = Array.from(new Set(displayInvoices.map(invoiceCashierName)))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const needle = query.trim().toLowerCase();
-  const invoiceProductLines = new Map(activeInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
+  const invoiceProductLines = new Map(displayInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
   const invoiceProductSummary = (invoice) => Array.from(new Set((invoiceProductLines.get(invoice.id) || []).map((line) => line.name).filter(Boolean))).join(", ");
-  const filtered = activeInvoices
+  const filtered = (filter === "voided" ? voidedInvoices : filter === "all" ? displayInvoices : activeInvoices)
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
       if (filter === "all") return true;
+      if (filter === "voided") return voidStatus === "approved";
       if (voidStatus === "approved") return false;
-      if (filter === "overdue") return invIsDebt(i) || invIsOverdue(i);
-      return filter === "open"
-        ? invOutstanding(i) > 0 && !invIsDebt(i) && !invIsOverdue(i)
-        : invOutstanding(i) <= 0;
+      if (filter === "debt") return invIsDebt(i);
+      if (filter === "overdue") return invIsOverdue(i);
+      if (filter === "open") return invOutstanding(i) > 0 && !invIsDebt(i) && !invIsOverdue(i);
+      return invOutstanding(i) <= 0;
     })
     .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
     .filter((i) => {
@@ -5862,7 +5867,10 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       return invoiceMatch || productMatch;
     })
     .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
-  const filteredBalanceDue = filtered.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const filteredBalanceDue = filtered.reduce(
+    (sum, invoice) => sum + (invoiceIsVoided(data, invoice) ? 0 : invOutstanding(invoice)),
+    0
+  );
   const selectedInvoices = filtered.filter((invoice) => selectedInvoiceIds.has(invoice.id));
   const allFilteredSelected = filtered.length > 0 && selectedInvoices.length === filtered.length;
   const toggleInvoiceSelection = (invoiceId) => {
@@ -5950,7 +5958,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>} />
       <div className="stats compact">
         <div className="stat"><div className="sl">Open invoices</div><div className="sv">{open.length}</div></div>
-        <div className="stat"><div className="sl">Overdue / debt</div><div className={"sv" + (overdue.length + debtInvoices.length ? " warn" : "")}>{overdue.length + debtInvoices.length}</div></div>
+        <div className="stat"><div className="sl">Overdue invoices</div><div className={"sv" + (overdue.length ? " warn" : "")}>{overdue.length}</div></div>
+        <div className="stat"><div className="sl">Debts</div><div className={"sv" + (debtInvoices.length ? " warn" : "")}>{debtInvoices.length}</div></div>
+        <div className="stat"><div className="sl">Voided invoices</div><div className="sv">{voidedInvoices.length}</div></div>
         <div className="stat"><div className="sl">{hasCustomDateRange ? "Balance due · custom range" : "Balance due · current period"}</div><div className="sv">{fmt(balanceDue, cur)}</div></div>
         <div className="stat"><div className="sl">{hasCustomDateRange ? "Total invoiced · custom range" : "Total invoiced · current period"}</div><div className="sv">{fmt(totalInvoiced, cur)}</div></div>
       </div>
@@ -5965,7 +5975,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       <div className="settlebar">
         <div className="seg">
-          {[["open", "Open"], ["overdue", "Overdue"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
+          {[["open", "Open"], ["overdue", "Overdue"], ["debt", "Debts"], ["paid", "Paid"], ["voided", "Voided"], ["all", "All"]].map(([key, label]) => (
             <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
           ))}
         </div>
@@ -6599,7 +6609,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
 }
 function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }) {
   const status = invStatus(inv);
-  const out = invOutstanding(inv);
+  const out = voidInfo?.status === "approved" ? 0 : invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const ageClass = invIsDebt(inv) ? "debt" : age > 0 ? "overdue" : "open";
   const voidStatus = voidInfo?.status || "none";
@@ -6629,15 +6639,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [tnote, setTnote] = useState(live.trackingNote || "");
   const [saved, setSaved] = useState(false);
   const [method, setMethod] = useState(live.method || "M-Pesa");
-  const out = invOutstanding(live);
-  const status = invStatus(live);
+  const voidInfo = invoiceVoidState(data, live.id);
+  const voidPending = voidInfo.status === "pending";
+  const voidApproved = voidInfo.status === "approved";
+  const out = voidApproved ? 0 : invOutstanding(live);
+  const status = voidApproved ? "voided" : invStatus(live);
   const [amount, setAmount] = useState(moneyInputValue(out));
   useEffect(() => { setAmount(moneyInputValue(out)); }, [live.id, out]);
   const paymentCents = clampPaymentCents(amount, out);
   const isFullPayment = out > 0 && paymentCents === out;
-  const voidInfo = invoiceVoidState(data, live.id);
-  const voidPending = voidInfo.status === "pending";
-  const voidApproved = voidInfo.status === "approved";
   const [decisionReason, setDecisionReason] = useState("");
   const [voidError, setVoidError] = useState("");
   const actorName = typeof user === "string"
@@ -8089,7 +8099,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
         <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.code} - {report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
-        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to missing inventory</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active cashier(s) and available in Cashier Credit reports." : "No active branch cashier was available, so this debt is awaiting allocation."}</div></div></div>}
+        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to missing inventory</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active cashier(s) and available in Debts reports." : "No active branch cashier was available, so this debt is awaiting allocation."}</div></div></div>}
       </div>}
     </div>
   );
@@ -10047,8 +10057,9 @@ function AIManagerTab({ data, sessionToken }) {
 /* ---- Reports ---- */
 const RSUBS = [
   ["overview", "Overview"], ["products", "Product Reports"], ["pnl", "Profit & Loss"],
-  ["inventory", "Inventory Analytics"], ["reorder", "Reorder Forecast"], ["cashier", "Cashier Credit"],
-  ["unpaid", "Unpaid Invoices"], ["credit", "Credit Recovery"], ["expenses", "Expense Reports"], ["loss", "Loss & Damage"], ["transfers", "Transfer History"],
+  ["inventory", "Inventory Analytics"], ["reorder", "Reorder Forecast"], ["cashier", "Debts"],
+  ["open", "Open Invoices"], ["overdue", "Overdue Invoices"], ["voided", "Voided Invoices"],
+  ["credit", "Debt Recovery"], ["expenses", "Expense Reports"], ["loss", "Loss & Damage"], ["transfers", "Transfer History"],
 ];
 function downloadFile(name, content, type) {
   try {
@@ -10232,7 +10243,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const cur = data.settings.currency;
   const [period, setPeriod] = useState("today");
   const [rb, setRb] = useState("all");
-  const [sub, setSub] = useState(initialTab || "overview");
+  const [sub, setSub] = useState(initialTab === "unpaid" ? "open" : (initialTab || "overview"));
   const [fromD, setFromD] = useState(todayStr());
   const [toD, setToD] = useState(todayStr());
   const [vel, setVel] = useState("all");
@@ -10346,10 +10357,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   // business day are recognized in profit, margin and product P&L.
   const grossSales = invs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
   const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
-  const openSales = invs.reduce((s, i) => s + invOutstanding(i), 0);
-  const overdueSales = invs.filter((i) => invIsDebt(i) || invIsOverdue(i)).reduce((s, i) => s + invOutstanding(i), 0);
-  const overdueCreditInvoices = invs.filter((invoice) => invIsDebt(invoice));
-  const overdueCredits = overdueCreditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const periodOpenInvoices = invs.filter((invoice) => invOutstanding(invoice) > 0 && !invIsDebt(invoice) && !invIsOverdue(invoice));
+  const periodOverdueInvoices = invs.filter((invoice) => invIsOverdue(invoice));
+  const periodDebtInvoices = invs.filter((invoice) => invIsDebt(invoice));
+  const openSales = periodOpenInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const overdueSales = periodOverdueInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const debtSales = periodDebtInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const grossProfit = totalSales - cogs;
   const expTotal = periodExp.reduce((s, e) => s + e.amountCents, 0);
   const netProfit = grossProfit - expTotal - lossTotal;
@@ -10600,9 +10613,15 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const trendRows = Object.entries(trend).sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-10);
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
-  const openInv = activeInvoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
+  const unresolvedInvoices = activeInvoices.filter((i) => invOutstanding(i) > 0 && inBranch(i.branchId));
+  const openInvoiceReport = unresolvedInvoices.filter((invoice) => !invIsDebt(invoice) && !invIsOverdue(invoice));
+  const overdueInvoiceReport = unresolvedInvoices.filter((invoice) => invIsOverdue(invoice));
+  const debtInvoiceReport = unresolvedInvoices.filter((invoice) => invIsDebt(invoice));
+  const voidedInvoiceReport = (data.invoices || [])
+    .filter((invoice) => inBranch(invoice.branchId) && invoiceIsVoided(data, invoice))
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   const invoiceDebtByCashierReport = {};
-  openInv.filter((i) => invIsDebt(i)).forEach((i) => {
+  debtInvoiceReport.forEach((i) => {
     const cashier = invoiceCashierName(i);
     invoiceDebtByCashierReport[cashier] = (invoiceDebtByCashierReport[cashier] || 0) + invOutstanding(i);
   });
@@ -10655,15 +10674,24 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       return { name: "reorder-forecast", headers: ["Product", "SKU", "On hand", "Weekly demand", "Weeks of cover", "Reorder level", "Suggested order (" + reorderWeeks + "wk cover)"], rows: rws.map((r) => [r.p.name, r.p.sku, r.oh, r.wk.toFixed(2), r.cover.toFixed(1), r.lvl, r.need]) };
     }
     if (sub === "cashier") return {
-      name: "cashier-credit",
-      headers: ["Cashier", "Overdue invoices", "Missing inventory counts", "Invoice debt", "Missing inventory debt", "Total owed"],
-      rows: Object.entries(debtByCashier).map(([n, v]) => [n, openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length, missingDebtCountByCashier[n] || 0, m(invoiceDebtByCashierReport[n] || 0), m(missingDebtByCashierReport[n] || 0), m(v)]),
+      name: "cashier-debts",
+      headers: ["Cashier", "Debt invoices", "Missing inventory counts", "Invoice debt", "Missing inventory debt", "Total owed"],
+      rows: Object.entries(debtByCashier).map(([n, v]) => [n, debtInvoiceReport.filter((i) => invoiceCashierName(i) === n).length, missingDebtCountByCashier[n] || 0, m(invoiceDebtByCashierReport[n] || 0), m(missingDebtByCashierReport[n] || 0), m(v)]),
     };
-    if (sub === "unpaid") return { name: "unpaid-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInv.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), invStatus(i)]) };
-    if (sub === "credit") return { name: "credit-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (invIsDebt(i) ? (i.paidCents > 0 ? "partial overdue" : "overdue") : "open")]) };
+    if (sub === "open") return { name: "open-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: openInvoiceReport.map((i) => [i.number || i.receiptNo, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), "open"]) };
+    if (sub === "overdue") return { name: "overdue-invoices", headers: ["Invoice", "Cashier", "Customer", "Date", "Outstanding", "Status"], rows: overdueInvoiceReport.map((i) => [i.number || i.receiptNo, invoiceCashierName(i), i.customerName, i.date, m(invOutstanding(i)), "overdue"]) };
+    if (sub === "voided") return {
+      name: "voided-invoices",
+      headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Void reason", "Approved by"],
+      rows: voidedInvoiceReport.map((invoice) => {
+        const voidInfo = invoiceVoidState(data, invoice.id);
+        return [invoice.number || invoice.receiptNo, invoiceCashierName(invoice), invoice.customerName, invoice.date, m(invoice.totalCents), voidInfo.decision?.reason || voidInfo.request?.reason || "", voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"];
+      }),
+    };
+    if (sub === "credit") return { name: "debt-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt")]) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
-    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue balance", m(overdueSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
+    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all non-void invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
   const activeBranchName = rb === "all" ? "All branches" : bname(rb);
@@ -10675,9 +10703,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       pnl: "Product Profit & Loss Report",
       inventory: "Inventory Report",
       reorder: "Reorder Forecast",
-      cashier: "Cashier Report",
-      unpaid: "Unpaid Invoices Report",
-      credit: "Credit Recovery Report",
+      cashier: "Cashier Debt Report",
+      open: "Open Invoices Report",
+      overdue: "Overdue Invoices Report",
+      voided: "Voided Invoices Report",
+      credit: "Debt Recovery Report",
       expenses: "Expense Report",
       loss: "Loss & Damage Report",
       transfers: "Stock Transfer Report",
@@ -10707,16 +10737,25 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       ];
       if (sub === "cashier") return [
         { label: "Cashiers", value: t.rows.length },
-        { label: "Overdue invoices", value: t.rows.reduce((sum, row) => sum + Number(row[1] || 0), 0) },
-        { label: "Amount owed", value: fmt(Math.round(t.rows.reduce((sum, row) => sum + Number(row[2] || 0), 0) * 100), cur) },
+        { label: "Debt invoices", value: t.rows.reduce((sum, row) => sum + Number(row[1] || 0), 0) },
+        { label: "Missing inventory counts", value: t.rows.reduce((sum, row) => sum + Number(row[2] || 0), 0) },
+        { label: "Amount owed", value: fmt(Math.round(t.rows.reduce((sum, row) => sum + Number(row[5] || 0), 0) * 100), cur) },
       ];
-      if (sub === "unpaid") return [
-        { label: "Unpaid invoices", value: openInv.length },
-        { label: "Outstanding", value: fmt(openInv.reduce((sum, invoice) => sum + invOutstanding(invoice), 0), cur) },
+      if (sub === "open") return [
+        { label: "Open invoices", value: openInvoiceReport.length },
+        { label: "Outstanding", value: fmt(openInvoiceReport.reduce((sum, invoice) => sum + invOutstanding(invoice), 0), cur) },
+      ];
+      if (sub === "overdue") return [
+        { label: "Overdue invoices", value: overdueInvoiceReport.length },
+        { label: "Outstanding", value: fmt(overdueInvoiceReport.reduce((sum, invoice) => sum + invOutstanding(invoice), 0), cur) },
+      ];
+      if (sub === "voided") return [
+        { label: "Voided invoices", value: voidedInvoiceReport.length },
+        { label: "Voided value", value: fmt(voidedInvoiceReport.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur) },
       ];
       if (sub === "credit") return [
         { label: "Recovered", value: recoveredList.length },
-        { label: "Overdue", value: pendingList.length },
+        { label: "Outstanding debts", value: pendingList.length },
         { label: "Outstanding", value: fmt(pendingTotal, cur) },
         { label: "Partial", value: partialCount },
       ];
@@ -10811,14 +10850,16 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "overview" && (
         <>
           <div className="stats">
-            <Stat l="Gross Sales" v={fmt(grossSales, cur)} sub2={invs.length + " invoice(s) · includes open and overdue"} />
+            <Stat l="Gross Sales" v={fmt(grossSales, cur)} sub2={invs.length + " non-void invoice(s)"} />
             <Stat l="Inventory Value" v={fmt(inventoryValue, cur)} sub2={activeBranchName} />
             <Stat l="Net Profit" v={fmt(netProfit, cur)} warn={netProfit < 0} />
             <Stat l="Cost of Goods" v={fmt(cogs, cur)} />
             <Stat l="Average Margin" v={margin + "%"} />
           </div>
           <div className="stats">
-            <Stat l="Overdue Credits" v={fmt(overdueCredits, cur)} sub2={overdueCreditInvoices.length + " carried-over invoice(s)"} warn={overdueCredits > 0} />
+            <Stat l="Open Invoices" v={fmt(openSales, cur)} sub2={periodOpenInvoices.length + " invoice(s)"} warn={openSales > 0} />
+            <Stat l="Overdue Invoices" v={fmt(overdueSales, cur)} sub2={periodOverdueInvoices.length + " invoice(s)"} warn={overdueSales > 0} />
+            <Stat l="Debts" v={fmt(debtSales, cur)} sub2={periodDebtInvoices.length + " carried-over invoice(s)"} warn={debtSales > 0} />
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
             <Stat l="Items Sold" v={itemsSold} />
             <Stat l="Payments Collected" v={fmt(cleared, cur)} sub2={clearedInvoiceCount + " invoice(s)"} />
@@ -11101,23 +11142,38 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         Object.keys(debtByCashier).length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
           <div className="list">{Object.entries(debtByCashier).map(([n, v]) => (<div className="row" key={n}>
             <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{n.charAt(0)}</div>
-            <div className="meta"><div className="nm">{n}</div><div className="mt2">{openInv.filter((i) => invoiceCashierName(i) === n && invIsDebt(i)).length} carried-over invoice(s) · {missingDebtCountByCashier[n] || 0} missing inventory count(s)</div></div>
+            <div className="meta"><div className="nm">{n}</div><div className="mt2">{debtInvoiceReport.filter((i) => invoiceCashierName(i) === n).length} carried-over invoice(s) · {missingDebtCountByCashier[n] || 0} missing inventory count(s)</div></div>
             <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(v, cur)} owed</span>
             {onOpenCashierCredit && (invoiceDebtByCashierReport[n] || 0) > 0 ? <button className="btn sm" onClick={() => onOpenCashierCredit(n)}>View invoices <ChevronRight /></button> : null}
           </div>))}</div>)
       )}
 
-      {sub === "unpaid" && (
-        openInv.length === 0 ? <div className="notice">No unpaid invoices.</div> : (
+      {sub === "open" && (
+        openInvoiceReport.length === 0 ? <div className="notice">No open invoices.</div> : (
           <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Invoice</th><th>Cashier</th><th>Customer</th><th>Date</th><th>Outstanding</th><th>Status</th></tr></thead>
-            <tbody>{openInv.map((i) => (<tr key={i.id}><td className="innum">{i.number.slice(-12)}</td><td>{invoiceCashierName(i)}</td><td>{i.customerName}</td><td>{dt(i.ts)}</td><td className="amt">{fmt(invOutstanding(i), cur)}</td><td><span className={"ist " + invStatus(i)}>{invStatus(i)}</span></td></tr>))}</tbody></table></div>)
+            <tbody>{openInvoiceReport.map((i) => (<tr key={i.id}><td className="innum">{String(i.number || i.receiptNo || "").slice(-12)}</td><td>{invoiceCashierName(i)}</td><td>{i.customerName}</td><td>{dt(i.ts)}</td><td className="amt">{fmt(invOutstanding(i), cur)}</td><td><span className="ist open">open</span></td></tr>))}</tbody></table></div>)
+      )}
+
+      {sub === "overdue" && (
+        overdueInvoiceReport.length === 0 ? <div className="notice">No overdue invoices.</div> : (
+          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Invoice</th><th>Cashier</th><th>Customer</th><th>Date</th><th>Outstanding</th><th>Status</th></tr></thead>
+            <tbody>{overdueInvoiceReport.map((i) => (<tr key={i.id}><td className="innum">{String(i.number || i.receiptNo || "").slice(-12)}</td><td>{invoiceCashierName(i)}</td><td>{i.customerName}</td><td>{dt(i.ts)}</td><td className="amt">{fmt(invOutstanding(i), cur)}</td><td><span className="ist overdue">overdue</span></td></tr>))}</tbody></table></div>)
+      )}
+
+      {sub === "voided" && (
+        voidedInvoiceReport.length === 0 ? <div className="notice">No voided invoices.</div> : (
+          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Invoice</th><th>Cashier</th><th>Customer</th><th>Date</th><th>Total</th><th>Void reason</th><th>Approved by</th></tr></thead>
+            <tbody>{voidedInvoiceReport.map((invoice) => {
+              const voidInfo = invoiceVoidState(data, invoice.id);
+              return <tr key={invoice.id}><td className="innum">{String(invoice.number || invoice.receiptNo || "").slice(-12)}</td><td>{invoiceCashierName(invoice)}</td><td>{invoice.customerName}</td><td>{dt(invoice.ts)}</td><td className="amt">{fmt(invoice.totalCents, cur)}</td><td>{voidInfo.decision?.reason || voidInfo.request?.reason || "—"}</td><td>{voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"}</td></tr>;
+            })}</tbody></table></div>)
       )}
 
       {sub === "credit" && (
         <>
           <div className="stats">
             <Stat l="Recovered Credits" v={recoveredList.length} sub2={fmt(recoveredTotal, cur)} />
-            <Stat l="Overdue Recovery" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
+            <Stat l="Outstanding Debt" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
             <Stat l="Partial Credits" v={partialCount} />
             <Stat l="Cleared Today" v={clearedTodayCount} />
           </div>
@@ -11132,8 +11188,8 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             </div>
             <div className="panel">
               <div className="sub" style={{ marginBottom: 2 }}>Recovery</div>
-              <div className="section-title" style={{ marginTop: 0 }}>Overdue Recovery Queue</div>
-              {pendingList.length === 0 ? <div className="notice">No overdue cashier debt records.</div> : (
+              <div className="section-title" style={{ marginTop: 0 }}>Debt Recovery Queue</div>
+              {pendingList.length === 0 ? <div className="notice">No outstanding cashier debt records.</div> : (
                 <div className="list">{pendingList.map((i) => (<div className="row" key={i.id}>
                   <div className="meta"><div className="nm innum">{i.number.slice(-12)}</div><div className="mt2">{i.cashier} · {i.customerName} · {dt(i.ts)}</div></div>
                   <span className={"ist " + invStatus(i)}>{invStatus(i)}</span><span className="pill plain" style={{ color: "#C23A56" }}>{fmt(invOutstanding(i), cur)} owed</span></div>))}</div>)}
