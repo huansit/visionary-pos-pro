@@ -3671,8 +3671,57 @@ body{overscroll-behavior:none}
 .void-decision.approved{border-color:rgba(41,158,105,.34);background:rgba(41,158,105,.08)}
 .void-decision.rejected{border-color:rgba(194,58,86,.34);background:rgba(194,58,86,.08)}
 .void-decision span{font-size:12px;color:var(--muted-2)}
+.invoice-detail-modal{max-width:640px;padding:20px}
+.invoice-detail-head{align-items:flex-start;margin:0;padding-bottom:14px;border-bottom:1px solid var(--border-soft)}
+.invoice-detail-heading{min-width:0}
+.invoice-detail-heading .sub{margin:0 0 5px}
+.invoice-detail-title-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.invoice-detail-title-row .title{font-size:20px;line-height:1.2}
+.invoice-carried{color:var(--warn);font-size:11px;font-weight:750;text-transform:uppercase}
+.invoice-detail-meta{display:flex;align-items:center;gap:0;margin-top:7px;color:var(--muted-2);font-size:12px;flex-wrap:wrap}
+.invoice-detail-meta span{display:flex;align-items:center}
+.invoice-detail-meta span+span:before{content:"";width:3px;height:3px;border-radius:50%;background:var(--muted-2);margin:0 9px;opacity:.65}
+.invoice-detail-meta .invoice-cleared-by{color:var(--ok);font-weight:750}
+.invoice-detail-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--border-soft);margin-bottom:2px}
+.invoice-detail-totals>div{min-width:0;padding:14px 12px;border-right:1px solid var(--border-soft)}
+.invoice-detail-totals>div:first-child{padding-left:0}
+.invoice-detail-totals>div:last-child{padding-right:0;border-right:0}
+.invoice-detail-totals span{display:block;color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.invoice-detail-totals b{display:block;margin-top:3px;font-family:var(--font-mono);font-size:16px;overflow-wrap:anywhere}
+.invoice-detail-totals .due b{color:var(--danger)}
+.invoice-detail-section{padding:14px 0 4px}
+.invoice-detail-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;font-size:13px}
+.invoice-detail-section-head>span,.invoice-detail-disclosure summary b{min-width:22px;height:20px;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--muted-2);display:inline-grid;place-items:center;font-size:10px;font-family:var(--font-mono)}
+.invoice-detail-items{display:grid;max-height:184px;overflow:auto}
+.invoice-detail-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--border-soft)}
+.invoice-detail-item:last-child{border-bottom:0}
+.invoice-detail-item>div{min-width:0;display:grid;gap:2px}
+.invoice-detail-item b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invoice-detail-item span{color:var(--muted-2);font-size:11.5px}
+.invoice-detail-item strong{font-family:var(--font-mono);font-size:12.5px}
+.invoice-detail-empty{padding:10px 0;color:var(--muted-2);font-size:12px}
+.invoice-payment-panel{margin:12px 0;padding:13px}
+.invoice-payment-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;font-size:13px}
+.invoice-payment-head span{color:var(--danger);font-family:var(--font-mono);font-size:12px;font-weight:750}
+.invoice-detail-sale-note{display:grid;gap:3px;padding:10px 0;border-top:1px solid var(--border-soft);font-size:12px}
+.invoice-detail-sale-note span{color:var(--muted-2)}
+.invoice-detail-disclosure{border-top:1px solid var(--border-soft)}
+.invoice-detail-disclosure summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;color:var(--text);font-size:12.5px;font-weight:750;cursor:pointer;list-style:none}
+.invoice-detail-disclosure summary::-webkit-details-marker{display:none}
+.invoice-detail-disclosure summary>span{display:flex;align-items:center;gap:8px}
+.invoice-detail-disclosure summary>svg{width:16px;height:16px;color:var(--muted-2);transition:transform .15s ease}
+.invoice-detail-disclosure[open] summary>svg{transform:rotate(180deg)}
+.invoice-detail-history{display:grid;padding-bottom:8px}
+.invoice-detail-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--border-soft)}
+.invoice-detail-history-row>div{display:grid;gap:2px;min-width:0}
+.invoice-detail-history-row b{text-transform:capitalize;font-size:12px}
+.invoice-detail-history-row span{color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invoice-detail-history-row>strong{font-family:var(--font-mono);font-size:12px}
+.invoice-detail-note-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;padding-bottom:12px}
+.invoice-detail-note-form textarea{min-height:58px;padding-top:10px;resize:vertical}
+.invoice-detail-footer{display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border-soft)}
 @media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -7122,11 +7171,20 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
+  const paymentActorName = (payment) => payment.recordedByName || payment.settledByName
+    || (typeof payment.recordedBy === "string" ? payment.recordedBy : payment.recordedBy?.name || payment.recordedBy?.displayName || payment.recordedBy?.email)
+    || (typeof payment.settledBy === "string" ? payment.settledBy : payment.settledBy?.name || payment.settledBy?.displayName || payment.settledBy?.email)
+    || "Supervisor";
   const items = invoiceSoldLines(data, live, live.branchId).map((item, index) => ({
     ...item,
     key: item.productId || `${item.name}-${index}`,
   }));
   const pays = data.payments.filter((p) => p.orderId === live.id || p.invoiceId === live.id);
+  const latestPayment = pays.reduce((latest, payment) => !latest || Number(payment.ts || 0) > Number(latest.ts || 0) ? payment : latest, null);
+  const clearedByName = live.settledByName || live.lastSettledByName
+    || (typeof live.settledBy === "string" ? live.settledBy : live.settledBy?.name || live.settledBy?.displayName || live.settledBy?.email)
+    || (typeof live.lastSettledBy === "string" ? live.lastSettledBy : live.lastSettledBy?.name || live.lastSettledBy?.displayName || live.lastSettledBy?.email)
+    || (latestPayment ? paymentActorName(latestPayment) : "");
   const recordPayment = () => {
     if (voidPending || voidApproved || paymentCents <= 0 || out <= 0) return;
     const ts = now();
@@ -7141,8 +7199,10 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           carriedOver: cleared ? false : x.carriedOver,
           method,
           lastSettledBy: user,
+          lastSettledByName: actorName,
           lastSettledAt: ts,
           settledBy: cleared ? user : x.settledBy,
+          settledByName: cleared ? actorName : x.settledByName,
           settledAt: cleared ? ts : x.settledAt,
           status: cleared ? "paid" : "open",
           synced: false,
@@ -7156,12 +7216,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         amountCents: paymentCents,
         status: "captured",
         recordedBy: user,
+        recordedByName: actorName,
         settledBy: user,
+        settledByName: actorName,
         ts,
         synced: false,
       }],
     }));
     setAmount("");
+    if (isFullPayment) onClose();
   };
   const decideVoid = (decision) => {
     if (!voidInfo.request || voidInfo.status !== "pending") return;
@@ -7185,30 +7248,41 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="modal settlement-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <div><div className="sub" style={{ margin: 0 }}>Invoice settlement</div><div className="title" style={{ fontSize: 20 }}>{live.number}</div></div>
-          <button className="iconbtn" onClick={onClose}><X /></button>
+      <div className="modal settlement-modal invoice-detail-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head invoice-detail-head">
+          <div className="invoice-detail-heading">
+            <div className="sub">Invoice settlement</div>
+            <div className="invoice-detail-title-row">
+              <div className="title">{live.number || live.receiptNo}</div>
+              <span className={"ist " + status}>{status}</span>
+              {live.carriedOver ? <span className="invoice-carried">Carried over</span> : null}
+            </div>
+            <div className="invoice-detail-meta">
+              <span>{live.customerName || "Walk-in"}</span>
+              <span>{invoiceCashierName(live) || "Unknown cashier"}</span>
+              <span>{dt(live.ts)}</span>
+              {status === "paid" && clearedByName ? <span className="invoice-cleared-by">Cleared by {clearedByName}</span> : null}
+            </div>
+          </div>
+          <button className="iconbtn" onClick={onClose} aria-label="Close invoice settlement"><X /></button>
         </div>
-        <div className="idgrid">
-          <div><span>Customer</span><b>{live.customerName}</b></div>
-          <div><span>Cashier</span><b>{live.cashier}</b></div>
-          <div><span>Date</span><b>{dt(live.ts)}</b></div>
-          <div><span>Status</span><b><span className={"ist " + status}>{status}</span>{live.carriedOver ? " - carried over" : ""}</b></div>
+
+        <div className="invoice-detail-totals">
           <div><span>Total</span><b>{fmt(live.totalCents, cur)}</b></div>
-          <div><span>Balance due</span><b>{fmt(out, cur)}</b></div>
+          <div><span>Paid</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
+          <div className="due"><span>Balance</span><b>{fmt(out, cur)}</b></div>
         </div>
-        <div className="sideh" style={{ margin: "16px 0 8px" }}>Items</div>
-        {items.length ? (
-          <div className="list">{items.map((it) => (
-            <div className="row" key={it.key}><div className="meta"><div className="nm">{it.name}</div><div className="mt2">{it.qty} x {fmt(it.priceCents, cur)}</div></div>
-              <span className="pill plain">{fmt(it.totalCents, cur)}</span></div>))}</div>
-        ) : <div className="notice">No itemised lines recorded for this invoice.</div>}
-        <div className="settlement-totals">
-          <div><span>Invoice total</span><b>{fmt(live.totalCents, cur)}</b></div>
-          <div><span>Paid so far</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
-          <div className="due"><span>Balance due</span><b>{fmt(out, cur)}</b></div>
-        </div>
+
+        <section className="invoice-detail-section">
+          <div className="invoice-detail-section-head"><b>Items</b><span>{items.length}</span></div>
+          {items.length ? (
+            <div className="invoice-detail-items">{items.map((it) => (
+              <div className="invoice-detail-item" key={it.key}>
+                <div><b>{it.name}</b><span>{it.qty} x {fmt(it.priceCents, cur)}</span></div>
+                <strong>{fmt(it.totalCents, cur)}</strong>
+              </div>))}</div>
+          ) : <div className="invoice-detail-empty">No itemised lines recorded.</div>}
+        </section>
         {voidPending ? (
           <div className="void-review-box">
             <div className="section-title" style={{ marginTop: 0 }}><AlertCircle /> Void approval required</div>
@@ -7239,8 +7313,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           </div>
         ) : null}
         {!voidPending && !voidApproved && out > 0 ? (
-          <div className="settlement-box">
-            <div className="section-title" style={{ marginTop: 0 }}>Record payment</div>
+          <div className="settlement-box invoice-payment-panel">
+            <div className="invoice-payment-head"><b>Record payment</b><span>{fmt(out, cur)} due</span></div>
             <div className="grid3">
               <button className={"wtab" + (method === "Cash" ? " on" : "")} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
               <button className={"wtab" + (method === "M-Pesa" ? " on" : "")} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
@@ -7254,17 +7328,32 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               <Check /> {isFullPayment ? "Settle full balance" : "Record " + fmt(paymentCents, cur) + " payment"}
             </button>
           </div>
-        ) : !voidPending && !voidApproved ? (
-          <div className="notice">This invoice is fully paid and cleared from the open list.</div>
         ) : null}
-        {live.note && <div className="notice" style={{ marginTop: 10 }}>Sale note: {live.note}</div>}
-        {pays.length > 0 && (<><div className="sideh" style={{ margin: "16px 0 8px" }}>Payments</div>
-          <div className="list">{pays.map((p) => (<div className="row" key={p.id}><div className="meta"><div className="nm" style={{ textTransform: "capitalize" }}>{p.method}</div><div className="mt2">{new Date(p.ts).toLocaleString()} by {p.recordedBy || p.settledBy || user}</div></div><span className="pill plain">{fmt(p.amountCents, cur)}</span></div>))}</div></>)}
-        <div className="field" style={{ marginTop: 16 }}><label className="label">Employee tracking note</label>
-          <textarea className="input" style={{ minHeight: 72, paddingTop: 10, resize: "vertical" }} placeholder="Track this invoice - who collected, follow-up, reason for credit, etc." value={tnote} onChange={(e) => { setTnote(e.target.value); setSaved(false); }} /></div>
-        <div className="grid2">
+
+        {live.note ? <div className="invoice-detail-sale-note"><b>Sale note</b><span>{live.note}</span></div> : null}
+
+        {pays.length > 0 ? (
+          <details className="invoice-detail-disclosure">
+            <summary><span>Payment history <b>{pays.length}</b></span><ChevronDown /></summary>
+            <div className="invoice-detail-history">{pays.map((p) => (
+              <div className="invoice-detail-history-row" key={p.id}>
+                <div><b>{p.method}</b><span>{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
+                <strong>{fmt(p.amountCents, cur)}</strong>
+              </div>))}</div>
+          </details>
+        ) : null}
+
+        <details className="invoice-detail-disclosure">
+          <summary><span>{tnote.trim() ? "Edit employee note" : "Add employee note"}{tnote.trim() ? <b>Added</b> : null}</span><ChevronDown /></summary>
+          <div className="invoice-detail-note-form">
+            <textarea className="input" placeholder="Who collected, follow-up, reason for credit, etc." value={tnote}
+              onChange={(e) => { setTnote(e.target.value); setSaved(false); }} />
+            <button className="btn btn-primary" onClick={saveNote}><Check /> {saved ? "Saved" : "Save note"}</button>
+          </div>
+        </details>
+
+        <div className="invoice-detail-footer">
           <button className="btn btn-ghost" onClick={() => onReprint({ ...live, items })}><Printer /> Reprint receipt</button>
-          <button className="btn btn-primary" onClick={saveNote}><Check /> {saved ? "Saved" : "Save note"}</button>
         </div>
       </div>
     </div>
