@@ -35,7 +35,8 @@ const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
 const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
 const REALTIME_RECONNECT_MS = 4000;
-const AUTO_LOGOUT_MS = 5 * 60 * 1000;
+const AUTO_LOGOUT_MS = 15 * 60 * 1000;
+const SESSION_ACTIVITY_WRITE_MS = 5000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 let activeSessionToken = "";
@@ -3882,6 +3883,7 @@ export default function VisionPOS() {
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
   const cloudRecoveryAttemptRef = useRef("");
+  const lastActivityAtRef = useRef(0);
   useEffect(() => { dataRef.current = data; }, [data]);
   useEffect(() => { (async () => {
     const hasRegisteredTerminal = await hasDesktopTerminalAuth();
@@ -3892,7 +3894,14 @@ export default function VisionPOS() {
       env = await environmentPublic();
       setEnvironmentInfo(env);
     } catch (_) {}
-    const savedSession = await loadSessionState();
+    let savedSession = await loadSessionState();
+    const restoredAt = now();
+    const savedActivityAt = Math.min(restoredAt, Number(savedSession?.lastActivityAt || savedSession?.ts || 0));
+    if (savedSession?.sessionToken && (!savedActivityAt || restoredAt - savedActivityAt >= AUTO_LOGOUT_MS)) {
+      logoutSessionToken(savedSession.sessionToken, { keepalive: true });
+      await clearSessionState();
+      savedSession = null;
+    }
     if (savedSession?.sessionToken) activeSessionToken = savedSession.sessionToken;
     const loaded = await loadEnvironmentAwareData(env);
     saveData(loaded);
@@ -3914,6 +3923,7 @@ export default function VisionPOS() {
             setData(loaded);
             return;
           }
+          lastActivityAtRef.current = savedActivityAt;
           setSession({ ...restored, sessionToken: savedSession.sessionToken });
           setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
         } else {
@@ -3929,15 +3939,18 @@ export default function VisionPOS() {
   })(); }, []);
   const signInSession = (nextView, emp = null, sessionToken = "") => {
     const signedIn = emp || null;
+    const signedInAt = now();
     activeSessionToken = sessionToken || signedIn?.sessionToken || "";
+    lastActivityAtRef.current = signedInAt;
     setSession(signedIn);
     setView(nextView);
-    saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: now() });
+    saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: signedInAt, lastActivityAt: signedInAt });
   };
   const signOutSession = (opts = {}) => {
     const options = opts?.type ? {} : opts;
     const token = options.sessionToken || session?.sessionToken || storedSessionTokenSync();
     logoutSessionToken(token, { keepalive: Boolean(options.keepalive) });
+    lastActivityAtRef.current = 0;
     setMenuOpen(false);
     setSession(null);
     setView(terminalLoginAvailable ? "pin" : "adminLogin");
@@ -3946,16 +3959,101 @@ export default function VisionPOS() {
   useEffect(() => {
     if (!session) return;
     let idleTimer = null;
-    const resetIdleTimer = () => {
+    let endingSession = false;
+    let lastScheduledAt = 0;
+    let lastPersistedAt = lastActivityAtRef.current;
+    const expireSession = (reason) => {
+      if (endingSession) return;
+      endingSession = true;
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => signOutSession({ reason: "idle" }), AUTO_LOGOUT_MS);
+      signOutSession({ reason });
     };
-    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart"];
-    activityEvents.forEach((name) => window.addEventListener(name, resetIdleTimer, { passive: true }));
-    resetIdleTimer();
+    const persistActivity = (activityAt) => {
+      if (endingSession) return;
+      const stored = storedSessionStateSync() || {};
+      saveSessionState({
+        ...stored,
+        view: stored.view || view,
+        employeeId: stored.employeeId || session.id || null,
+        sessionToken: stored.sessionToken || session.sessionToken || "",
+        ts: Number(stored.ts || activityAt),
+        lastActivityAt: activityAt,
+      });
+    };
+    const scheduleIdleCheck = () => {
+      if (endingSession) return;
+      clearTimeout(idleTimer);
+      const elapsed = now() - lastActivityAtRef.current;
+      if (elapsed >= AUTO_LOGOUT_MS) {
+        expireSession("idle");
+        return;
+      }
+      idleTimer = setTimeout(() => checkIdle(), AUTO_LOGOUT_MS - elapsed);
+    };
+    const checkIdle = () => {
+      if (endingSession) return;
+      if (!lastActivityAtRef.current || now() - lastActivityAtRef.current >= AUTO_LOGOUT_MS) {
+        expireSession("idle");
+        return;
+      }
+      scheduleIdleCheck();
+    };
+    const recordActivity = (event) => {
+      if (endingSession) return;
+      if (event?.isTrusted === false) return;
+      const activityAt = now();
+      if (lastActivityAtRef.current && activityAt - lastActivityAtRef.current >= AUTO_LOGOUT_MS) {
+        expireSession("idle");
+        return;
+      }
+      lastActivityAtRef.current = activityAt;
+      if (activityAt - lastPersistedAt >= SESSION_ACTIVITY_WRITE_MS) {
+        lastPersistedAt = activityAt;
+        persistActivity(activityAt);
+      }
+      if (activityAt - lastScheduledAt >= 1000) {
+        lastScheduledAt = activityAt;
+        scheduleIdleCheck();
+      }
+    };
+    const verifyActiveSession = () => {
+      if (!document.hidden) checkIdle();
+    };
+    const syncSessionActivity = (event) => {
+      if (endingSession) return;
+      if (event.key !== SESSION_KEY) return;
+      if (!event.newValue) {
+        expireSession("session_cleared");
+        return;
+      }
+      try {
+        const stored = JSON.parse(event.newValue);
+        if (session.sessionToken && stored.sessionToken !== session.sessionToken) {
+          expireSession("session_changed");
+          return;
+        }
+        const sharedActivityAt = Number(stored.lastActivityAt || stored.ts || 0);
+        if (sharedActivityAt > lastActivityAtRef.current) {
+          lastActivityAtRef.current = Math.min(now(), sharedActivityAt);
+          scheduleIdleCheck();
+        }
+      } catch (_) {}
+    };
+    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart", "wheel"];
+    activityEvents.forEach((name) => window.addEventListener(name, recordActivity, { passive: true }));
+    window.addEventListener("focus", verifyActiveSession);
+    window.addEventListener("pageshow", verifyActiveSession);
+    window.addEventListener("storage", syncSessionActivity);
+    document.addEventListener("visibilitychange", verifyActiveSession);
+    if (!lastActivityAtRef.current) lastActivityAtRef.current = now();
+    checkIdle();
     return () => {
       clearTimeout(idleTimer);
-      activityEvents.forEach((name) => window.removeEventListener(name, resetIdleTimer));
+      activityEvents.forEach((name) => window.removeEventListener(name, recordActivity));
+      window.removeEventListener("focus", verifyActiveSession);
+      window.removeEventListener("pageshow", verifyActiveSession);
+      window.removeEventListener("storage", syncSessionActivity);
+      document.removeEventListener("visibilitychange", verifyActiveSession);
     };
   }, [session?.id, session?.sessionToken]); // eslint-disable-line
   useEffect(() => {
