@@ -3931,6 +3931,63 @@ body{overscroll-behavior:none}
 .seg{padding:9px 15px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:13px;font-weight:650;cursor:pointer;transition:.15s}
 .seg:hover{color:var(--text);background:var(--surface-2)}
 .seg.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;border-color:transparent}
+.expense-page{max-width:1180px;margin:0 auto}
+.expense-head-actions{display:flex;gap:8px;flex-wrap:wrap}
+.expense-head-actions .btn{height:38px}
+.expense-tabs{display:flex;gap:4px;padding:4px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:12px;width:max-content;max-width:100%;margin-bottom:12px}
+.expense-tab{height:36px;padding:0 15px;border:0;border-radius:8px;background:transparent;color:var(--muted);font:650 13px var(--font-ui);cursor:pointer;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.expense-tab:hover{color:var(--text)}
+.expense-tab.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.expense-tab .count{min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:rgba(230,67,104,.14);color:var(--danger);display:grid;place-items:center;font:750 10px var(--font-mono)}
+.expense-filterbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);margin-bottom:12px}
+.expense-filterbar .segbtns{gap:4px}
+.expense-filterbar .seg{padding:7px 11px;border-radius:8px}
+.expense-filterbar .select{width:165px;height:36px;margin-left:auto}
+.expense-custom-range{display:flex;align-items:center;gap:7px}
+.expense-custom-range .input{width:142px;height:36px}
+.expense-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);margin-bottom:14px}
+.expense-summary>div{padding:11px 14px;border-right:1px solid var(--border-soft)}
+.expense-summary>div:last-child{border-right:0}
+.expense-summary span{display:block;color:var(--muted-2);font-size:10.5px;font-weight:750;text-transform:uppercase}
+.expense-summary b{display:block;margin-top:3px;font:750 18px var(--font-mono)}
+.expense-summary small{display:block;margin-top:2px;color:var(--muted);font-size:11px}
+.expense-inline-tool{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px}
+.expense-tool-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.expense-tool-head .sideh{margin:0}
+.expense-entry-grid{display:grid;grid-template-columns:1.1fr 1fr .8fr 1.4fr auto;gap:9px;align-items:end}
+.expense-entry-grid .btn{height:42px}
+.expense-category-form{display:grid;grid-template-columns:minmax(180px,1fr) minmax(150px,.7fr) auto;gap:9px;align-items:end;margin-bottom:10px}
+.expense-category-list{max-height:340px;overflow:auto}
+.expense-category-list .row{padding:9px 10px;gap:8px}
+.expense-category-list .btn{padding:0 9px}
+.expense-category-list .category-order{display:flex;gap:4px}
+.expense-overview-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.expense-overview-grid .dcard{padding:14px}
+.expense-more-analysis{margin-top:12px;border-top:1px solid var(--border-soft)}
+.expense-more-analysis>summary{padding:11px 2px;cursor:pointer;list-style:none;color:var(--muted);font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:space-between}
+.expense-more-analysis>summary::-webkit-details-marker{display:none}
+.expense-more-analysis[open]>summary svg{transform:rotate(180deg)}
+.expense-queue{display:flex;flex-direction:column;gap:7px}
+.expense-queue .row,.expense-history-list .row{border:1px solid var(--border-soft);padding:10px 12px}
+.expense-queue .row{align-items:flex-start}
+.expense-queue-actions{display:flex;gap:6px;align-items:center}
+.expense-reject-form{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:7px;margin-top:8px}
+.expense-reject-form .input{height:36px}
+.expense-history-list{display:flex;flex-direction:column;gap:7px}
+.expense-history-status{display:inline-flex;margin-left:7px}
+.document-file{border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);margin-top:12px}
+.document-file-head{width:100%;min-height:52px;padding:9px 4px;border:0;background:transparent;color:var(--text);display:flex;align-items:center;gap:10px;text-align:left;cursor:pointer;font-family:var(--font-ui)}
+.document-file-head>svg:first-child{width:19px;height:19px;color:var(--accent);flex:0 0 auto}
+.document-file-head .meta{flex:1;min-width:0}
+.document-file-head .nm{font-size:13.5px;font-weight:750}
+.document-file-head .mt2{font-size:11.5px;color:var(--muted)}
+.document-file-count{min-width:28px;height:24px;padding:0 7px;border-radius:999px;background:var(--surface-2);color:var(--muted);display:grid;place-items:center;font:750 11px var(--font-mono)}
+.document-file-head .chevron{width:17px;height:17px;color:var(--muted);transition:transform .15s}
+.document-file.open .document-file-head .chevron{transform:rotate(180deg)}
+.document-file-body{padding:4px 0 10px}
+.document-file-body>.list{max-height:460px;overflow:auto}
+@media (max-width:900px){.expense-entry-grid{grid-template-columns:1fr 1fr}.expense-entry-grid .btn{width:100%}.expense-overview-grid{grid-template-columns:1fr}}
+@media (max-width:680px){.expense-head-actions{width:100%}.expense-head-actions .btn{flex:1}.expense-tabs{width:100%;overflow-x:auto}.expense-tab{flex:1;justify-content:center}.expense-filterbar{align-items:stretch}.expense-filterbar .segbtns{width:100%;overflow-x:auto;flex-wrap:nowrap}.expense-filterbar .seg{white-space:nowrap}.expense-filterbar .select{width:100%;margin-left:0}.expense-custom-range{width:100%}.expense-custom-range .input{min-width:0;width:100%}.expense-summary>div{padding:10px 8px}.expense-summary b{font-size:15px}.expense-summary small{font-size:10px}.expense-entry-grid,.expense-category-form{grid-template-columns:1fr}.expense-category-list .row{align-items:flex-start}.expense-category-list .category-order{margin-left:44px}.expense-queue-actions{width:100%;margin-left:44px}.expense-queue-actions .btn{flex:1}.expense-reject-form{grid-template-columns:1fr}.expense-history-list .row>.pill{margin-left:44px}.expense-tool-head{align-items:flex-start}}
 .expbtns{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap;align-items:center}
 .subtabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
 .invwrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -6159,6 +6216,20 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   );
 }
 function PageHead({ title, sub, right }) { return (<div className="page-h"><div><div className="title" style={{ fontSize: 19 }}>{title}</div>{sub && <div className="sub">{sub}</div>}</div>{right}</div>); }
+function DocumentFile({ title, count = 0, meta, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={"document-file" + (open ? " open" : "")}>
+      <button type="button" className="document-file-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <Files />
+        <span className="meta"><span className="nm">{title}</span>{meta ? <span className="mt2">{meta}</span> : null}</span>
+        <span className="document-file-count">{count}</span>
+        <ChevronDown className="chevron" />
+      </button>
+      {open ? <div className="document-file-body">{children}</div> : null}
+    </section>
+  );
+}
 
 function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
   return (
@@ -8512,10 +8583,8 @@ function StockTab({ data, update, branch }) {
           </div>
         </div>
       )}
-      {correctionList.length > 0 && (
-        <div className="panel fade" style={{ marginTop: 18 }}>
-          <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 17 }}>Recent stock corrections</div><div className="sub">Audited quantity corrections for {bname}</div></div><span className="pill plain">{correctionList.length}</span></div>
-          <div className="list">{correctionList.slice(0, 10).map((movement) => {
+      <DocumentFile title="Stock correction records" count={correctionList.length} meta={`Audited quantity corrections for ${bname}`}>
+          {correctionList.length > 0 ? <div className="list">{correctionList.slice(0, 10).map((movement) => {
             const product = data.products.find((p) => p.id === movement.productId);
             const delta = Number(movement.qty || 0);
             const previous = Number.isFinite(Number(movement.previousQty)) ? Number(movement.previousQty) : null;
@@ -8524,9 +8593,8 @@ function StockTab({ data, update, branch }) {
               <div className="meta"><div className="nm">{product?.name || "Product"}</div><div className="mt2">{previous === null || corrected === null ? "Quantity adjusted" : previous + " to " + corrected} - {movement.correctionReason || movement.reason} - {movement.correctedBy || "Admin"} - {dt(movement.ts)}</div></div>
               <span className="pill plain" style={{ color: delta < 0 ? "var(--danger)" : "var(--ok)" }}>{delta > 0 ? "+" : ""}{delta}</span>
             </div>;
-          })}</div>
-        </div>
-      )}
+          })}</div> : <div className="notice">No stock corrections recorded for this branch.</div>}
+      </DocumentFile>
       {cameraOpen && (
         <CameraBarcodeScanner
           eyebrow="Inventory count"
@@ -9506,6 +9574,11 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           )}
         </div>
       )}
+      <DocumentFile
+        title="Purchase order files"
+        count={new Set((data.purchases || []).map((purchase) => purchase.batchId || purchase.id)).size}
+        meta="Received and outstanding purchase documents"
+      >
       {(() => {
         const groups = {};
         data.purchases.forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
@@ -9530,6 +9603,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
             {rows.length === 0 && <div className="notice">No purchase orders yet.</div>}</div>
         );
       })()}
+      </DocumentFile>
       {poView && (() => {
         const items = data.purchases.filter((po) => (po.batchId || po.id) === poView);
         if (items.length === 0) { setPoView(null); return null; }
@@ -10170,7 +10244,7 @@ function BorrowingTab({ data, update }) {
         <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
       </div>
 
-      <div className="section-title">Recent transfers</div>
+      <DocumentFile title="Transfer records" count={data.borrowings.length} meta="Completed branch stock movements">
       <div className="list">{data.borrowings.map((t) => { const items = normalizedTransferItems(t, data.products); const units = transferUnitCount(t, data.products);
         return (
         <div className="row" key={t.id}>
@@ -10181,6 +10255,7 @@ function BorrowingTab({ data, update }) {
           <span className="pill plain">{dt(t.ts)}</span>
         </div>); })}
         {data.borrowings.length === 0 && <div className="notice">No transfers yet.</div>}</div>
+      </DocumentFile>
 
       {cameraOpen && (
         <CameraBarcodeScanner
@@ -10463,6 +10538,8 @@ function ExpensesTab({ data, update, branch, user }) {
   const [rejectReason, setRejectReason] = useState("");
   const [catForm, setCatForm] = useState({ name: "", icon: "wallet" });
   const [editingCat, setEditingCat] = useState(null);
+  const [view, setView] = useState("overview");
+  const [showRecordExpense, setShowRecordExpense] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [fromD, setFromD] = useState(todayStr()); const [toD, setToD] = useState(todayStr());
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -10518,19 +10595,22 @@ function ExpensesTab({ data, update, branch, user }) {
   };
   const approved = data.expenses.filter(isApproved);
   const pending = data.expenses.filter(isPending);
+  const visiblePending = pending.filter((e) => inBranch(e.branchId));
   const periodApproved = approved.filter((e) => inRange(e.ts) && inBranch(e.branchId));
   const history = data.expenses.filter((e) => !isPending(e) && inRange(e.decidedAt || e.approvedAt || e.rejectedAt || e.ts) && inBranch(e.branchId))
     .sort((a, b) => (b.decidedAt || b.approvedAt || b.rejectedAt || b.ts || 0) - (a.decidedAt || a.approvedAt || a.rejectedAt || a.ts || 0));
   const total = periodApproved.reduce((s, e) => s + e.amountCents, 0);
-  const pendingTotal = pending.reduce((s, e) => s + e.amountCents, 0);
+  const pendingTotal = visiblePending.reduce((s, e) => s + e.amountCents, 0);
   const add = () => { const amt = Math.round(parseFloat(f.amount) * 100); if (!amt || amt <= 0) return;
     const ts = now();
     update((d) => {
       const categories = adminExpenseCategories(d);
       const category = categories.find((item) => item.id === f.categoryId) || categories[0];
       return { ...d, expenses: [...d.expenses, { id: uid("ex"), categoryId: category?.id || f.categoryId, category: category?.name || "Other", amountCents: amt, note: f.note, status: "approved", enteredBy: data.admin?.name || "Admin", branchId: f.branchId || branch.id, date: todayStr(), ts, updatedAt: ts, synced: false }] };
-    }); setF({ categoryId: defaultCategoryId, amount: "", note: "", branchId: f.branchId }); };
-  const remove = (id) => update((d) => ({ ...d, expenses: d.expenses.filter((e) => e.id !== id) }));
+    });
+    setF({ categoryId: defaultCategoryId, amount: "", note: "", branchId: f.branchId });
+    setShowRecordExpense(false);
+  };
   const approve = (id) => { const ts = now(); const by = actor(); update((d) => ({ ...d, expenses: d.expenses.map((e) => e.id === id ? { ...e, status: "approved", decidedBy: by, decidedAt: ts, approvedBy: by, approvedAt: ts, rejectReason: "", updatedAt: ts, synced: false } : e) })); };
   const reject = (id) => {
     const reason = rejectReason.trim(); if (reason.length < 3) return;
@@ -10548,65 +10628,69 @@ function ExpensesTab({ data, update, branch, user }) {
       <div className="bar-track"><div className="bar-fill" style={{ width: (val / bd.max * 100) + "%" }} /></div><span className="bv">{fmt(val, cur)}</span></div>))}</div>
   );
   return (
-    <div><PageHead title="Expenses" sub={"Approved this period · " + fmt(total, cur) + (pending.length ? "   ·   " + pending.length + " awaiting approval (" + fmt(pendingTotal, cur) + ")" : "")} />
-      <div className="repctrl">
+    <div className="expense-page"><PageHead
+      title="Expenses"
+      sub={`${fmt(total, cur)} approved in the selected period`}
+      right={<div className="expense-head-actions">
+        <button className={"btn sm " + (showRecordExpense ? "btn-primary" : "btn-ghost")} onClick={() => { setShowRecordExpense((open) => !open); setShowCategoryManager(false); }}><Plus /> Record expense</button>
+        <button className={"btn sm " + (showCategoryManager ? "btn-primary" : "btn-ghost")} onClick={() => { setShowCategoryManager((open) => !open); setShowRecordExpense(false); }}><Tags /> Categories</button>
+      </div>}
+    />
+      <div className="expense-tabs" role="tablist" aria-label="Expense views">
+        <button type="button" role="tab" aria-selected={view === "overview"} className={"expense-tab" + (view === "overview" ? " on" : "")} onClick={() => setView("overview")}><BarChart3 /> Overview</button>
+        <button type="button" role="tab" aria-selected={view === "approvals"} className={"expense-tab" + (view === "approvals" ? " on" : "")} onClick={() => setView("approvals")}><AlertCircle /> Approvals {visiblePending.length > 0 ? <span className="count">{visiblePending.length}</span> : null}</button>
+        <button type="button" role="tab" aria-selected={view === "history"} className={"expense-tab" + (view === "history" ? " on" : "")} onClick={() => setView("history")}><Receipt /> History</button>
+      </div>
+      <div className="expense-filterbar">
         <div className="segbtns">{[["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["all", "All time"], ["custom", "Custom"]].map(([k, lbl]) => (
-          <button key={k} className={"seg" + (period === k ? " on" : "")} onClick={() => setPeriod(k)}>{lbl}</button>))}</div>
-        <div><label className="label">Branch</label>
-          <select className="select" style={{ width: 170 }} value={rb} onChange={(e) => setRb(e.target.value)}>
-            <option value="all">All branches</option>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <button type="button" key={k} className={"seg" + (period === k ? " on" : "")} onClick={() => setPeriod(k)}>{lbl}</button>))}</div>
         {period === "custom" && (
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-            <div><label className="label">From</label><input className="input" type="date" style={{ height: 38, width: 152 }} value={fromD} max={toD} onChange={(e) => setFromD(e.target.value)} /></div>
-            <div><label className="label">To</label><input className="input" type="date" style={{ height: 38, width: 152 }} value={toD} min={fromD} max={todayStr()} onChange={(e) => setToD(e.target.value)} /></div>
+          <div className="expense-custom-range">
+            <input aria-label="Expense start date" title="Start date" className="input" type="date" value={fromD} max={toD} onChange={(e) => setFromD(e.target.value)} />
+            <input aria-label="Expense end date" title="End date" className="input" type="date" value={toD} min={fromD} max={todayStr()} onChange={(e) => setToD(e.target.value)} />
           </div>
         )}
+        <select aria-label="Expense branch" className="select" value={rb} onChange={(e) => setRb(e.target.value)}>
+          <option value="all">All branches</option>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
       </div>
-      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(3,1fr)", marginBottom: 16 }}>
-        <div className="ctile warn"><div className="ic"><TrendingDown /></div><div><div className="cl">Total expenses</div><div className="cv">{fmt(total, cur)}</div><div className="cs">{periodApproved.length} record{periodApproved.length === 1 ? "" : "s"}</div></div></div>
-        <div className="ctile"><div className="ic"><Tags /></div><div><div className="cl">Categories</div><div className="cv">{byCat.rows.length}</div></div></div>
-        <div className={"ctile" + (pending.length ? " warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Awaiting approval</div><div className="cv">{fmt(pendingTotal, cur)}</div><div className="cs">{pending.length} pending</div></div></div>
+      <div className="expense-summary">
+        <div><span>Approved</span><b>{fmt(total, cur)}</b><small>{periodApproved.length} record{periodApproved.length === 1 ? "" : "s"}</small></div>
+        <div><span>Categories used</span><b>{byCat.rows.length}</b><small>Selected period</small></div>
+        <div><span>Awaiting approval</span><b style={{ color: visiblePending.length ? "var(--danger)" : undefined }}>{fmt(pendingTotal, cur)}</b><small>{visiblePending.length} pending</small></div>
       </div>
 
-      <div className="addpanel" style={{ marginBottom: 18 }}>
-        <div className="sideh" style={{ marginBottom: 10 }}>Record expense</div>
-        <div className="grid2">
+      {showRecordExpense && <div className="expense-inline-tool">
+        <div className="expense-tool-head"><div><div className="sideh">Record expense</div><div className="muted">Add an approved operational expense.</div></div><button type="button" className="iconbtn" title="Close" aria-label="Close expense form" onClick={() => setShowRecordExpense(false)}><X /></button></div>
+        <div className="expense-entry-grid">
           <div><label className="label">Category</label><select className="select" value={f.categoryId} onChange={(e) => setF({ ...f, categoryId: e.target.value })}>{recordExpenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           <div><label className="label">Branch</label><select className="select" value={f.branchId} onChange={(e) => setF({ ...f, branchId: e.target.value })}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-        </div>
-        <div className="grid2" style={{ marginTop: 12 }}>
           <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="2000" /></div>
           <div><label className="label">Note</label><input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="Optional" /></div>
+          <button type="button" className="btn btn-primary" disabled={!recordExpenseCategories.length || Number(f.amount) <= 0} onClick={add}><Check /> Save</button>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={add}><TrendingDown /> Record expense</button>
-      </div>
+      </div>}
 
-      <div className="addpanel" style={{ marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
-            <div className="muted">Cashiers only see Police, Utilities and Other. Admin expense recording uses the operational categories in the dropdown above.</div>
-          </div>
-          <button className="btn btn-ghost" onClick={() => setShowCategoryManager((v) => !v)}><Tags /> {showCategoryManager ? "Hide manager" : "Manage categories"}</button>
+      {showCategoryManager && <div className="expense-inline-tool">
+        <div className="expense-tool-head">
+          <div><div className="sideh">Expense categories</div><div className="muted">Manage the categories available when expenses are recorded.</div></div>
+          <button type="button" className="iconbtn" title="Close" aria-label="Close category manager" onClick={() => setShowCategoryManager(false)}><X /></button>
         </div>
-        {showCategoryManager && <>
-        <div className="sideh" style={{ marginBottom: 4 }}>Expense categories</div>
-        <div className="muted" style={{ marginBottom: 12 }}>Cashier terminals can only pick active categories from this supervisor-managed list. Historical expenses keep their original category names.</div>
-        <div className="grid3">
+        <div className="expense-category-form">
           <div><label className="label">{editingCat ? "Rename category" : "New category"}</label>
             <input className="input" value={editingCat ? editingCat.name : catForm.name} onChange={(e) => editingCat ? setEditingCat({ ...editingCat, name: e.target.value }) : setCatForm({ ...catForm, name: e.target.value })} placeholder="e.g. Repairs" /></div>
           <div><label className="label">Icon</label>
             <select className="select" value={editingCat ? editingCat.icon : catForm.icon} onChange={(e) => editingCat ? setEditingCat({ ...editingCat, icon: e.target.value }) : setCatForm({ ...catForm, icon: e.target.value })}>
               {EXPENSE_CATEGORY_ICON_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select></div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <div style={{ display: "flex", gap: 8 }}>
             {editingCat ? <>
-              <button className="btn btn-primary" onClick={saveCategoryEdit}><Check /> Save</button>
-              <button className="btn btn-ghost" onClick={() => setEditingCat(null)}>Cancel</button>
-            </> : <button className="btn btn-primary" onClick={addCategory}><Plus /> Add category</button>}
+              <button type="button" className="btn btn-primary" onClick={saveCategoryEdit}><Check /> Save</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditingCat(null)}>Cancel</button>
+            </> : <button type="button" className="btn btn-primary" onClick={addCategory}><Plus /> Add</button>}
           </div>
         </div>
-        <div className="list" style={{ marginTop: 14 }}>{allExpenseCategories.map((cat, idx) => (
+        <div className="list expense-category-list">{allExpenseCategories.map((cat, idx) => (
           <div className="row" key={cat.id}>
             <div className="avatar"><ExpenseCategoryIcon icon={cat.icon} /></div>
             <div className="meta">
@@ -10614,61 +10698,68 @@ function ExpensesTab({ data, update, branch, user }) {
               <div className="mt2">{cat.active === false ? "Hidden from cashier expense sheet" : "Available to cashier terminals"}</div>
             </div>
             <span className="pill plain" style={{ color: cat.active === false ? "var(--muted)" : "var(--ok)" }}>{cat.active === false ? "Inactive" : "Active"}</span>
-            <button className="btn sm btn-ghost" disabled={idx === 0} onClick={() => moveCategory(cat, -1)}><ArrowUp /> Up</button>
-            <button className="btn sm btn-ghost" disabled={idx === allExpenseCategories.length - 1} onClick={() => moveCategory(cat, 1)}><ChevronDown /> Down</button>
-            <button className="btn sm btn-ghost" onClick={() => startEditCategory(cat)}><Edit /> Rename</button>
-            <button className={"btn sm " + (cat.active === false ? "btn-primary" : "btn-ghost")} onClick={() => toggleCategory(cat)}>{cat.active === false ? <Check /> : <X />}{cat.active === false ? "Activate" : "Deactivate"}</button>
+            <div className="category-order">
+              <button type="button" className="iconbtn" title="Move up" aria-label={`Move ${cat.name} up`} disabled={idx === 0} onClick={() => moveCategory(cat, -1)}><ArrowUp /></button>
+              <button type="button" className="iconbtn" title="Move down" aria-label={`Move ${cat.name} down`} disabled={idx === allExpenseCategories.length - 1} onClick={() => moveCategory(cat, 1)}><ChevronDown /></button>
+              <button type="button" className="iconbtn" title="Rename" aria-label={`Rename ${cat.name}`} onClick={() => startEditCategory(cat)}><Edit /></button>
+            </div>
+            <button type="button" className={"btn xs " + (cat.active === false ? "btn-primary" : "btn-ghost")} onClick={() => toggleCategory(cat)}>{cat.active === false ? "Enable" : "Disable"}</button>
           </div>
         ))}</div>
-        </>}
-      </div>
+      </div>}
 
-      <div className="dash2">
+      {view === "overview" && <>
+      <div className="expense-overview-grid">
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Expenses by category</div><Bars data={byCat} empty="No expenses in this timeframe." /></div>
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Expenses by cashier</div><Bars data={byCashier} empty="No expenses in this timeframe." /></div>
       </div>
-      <div className="dash2" style={{ marginTop: 16 }}>
+      <details className="expense-more-analysis">
+        <summary><span>More analysis</span><ChevronDown /></summary>
+      <div className="expense-overview-grid">
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Expenses by branch</div><Bars data={byBranch} empty="No expenses in this timeframe." /></div>
         <div className="dcard"><div className="sub" style={{ marginBottom: 2 }}>Analytics</div><div className="section-title" style={{ marginTop: 0 }}>Monthly operational cost</div><Bars data={byMonth} empty="No expenses in this timeframe." /></div>
       </div>
+      </details>
+      </>}
 
-      {pending.length > 0 && (
-        <div className="addpanel" style={{ borderColor: "rgba(214,158,46,.45)", background: "rgba(214,158,46,.07)", marginTop: 18 }}>
-          <div className="sideh" style={{ marginBottom: 10, color: "#9A6B00" }}>Pending approval queue · over {fmt(APPROVAL_LIMIT, cur)}</div>
-          <div className="list">{[...pending].reverse().map((e) => (
-            <div className="row" key={e.id} style={{ alignItems: "flex-start" }}>
+      {view === "approvals" && visiblePending.length > 0 && (
+        <div>
+          <div className="section-title">Pending approval queue · over {fmt(APPROVAL_LIMIT, cur)}</div>
+          <div className="expense-queue">{[...visiblePending].reverse().map((e) => (
+            <div className="row" key={e.id}>
               <div className="avatar"><AlertCircle style={{ width: 17, height: 17 }} /></div>
               <div className="meta">
                 <div className="nm">{fmt(e.amountCents, cur)} · {e.category || "Other"}</div>
                 <div className="mt2">{sourceOf(e)} · {cashierOf(e)} · {bname(e.branchId)} · {dt(e.ts)}</div>
                 <div className="mt2">{e.note || "No note supplied."}</div>
                 {rejecting === e.id && (
-                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <input className="input" style={{ height: 38 }} value={rejectReason} onChange={(ev) => setRejectReason(ev.target.value)} placeholder="Reason for rejection" autoFocus />
-                    <button className="btn sm btn-primary" disabled={rejectReason.trim().length < 3} onClick={() => reject(e.id)}><X /> Confirm reject</button>
-                    <button className="btn sm btn-ghost" onClick={() => { setRejecting(null); setRejectReason(""); }}>Cancel</button>
+                  <div className="expense-reject-form">
+                    <input className="input" value={rejectReason} onChange={(ev) => setRejectReason(ev.target.value)} placeholder="Reason for rejection" autoFocus />
+                    <button type="button" className="btn sm btn-primary" disabled={rejectReason.trim().length < 3} onClick={() => reject(e.id)}><X /> Reject</button>
+                    <button type="button" className="btn sm btn-ghost" onClick={() => { setRejecting(null); setRejectReason(""); }}>Cancel</button>
                   </div>
                 )}
               </div>
               {rejecting === e.id ? null : (
-                <>
-                  <button className="btn sm btn-primary" onClick={() => approve(e.id)}><Check /> Approve</button>
-                  <button className="btn sm btn-ghost" onClick={() => { setRejecting(e.id); setRejectReason(""); }}><X /> Reject</button>
-                </>
+                <div className="expense-queue-actions">
+                  <button type="button" className="btn sm btn-primary" onClick={() => approve(e.id)}><Check /> Approve</button>
+                  <button type="button" className="btn sm btn-ghost" onClick={() => { setRejecting(e.id); setRejectReason(""); }}><X /> Reject</button>
+                </div>
               )}
             </div>))}
           </div>
         </div>
       )}
-      <div className="section-title" style={{ margin: "18px 0 8px" }}>Expense approval history</div>
-      <div className="list">{history.map((e) => {
+      {view === "approvals" && visiblePending.length === 0 ? <div className="notice">No expenses are waiting for approval.</div> : null}
+      {view === "history" && <DocumentFile title="Expense records" count={history.length} meta={`${periodApproved.length} approved in the selected period`}>
+      <div className="expense-history-list">{history.map((e) => {
         const rejected = isRejected(e);
         const decidedAt = e.decidedAt || e.approvedAt || e.rejectedAt;
         const decidedBy = e.decidedBy || e.approvedBy || e.rejectedBy;
         return (
           <div className="row" key={e.id}><div className="avatar"><TrendingDown style={{ width: 17, height: 17 }} /></div>
             <div className="meta">
-              <div className="nm">{e.category || "Other"} · {sourceOf(e)} <span className="pill plain" style={{ marginLeft: 8, color: rejected ? "#C23A56" : "var(--ok)" }}>{rejected ? "Rejected" : "Approved"}</span></div>
+              <div className="nm">{e.category || "Other"} · {sourceOf(e)} <span className="pill plain expense-history-status" style={{ color: rejected ? "#C23A56" : "var(--ok)" }}>{rejected ? "Rejected" : "Approved"}</span></div>
               <div className="mt2">{e.note || "No note supplied."} · {bname(e.branchId)} · {cashierOf(e)} · {dt(e.ts)}</div>
               <div className="mt2">{decidedAt ? (rejected ? "Rejected" : "Approved") + " by " + (decidedBy || "Supervisor") + " · " + dt(decidedAt) : "Auto-approved at entry"}</div>
               {rejected && e.rejectReason ? <div className="mt2">Reason: {e.rejectReason}</div> : null}
@@ -10678,6 +10769,7 @@ function ExpensesTab({ data, update, branch, user }) {
         );
       })}
         {history.length === 0 && <div className="notice">No expense approval history in this timeframe.</div>}</div>
+      </DocumentFile>}
     </div>
   );
 }
@@ -12012,7 +12104,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 /* ---- Documents (report & document center) ---- */
 const DOC_TYPES = [
   ["suppliers", "Invoices from Suppliers"], ["sales", "Sales Invoices"], ["inventory", "Inventory Counts"],
-  ["loss", "Loss & Damage"], ["transfers", "Stock Transfers"], ["expenses", "Expenses"], ["purchases", "Purchase Orders"], ["endofday", "End of Day Closes"],
+  ["corrections", "Stock Corrections"], ["loss", "Loss & Damage"], ["transfers", "Stock Transfers"], ["expenses", "Expenses"], ["purchases", "Purchase Orders"], ["endofday", "End of Day Closes"],
 ];
 const openMail = (subject, body) => { try { window.open("mailto:?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body), "_blank"); } catch (_) {} };
 const openWhatsApp = (text) => { try { window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank"); } catch (_) {} };
@@ -12081,6 +12173,21 @@ function DocumentsTab({ data }) {
         date: dt(ts), ts, amountCents: Math.abs(rep.varianceCost),
         detail: [["Branch", rep.branchName], ["When", new Date(ts).toLocaleString()], ["Items counted", lines.length], ["Discrepancies", discrepancies.length], ["Amendments", rep.amendments], ["Shortage total", fmt(rep.shortCost, cur)], ["Overage total", fmt(rep.overCost, cur)], ["Net variance value", fmt(rep.varianceCost, cur)]] };
     });
+  } else if (type === "corrections") {
+    eyebrow = "Inventory"; title = "Stock Correction Records";
+    docs = (data.stockMovements || [])
+      .filter((movement) => inRange(movement.ts) && inBranch(movement.branchId) && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
+      .map((movement) => {
+        const product = prod(movement.productId);
+        const value = Math.abs(Number(movement.qty) || 0) * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
+        return {
+          id: movement.id,
+          label: product?.name || "Product correction",
+          meta: `${bname(movement.branchId)} · ${movement.previousQty ?? "—"} to ${movement.correctedQty ?? "—"} (${Number(movement.qty) > 0 ? "+" : ""}${movement.qty || 0})`,
+          date: dt(movement.ts), ts: movement.ts, amountCents: value,
+          detail: [["Product", product?.name || movement.productId], ["SKU", product?.sku || "—"], ["Branch", bname(movement.branchId)], ["Previous quantity", movement.previousQty ?? "—"], ["Corrected quantity", movement.correctedQty ?? "—"], ["Adjustment", `${Number(movement.qty) > 0 ? "+" : ""}${movement.qty || 0}`], ["Reason", movement.correctionReason || movement.reason || "Stock correction"], ["Note", movement.correctionNote || "—"], ["Corrected by", movement.correctedBy || "Supervisor"], ["When", dt(movement.ts)]]
+        };
+      });
   } else if (type === "loss") {
     eyebrow = "Shrinkage"; title = "Loss & Damage Reports";
     docs = data.stockMovements.filter((m) => inRange(m.ts) && inBranch(m.branchId) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchInventoryCostCents(data, p, m.branchId) : 0);
@@ -12103,7 +12210,6 @@ function DocumentsTab({ data }) {
   docs = docs.sort((a, b) => b.ts - a.ts);
   const sum = docs.reduce((s, d) => s + (d.amountCents || 0), 0);
   const periodLabel = (!start && !end) ? "All dates" : (start || "…") + " → " + (end || "…");
-  const typeLabel = DOC_TYPES.find((t) => t[0] === type)?.[1] || "Documents";
   const branchLabel = branch === "all" ? "All branches" : bname(branch);
 
   const runSelected = (a) => {
@@ -12140,15 +12246,7 @@ function DocumentsTab({ data }) {
         <div><label className="label">End date</label><input type="date" className="input" style={{ maxWidth: 168 }} value={end} onChange={(e) => setEnd(e.target.value)} /></div>
       </div>
 
-      <div className="panel">
-        <div className="wshead">{eyebrow}</div>
-        <div className="wstitle" style={{ fontSize: 20, marginBottom: 14 }}>{title}</div>
-        <div className="stats">
-          <div className="stat"><div className="sl">Period</div><div className="sv" style={{ fontSize: 17 }}>{periodLabel}</div></div>
-          <div className="stat"><div className="sl">Branch</div><div className="sv" style={{ fontSize: 17 }}>{branchLabel}</div></div>
-          <div className="stat"><div className="sl">{typeLabel}</div><div className="sv">{docs.length}</div></div>
-          <div className="stat"><div className="sl">Sum Total</div><div className="sv">{fmt(sum, cur)}</div></div>
-        </div>
+      <DocumentFile title={title} count={docs.length} meta={`${eyebrow} · ${periodLabel} · ${branchLabel} · ${fmt(sum, cur)}`}>
         {docs.length === 0 ? <div className="notice">No documents found for this period.</div> : (
           <div className="list">{docs.map((d) => (
             <div className={"row" + (d.poItems || d.countReport ? " clickable" : "") + (selected && selected.id === d.id ? " rowsel" : "")} key={d.id} onClick={d.poItems ? () => setPoView(d) : d.countReport ? () => setRepView(d) : undefined}>
@@ -12158,7 +12256,7 @@ function DocumentsTab({ data }) {
               <button className="btn xs btn-ghost" onClick={(e) => { e.stopPropagation(); d.poItems ? setPoView(d) : d.countReport ? setRepView(d) : setSelected(d); }}>View</button>
             </div>))}</div>
         )}
-      </div>
+      </DocumentFile>
 
       {selected && !selected.poItems && !selected.countReport && (
         <div className="scrim" onClick={() => setSelected(null)}>
