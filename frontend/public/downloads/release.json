@@ -1,11 +1,11 @@
 {
-  "version": "2.0.66",
+  "version": "2.0.67",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.66_x64-setup.exe",
-  "size": 3243272,
-  "sha512": "035D7E6A7A5296F9FAB6CD72DB51DBC279FBA94E877A6E06C195FC0BB3DBC126CE26E4C4228C636E5D9A46E39AA8EFB0929C876C34A88C59E57E675F667E52B3",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.67_x64-setup.exe",
+  "size": 3240832,
+  "sha512": "96AC8279A6026C8D013FC5D754B8A31FF3BA923FFF96C98C97CB112454724031E0635A6304014C4BCEDB2EDA60555BA743D8CF1A6250F1CCD3C07770DDD5CFC0",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.66",
+    "VISIONPOS Cashier 2.0.67",
     "Cashier inventory debt now accumulates assigned, paid, and outstanding balances across all stock counts.",
     "Supervisor inventory-debt payments sync to the cashier dashboard and reduce each cashier's outstanding balance.",
     "Customer balances remain in Invoice debt and no longer appear in the Inventory debt category.",
