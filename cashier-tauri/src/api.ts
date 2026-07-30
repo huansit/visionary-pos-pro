@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
-import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -817,6 +817,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   products: Product[];
   invoices: Invoice[];
   cashierJointDebts: CashierJointDebt[];
+  stockTransferRequests: StockTransferRequest[];
   expenseCategories: ExpenseCategory[];
   dayClosedAt: number | null;
 }> {
@@ -877,6 +878,8 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const cashierJointDebtRecords = new Map<string, CashierJointDebt>();
   const cashierJointDebtPaidCents = new Map<string, number>();
+  const stockTransferRequestRecords = new Map<string, StockTransferRequest>();
+  const stockTransferDecisions = new Map<string, { decision: "approved" | "rejected"; reason: string; transferNumber?: string; decidedAt: number }>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
   let dayClosedAt: number | null = catalogDayClosedAt;
@@ -1048,6 +1051,50 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         cashierJointDebtPaidCents.set(key, (cashierJointDebtPaidCents.get(key) || 0) + amountCents);
       }
     }
+    if (item.type === "stockTransferRequest") {
+      const payload = item.payload || {};
+      const requestId = String(item.id || payload.id || "").trim();
+      const fromBranchId = String(payload.fromBranchId || payload.branchId || item.branchId || "").trim();
+      const toBranchId = String(payload.toBranchId || "").trim();
+      const requestItems: StockTransferRequestItem[] = (Array.isArray(payload.items) ? payload.items : [])
+        .map((entry: any) => ({
+          productId: String(entry.productId || "").trim(),
+          productName: String(entry.productName || entry.name || "Product").trim() || "Product",
+          sku: String(entry.sku || "").trim(),
+          qty: Math.max(0, Math.floor(Number(entry.qty || entry.quantity || 0)))
+        }))
+        .filter((entry: StockTransferRequestItem) => entry.productId && entry.qty > 0);
+      if (requestId && fromBranchId && toBranchId && requestItems.length) {
+        stockTransferRequestRecords.set(requestId, {
+          id: requestId,
+          fromBranchId,
+          toBranchId,
+          cashierId: String(payload.cashierId || "").trim(),
+          cashierName: String(payload.cashierName || payload.cashier || "Cashier").trim() || "Cashier",
+          note: String(payload.note || "").trim(),
+          items: requestItems,
+          status: "pending",
+          requestedAt: Number(payload.requestedAt || payload.ts || item.clientTs || item.serverTs || 0)
+        });
+      }
+    }
+    if (item.type === "stockTransferDecision") {
+      const payload = item.payload || {};
+      const requestId = String(payload.requestId || "").trim();
+      const decision = String(payload.decision || "").trim().toLowerCase();
+      if (requestId && (decision === "approved" || decision === "rejected")) {
+        const decidedAt = Number(payload.decidedAt || payload.ts || item.clientTs || item.serverTs || 0);
+        const previous = stockTransferDecisions.get(requestId);
+        if (!previous || decidedAt >= previous.decidedAt) {
+          stockTransferDecisions.set(requestId, {
+            decision,
+            reason: String(payload.reason || payload.decisionReason || "").trim(),
+            transferNumber: String(payload.transferNumber || "").trim() || undefined,
+            decidedAt
+          });
+        }
+      }
+    }
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
@@ -1152,7 +1199,21 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     .filter((debt) => debt.branchId === terminal.branchId)
     .sort((a, b) => b.ts - a.ts);
 
-  return { branches, invoices, products, cashierJointDebts, expenseCategories, dayClosedAt };
+  const stockTransferRequests = Array.from(stockTransferRequestRecords.values())
+    .filter((request) => request.fromBranchId === terminal.branchId)
+    .map((request) => {
+      const review = stockTransferDecisions.get(request.id);
+      return review ? {
+        ...request,
+        status: review.decision,
+        decisionReason: review.reason,
+        transferNumber: review.transferNumber,
+        decidedAt: review.decidedAt
+      } : request;
+    })
+    .sort((a, b) => b.requestedAt - a.requestedAt);
+
+  return { branches, invoices, products, cashierJointDebts, stockTransferRequests, expenseCategories, dayClosedAt };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {
@@ -1285,6 +1346,41 @@ export async function pushExpense(
       }];
   const result = await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
+}
+
+export async function requestStockTransfer(
+  terminal: TerminalCredentials,
+  account: Account,
+  request: { toBranchId: string; note?: string; items: StockTransferRequestItem[] }
+): Promise<string> {
+  const ts = Date.now();
+  const requestId = uid("transfer-request");
+  const events = [{
+    id: requestId,
+    type: "stockTransferRequest",
+    branchId: terminal.branchId,
+    clientTs: ts,
+    payload: {
+      id: requestId,
+      fromBranchId: terminal.branchId,
+      toBranchId: request.toBranchId,
+      cashierId: account.id,
+      cashierName: account.name,
+      note: String(request.note || "").trim(),
+      items: request.items.map((item) => ({
+        productId: item.productId,
+        productName: item.productName,
+        sku: item.sku || "",
+        qty: Math.max(1, Math.floor(Number(item.qty || 0)))
+      })),
+      status: "pending",
+      requestedAt: ts,
+      ts
+    }
+  }];
+  const result = await pushSyncEvents(terminal, events);
+  assertSyncAccepted(result, events);
+  return requestId;
 }
 
 export async function pushCashSessionEvent(

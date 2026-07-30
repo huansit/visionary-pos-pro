@@ -103,6 +103,28 @@ export type CashierJointDebt = {
   ts: number;
 };
 
+export type StockTransferRequestItem = {
+  productId: string;
+  productName: string;
+  sku?: string;
+  qty: number;
+};
+
+export type StockTransferRequest = {
+  id: string;
+  fromBranchId: string;
+  toBranchId: string;
+  cashierId: string;
+  cashierName: string;
+  note?: string;
+  items: StockTransferRequestItem[];
+  status: "pending" | "approved" | "rejected";
+  decisionReason?: string;
+  transferNumber?: string;
+  requestedAt: number;
+  decidedAt?: number;
+};
+
 export type CartLine = {
   product: Product;
   qty: number;

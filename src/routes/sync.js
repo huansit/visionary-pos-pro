@@ -676,6 +676,8 @@ const EVENT_TYPES = new Set([
   "invoiceNote",
   "invoiceVoidRequest",
   "invoiceVoidDecision",
+  "stockTransferRequest",
+  "stockTransferDecision",
   "stockMovement",
   "borrowing",
   "endOfDay",
@@ -734,6 +736,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "payment",
   "purchase",
   "invoiceVoidDecision",
+  "stockTransferDecision",
   "cashierJointDebt",
   "cashierJointDebtPayment",
 ]);
@@ -968,6 +971,86 @@ async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
   return { id: decisionEvent.id, ts: acceptedTs };
 }
 
+async function processStockTransferApprovalEvent(client, ev, type, req, deviceId, ts) {
+  const duplicate = await existingEvent(client, ev.id);
+  if (duplicate) {
+    if (duplicate.type !== type) throw syncEventError("event_id_conflict");
+    return { id: duplicate.id, ts: duplicate.server_ts };
+  }
+
+  const payload = { ...(ev.payload || {}) };
+  if (type === "stockTransferRequest") {
+    const fromBranchId = String(ev.branchId || payload.fromBranchId || payload.branchId || "").trim();
+    const toBranchId = String(payload.toBranchId || "").trim();
+    const items = (Array.isArray(payload.items) ? payload.items : []).map((item) => ({
+      productId: String(item?.productId || "").trim(),
+      productName: String(item?.productName || item?.name || "Product").trim() || "Product",
+      sku: String(item?.sku || "").trim(),
+      qty: Math.floor(Number(item?.qty || 0)),
+    })).filter((item) => item.productId && item.qty > 0);
+    if (!fromBranchId) throw syncEventError("transfer_source_branch_required");
+    if (!toBranchId) throw syncEventError("transfer_destination_branch_required");
+    if (fromBranchId === toBranchId) throw syncEventError("transfer_branches_must_differ");
+    if (!items.length) throw syncEventError("transfer_items_required");
+    const requestEvent = {
+      ...ev,
+      branchId: fromBranchId,
+      payload: {
+        ...payload,
+        fromBranchId,
+        branchId: fromBranchId,
+        toBranchId,
+        items,
+        status: "pending",
+        cashierId: String(payload.cashierId || req.account?.id || "").trim(),
+        cashierName: String(payload.cashierName || req.account?.name || "Cashier").trim() || "Cashier",
+        requestedBy: req.account?.id || payload.cashierId || req.deviceId || "unknown",
+        requestedByRole: syncRole(req.account) || (req.terminalUuid ? "cashier" : "unknown"),
+        requestedAt: Date.now(),
+      },
+    };
+    const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
+    return { id: requestEvent.id, ts: acceptedTs };
+  }
+
+  if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
+    throw syncEventError("supervisor_authorization_required");
+  }
+  const requestId = String(payload.requestId || "").trim();
+  const decision = String(payload.decision || "").trim().toLowerCase();
+  if (!requestId) throw syncEventError("transfer_request_id_required");
+  if (!["approved", "rejected"].includes(decision)) throw syncEventError("transfer_decision_invalid");
+  const requestResult = await client.query(
+    "SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'stockTransferRequest' LIMIT 1",
+    [requestId]
+  );
+  const request = requestResult.rows[0];
+  if (!request) throw syncEventError("transfer_request_not_found");
+  const decisionsResult = await client.query("SELECT id, payload FROM events WHERE type = 'stockTransferDecision'");
+  if (decisionsResult.rows.some((row) => row.payload?.requestId === requestId)) {
+    throw syncEventError("transfer_request_already_decided");
+  }
+  const fromBranchId = String(request.branch_id || request.payload?.fromBranchId || request.payload?.branchId || "").trim();
+  const decisionEvent = {
+    ...ev,
+    branchId: fromBranchId,
+    payload: {
+      ...payload,
+      requestId,
+      fromBranchId,
+      branchId: fromBranchId,
+      toBranchId: request.payload?.toBranchId,
+      decision,
+      decidedBy: req.account.id,
+      decidedByName: req.account.name || req.account.email || "Supervisor",
+      decidedByRole: syncRole(req.account),
+      decidedAt: Date.now(),
+    },
+  };
+  const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
+  return { id: decisionEvent.id, ts: acceptedTs };
+}
+
 router.post("/push", requireSyncWrite, async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
@@ -1049,6 +1132,20 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           const result = await processInvoiceVoidEvent(
             client,
             guardedEvent,
+            type,
+            req,
+            recordDeviceId,
+            nextServerTs()
+          );
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+        } else if (type === "stockTransferRequest" || type === "stockTransferDecision") {
+          const transferApprovalEvent = type === "stockTransferRequest"
+            ? remapEventProductReferences(guardedEvent, await getProductAliases())
+            : guardedEvent;
+          const result = await processStockTransferApprovalEvent(
+            client,
+            transferApprovalEvent,
             type,
             req,
             recordDeviceId,

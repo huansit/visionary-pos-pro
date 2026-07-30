@@ -740,6 +740,77 @@ test("4a. cashier invoice void requests require management approval and sync to 
     });
 });
 
+test("4b. cashier stock transfer requests require management approval", async () => {
+  const transferRequest = {
+    id: "transfer-request-001",
+    type: "stockTransferRequest",
+    branchId: "b_sip",
+    clientTs: 1300,
+    payload: {
+      fromBranchId: "b_sip",
+      toBranchId: "b_cpt",
+      cashierId: "cashier-001",
+      cashierName: "Test Cashier",
+      note: "Move stock requested at the shop",
+      items: [{ productId: "prod-two-device-001", productName: "Test product", sku: "TEST-001", qty: 2 }],
+    },
+  };
+  const transferDecision = {
+    id: "transfer-decision-001",
+    type: "stockTransferDecision",
+    branchId: "b_sip",
+    clientTs: 1400,
+    payload: {
+      requestId: transferRequest.id,
+      decision: "approved",
+    },
+  };
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [transferRequest] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, [transferRequest.id]);
+      assert.equal(res.body.rejected.length, 0);
+    });
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [transferDecision] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.reason, "supervisor_authorization_required");
+    });
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [transferDecision] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, [transferDecision.id]);
+      assert.equal(res.body.rejected.length, 0);
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const requestEvent = res.body.events.find((event) => event.id === transferRequest.id);
+      const decisionEvent = res.body.events.find((event) => event.id === transferDecision.id);
+      assert.equal(requestEvent?.payload?.status, "pending");
+      assert.equal(requestEvent?.payload?.fromBranchId, "b_sip");
+      assert.equal(requestEvent?.payload?.toBranchId, "b_cpt");
+      assert.equal(requestEvent?.payload?.items?.[0]?.qty, 2);
+      assert.equal(decisionEvent?.payload?.decision, "approved");
+      assert.equal(decisionEvent?.payload?.requestId, transferRequest.id);
+      assert.equal(decisionEvent?.payload?.decidedBy, "admin-owner");
+    });
+});
+
 test("5. two devices sync a complete transaction sale across invoice, payment, and stock movement", async () => {
   const saleEvents = [
     {

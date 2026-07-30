@@ -508,6 +508,8 @@ const SEED = () => {
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
+    stockTransferRequests: [],
+    stockTransferDecisions: [],
     purchases: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
@@ -542,6 +544,8 @@ const CLEAN_SETUP = () => {
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
+    stockTransferRequests: [],
+    stockTransferDecisions: [],
     purchases: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
@@ -736,6 +740,8 @@ function normalizeLoadedData(data) {
     invoices: Array.isArray(data.invoices) ? data.invoices : [],
     invoiceVoidRequests: Array.isArray(data.invoiceVoidRequests) ? data.invoiceVoidRequests : [],
     invoiceVoidDecisions: Array.isArray(data.invoiceVoidDecisions) ? data.invoiceVoidDecisions : [],
+    stockTransferRequests: Array.isArray(data.stockTransferRequests) ? data.stockTransferRequests : [],
+    stockTransferDecisions: Array.isArray(data.stockTransferDecisions) ? data.stockTransferDecisions : [],
     purchases: Array.isArray(data.purchases) ? data.purchases : [],
     expenses: Array.isArray(data.expenses) ? data.expenses : [],
     expenseCategories: Array.isArray(data.expenseCategories) ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES,
@@ -926,6 +932,8 @@ const SYNC_APPEND = new Map([
   ["invoices", "invoice"],
   ["invoiceVoidRequests", "invoiceVoidRequest"],
   ["invoiceVoidDecisions", "invoiceVoidDecision"],
+  ["stockTransferRequests", "stockTransferRequest"],
+  ["stockTransferDecisions", "stockTransferDecision"],
   ["payments", "payment"],
   ["borrowings", "borrowing"],
   ["stockMovements", "stockMovement"],
@@ -3989,6 +3997,21 @@ body{overscroll-behavior:none}
 .ticket .totrow.grand{background:var(--surface-2);border:1px solid var(--border-soft);border-radius:14px;padding:14px 16px;margin-top:10px}
 .xferinfo{background:rgba(14,165,181,.08);border:1px solid var(--border-soft);border-radius:16px;padding:16px 18px;margin-bottom:14px}
 .xferinfo strong{font-size:15px}
+.transfer-approval-queue{border:1px solid rgba(230,67,104,.28);background:var(--surface);border-radius:16px;margin-bottom:14px;overflow:hidden}
+.transfer-approval-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-approval-head h3{font-size:15px;margin:2px 0 0}
+.transfer-approval-count{min-width:28px;height:28px;border-radius:999px;display:grid;place-items:center;background:rgba(230,67,104,.14);color:var(--danger);font:800 12px var(--font-mono)}
+.transfer-approval-queue>.alert{margin:10px 14px 0}
+.transfer-approval-list{display:flex;flex-direction:column}
+.transfer-approval-row{display:grid;grid-template-columns:minmax(240px,1fr) auto auto;align-items:center;gap:18px;padding:13px 18px;border-bottom:1px solid var(--border-soft)}
+.transfer-approval-row:last-child{border-bottom:0}
+.transfer-approval-main{display:flex;flex-direction:column;gap:3px;min-width:0}
+.transfer-approval-main>span{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);font-weight:700}
+.transfer-approval-main>span svg{width:13px;height:13px}
+.transfer-approval-main small{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transfer-approval-meta{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-family:var(--font-mono);font-size:12px;white-space:nowrap}
+.transfer-approval-meta small{color:var(--muted)}
+.transfer-approval-actions{display:flex;gap:7px}
 .transfer-suggestions{border:1px solid var(--border-soft);background:var(--surface);border-radius:16px;margin-bottom:14px;overflow:hidden}
 .transfer-suggestions-toggle{width:100%;min-height:64px;border:0;background:transparent;color:var(--text);padding:12px 16px;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;font-family:var(--font-ui)}
 .transfer-suggestions-toggle:hover{background:var(--surface-2)}
@@ -4207,6 +4230,9 @@ body{overscroll-behavior:none}
   .transfer-suggestion-row{grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:13px 14px}
   .transfer-suggestion-route,.transfer-suggestion-evidence{grid-column:1}
   .transfer-suggestion-action{grid-column:2;grid-row:1 / span 3;align-items:flex-end;flex-direction:column;justify-content:center}
+  .transfer-approval-row{grid-template-columns:minmax(0,1fr) auto;padding:13px 14px;gap:10px}
+  .transfer-approval-meta{grid-column:2;grid-row:1;align-self:start}
+  .transfer-approval-actions{grid-column:1 / -1;justify-content:flex-end}
 }
 @media (max-width:520px){
   .vpos{padding:8px}
@@ -6240,7 +6266,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
+  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; if (tabId === "borrowing" && accountRole === "supervisor") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
@@ -6259,6 +6285,10 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const pendingVoidCount = operationalInvoices(data)
     .filter((invoice) => invoice.branchId === branch.id && invoiceVoidState(data, invoice.id).status === "pending")
     .length;
+  const decidedTransferRequestIds = new Set((data.stockTransferDecisions || []).map((decision) => decision.requestId));
+  const pendingTransferRequestCount = (data.stockTransferRequests || [])
+    .filter((request) => !decidedTransferRequestIds.has(request.id))
+    .length;
   const openCashierCreditInvoices = (cashier) => {
     setInvoiceFocus({ cashier, filter: "debt", key: Date.now() });
     setTab("invoices");
@@ -6268,8 +6298,18 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   };
   const NavBtn = ({ item, main }) => {
     const I = item.icon;
-    const badgeCount = item.id === "expenses" ? pendingExpenseCount : item.id === "invoices" ? pendingVoidCount : 0;
-    const badgeLabel = item.id === "invoices" ? "void requests pending approval" : "expenses pending approval";
+    const badgeCount = item.id === "expenses"
+      ? pendingExpenseCount
+      : item.id === "invoices"
+        ? pendingVoidCount
+        : item.id === "borrowing"
+          ? pendingTransferRequestCount
+          : 0;
+    const badgeLabel = item.id === "invoices"
+      ? "void requests pending approval"
+      : item.id === "borrowing"
+        ? "stock transfer requests pending approval"
+        : "expenses pending approval";
     return (
       <button
         className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")}
@@ -6302,7 +6342,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} />;
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
-      case "borrowing": return <BorrowingTab data={data} update={update} />;
+      case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
@@ -8677,7 +8717,7 @@ function StockTab({ data, update, branch }) {
     headers: stockTemplateHeaders(),
     rows: stockTemplateRows(),
     totals: [],
-    orientation: "landscape",
+    orientation: "portrait",
     prominentBranch: true,
   });
   const exportStockTakingTemplate = (kind) => {
@@ -10290,7 +10330,7 @@ function BranchesTab({ data, update }) {
 }
 
 /* ---- Branch Transfer (Stock Borrowing) ---- */
-function BorrowingTab({ data, update }) {
+function BorrowingTab({ data, update, approver, approverRole }) {
   const [fromB, setFromB] = useState(data.branches[1]?.id || data.branches[0]?.id || "");
   const [toB, setToB] = useState(data.branches[0]?.id || "");
   const [q, setQ] = useState("");
@@ -10305,11 +10345,27 @@ function BorrowingTab({ data, update }) {
   const [suggestionMessage, setSuggestionMessage] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+  const [requestReviewError, setRequestReviewError] = useState("");
   const transferSearchRef = useRef(null);
   const transferQtyRef = useRef(null);
   const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
+  const transferDecisionsByRequest = useMemo(() => {
+    const decisions = new Map();
+    (data.stockTransferDecisions || []).forEach((decision) => {
+      const requestId = String(decision.requestId || "");
+      if (!requestId) return;
+      const previous = decisions.get(requestId);
+      if (!previous || Number(decision.decidedAt || decision.ts || 0) >= Number(previous.decidedAt || previous.ts || 0)) {
+        decisions.set(requestId, decision);
+      }
+    });
+    return decisions;
+  }, [data.stockTransferDecisions]);
+  const pendingTransferRequests = useMemo(() => (data.stockTransferRequests || [])
+    .filter((request) => !transferDecisionsByRequest.has(request.id))
+    .sort((a, b) => Number(b.requestedAt || b.ts || 0) - Number(a.requestedAt || a.ts || 0)), [data.stockTransferRequests, transferDecisionsByRequest]);
   const transferSuggestions = useMemo(() => {
     const activeBranches = (data.branches || []).filter((branch) => branch.active !== false);
     if (activeBranches.length < 2) return [];
@@ -10573,6 +10629,91 @@ function BorrowingTab({ data, update }) {
     setLines([]); setQty(""); setNote(""); setProductId(""); setQ("");
   };
 
+  const reviewCashierTransferRequest = (request, decision) => {
+    setRequestReviewError("");
+    if (transferDecisionsByRequest.has(request.id)) return;
+    const requestItems = normalizedTransferItems(request, data.products).filter((item) => Number(item.qty) > 0);
+    if (decision === "approved") {
+      for (const item of requestItems) {
+        const currentProduct = data.products.find((entry) => entry.id === item.productId);
+        if (!currentProduct) return setRequestReviewError(`${item.productName} is no longer available in the catalog.`);
+        const availableQty = productOnHand(data, currentProduct, request.fromBranchId);
+        if (Number(item.qty) > availableQty) return setRequestReviewError(`${item.productName} requested ${item.qty}, but only ${availableQty} is currently available at ${bn(request.fromBranchId)}.`);
+        if (branchInventoryCostCents(data, currentProduct, request.fromBranchId) <= 0) return setRequestReviewError(`${item.productName} has no purchase cost at ${bn(request.fromBranchId)}.`);
+      }
+    }
+
+    const reviewedAt = now();
+    update((d) => {
+      if ((d.stockTransferDecisions || []).some((entry) => entry.requestId === request.id)) return d;
+      const reviewer = approver?.name || approver?.email || "Supervisor";
+      const baseDecision = {
+        id: uid("trd"),
+        requestId: request.id,
+        fromBranchId: request.fromBranchId,
+        toBranchId: request.toBranchId,
+        branchId: request.fromBranchId,
+        decision,
+        decidedBy: approver?.id || "management",
+        decidedByName: reviewer,
+        decidedByRole: String(approverRole || approver?.role || "Supervisor"),
+        decidedAt: reviewedAt,
+        ts: reviewedAt,
+        reason: decision === "rejected" ? `Rejected by ${reviewer}` : "Stock and purchase cost verified",
+        synced: false,
+      };
+      if (decision === "rejected") {
+        return { ...d, stockTransferDecisions: [...(d.stockTransferDecisions || []), baseDecision] };
+      }
+
+      const number = nextTransferNumber(d.borrowings);
+      const transferId = uid("trf");
+      let products = [...d.products];
+      const movements = [];
+      const transferItems = normalizedTransferItems(request, d.products).filter((item) => Number(item.qty) > 0).map((item) => {
+        const productIndex = products.findIndex((entry) => entry.id === item.productId);
+        const currentProduct = productIndex >= 0 ? products[productIndex] : null;
+        const workingData = { ...d, products };
+        const sourceCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, request.fromBranchId) : 0;
+        const destinationQty = currentProduct ? Math.max(0, productOnHand(workingData, currentProduct, request.toBranchId)) : 0;
+        const destinationCostCents = currentProduct ? branchInventoryCostCents(workingData, currentProduct, request.toBranchId) : 0;
+        const destinationMovingAverageCents = sourceCostCents > 0
+          ? wacCost(destinationQty, destinationCostCents || sourceCostCents, item.qty, sourceCostCents)
+          : destinationCostCents;
+        if (currentProduct && sourceCostCents > 0) {
+          products = withBranchProductCostForKey(products, currentProduct, request.toBranchId, destinationMovingAverageCents);
+        }
+        movements.push({ id: uid("mv"), transferId, transferRequestId: request.id, productId: item.productId, branchId: request.fromBranchId, qty: -item.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer to " + bn(request.toBranchId) + " (" + number + ")", ts: reviewedAt, synced: false });
+        movements.push({ id: uid("mv"), transferId, transferRequestId: request.id, productId: item.productId, branchId: request.toBranchId, qty: item.qty, costCents: sourceCostCents, transferNumber: number, reason: "Transfer from " + bn(request.fromBranchId) + " (" + number + ")", ts: reviewedAt, synced: false });
+        return { ...item, qty: Number(item.qty), costCents: sourceCostCents, valueCents: Number(item.qty) * sourceCostCents };
+      });
+      const transfer = {
+        id: transferId,
+        number,
+        fromBranchId: request.fromBranchId,
+        toBranchId: request.toBranchId,
+        note: [request.note, `Requested by ${request.cashierName || "Cashier"}`].filter(Boolean).join(" · "),
+        status: "completed",
+        ts: reviewedAt,
+        synced: false,
+        cashierRequestId: request.id,
+        approvedBy: reviewer,
+        items: transferItems,
+        productName: transferItems.length === 1 ? transferItems[0].productName : transferItems.length + " products",
+        qty: transferItems.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+        valueCents: transferItems.reduce((sum, item) => sum + Number(item.valueCents || 0), 0),
+      };
+      return {
+        ...d,
+        products,
+        stockTransferDecisions: [...(d.stockTransferDecisions || []), { ...baseDecision, transferId, transferNumber: number }],
+        borrowings: [transfer, ...d.borrowings],
+        stockMovements: [...d.stockMovements, ...movements],
+        auditLogs: [...(d.auditLogs || []), { id: uid("audit"), action: "cashier_transfer_request_approved", requestId: request.id, transferId, transferNumber: number, approvedBy: reviewer, ts: reviewedAt }],
+      };
+    });
+  };
+
   const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
   return (
@@ -10651,6 +10792,20 @@ function BorrowingTab({ data, update }) {
           <input className="input" placeholder="Reason or reference (applies to whole transfer)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
         <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
       </div>
+
+      {pendingTransferRequests.length > 0 && <section className="transfer-approval-queue">
+        <div className="transfer-approval-head"><div><span className="eyebrow">Approval required</span><h3>Cashier transfer requests</h3></div><span className="transfer-approval-count">{pendingTransferRequests.length}</span></div>
+        {requestReviewError && <div className="alert"><AlertCircle />{requestReviewError}</div>}
+        <div className="transfer-approval-list">{pendingTransferRequests.map((request) => {
+          const items = normalizedTransferItems(request, data.products).filter((item) => Number(item.qty) > 0);
+          const units = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+          return <div className="transfer-approval-row" key={request.id}>
+            <div className="transfer-approval-main"><strong>{request.cashierName || "Cashier"}</strong><span>{bn(request.fromBranchId)} <ArrowRight /> {bn(request.toBranchId)}</span><small>{items.map((item) => `${item.productName} × ${item.qty}`).join(", ")}{request.note ? ` · ${request.note}` : ""}</small></div>
+            <div className="transfer-approval-meta"><span>{units} unit{units === 1 ? "" : "s"}</span><small>{dt(request.requestedAt || request.ts)}</small></div>
+            <div className="transfer-approval-actions"><button type="button" className="btn sm btn-ghost" onClick={() => reviewCashierTransferRequest(request, "rejected")}>Reject</button><button type="button" className="btn sm btn-primary" onClick={() => reviewCashierTransferRequest(request, "approved")}><Check /> Approve</button></div>
+          </div>;
+        })}</div>
+      </section>}
 
       <section className="transfer-suggestions" aria-labelledby="transfer-suggestions-title">
         <button type="button" className="transfer-suggestions-toggle" onClick={() => setSuggestionsOpen((current) => !current)} aria-expanded={suggestionsOpen}>
@@ -12852,7 +13007,7 @@ const RIGHTS = [
 ];
 const ROLE_RIGHTS = {
   Cashier: ["sell", "customers"],
-  Supervisor: ["sell", "invoices", "customers", "stock", "expenses", "documents"],
+  Supervisor: ["sell", "invoices", "customers", "stock", "transfers", "expenses", "documents"],
   Manager: ["sell", "invoices", "customers", "products", "stock", "purchases", "transfers", "suppliers", "cash", "expenses", "approve_expenses", "financials", "branches", "documents"],
 };
 // Strong password: ≥8 chars, with uppercase, lowercase, a number, and a special character.

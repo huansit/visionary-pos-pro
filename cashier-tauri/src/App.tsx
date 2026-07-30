@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import {
+  ArrowLeftRight,
   Barcode,
   Boxes,
   Building2,
@@ -20,13 +21,16 @@ import {
   Lock,
   LogOut,
   Menu,
+  Minus,
   MonitorCheck,
   Pencil,
+  Plus,
   Search,
   Server,
   ShieldCheck,
   ShoppingCart,
   Send,
+  Trash2,
   UserRound,
   WalletCards,
   Wine,
@@ -50,13 +54,14 @@ import {
   pushCheckout,
   pushExpense,
   requestInvoiceVoid,
+  requestStockTransfer,
   resolveBarcode,
   isTerminalRegistrationError,
   verifyCashierFingerprint,
   verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
@@ -407,6 +412,7 @@ function saveCatalog(
   products: Product[],
   invoices: Invoice[],
   cashierJointDebts: CashierJointDebt[],
+  stockTransferRequests: StockTransferRequest[],
   expenseCategories: ExpenseCategory[],
   dayClosedAt: number | null
 ) {
@@ -416,6 +422,7 @@ function saveCatalog(
     products: dedupeCatalogProducts(products),
     invoices,
     cashierJointDebts,
+    stockTransferRequests,
     expenseCategories,
     dayClosedAt,
     savedAt
@@ -428,13 +435,14 @@ function loadCatalog(): {
   products: Product[];
   invoices: Invoice[];
   cashierJointDebts: CashierJointDebt[];
+  stockTransferRequests: StockTransferRequest[];
   expenseCategories: ExpenseCategory[];
   dayClosedAt: number | null;
   savedAt?: number;
 } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [], invoices: [], cashierJointDebts: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    if (!raw) return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
     const parsed = JSON.parse(raw);
     const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
     const parsedClose = Number(parsed.dayClosedAt || 0);
@@ -443,6 +451,7 @@ function loadCatalog(): {
       products,
       invoices: parsed.invoices || [],
       cashierJointDebts: Array.isArray(parsed.cashierJointDebts) ? parsed.cashierJointDebts : [],
+      stockTransferRequests: Array.isArray(parsed.stockTransferRequests) ? parsed.stockTransferRequests : [],
       expenseCategories: Array.isArray(parsed.expenseCategories) && parsed.expenseCategories.length ? parsed.expenseCategories : DEFAULT_CASHIER_EXPENSE_CATEGORIES,
       dayClosedAt: Number.isFinite(parsedClose) && parsedClose > 0 ? parsedClose : null,
       savedAt: parsed.savedAt
@@ -450,7 +459,7 @@ function loadCatalog(): {
     localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
     return repaired;
   } catch {
-    return { branches: [], products: [], invoices: [], cashierJointDebts: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
   }
 }
 
@@ -623,6 +632,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [cashierJointDebts, setCashierJointDebts] = useState<CashierJointDebt[]>([]);
+  const [stockTransferRequests, setStockTransferRequests] = useState<StockTransferRequest[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
@@ -635,6 +645,7 @@ export default function App() {
   const [checkoutFingerprintOpen, setCheckoutFingerprintOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
+  const [transferRequestOpen, setTransferRequestOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
@@ -696,6 +707,15 @@ export default function App() {
     () => cashierJointDebtAccumulator(cashierJointDebts, account, terminal?.branchId),
     [account, cashierJointDebts, terminal?.branchId]
   );
+  const myTransferRequests = useMemo(() => {
+    if (!account) return [];
+    const accountName = normalize(account.name || "");
+    return stockTransferRequests.filter((request) => (
+      request.cashierId === account.id
+      || (accountName && normalize(request.cashierName || "") === accountName)
+    ));
+  }, [account, stockTransferRequests]);
+  const pendingTransferRequestCount = myTransferRequests.filter((request) => request.status === "pending").length;
   const activeTodayInvoices = useMemo(
     () => businessDayInvoices.filter((invoice) => (
       invoice.voidRequestStatus !== "approved"
@@ -829,6 +849,7 @@ export default function App() {
     setProducts([]);
     setInvoices([]);
     setCashierJointDebts([]);
+    setStockTransferRequests([]);
     setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
     dayClosedAtRef.current = null;
     setDayClosedAt(null);
@@ -845,6 +866,7 @@ export default function App() {
       setProducts(cached.products);
       setInvoices(cached.invoices);
       setCashierJointDebts(cached.cashierJointDebts);
+      setStockTransferRequests(cached.stockTransferRequests);
       setExpenseCategories(cashierManagedExpenseCategories(cached.expenseCategories));
       retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
@@ -1007,7 +1029,7 @@ export default function App() {
     };
   }, [terminal?.uuid]);
 
-  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn);
+  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn && !transferRequestOpen);
 
   useEffect(() => {
     if (!account) return;
@@ -1115,6 +1137,7 @@ export default function App() {
           });
           setInvoices(effectiveInvoices);
           setCashierJointDebts(pulled.cashierJointDebts);
+          setStockTransferRequests(pulled.stockTransferRequests);
           const currentExpenseCategories = cashierManagedExpenseCategories(pulled.expenseCategories);
           setExpenseCategories(currentExpenseCategories);
           setLastSyncAt(saveCatalog(
@@ -1122,10 +1145,11 @@ export default function App() {
             pulled.products,
             effectiveInvoices,
             pulled.cashierJointDebts,
+            pulled.stockTransferRequests,
             currentExpenseCategories,
             effectiveDayClosedAt
           ));
-          setStatus(`Connected. Synced ${pulled.products.length} products, ${effectiveInvoices.length} invoices and ${pulled.cashierJointDebts.length} inventory debts.`);
+          setStatus(`Connected. Synced ${pulled.products.length} products, ${effectiveInvoices.length} invoices and ${pulled.stockTransferRequests.length} transfer requests.`);
           setError("");
         } catch (err) {
           if (isTerminalRegistrationError(err)) {
@@ -1286,6 +1310,7 @@ export default function App() {
     setLastReceipt(null);
     setCheckoutFingerprintOpen(false);
     setExpenseOpen(false);
+    setTransferRequestOpen(false);
     setInvoiceListMode(null);
     setInvoiceDetail(null);
   }
@@ -1455,6 +1480,10 @@ export default function App() {
                   {openInvoices.length > 0 && <b>{openInvoices.length}</b>}
                 </button>
                 <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
+                <button className="mini-badge-button" onClick={() => setTransferRequestOpen(true)} title={`${pendingTransferRequestCount} stock transfers awaiting approval`}>
+                  <ArrowLeftRight size={18} />
+                  {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
+                </button>
                 <button className="mini-badge-button" onClick={() => setInvoiceListMode("debts")} title={`${cashierDebtCount} cashier debts`}>
                   <span className="info-dot">!</span>
                   {cashierDebtCount > 0 && <b>{cashierDebtCount}</b>}
@@ -1608,6 +1637,10 @@ export default function App() {
           </div>
           <section className="rail-quick-actions">
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
+            <button className="rail-action-badge" onClick={() => setTransferRequestOpen(true)}>
+              <ArrowLeftRight size={18} />Transfer
+              {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
+            </button>
             <button className="rail-action-badge" onClick={() => setInvoiceListMode("debts")}>
               <span className="info-dot">!</span>
               Debts
@@ -1793,6 +1826,24 @@ export default function App() {
               setExpenseOpen(false);
               await refreshCatalog(terminal);
               focusSearch();
+            }}
+          />
+        </Drawer>
+      )}
+      {transferRequestOpen && terminal && account && (
+        <Drawer side="left" onClose={() => { setTransferRequestOpen(false); focusSearch(); }} labelledBy="transfer-request-title">
+          <StockTransferRequestView
+            branchName={branch?.name || terminal.branchId}
+            sourceBranchId={terminal.branchId}
+            branches={branches}
+            products={products}
+            requests={myTransferRequests}
+            onClose={() => { setTransferRequestOpen(false); focusSearch(); }}
+            onSave={async (request) => {
+              setError("");
+              await requestStockTransfer(terminal, account, request);
+              setStatus("Stock transfer request sent for admin or supervisor approval.");
+              await refreshCatalog(terminal, { silent: true });
             }}
           />
         </Drawer>
@@ -2434,6 +2485,216 @@ function UpdateReadyToast({
         <button className="primary" onClick={onRestart} disabled={cartBlocked}>Update now</button>
       </div>
     </aside>
+  );
+}
+
+function StockTransferRequestView({
+  branchName,
+  sourceBranchId,
+  branches,
+  products,
+  requests,
+  onClose,
+  onSave
+}: {
+  branchName: string;
+  sourceBranchId: string;
+  branches: Branch[];
+  products: Product[];
+  requests: StockTransferRequest[];
+  onClose: () => void;
+  onSave: (request: { toBranchId: string; note?: string; items: StockTransferRequestItem[] }) => Promise<void>;
+}) {
+  type RequestLine = StockTransferRequestItem & { stockQty: number };
+  const destinations = branches.filter((item) => item.id !== sourceBranchId);
+  const [toBranchId, setToBranchId] = useState(destinations[0]?.id || "");
+  const [query, setQuery] = useState("");
+  const [lines, setLines] = useState<RequestLine[]>([]);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [messageKind, setMessageKind] = useState<"error" | "success" | "info">("info");
+  const visibleProducts = useMemo(() => {
+    const needle = normalize(query);
+    if (!needle) return [];
+    return products
+      .filter((product) => productStock(product) > 0)
+      .filter((product) => [product.name, product.sku, product.barcode, ...(product.barcodes || [])]
+        .some((value) => normalize(String(value || "")).includes(needle)))
+      .slice(0, 6);
+  }, [products, query]);
+  const totalUnits = lines.reduce((sum, line) => sum + line.qty, 0);
+
+  function addProduct(product: Product) {
+    const stockQty = Math.max(0, Math.floor(productStock(product)));
+    if (stockQty <= 0) {
+      setMessage(`${product.name} has no available stock.`);
+      setMessageKind("error");
+      return;
+    }
+    setLines((current) => {
+      const existing = current.find((line) => line.productId === product.id);
+      if (existing) {
+        return current.map((line) => line.productId === product.id
+          ? { ...line, qty: Math.min(line.stockQty, line.qty + 1) }
+          : line);
+      }
+      return [...current, {
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku || "",
+        qty: 1,
+        stockQty
+      }];
+    });
+    setQuery("");
+    setMessage(`${product.name} added.`);
+    setMessageKind("success");
+  }
+
+  function adjustQuantity(productId: string, value: number) {
+    setLines((current) => current.flatMap((line) => {
+      if (line.productId !== productId) return [line];
+      const qty = Math.min(line.stockQty, Math.max(0, Math.floor(Number(value || 0))));
+      return qty > 0 ? [{ ...line, qty }] : [];
+    }));
+  }
+
+  useScanner((barcode) => {
+    const code = normalize(barcode);
+    const product = products.find((item) => [item.barcode, item.sku, ...(item.barcodes || [])]
+      .some((value) => normalize(String(value || "")) === code));
+    if (!product) {
+      setQuery("");
+      setMessage(`Barcode ${barcode} was not found at ${branchName}.`);
+      setMessageKind("error");
+      return;
+    }
+    addProduct(product);
+  }, true);
+
+  async function submit() {
+    if (!toBranchId) {
+      setMessage("Select the destination shop.");
+      setMessageKind("error");
+      return;
+    }
+    if (!lines.length) {
+      setMessage("Add at least one product.");
+      setMessageKind("error");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await onSave({
+        toBranchId,
+        note: note.trim(),
+        items: lines.map(({ stockQty: _stockQty, ...item }) => item)
+      });
+      setLines([]);
+      setNote("");
+      setQuery("");
+      setMessage("Request submitted. Stock will move only after approval.");
+      setMessageKind("success");
+    } catch (error) {
+      setMessage(String(error));
+      setMessageKind("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="transfer-request-sheet">
+      <header className="transfer-request-head">
+        <div className="transfer-request-icon"><ArrowLeftRight size={22} /></div>
+        <div>
+          <h2 id="transfer-request-title">Request stock transfer</h2>
+          <p>{branchName} - admin or supervisor approval required</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Close stock transfer"><X size={20} /></button>
+      </header>
+
+      <div className="transfer-route">
+        <span><small>From</small><b>{branchName}</b></span>
+        <ArrowLeftRight size={18} />
+        <label>
+          <small>To shop</small>
+          <select value={toBranchId} onChange={(event) => setToBranchId(event.target.value)}>
+            {destinations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {!destinations.length && <div className="transfer-request-message error">Add another active branch before requesting a transfer.</div>}
+
+      <div className="transfer-product-search">
+        <Search size={17} />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search name, SKU, or scan barcode"
+          autoComplete="off"
+        />
+      </div>
+      {visibleProducts.length > 0 && (
+        <div className="transfer-search-results">
+          {visibleProducts.map((product) => (
+            <button key={product.id} type="button" onClick={() => addProduct(product)}>
+              <span><b>{product.name}</b><small>{product.sku || "No SKU"}</small></span>
+              <strong>{Math.floor(productStock(product))} in stock</strong>
+              <Plus size={17} />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="transfer-request-lines">
+        <div className="transfer-request-section-title">
+          <span>Products</span><small>{lines.length} products - {totalUnits} units</small>
+        </div>
+        {!lines.length ? (
+          <div className="transfer-lines-empty"><Barcode size={24} /><span>Scan or search products to add them.</span></div>
+        ) : lines.map((line) => (
+          <div className="transfer-request-line" key={line.productId}>
+            <span><b>{line.productName}</b><small>{line.sku || "No SKU"} - {line.stockQty} available</small></span>
+            <div className="transfer-line-qty">
+              <button type="button" onClick={() => adjustQuantity(line.productId, line.qty - 1)} aria-label={`Reduce ${line.productName}`}><Minus size={15} /></button>
+              <input type="number" min="1" max={line.stockQty} value={line.qty} onChange={(event) => adjustQuantity(line.productId, Number(event.target.value))} />
+              <button type="button" disabled={line.qty >= line.stockQty} onClick={() => adjustQuantity(line.productId, line.qty + 1)} aria-label={`Increase ${line.productName}`}><Plus size={15} /></button>
+            </div>
+            <button className="transfer-line-remove" type="button" onClick={() => adjustQuantity(line.productId, 0)} aria-label={`Remove ${line.productName}`}><Trash2 size={16} /></button>
+          </div>
+        ))}
+      </div>
+
+      <label className="transfer-request-note">
+        <span>Note <small>optional</small></span>
+        <textarea rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Reason or instructions for the receiving shop" />
+      </label>
+
+      {message && <div className={`transfer-request-message ${messageKind}`}>{message}</div>}
+
+      <button className="transfer-request-submit" type="button" disabled={busy || !destinations.length || !lines.length} onClick={submit}>
+        <Send size={18} />{busy ? "Submitting..." : `Request ${totalUnits} unit${totalUnits === 1 ? "" : "s"}`}
+      </button>
+
+      <section className="transfer-request-history">
+        <div className="transfer-request-section-title"><span>My recent requests</span><small>{requests.length}</small></div>
+        {!requests.length ? <p>No stock transfer requests yet.</p> : requests.slice(0, 8).map((request) => {
+          const destination = branches.find((item) => item.id === request.toBranchId)?.name || request.toBranchId;
+          const units = request.items.reduce((sum, item) => sum + item.qty, 0);
+          return (
+            <div className="transfer-request-history-row" key={request.id}>
+              <span><b>{destination}</b><small>{request.items.length} products - {units} units - {new Date(request.requestedAt).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</small></span>
+              <strong className={request.status}>{request.status}</strong>
+              {request.transferNumber && <small>{request.transferNumber}</small>}
+            </div>
+          );
+        })}
+      </section>
+    </section>
   );
 }
 
