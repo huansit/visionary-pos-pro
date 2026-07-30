@@ -1402,7 +1402,7 @@ function cashierJointDebtEntries(data, cashierId, branchId = null) {
     return outstandingCents > 0 ? [{ debt, share, outstandingCents }] : [];
   });
 }
-function createCashierJointDebt(data, session, rows, operator, ts = now()) {
+function createCashierJointDebt(data, session, rows, operator, ts = now(), source = "stock_count") {
   const branchId = session?.branchId;
   const items = (rows || []).filter((row) => Number(row.varianceQty) < 0).map((row) => {
     const missingQty = Math.abs(Number(row.varianceQty) || 0);
@@ -1438,6 +1438,7 @@ function createCashierJointDebt(data, session, rows, operator, ts = now()) {
     cashierCount: shares.length,
     items,
     shares,
+    source,
     createdBy: operator,
     ts,
     synced: false,
@@ -5257,7 +5258,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
                 )}
               </div>
             )}
-            <div className="cust-meta" style={{ marginTop: 12 }}>Missing inventory is valued at branch cost and shared equally among the active branch cashiers recorded when the stock count was committed.</div>
+            <div className="cust-meta" style={{ marginTop: 12 }}>Missing inventory is valued at branch cost and shared equally among the active branch cashiers when the inventory count is applied.</div>
           </div>
         </div>
       )}
@@ -5874,7 +5875,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     printInvoiceReceipts(receipts, cur);
   };
 
-  // Cashier debt combines overdue sales invoices with audited stock-count shortages.
+  // Cashier debt combines overdue sales invoices with audited inventory-count shortages.
   const debts = overdue;
   const invoiceDebtByCashier = {};
   debts.forEach((i) => {
@@ -7919,6 +7920,12 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       return;
     }
     const ts = now();
+    const quickInventoryId = uid("qi");
+    const quickInventoryBatch = {
+      id: quickInventoryId,
+      code: "QI-" + quickInventoryId.slice(3).toUpperCase(),
+      branchId: bId,
+    };
     const adjustments = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
       id: uid("mv"),
       productId: row.product.id,
@@ -7944,15 +7951,32 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       ts,
       synced: false,
     }));
+    const debtRows = selectedRows.map((row) => ({
+      productId: row.product.id,
+      product: row.product,
+      varianceQty: row.variance,
+    }));
+    const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, stockCountOperator(data), ts, "quick_inventory");
     update((d) => ({
       ...d,
       stockMovements: [...(d.stockMovements || []), ...adjustments],
       countLog: [...(d.countLog || []), ...logs],
+      cashierJointDebts: jointDebt && !(d.cashierJointDebts || []).some((debt) => debt.id === jointDebt.id || debt.stockCountSessionId === quickInventoryId)
+        ? [...(d.cashierJointDebts || []), jointDebt]
+        : (d.cashierJointDebts || []),
     }));
-    setReport({ ts, branchName: bname, rows: selectedRows, adjustments: adjustments.length });
+    setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
     setCounts({});
     setQ("");
-    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock adjustment(s) applied.");
+    const hasShortage = selectedRows.some((row) => row.variance < 0);
+    const debtMessage = jointDebt
+      ? jointDebt.cashierCount > 0
+        ? " Missing inventory of " + fmt(jointDebt.totalCents, cur) + " was shared equally across " + jointDebt.cashierCount + " branch cashier(s)."
+        : " Missing inventory of " + fmt(jointDebt.totalCents, cur) + " is unallocated because this branch has no active cashiers."
+      : hasShortage
+        ? " Missing products have no branch cost, so no monetary cashier debt was created."
+        : "";
+    setMessage(selectedRows.length + " product(s) counted. " + adjustments.length + " stock adjustment(s) applied." + debtMessage);
   };
 
   return (
@@ -7971,7 +7995,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {lockedSession ? (
         <div className="alert" style={{ marginBottom: 14 }}><AlertTriangle /> <div><b>Quick inventory is locked.</b><div>{lockedSession.code} is already {lockedSession.status} for {bname}. Finish or cancel that formal count first.</div></div></div>
       ) : (
-        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Blank products and all other catalogue stock remain unchanged.</div>
+        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Missing quantities are valued at branch cost and shared equally across active branch cashiers; blank products remain unchanged.</div>
       )}
       {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
@@ -8020,8 +8044,9 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         />
       )}
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
-        <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
+        <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.code} - {report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
+        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to missing inventory</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active cashier(s) and available in Cashier Credit reports." : "No active branch cashier was available, so this debt is awaiting allocation."}</div></div></div>}
       </div>}
     </div>
   );
