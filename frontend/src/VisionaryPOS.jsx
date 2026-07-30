@@ -2750,17 +2750,37 @@ function mondayDateValue(value = Date.now()) {
   date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
   return localDateValue(date);
 }
-function stockTemplateWeek(value) {
-  const mondayValue = mondayDateValue(value);
-  const monday = new Date(mondayValue + "T12:00:00");
+function dateValuePlusDays(value, dayCount) {
+  const parsed = new Date(String(value) + "T12:00:00");
+  const date = Number.isNaN(parsed.getTime()) ? new Date(mondayDateValue() + "T12:00:00") : parsed;
+  date.setDate(date.getDate() + dayCount);
+  return localDateValue(date);
+}
+function stockTemplateDateRange(fromValue, toValue) {
+  const fallbackFrom = mondayDateValue();
+  const from = new Date(String(fromValue || fallbackFrom) + "T12:00:00");
+  const safeFrom = Number.isNaN(from.getTime()) ? new Date(fallbackFrom + "T12:00:00") : from;
+  const requestedTo = new Date(String(toValue || localDateValue(safeFrom)) + "T12:00:00");
+  const maximumTo = new Date(safeFrom);
+  maximumTo.setDate(safeFrom.getDate() + 6);
+  const safeTo = Number.isNaN(requestedTo.getTime()) || requestedTo < safeFrom
+    ? new Date(safeFrom)
+    : requestedTo > maximumTo ? maximumTo : requestedTo;
   const format = (date) => [String(date.getDate()).padStart(2, "0"), String(date.getMonth() + 1).padStart(2, "0"), date.getFullYear()].join("/");
-  const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  const days = dayNames.map((day, index) => {
-    const date = new Date(monday);
-    date.setDate(monday.getDate() + index);
-    return { day, date: format(date), label: day + " " + format(date) };
-  });
-  return { mondayValue, days, label: days[0].label + " to " + days[days.length - 1].label };
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const days = [];
+  for (const date = new Date(safeFrom); date <= safeTo; date.setDate(date.getDate() + 1)) {
+    const snapshot = new Date(date);
+    const day = dayNames[snapshot.getDay()];
+    days.push({ day, date: format(snapshot), label: day + " " + format(snapshot) });
+  }
+  return {
+    fromValue: localDateValue(safeFrom),
+    toValue: localDateValue(safeTo),
+    maximumToValue: localDateValue(maximumTo),
+    days,
+    label: days[0].label + (days.length > 1 ? " to " + days[days.length - 1].label : ""),
+  };
 }
 function cartLines(data, cart) {
   return Object.entries(cart).filter(([, q]) => q > 0).map(([pid, qty]) => {
@@ -8209,7 +8229,8 @@ function StockTab({ data, update, branch }) {
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState("");
   const [templateSelectedIds, setTemplateSelectedIds] = useState([]);
-  const [templateWeekMonday, setTemplateWeekMonday] = useState(() => mondayDateValue());
+  const [templateDateFrom, setTemplateDateFrom] = useState(() => mondayDateValue());
+  const [templateDateTo, setTemplateDateTo] = useState(() => dateValuePlusDays(mondayDateValue(), 6));
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const [cf, setCf] = useState({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
@@ -8224,7 +8245,7 @@ function StockTab({ data, update, branch }) {
   const templateTerm = templateSearch.trim().toLowerCase();
   const filteredTemplateProducts = templateProducts.filter((product) => !templateTerm || product.name.toLowerCase().includes(templateTerm));
   const selectedTemplateProducts = templateProducts.filter((product) => templateSelectedIds.includes(product.id));
-  const templateWeek = stockTemplateWeek(templateWeekMonday);
+  const templateRange = stockTemplateDateRange(templateDateFrom, templateDateTo);
   const allFilteredTemplateProductsSelected = filteredTemplateProducts.length > 0 && filteredTemplateProducts.every((product) => templateSelectedIds.includes(product.id));
   const salesDuringCount = session ? rows.reduce((sum, row) => sum + row.soldSince, 0) : 0;
   const visibleRows = rows.filter((row) => {
@@ -8590,9 +8611,11 @@ function StockTab({ data, update, branch }) {
   };
   const exportReport = (kind) => report && exportDiscrepancy(report, cur, kind);
   const openStockTemplate = () => {
+    const monday = mondayDateValue();
     setTemplateSearch("");
     setTemplateSelectedIds([]);
-    setTemplateWeekMonday(mondayDateValue());
+    setTemplateDateFrom(monday);
+    setTemplateDateTo(dateValuePlusDays(monday, 6));
     setTemplateOpen(true);
   };
   const toggleTemplateProduct = (productId) => setTemplateSelectedIds((current) => current.includes(productId)
@@ -8603,18 +8626,19 @@ function StockTab({ data, update, branch }) {
     if (visibleIds.length && visibleIds.every((id) => current.includes(id))) return current.filter((id) => !visibleIds.includes(id));
     return Array.from(new Set([...current, ...visibleIds]));
   });
-  const stockTemplateRows = () => selectedTemplateProducts.flatMap((product) => templateWeek.days.map((day) => [product.name, day.label, ""]));
+  const stockTemplateHeaders = () => ["Product name", ...templateRange.days.map((day) => day.label)];
+  const stockTemplateRows = () => selectedTemplateProducts.map((product) => [product.name, ...templateRange.days.map(() => "")]);
   const stockTakingTemplateDocument = () => buildReportDocument({
-    title: "Weekly Stock Taking Template",
+    title: "Stock Taking Template",
     companyName: data.settings.store || "VISIONPOS",
     branchName: bname,
     generatedBy: operator || "VISIONPOS",
-    dateRange: templateWeek.label,
+    dateRange: templateRange.label,
     filters: [{ label: "Shop", value: bname }, { label: "Selected products", value: selectedTemplateProducts.length }],
-    headers: ["Product name", "Day / date", "Count"],
+    headers: stockTemplateHeaders(),
     rows: stockTemplateRows(),
     totals: [],
-    orientation: "portrait",
+    orientation: "landscape",
   });
   const exportStockTakingTemplate = (kind) => {
     if (!selectedTemplateProducts.length) return;
@@ -8622,9 +8646,9 @@ function StockTab({ data, update, branch }) {
     if (kind === "print") printReport(templateDocument);
     else if (kind === "pdf") downloadPDF(templateDocument);
     else {
-      const metadata = [["Shop", bname], ["Week", templateWeek.label], [], ["Product name", "Day / date", "Count"]];
+      const metadata = [["Shop", bname], ["Date range", templateRange.label], [], stockTemplateHeaders()];
       const branchSlug = String(bname).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "shop";
-      downloadFile("stock-taking-" + branchSlug + "-" + templateWeek.mondayValue + ".csv", [...metadata, ...stockTemplateRows()].map((row) => row.map(csvEscape).join(",")).join("\n"), "text/csv");
+      downloadFile("stock-taking-" + branchSlug + "-" + templateRange.fromValue + ".csv", [...metadata, ...stockTemplateRows()].map((row) => row.map(csvEscape).join(",")).join("\n"), "text/csv");
     }
   };
 
@@ -8739,9 +8763,15 @@ function StockTab({ data, update, branch }) {
               <button className="iconbtn" onClick={() => setTemplateOpen(false)} aria-label="Close stock taking template"><X /></button>
             </div>
             <div className="grid2" style={{ marginTop: 14 }}>
-              <div><label className="label">Week starting Monday</label><input className="input" type="date" value={templateWeek.mondayValue} onChange={(event) => setTemplateWeekMonday(mondayDateValue(event.target.value))} /></div>
-              <div><label className="label">Week covered</label><input className="input" value={templateWeek.label} readOnly /></div>
+              <div><label className="label">From date</label><input className="input" type="date" value={templateRange.fromValue} onChange={(event) => {
+                const nextFrom = event.target.value;
+                const nextMaximum = dateValuePlusDays(nextFrom, 6);
+                setTemplateDateFrom(nextFrom);
+                if (templateDateTo < nextFrom || templateDateTo > nextMaximum) setTemplateDateTo(nextMaximum);
+              }} /></div>
+              <div><label className="label">To date</label><input className="input" type="date" min={templateRange.fromValue} max={templateRange.maximumToValue} value={templateRange.toValue} onChange={(event) => setTemplateDateTo(event.target.value)} /></div>
             </div>
+            <div className="notice" style={{ marginTop: 12 }}>{templateRange.label} · Choose any range of up to seven days.</div>
             <div className="possearch" style={{ marginTop: 14 }}><Search /><input placeholder="Find product by name..." value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} /></div>
             <div className="tablewrap" style={{ marginTop: 12, maxHeight: 340, overflow: "auto" }}>
               <table className="tbl">
@@ -8756,7 +8786,7 @@ function StockTab({ data, update, branch }) {
               </table>
             </div>
             <div className="page-h" style={{ marginTop: 14, marginBottom: 0 }}>
-              <div><div className="nm">{selectedTemplateProducts.length} selected</div><div className="mt2">Each product gets Monday-to-Sunday rows and one blank count column.</div></div>
+              <div><div className="nm">{selectedTemplateProducts.length} selected</div><div className="mt2">Products run vertically; the selected dates are headers with blank count cells.</div></div>
               <div className="expbtns">
                 {selectedTemplateProducts.length > 0 && <button className="btn sm btn-ghost" onClick={() => setTemplateSelectedIds([])}>Clear</button>}
                 <button className="btn sm btn-ghost" disabled={!selectedTemplateProducts.length} onClick={() => exportStockTakingTemplate("csv")}><Download /> CSV</button>
