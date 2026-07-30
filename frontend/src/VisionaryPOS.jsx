@@ -3790,6 +3790,58 @@ body{overscroll-behavior:none}
 .debt-summary>section{min-width:0}
 .debt-summary .list.mini{max-height:440px}
 .inventory-debt-detail{display:grid;gap:6px;margin:10px 0 0 44px;padding:10px 0 0;border-top:1px solid var(--border-soft)}
+.inventory-payment-page{max-width:1120px}
+.inventory-payment-workspace{padding:18px}
+.inventory-payment-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;padding-bottom:16px;border-bottom:1px solid var(--border-soft)}
+.inventory-payment-toolbar .section-title{margin:0 0 3px;font-size:16px}
+.inventory-payment-toolbar p{margin:0;color:var(--muted-2);font-size:12px}
+.inventory-payment-cashier{display:grid;gap:5px;min-width:min(100%,300px)}
+.inventory-payment-cashier>span{color:var(--muted-2);font-size:10.5px;font-weight:750;text-transform:uppercase}
+.inventory-selected-cashier{display:grid;grid-template-columns:auto minmax(0,1fr) repeat(3,auto);align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid var(--border-soft)}
+.inventory-selected-cashier .avatar{width:38px;height:38px;border-radius:8px}
+.inventory-selected-cashier .meta{min-width:0}
+.inventory-selected-cashier .metric{display:grid;gap:2px;min-width:100px}
+.inventory-selected-cashier .metric span{color:var(--muted-2);font-size:9.5px;font-weight:750;text-transform:uppercase}
+.inventory-selected-cashier .metric b{font-family:var(--font-mono);font-size:14px}
+.inventory-selected-cashier .metric.due b{color:var(--danger)}
+.inventory-debt-picker{padding:17px 0 0}
+.inventory-debt-picker-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:9px}
+.inventory-debt-picker-head>div{display:grid;gap:2px}
+.inventory-debt-picker-head b{font-size:13px}
+.inventory-debt-picker-head span{color:var(--muted-2);font-size:11.5px}
+.inventory-debt-list{max-height:280px;overflow:auto;border:1px solid var(--border-soft);border-radius:8px}
+.inventory-debt-choice{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:11px 12px;border-bottom:1px solid var(--border-soft);cursor:pointer;transition:.15s}
+.inventory-debt-choice:last-child{border-bottom:0}
+.inventory-debt-choice:hover{background:var(--surface-2)}
+.inventory-debt-choice.selected{background:color-mix(in srgb,var(--accent) 7%,var(--surface))}
+.inventory-debt-choice input{width:17px;height:17px;accent-color:var(--accent)}
+.inventory-debt-choice .meta{display:grid;gap:3px;min-width:0}
+.inventory-debt-choice .meta b{font-family:var(--font-mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inventory-debt-choice .meta span{color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inventory-debt-choice .amount{display:grid;gap:2px;text-align:right}
+.inventory-debt-choice .amount b{font-family:var(--font-mono);font-size:13px}
+.inventory-debt-choice .amount span{color:var(--muted-2);font-size:10px}
+.inventory-debt-selection{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;background:var(--surface-2);border-radius:0 0 8px 8px;font-size:12px}
+.inventory-debt-selection b{font-family:var(--font-mono);font-size:14px}
+.inventory-payment-form{margin-top:17px;padding-top:17px;border-top:1px solid var(--border-soft)}
+.inventory-payment-form-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.inventory-payment-form-head b{font-size:13px}
+.inventory-payment-form-head span{color:var(--muted-2);font-size:11.5px}
+.inventory-payment-methods{display:grid;grid-template-columns:repeat(4,minmax(100px,1fr));gap:5px;padding:3px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface-2)}
+.inventory-payment-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:10px;margin-top:11px}
+.inventory-payment-entry label{display:grid;gap:5px}
+.inventory-payment-entry label span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.inventory-payment-options{margin-top:11px;border-bottom:1px solid var(--border-soft)}
+.inventory-payment-options .grid2{padding-bottom:12px}
+.inventory-payment-action{width:100%;margin-top:13px}
+.inventory-payment-history{margin-top:16px;padding:0 18px}
+.inventory-payment-history>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 0;cursor:pointer;list-style:none;font-size:13px;font-weight:750}
+.inventory-payment-history>summary::-webkit-details-marker{display:none}
+.inventory-payment-history>summary>span{display:flex;align-items:center;gap:8px}
+.inventory-payment-history>summary b{min-width:22px;height:20px;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--muted-2);display:inline-grid;place-items:center;font-size:10px;font-family:var(--font-mono)}
+.inventory-payment-history>summary svg{width:16px;height:16px;color:var(--muted-2);transition:transform .15s}
+.inventory-payment-history[open]>summary svg{transform:rotate(180deg)}
+.inventory-payment-history .tablewrap{margin-bottom:16px}
 .day-close-list{gap:8px;max-width:920px}
 .compact-notice{padding:12px 16px;text-align:left;margin-bottom:12px}
 .stats.compact{gap:10px;margin-bottom:12px}
@@ -3805,7 +3857,8 @@ body{overscroll-behavior:none}
 .invsummary{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
 @media (max-width:820px){.invsummary{grid-template-columns:1fr}}
 @media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
-@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.day-close-list .row .btn{width:100%}}
+@media (max-width:760px){.inventory-payment-toolbar{align-items:stretch;flex-direction:column}.inventory-payment-cashier{width:100%}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) repeat(3,minmax(76px,1fr));gap:12px}.inventory-selected-cashier .metric{min-width:0}.inventory-payment-methods{grid-template-columns:1fr 1fr}.inventory-payment-entry{grid-template-columns:1fr}.inventory-payment-entry .btn{width:100%}}
+@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:14px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr)}.inventory-selected-cashier .metric:first-of-type{grid-column:auto}.inventory-selected-cashier .metric{padding-top:8px;border-top:1px solid var(--border-soft)}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -6429,7 +6482,7 @@ function DebtPaymentsTab({ data, update, branch, user }) {
   const selectedAllocations = openDebtAllocations.filter((allocation) => selectedDebtIds.has(allocation.debt.id));
   const selectedDebtTotal = selectedAllocations.reduce((sum, allocation) => sum + allocation.outstandingCents, 0);
   const [amount, setAmount] = useState(() => moneyInputValue(selected?.outstandingCents || 0));
-  const [method, setMethod] = useState("cash");
+  const [method, setMethod] = useState("m-pesa");
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
@@ -6525,87 +6578,101 @@ function DebtPaymentsTab({ data, update, branch, user }) {
     setError("");
   };
 
+  const paymentMethods = [
+    { id: "m-pesa", label: "M-Pesa", Icon: Smartphone },
+    { id: "cash", label: "Cash", Icon: Banknote },
+    { id: "bank", label: "Bank", Icon: Building2 },
+    { id: "payroll", label: "Payroll", Icon: Wallet },
+  ];
+
   return (
-    <div>
-      <PageHead title="Payments" sub={`Cashier inventory-debt settlement · ${branch.name}`} />
-      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))" }}>
-        <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Accumulated debt</div><div className="cv">{fmt(totals.assignedCents, cur)}</div><div className="cs">All formal inventory counts</div></div></div>
-        <div className="ctile good"><div className="ic"><Check /></div><div><div className="cl">Payments captured</div><div className="cv">{fmt(totals.paidCents, cur)}</div><div className="cs">{branchPayments.length} allocation{branchPayments.length === 1 ? "" : "s"}</div></div></div>
-        <div className={"ctile" + (totals.outstandingCents > 0 ? " warn" : " good")}><div className="ic"><CreditCard /></div><div><div className="cl">Balance outstanding</div><div className="cv">{fmt(totals.outstandingCents, cur)}</div><div className="cs">{openBalances.length} cashier{openBalances.length === 1 ? "" : "s"} owing</div></div></div>
+    <div className="inventory-payment-page">
+      <PageHead title="Inventory debt payments" sub={`${branch.name} - settle cashier shortage balances`} />
+      <div className="invoice-summary-strip three">
+        <div><span>Total assigned</span><b>{fmt(totals.assignedCents, cur)}</b></div>
+        <div><span>Total paid</span><b>{fmt(totals.paidCents, cur)}</b></div>
+        <div><span>Outstanding</span><b className={totals.outstandingCents > 0 ? "danger" : ""}>{fmt(totals.outstandingCents, cur)}</b></div>
       </div>
 
-      {message ? <div className="notice" style={{ marginTop: 14 }}>{message}</div> : null}
-      <div className="grid2" style={{ alignItems: "start", gap: 18, marginTop: 18 }}>
-        <section className="panel">
-          <div className="section-title" style={{ marginTop: 0 }}>Cashier balances</div>
-          {balances.length === 0 ? <div className="notice">No formal inventory-count debt has been assigned at {branch.name}.</div> : (
-            <div className="list mini">{balances.map((row) => (
-              <button className="row" type="button" key={row.cashierId} onClick={() => { setSelectedCashierId(row.cashierId); setMessage(""); }} style={{ width: "100%", textAlign: "left", cursor: "pointer", borderColor: selectedCashierId === row.cashierId ? "var(--accent)" : undefined }}>
-                <div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.cashierName.charAt(0)}</div>
-                <div className="meta"><div className="nm">{row.cashierName}</div><div className="mt2">{row.debtCount} inventory count{row.debtCount === 1 ? "" : "s"} · paid {fmt(row.paidCents, cur)} of {fmt(row.assignedCents, cur)}</div></div>
-                <span className={"pill plain"} style={{ color: row.outstandingCents > 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(row.outstandingCents, cur)} {row.outstandingCents > 0 ? "due" : "paid"}</span>
-              </button>
-            ))}</div>
-          )}
-        </section>
+      {message ? <div className="notice compact-notice">{message}</div> : null}
+      {balances.length === 0 ? <div className="notice">No inventory debt has been assigned at {branch.name}.</div> : (
+        <section className="panel inventory-payment-workspace">
+          <div className="inventory-payment-toolbar">
+            <div><div className="section-title">Settle a balance</div><p>{openBalances.length} cashier balance{openBalances.length === 1 ? "" : "s"} outstanding</p></div>
+            <label className="inventory-payment-cashier"><span>Cashier</span>
+              <select className="select" value={selectedCashierId} onChange={(event) => { setSelectedCashierId(event.target.value); setMessage(""); }}>
+                {balances.map((row) => <option key={row.cashierId} value={row.cashierId}>{row.cashierName} - {row.outstandingCents > 0 ? `${fmt(row.outstandingCents, cur)} due` : "paid"}</option>)}
+              </select>
+            </label>
+          </div>
 
-        <section className="panel">
-          <div className="section-title" style={{ marginTop: 0 }}>Settle inventory balance</div>
-          {!selected ? <div className="notice">Select a cashier balance to record a payment.</div> : selected.outstandingCents <= 0 ? (
-            <div className="notice">{selected.cashierName}'s inventory debt is fully paid.</div>
-          ) : (
+          {!selected ? <div className="notice">Select a cashier balance to continue.</div> : (
             <>
-              <div className="settlement-totals">
-                <div><span>Accumulated</span><b>{fmt(selected.assignedCents, cur)}</b></div>
-                <div><span>Paid</span><b>{fmt(selected.paidCents, cur)}</b></div>
-                <div className="due"><span>Balance due</span><b>{fmt(selected.outstandingCents, cur)}</b></div>
+              <div className="inventory-selected-cashier">
+                <div className="avatar" style={{ background: "var(--accent)" }}>{selected.cashierName.charAt(0)}</div>
+                <div className="meta"><div className="nm">{selected.cashierName}</div><div className="mt2">{selected.debtCount} inventory debt{selected.debtCount === 1 ? "" : "s"}</div></div>
+                <div className="metric"><span>Assigned</span><b>{fmt(selected.assignedCents, cur)}</b></div>
+                <div className="metric"><span>Paid</span><b>{fmt(selected.paidCents, cur)}</b></div>
+                <div className="metric due"><span>Balance</span><b>{fmt(selected.outstandingCents, cur)}</b></div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 16 }}>
-                <label className="label" style={{ margin: 0 }}>Inventory debts to clear</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="button" className="btn sm btn-ghost" onClick={selectAllDebts} disabled={selectedAllocations.length === openDebtAllocations.length}>Select all</button>
-                  <button type="button" className="btn sm btn-ghost" onClick={clearDebtSelection} disabled={selectedAllocations.length === 0}>Clear</button>
-                </div>
-              </div>
-              <div className="tablewrap" style={{ marginTop: 8, maxHeight: 260, overflowY: "auto" }}>
-                <table className="tbl">
-                  <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all inventory debts" checked={openDebtAllocations.length > 0 && selectedAllocations.length === openDebtAllocations.length} onChange={(event) => event.target.checked ? selectAllDebts() : clearDebtSelection()} /></th><th>Reference</th><th>Source</th><th>Date</th><th className="amt">Balance</th></tr></thead>
-                  <tbody>{openDebtAllocations.map((allocation) => (
-                    <tr key={allocation.debt.id} className="clickable" onClick={() => toggleDebt(allocation.debt.id)}>
-                      <td><input type="checkbox" aria-label={`Select ${allocation.debt.stockCountCode || allocation.debt.id}`} checked={selectedDebtIds.has(allocation.debt.id)} onChange={() => toggleDebt(allocation.debt.id)} onClick={(event) => event.stopPropagation()} /></td>
-                      <td><b className="innum">{allocation.debt.stockCountCode || allocation.debt.id}</b><div className="muted">{allocation.debt.shortageUnits || 0} missing unit{Number(allocation.debt.shortageUnits || 0) === 1 ? "" : "s"}</div></td>
-                      <td>{allocation.debt.source === "quick_inventory" ? "Quick inventory" : "Stock count"}</td>
-                      <td>{dt(allocation.debt.ts)}</td>
-                      <td className="amt"><b>{fmt(allocation.outstandingCents, cur)}</b><div className="muted">paid {fmt(allocation.paidCents, cur)}</div></td>
-                    </tr>
-                  ))}</tbody>
-                  <tfoot><tr><td colSpan="4"><b>{selectedAllocations.length} selected</b></td><td className="amt"><b>{fmt(selectedDebtTotal, cur)}</b></td></tr></tfoot>
-                </table>
-              </div>
-              <div className="grid2" style={{ marginTop: 14 }}>
-                <div><label className="label">Amount ({cur})</label><input className="input" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} /></div>
-                <div><label className="label">Payment method</label><select className="select" value={method} onChange={(event) => setMethod(event.target.value)}><option value="cash">Cash</option><option value="m-pesa">M-Pesa</option><option value="bank">Bank</option><option value="payroll">Payroll deduction</option></select></div>
-              </div>
-              <div className="grid2" style={{ marginTop: 12 }}>
-                <div><label className="label">Reference</label><input className="input" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt or transaction reference" /></div>
-                <div><label className="label">Note</label><input className="input" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional settlement note" /></div>
-              </div>
-              <div className="notice" style={{ marginTop: 12 }}>This payment will clear only the selected inventory debt{selectedAllocations.length === 1 ? "" : "s"}. A partial payment across multiple selections is allocated oldest first within the checked rows.</div>
-              {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
-              <button className="btn btn-primary" style={{ width: "100%", marginTop: 14 }} disabled={selectedAllocations.length === 0 || paymentCents <= 0} onClick={recordPayment}><Check /> {paymentCents === selectedDebtTotal ? `Clear ${selectedAllocations.length === 1 ? "selected debt" : "selected debts"}` : `Record ${fmt(paymentCents, cur)} payment`}</button>
+
+              {selected.outstandingCents <= 0 ? <div className="notice">This cashier's inventory debt is fully paid.</div> : (
+                <>
+                  <div className="inventory-debt-picker">
+                    <div className="inventory-debt-picker-head">
+                      <div><b>Choose debts to settle</b><span>{openDebtAllocations.length} unpaid record{openDebtAllocations.length === 1 ? "" : "s"}</span></div>
+                      <button type="button" className="btn sm btn-ghost" onClick={selectedAllocations.length === openDebtAllocations.length ? clearDebtSelection : selectAllDebts}>
+                        {selectedAllocations.length === openDebtAllocations.length ? "Clear selection" : "Select all"}
+                      </button>
+                    </div>
+                    <div className="inventory-debt-list">
+                      {openDebtAllocations.map((allocation) => {
+                        const checked = selectedDebtIds.has(allocation.debt.id);
+                        const source = allocation.debt.source === "quick_inventory" ? "Quick inventory" : "Stock count";
+                        return <label className={"inventory-debt-choice" + (checked ? " selected" : "")} key={allocation.debt.id}>
+                          <input type="checkbox" aria-label={`Select ${allocation.debt.stockCountCode || allocation.debt.id}`} checked={checked} onChange={() => toggleDebt(allocation.debt.id)} />
+                          <span className="meta"><b>{allocation.debt.stockCountCode || allocation.debt.id}</b><span>{source} - {allocation.debt.shortageUnits || 0} missing unit{Number(allocation.debt.shortageUnits || 0) === 1 ? "" : "s"} - {dt(allocation.debt.ts)}</span></span>
+                          <span className="amount"><b>{fmt(allocation.outstandingCents, cur)}</b>{allocation.paidCents > 0 ? <span>{fmt(allocation.paidCents, cur)} paid</span> : null}</span>
+                        </label>;
+                      })}
+                    </div>
+                    <div className="inventory-debt-selection"><span>{selectedAllocations.length} of {openDebtAllocations.length} debt{openDebtAllocations.length === 1 ? "" : "s"} selected</span><b>{fmt(selectedDebtTotal, cur)}</b></div>
+                  </div>
+
+                  <div className="inventory-payment-form">
+                    <div className="inventory-payment-form-head"><b>Record payment</b><span>{selectedAllocations.length} debt{selectedAllocations.length === 1 ? "" : "s"} selected</span></div>
+                    <div className="inventory-payment-methods" role="radiogroup" aria-label="Payment method">
+                      {paymentMethods.map(({ id, label, Icon }) => <button type="button" key={id} role="radio" aria-checked={method === id} className={"invoice-method" + (method === id ? " on" : "")} onClick={() => setMethod(id)}><Icon />{label}</button>)}
+                    </div>
+                    <div className="inventory-payment-entry">
+                      <label><span>Amount to pay ({cur})</span><input className="input" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} placeholder="0.00" /></label>
+                      <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(selectedDebtTotal))} disabled={selectedDebtTotal <= 0}>Use selected total</button>
+                    </div>
+                    <details className="invoice-detail-disclosure inventory-payment-options">
+                      <summary><span>Add reference or note</span><ChevronDown /></summary>
+                      <div className="grid2">
+                        <div><label className="label">Reference</label><input className="input" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Receipt or transaction reference" /></div>
+                        <div><label className="label">Note</label><input className="input" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional settlement note" /></div>
+                      </div>
+                    </details>
+                    {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
+                    <button className="btn btn-primary inventory-payment-action" disabled={selectedAllocations.length === 0 || paymentCents <= 0} onClick={recordPayment}><Check /> Record {fmt(paymentCents, cur)} payment</button>
+                  </div>
+                </>
+              )}
             </>
           )}
         </section>
-      </div>
+      )}
 
-      <section className="panel" style={{ marginTop: 18 }}>
-        <div className="section-title" style={{ marginTop: 0 }}>Inventory-debt payment history</div>
-        {branchPayments.length === 0 ? <div className="notice">No inventory-debt payments have been recorded yet.</div> : (
-          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Date</th><th>Cashier</th><th>Stock count</th><th>Method</th><th>Reference</th><th>Recorded by</th><th className="amt">Amount</th></tr></thead>
-            <tbody>{branchPayments.map((payment) => <tr key={payment.id}><td>{dt(payment.ts)}</td><td>{payment.cashierName || payment.cashierId}</td><td className="innum">{payment.stockCountCode || payment.debtId}</td><td>{payment.method || "cash"}</td><td>{payment.reference || payment.note || "—"}</td><td>{payment.recordedBy || "Supervisor"}</td><td className="amt">{fmt(payment.amountCents, cur)}</td></tr>)}</tbody>
+      <details className="panel inventory-payment-history">
+        <summary><span>Payment history <b>{branchPayments.length}</b></span><ChevronDown /></summary>
+        {branchPayments.length === 0 ? <div className="notice" style={{ marginBottom: 16 }}>No inventory-debt payments have been recorded yet.</div> : (
+          <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Date</th><th>Cashier</th><th>Debt</th><th>Method</th><th>Reference</th><th>Recorded by</th><th className="amt">Amount</th></tr></thead>
+            <tbody>{branchPayments.map((payment) => <tr key={payment.id}><td>{dt(payment.ts)}</td><td>{payment.cashierName || payment.cashierId}</td><td className="innum">{payment.stockCountCode || payment.debtId}</td><td>{payment.method || "cash"}</td><td>{payment.reference || payment.note || "-"}</td><td>{payment.recordedBy || "Supervisor"}</td><td className="amt">{fmt(payment.amountCents, cur)}</td></tr>)}</tbody>
           </table></div>
         )}
-      </section>
+      </details>
     </div>
   );
 }
@@ -7305,16 +7372,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <div className="due"><span>Balance</span><b>{fmt(out, cur)}</b></div>
         </div>
 
-        <section className="invoice-detail-section">
-          <div className="invoice-detail-section-head"><b>Items</b><span>{items.length}</span></div>
-          {items.length ? (
-            <div className="invoice-detail-items">{items.map((it) => (
-              <div className="invoice-detail-item" key={it.key}>
-                <div><b>{it.name}</b><span>{it.qty} x {fmt(it.priceCents, cur)}</span></div>
-                <strong>{fmt(it.totalCents, cur)}</strong>
-              </div>))}</div>
-          ) : <div className="invoice-detail-empty">No itemised lines recorded.</div>}
-        </section>
         {voidPending ? (
           <div className="void-review-box">
             <div className="section-title" style={{ marginTop: 0 }}><AlertCircle /> Void approval required</div>
@@ -7352,18 +7409,29 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                 <button type="button" className={"invoice-method" + (method === "M-Pesa" ? " on" : "")} aria-pressed={method === "M-Pesa"} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
                 <button type="button" className={"invoice-method" + (method === "Cash" ? " on" : "")} aria-pressed={method === "Cash"} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
               </div>
-              <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Use full balance</button>
+              <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Full balance</button>
             </div>
             <div className="invoice-payment-entry">
               <label className="invoice-payment-amount"><span>Payment amount</span>
                 <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(moneyInputValue(clampPaymentCents(e.target.value, out)))} placeholder="0.00" />
               </label>
               <button className="btn btn-primary" disabled={paymentCents <= 0} onClick={recordPayment}>
-                <Check /> {isFullPayment ? "Settle balance" : "Record " + fmt(paymentCents, cur)}
+                <Check /> {isFullPayment ? "Settle full balance" : "Record partial payment"}
               </button>
             </div>
           </div>
         ) : null}
+
+        <details className="invoice-detail-disclosure invoice-items-disclosure">
+          <summary><span>Invoice items <b>{items.length}</b></span><ChevronDown /></summary>
+          {items.length ? (
+            <div className="invoice-detail-items">{items.map((it) => (
+              <div className="invoice-detail-item" key={it.key}>
+                <div><b>{it.name}</b><span>{it.qty} x {fmt(it.priceCents, cur)}</span></div>
+                <strong>{fmt(it.totalCents, cur)}</strong>
+              </div>))}</div>
+          ) : <div className="invoice-detail-empty">No itemised lines recorded.</div>}
+        </details>
 
         {live.note ? <div className="invoice-detail-sale-note"><b>Sale note</b><span>{live.note}</span></div> : null}
 
