@@ -7605,6 +7605,30 @@ body {
   grid-auto-rows: max-content;
 }
 
+.workstation .category-chip.favorites.active {
+  border-color: #fb7185;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.workstation .product-grid-empty {
+  grid-column: 1 / -1;
+  min-height: 150px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.workstation .product-grid-empty b {
+  color: #334155;
+  font-size: 13px;
+}
+
 .workstation .product-card,
 .workstation .product-card.is-blocked {
   display: flex !important;

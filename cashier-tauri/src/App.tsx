@@ -62,6 +62,8 @@ const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
+const COMMON_PRODUCTS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const COMMON_PRODUCTS_LIMIT = 12;
 const DEFAULT_CASHIER_EXPENSE_CATEGORIES: ExpenseCategory[] = [
   { id: "excat_police", name: "Police", icon: "shield", active: true, order: 50 },
   { id: "excat_utilities", name: "Utilities", icon: "zap", active: true, order: 60 },
@@ -719,17 +721,67 @@ export default function App() {
     return ["All Products", ...names.slice(0, 5)];
   }, [products]);
 
+  const commonProductIds = useMemo(() => {
+    const availableProductIds = new Set(products.map((product) => product.id));
+    const productIdByName = new Map<string, string>();
+    products.forEach((product) => {
+      const name = normalize(product.name || "");
+      if (name && !productIdByName.has(name)) productIdByName.set(name, product.id);
+    });
+    const cutoff = Date.now() - COMMON_PRODUCTS_WINDOW_MS;
+    const scores = new Map<string, { units: number; invoiceCount: number; latestSaleAt: number }>();
+
+    invoices.forEach((invoice) => {
+      const invoiceTs = Number(invoice.ts || 0);
+      if (invoiceTs < cutoff || invoice.voidRequestStatus === "approved") return;
+      if (terminal?.branchId && invoice.branchId !== terminal.branchId) return;
+      const productsInInvoice = new Set<string>();
+      (invoice.items || []).forEach((item) => {
+        const explicitProductId = String(item.productId || "").trim();
+        const productId = availableProductIds.has(explicitProductId)
+          ? explicitProductId
+          : productIdByName.get(normalize(item.name || ""));
+        const units = Math.max(0, Number(item.qty || 0));
+        if (!productId || units <= 0) return;
+        const current = scores.get(productId) || { units: 0, invoiceCount: 0, latestSaleAt: 0 };
+        current.units += units;
+        current.latestSaleAt = Math.max(current.latestSaleAt, invoiceTs);
+        scores.set(productId, current);
+        productsInInvoice.add(productId);
+      });
+      productsInInvoice.forEach((productId) => {
+        const current = scores.get(productId);
+        if (current) current.invoiceCount += 1;
+      });
+    });
+
+    return [...scores.entries()]
+      .sort(([leftId, left], [rightId, right]) => (
+        right.units - left.units
+        || right.invoiceCount - left.invoiceCount
+        || right.latestSaleAt - left.latestSaleAt
+        || leftId.localeCompare(rightId)
+      ))
+      .slice(0, COMMON_PRODUCTS_LIMIT)
+      .map(([productId]) => productId);
+  }, [invoices, products, terminal?.branchId]);
+
   const filteredProducts = useMemo(() => {
     const q = normalize(query);
-    const scoped = selectedCategory === "All Products"
-      ? products
-      : products.filter((product) => (product.category || "Uncategorised") === selectedCategory);
+    const scoped = selectedCategory === "Favorites"
+      ? commonProductIds.flatMap((productId) => {
+        const product = products.find((item) => item.id === productId);
+        return product ? [product] : [];
+      })
+      : selectedCategory === "All Products"
+        ? products
+        : products.filter((product) => (product.category || "Uncategorised") === selectedCategory);
     if (!q) return scoped;
     return scoped.filter((product) => {
       const haystack = [product.name, product.sku, product.barcode, product.category, ...(product.barcodes || [])].join(" ").toLowerCase();
       return haystack.includes(q);
     });
-  }, [products, query, selectedCategory]);
+  }, [commonProductIds, products, query, selectedCategory]);
 
   const focusSearch = () => setTimeout(() => searchRef.current?.focus(), 20);
 
@@ -1565,7 +1617,12 @@ export default function App() {
               <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
             </div>
             <div className="product-strip">
-              <button className="category-chip"><Heart size={16} />Favorites</button>
+              <button
+                className={"category-chip favorites" + (selectedCategory === "Favorites" ? " active" : "")}
+                onClick={() => setSelectedCategory("Favorites")}
+              >
+                <Heart size={16} fill={selectedCategory === "Favorites" ? "currentColor" : "none"} />Favorites
+              </button>
               {categories.map((category) => (
                 <button
                   key={category}
@@ -1579,6 +1636,12 @@ export default function App() {
               <small>F2 Search - F4 Checkout - F6 Hold - Esc Clear search</small>
             </div>
             <div className="product-grid">
+              {filteredProducts.length === 0 && selectedCategory === "Favorites" && (
+                <div className="product-grid-empty">
+                  <Heart size={28} />
+                  <b>{commonProductIds.length === 0 ? "No recent sales yet" : "No matching favorites"}</b>
+                </div>
+              )}
               {filteredProducts.map((product) => {
                 const reservedQty = cart[product.id]?.qty || 0;
                 const blocked = productSaleBlockReason(product, reservedQty);
