@@ -3682,8 +3682,8 @@ body{overscroll-behavior:none}
 .invoice-workspace-tabs button:hover{color:var(--text);background:var(--surface-2)}
 .invoice-workspace-tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
 .invoice-workspace-tabs svg{width:17px;height:17px}
-.invoice-workspace-tabs span,.invoice-status-tabs span{min-width:22px;height:22px;display:inline-grid;place-items:center;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--muted-2);font-size:10px;font-family:var(--font-mono)}
-.invoice-workspace-tabs button.active span,.invoice-status-tabs button.active span{background:rgba(14,165,181,.13);color:var(--accent)}
+.invoice-workspace-tabs span{min-width:22px;height:22px;display:inline-grid;place-items:center;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--muted-2);font-size:10px;font-family:var(--font-mono)}
+.invoice-workspace-tabs button.active span{background:rgba(14,165,181,.13);color:var(--accent)}
 .invoice-workspace-view{min-width:0}
 .invoice-summary-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-soft);border-left:0;border-right:0;margin-bottom:18px}
 .invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -3696,14 +3696,19 @@ body{overscroll-behavior:none}
 .invoice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 13px}
 .invoice-section-head .section-title{font-size:16px;margin:0 0 3px}
 .invoice-section-head .muted{color:var(--muted-2);font-size:12px}
-.invoice-status-tabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;margin-bottom:4px}
-.invoice-status-tabs button{height:36px;display:flex;align-items:center;gap:7px;padding:0 11px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface);color:var(--muted);font:inherit;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer}
-.invoice-status-tabs button:hover{border-color:var(--border);color:var(--text)}
-.invoice-status-tabs button.active{border-color:var(--accent);background:rgba(14,165,181,.08);color:var(--accent)}
+.invoice-compact-summary{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
+.invoice-compact-summary>div{display:grid;gap:2px}
+.invoice-compact-summary b{font-family:var(--font-mono);font-size:16px}
+.invoice-compact-summary b.danger{color:var(--danger)}
+.invoice-compact-summary span{color:var(--muted-2);font-size:10.5px;text-transform:uppercase;font-weight:700}
+.invoice-compact-summary .btn{justify-self:end}
 .invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px;gap:10px;align-items:center;margin-bottom:8px}
-.invoice-date-filter{border-bottom:1px solid var(--border-soft);padding:0 0 10px;margin-bottom:12px}
-.invoice-date-filter summary{width:max-content;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;list-style-position:inside}
-.invoice-date-filter .settledates{grid-column:auto;justify-content:flex-start;padding-top:10px}
+.invoice-more-filters{border-bottom:1px solid var(--border-soft);padding:0 0 9px;margin-bottom:10px}
+.invoice-more-filters summary{width:max-content;color:var(--muted-2);font-size:11.5px;font-weight:700;cursor:pointer;list-style-position:inside}
+.invoice-more-filter-grid{display:grid;grid-template-columns:150px 155px 155px auto;align-items:end;gap:8px;padding-top:9px}
+.invoice-more-filter-grid label{display:grid;gap:4px}
+.invoice-more-filter-grid label span{color:var(--muted-2);font-size:10px;font-weight:700;text-transform:uppercase}
+.invoice-more-filter-grid .input,.invoice-more-filter-grid .select,.invoice-more-filter-grid .btn{height:38px}
 .invoice-selection-bar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;margin:8px 0 12px;border-left:3px solid var(--accent);background:rgba(14,165,181,.07)}
 .invoice-selection-bar>div{display:flex;align-items:center;gap:9px}
 .invoice-selection-bar span{font-size:12px;color:var(--muted-2)}
@@ -3711,7 +3716,7 @@ body{overscroll-behavior:none}
 .invoice-table .invoice-ref,.invoice-table .invoice-customer{display:grid;gap:4px;min-width:0}
 .invoice-table .invoice-ref span,.invoice-table .invoice-customer span{max-width:300px;color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .invoice-table .invoice-customer b{font-size:13px}
-.invoice-table-wrap{max-height:calc(100dvh - 420px);min-height:250px}
+.invoice-table-wrap{max-height:calc(100dvh - 320px);min-height:280px}
 .debt-summary{margin-top:0}
 .debt-summary>section{min-width:0}
 .debt-summary .list.mini{max-height:440px}
@@ -3730,8 +3735,8 @@ body{overscroll-behavior:none}
 .list.mini .row .mt2{font-size:11px}
 .invsummary{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
 @media (max-width:820px){.invsummary{grid-template-columns:1fr}}
-@media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 390px)}}
-@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.invoice-date-filter .settledates{display:grid;grid-template-columns:1fr}.invoice-date-filter .settledates label{min-width:0}.inventory-debt-detail{margin-left:0}.day-close-list .row .btn{width:100%}}
+@media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
+@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.day-close-list .row .btn{width:100%}}
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -6067,22 +6072,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const dateFromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
   const dateToTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
   const hasCustomDateRange = Boolean(dateFrom || dateTo);
-  const todayStartTs = new Date().setHours(0, 0, 0, 0);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
-  const totalRangeStartTs = hasCustomDateRange
-    ? (dateFromTs ?? Number.MIN_SAFE_INTEGER)
-    : (branchSinceEndDay > 0 ? branchSinceEndDay + 1 : todayStartTs);
-  const totalRangeEndTs = hasCustomDateRange ? (dateToTs ?? Number.MAX_SAFE_INTEGER) : Date.now();
-  const totalInvoicedInvoices = activeInvoices.filter((invoice) => {
-    const issuedTs = invoiceIssuedTs(invoice);
-    return issuedTs >= totalRangeStartTs && issuedTs <= totalRangeEndTs;
-  });
   const outstanding = activeInvoices.filter((i) => invOutstanding(i) > 0);
   const debtInvoices = outstanding.filter((i) => invIsDebt(i));
   const overdue = outstanding.filter((i) => invIsOverdue(i));
   const open = outstanding.filter((i) => !invIsDebt(i) && !invIsOverdue(i));
-  const balanceDue = totalInvoicedInvoices.reduce((s, i) => s + invOutstanding(i), 0);
-  const totalInvoiced = totalInvoicedInvoices.reduce((s, i) => s + i.totalCents, 0);
   const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
   const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
     const voidStatus = invoiceVoidState(data, invoice.id).status;
@@ -6210,15 +6204,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
 
       {workspaceView === "invoices" && <div className="invoice-workspace-view">
-        <div className="invoice-summary-strip">
-          <div><span>{hasCustomDateRange ? "Sales in selected dates" : "Current period sales"}</span><b>{fmt(totalInvoiced, cur)}</b></div>
-          <div><span>Outstanding</span><b className={balanceDue > 0 ? "danger" : ""}>{fmt(balanceDue, cur)}</b></div>
-          <div><span>Open</span><b>{open.length}</b></div>
-          <div><span>Needs attention</span><b className={overdue.length + debtInvoices.length + voidPendingCount > 0 ? "warn" : ""}>{overdue.length + debtInvoices.length + voidPendingCount}</b></div>
-        </div>
-
-        <div className="invoice-section-head">
-          <div><div className="section-title">Invoice settlement</div><div className="muted">{cashierFilter === "all" ? "All cashiers" : cashierFilter} - {filtered.length} invoice(s) - {fmt(filteredBalanceDue, cur)} due</div></div>
+        <div className="invoice-compact-summary">
+          <div><b>{filtered.length}</b><span>invoices shown</span></div>
+          <div><b className={filteredBalanceDue > 0 ? "danger" : ""}>{fmt(filteredBalanceDue, cur)}</b><span>balance due</span></div>
           <button
             className="btn sm btn-ghost"
             disabled={currentDayOpenInvoices.length === 0}
@@ -6227,35 +6215,27 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark day invoices paid"}</button>
         </div>
 
-        <div className="invoice-status-tabs" role="tablist" aria-label="Invoice status">
-          {[
-            ["open", "Open", open.length],
-            ["overdue", "Overdue", overdue.length],
-            ["debt", "Debts", debtInvoices.length],
-            ["void_pending", "Void pending", voidPendingCount],
-            ["paid", "Paid", activeInvoices.filter((invoice) => invOutstanding(invoice) <= 0 && !invoiceIsVoided(data, invoice)).length],
-            ["voided", "Voided", voidedInvoices.length],
-            ["all", "All", displayInvoices.length],
-          ].map(([key, label, count]) => (
-            <button type="button" role="tab" aria-selected={filter === key} key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}<span>{count}</span></button>
-          ))}
-        </div>
-
-        <div className="invoice-filter-grid">
+        <div className="invoice-filter-grid simple">
           <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+          <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter invoices by status">
+            <option value="open">Open ({open.length})</option>
+            <option value="overdue">Overdue ({overdue.length})</option>
+            <option value="debt">Debts ({debtInvoices.length})</option>
+            <option value="void_pending">Void pending ({voidPendingCount})</option>
+            <option value="paid">Paid</option>
+            <option value="voided">Voided ({voidedInvoices.length})</option>
+            <option value="all">All invoices ({displayInvoices.length})</option>
+          </select>
           <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} aria-label="Filter invoices by cashier">
             <option value="all">All cashiers</option>
             {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
-          <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices">
-            <option value="oldest">Oldest first</option>
-            <option value="newest">Newest first</option>
-          </select>
         </div>
 
-        <details className="invoice-date-filter">
-          <summary>{hasCustomDateRange ? "Custom date range active" : "Filter by date"}</summary>
-          <div className="settledates">
+        <details className="invoice-more-filters">
+          <summary>{hasCustomDateRange ? "More filters - custom dates active" : "More filters"}</summary>
+          <div className="invoice-more-filter-grid">
+            <label><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
             <label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
             <label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} /></label>
             {hasCustomDateRange ? <button className="btn sm btn-ghost" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
