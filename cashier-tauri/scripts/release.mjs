@@ -221,6 +221,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "End of Day notifications are now resolved from the terminal's own branch catalog before invoices move into cashier debt.",
+  "Closing one branch can no longer carry another branch's open invoices into debt.",
+  "Incorrect cached day-close boundaries are repaired automatically during the next successful sync.",
   "Cashiers can request branch stock transfers by scanning or searching products at their shop.",
   "Requested stock remains unchanged until an admin or supervisor approves the transfer.",
   "Cashiers can track pending, approved, and rejected transfer requests from the cashier dashboard.",
