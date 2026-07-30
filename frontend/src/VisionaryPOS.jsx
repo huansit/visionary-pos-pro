@@ -5820,6 +5820,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
   const needle = query.trim().toLowerCase();
+  const invoiceProductLines = new Map(activeInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
+  const invoiceProductSummary = (invoice) => Array.from(new Set((invoiceProductLines.get(invoice.id) || []).map((line) => line.name).filter(Boolean))).join(", ");
   const filtered = activeInvoices
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
@@ -5839,8 +5841,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     })
     .filter((i) => {
       if (!needle) return true;
-      return [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, i.cashier]
+      const invoiceMatch = [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, invoiceCashierName(i)]
         .some((value) => String(value || "").toLowerCase().includes(needle));
+      const productMatch = (invoiceProductLines.get(i.id) || []).some((line) => [line.name, line.sku, line.barcode, line.category]
+        .some((value) => String(value || "").toLowerCase().includes(needle)));
+      return invoiceMatch || productMatch;
     })
     .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
   const filteredBalanceDue = filtered.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
@@ -5950,7 +5955,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
           ))}
         </div>
-        <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+        <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, SKU, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
         <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} title="Filter invoices by cashier">
           <option value="all">All cashiers</option>
           {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -5973,8 +5978,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
         <div className="tablewrap tblscroll lg"><table className="tbl">
-          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
-          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+          <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Customer</th><th>Products</th><th>Cashier</th><th>Receipt</th><th>Issued</th><th>Age</th><th>Balance</th><th>Status</th></tr></thead>
+          <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
         </table></div>
       )}
 
@@ -6020,6 +6025,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
       {bulkSettlementOpen && <BulkSettleDayModal
         invoices={currentDayOpenInvoices}
+        initialCashier={cashierFilter}
         branch={branch}
         update={update}
         cur={cur}
@@ -6032,11 +6038,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   );
 }
 
-function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
-  const [selectedIds, setSelectedIds] = useState(() => new Set(invoices.map((invoice) => invoice.id)));
-  const selectedInvoices = invoices.filter((invoice) => selectedIds.has(invoice.id));
+function BulkSettleDayModal({ invoices, initialCashier = "all", branch, update, cur, user, onClose }) {
+  const cashierNames = Array.from(new Set(invoices.map(invoiceCashierName))).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const defaultCashier = initialCashier !== "all" && cashierNames.includes(initialCashier) ? initialCashier : "all";
+  const initialVisibleInvoices = invoices.filter((invoice) => defaultCashier === "all" || invoiceCashierName(invoice) === defaultCashier);
+  const [cashierFilter, setCashierFilter] = useState(defaultCashier);
+  const visibleInvoices = invoices.filter((invoice) => cashierFilter === "all" || invoiceCashierName(invoice) === cashierFilter);
+  const [selectedIds, setSelectedIds] = useState(() => new Set(initialVisibleInvoices.map((invoice) => invoice.id)));
+  const selectedInvoices = visibleInvoices.filter((invoice) => selectedIds.has(invoice.id));
   const totalCents = selectedInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
-  const [mpesaAmount, setMpesaAmount] = useState(() => moneyInputValue(invoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
+  const [mpesaAmount, setMpesaAmount] = useState(() => moneyInputValue(initialVisibleInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
   const [cashAmount, setCashAmount] = useState("0");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -6057,6 +6068,11 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
     setCashAmount("0");
     setError("");
   };
+  const changeCashier = (nextCashier) => {
+    const nextInvoices = invoices.filter((invoice) => nextCashier === "all" || invoiceCashierName(invoice) === nextCashier);
+    setCashierFilter(nextCashier);
+    replaceSelection(new Set(nextInvoices.map((invoice) => invoice.id)));
+  };
   const toggleInvoice = (invoiceId) => {
     const nextIds = new Set(selectedIds);
     if (nextIds.has(invoiceId)) nextIds.delete(invoiceId);
@@ -6064,9 +6080,13 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
     replaceSelection(nextIds);
   };
   const toggleAll = () => {
-    replaceSelection(selectedIds.size === invoices.length
-      ? new Set()
-      : new Set(invoices.map((invoice) => invoice.id)));
+    const allVisibleSelected = visibleInvoices.length > 0 && visibleInvoices.every((invoice) => selectedIds.has(invoice.id));
+    const nextIds = new Set(selectedIds);
+    visibleInvoices.forEach((invoice) => {
+      if (allVisibleSelected) nextIds.delete(invoice.id);
+      else nextIds.add(invoice.id);
+    });
+    replaceSelection(nextIds);
   };
 
   const balanceFromCash = (value) => {
@@ -6169,19 +6189,27 @@ function BulkSettleDayModal({ invoices, branch, update, cur, user, onClose }) {
         </div>
 
         <div className="notice">
-          Select the paid invoices for {branch.name}. The selected balance is <b>{fmt(totalCents, cur)}</b>.
+          Select the paid invoices for {cashierFilter === "all" ? "all cashiers" : cashierFilter} at {branch.name}. The selected balance is <b>{fmt(totalCents, cur)}</b>.
           Carried-over debts and void requests are excluded.
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <label className="label" htmlFor="bulk-settlement-cashier">Cashier to settle</label>
+          <select id="bulk-settlement-cashier" className="select" value={cashierFilter} onChange={(event) => changeCashier(event.target.value)}>
+            <option value="all">All cashiers</option>
+            {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
         </div>
 
         <div className="tablewrap" style={{ marginTop: 14, maxHeight: 230, overflowY: "auto" }}>
           <table className="tbl">
             <thead><tr>
               <th style={{ width: 44 }}><input type="checkbox" aria-label="Select all invoices"
-                checked={invoices.length > 0 && selectedIds.size === invoices.length}
+                checked={visibleInvoices.length > 0 && visibleInvoices.every((invoice) => selectedIds.has(invoice.id))}
                 onChange={toggleAll} /></th>
               <th>Customer</th><th>Receipt</th><th>Cashier</th><th className="amt">Balance</th>
             </tr></thead>
-            <tbody>{invoices.map((invoice) => (
+            <tbody>{visibleInvoices.map((invoice) => (
               <tr key={invoice.id} className="clickable" onClick={() => toggleInvoice(invoice.id)}>
                 <td><input type="checkbox" aria-label={`Select ${invoice.number || invoice.receiptNo}`}
                   checked={selectedIds.has(invoice.id)}
@@ -6555,7 +6583,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     </div>
   );
 }
-function InvoiceRow({ inv, cur, voidInfo, selected, onToggle, onOpen }) {
+function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }) {
   const status = invStatus(inv);
   const out = invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
@@ -6571,6 +6599,7 @@ function InvoiceRow({ inv, cur, voidInfo, selected, onToggle, onOpen }) {
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
       <td><div className="nm">{inv.customerName || "Walk-in"}</div></td>
+      <td><div className="nm" style={{ maxWidth: 240 }} title={products || "No product details"}>{products || "No product details"}</div></td>
       <td><div className="nm">{invoiceCashierName(inv) || "Unknown cashier"}</div></td>
       <td className="innum">{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</td>
       <td>{dt(inv.ts)}</td>
