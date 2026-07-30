@@ -3297,6 +3297,13 @@ body{overscroll-behavior:none}
 .ctile.primary .ic{background:rgba(255,255,255,.2);color:#fff}
 .ctile.good .cv{color:var(--ok)}
 .ctile.warn .cv{color:var(--danger)}
+.cash-page{max-width:1180px;margin:0 auto}
+.cash-reconcile{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:-2px 0 18px}
+.cash-equation{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 13px;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
+.cash-equation span{color:var(--muted);font-size:12px}
+.cash-equation b{font:800 13px var(--font-mono);text-align:right}
+.cash-ledger-warning{margin-bottom:18px}
+@media (max-width:720px){.cash-reconcile{grid-template-columns:1fr}.cash-equation{align-items:flex-start;flex-direction:column;gap:4px}.cash-equation b{text-align:left}}
 .eodrow{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border-soft);border-radius:13px;background:var(--surface)}
 .dash{display:flex;flex-direction:column;gap:16px}
 .dash2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -10533,28 +10540,66 @@ function CashTab({ data, update, branch }) {
   const matchesBranch = (branchId) => branchFilter === "all" || branchId === branchFilter;
   const rangeStart = new Date(`${dateFrom}T00:00:00`).getTime();
   const rangeEnd = new Date(`${dateTo}T23:59:59.999`).getTime();
-  const inDateRange = (ts) => Number(ts || 0) >= rangeStart && Number(ts || 0) <= rangeEnd;
+  const recordTs = (...values) => {
+    for (const value of values) {
+      if (value == null || value === "") continue;
+      const text = String(value).trim();
+      const numeric = Number(text);
+      if (Number.isFinite(numeric)) {
+        if (numeric > 0) return numeric;
+        continue;
+      }
+      const parsed = Date.parse(text);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 0;
+  };
+  const inDateRange = (ts) => {
+    const value = recordTs(ts);
+    return value >= rangeStart && value <= rangeEnd;
+  };
   const paymentBranchId = (payment) => payment.branchId || invoiceById[paymentInvoiceId(payment)]?.branchId;
-  const rangePays = data.payments.filter((p) => inDateRange(p.ts) && p.status === "captured" && matchesBranch(paymentBranchId(p)) && !invoiceIsVoided(data, paymentInvoiceId(p)));
-  const sumM = (re) => rangePays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + p.amountCents, 0);
-  const mpesa = sumM(/mpesa|m-?pesa|mobile/i), card = sumM(/card/i), cash = sumM(/cash/i);
+  const paymentTs = (payment) => recordTs(payment?.ts, payment?.createdAt, payment?.updatedAt, payment?.serverTs);
+  const allCapturedInvoicePayments = (data.payments || []).filter((payment) => {
+    const invoiceId = paymentInvoiceId(payment);
+    const status = String(payment?.status || "captured").toLowerCase();
+    const amountCents = Number(payment?.amountCents || 0);
+    return Boolean(invoiceId && invoiceById[invoiceId])
+      && status === "captured"
+      && Number.isFinite(amountCents)
+      && amountCents > 0
+      && !invoiceIsVoided(data, invoiceId);
+  });
+  const rangePays = allCapturedInvoicePayments.filter((payment) => inDateRange(paymentTs(payment)) && matchesBranch(paymentBranchId(payment)));
+  const sumM = (re) => rangePays.filter((p) => re.test(p.method || "")).reduce((s, p) => s + Number(p.amountCents || 0), 0);
+  const mpesa = sumM(/mpesa|m-?pesa|mobile/i);
+  const cash = sumM(/cash/i);
+  const paymentsReceived = rangePays.reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0);
+  const otherPayments = Math.max(0, paymentsReceived - cash - mpesa);
   const rangeInvoices = operationalInvoices(data).filter((i) => inDateRange(i.ts) && matchesBranch(i.branchId));
-  const periodSales = rangeInvoices.reduce((s, i) => s + i.totalCents, 0);
+  const periodSales = rangeInvoices.reduce((s, i) => s + Number(i.totalCents || 0), 0);
   const outstanding = rangeInvoices.reduce((s, i) => s + invOutstanding(i), 0);
-  const periodExpenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && inDateRange(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + e.amountCents, 0);
-  const net = periodSales - periodExpenses;
+  const settledSales = Math.max(0, periodSales - outstanding);
+  const rangeInvoiceIds = new Set(rangeInvoices.map((invoice) => invoice.id));
+  const recordedSettlements = allCapturedInvoicePayments
+    .filter((payment) => rangeInvoiceIds.has(paymentInvoiceId(payment)))
+    .reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0);
+  const settlementRecordGap = Math.max(0, settledSales - recordedSettlements);
+  const periodExpenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && inDateRange(e.ts) && matchesBranch(e.branchId)).reduce((s, e) => s + Number(e.amountCents || 0), 0);
+  const netRecordedInflow = paymentsReceived - periodExpenses;
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const tile = (cls, icon, label, value, sub) => (
     <div className={"ctile" + (cls ? " " + cls : "")}><div className="ic">{icon}</div>
       <div><div className="cl">{label}</div><div className="cv">{value}</div>{sub && <div className="cs">{sub}</div>}</div></div>
   );
-  const eods = [...(data.endOfDays || [])].filter((entry) => matchesBranch(entry.branchId) && inDateRange(entry.ts)).sort((a, b) => b.ts - a.ts).slice(0, 6);
+  const eodTs = (entry) => recordTs(entry?.ts, entry?.closedAt, entry?.periodEndedAt);
+  const eods = [...(data.endOfDays || [])].filter((entry) => matchesBranch(entry.branchId) && inDateRange(eodTs(entry))).sort((a, b) => eodTs(b) - eodTs(a)).slice(0, 6);
   const selectedBranchName = branchFilter === "all" ? "All branches" : bname(branchFilter);
   const rangeLabel = dateFrom === dateTo
     ? (dateFrom === todayStr() ? "Today" : new Date(`${dateFrom}T00:00:00`).toLocaleDateString())
     : `${new Date(`${dateFrom}T00:00:00`).toLocaleDateString()} - ${new Date(`${dateTo}T00:00:00`).toLocaleDateString()}`;
   return (
-    <div><PageHead
+    <div className="cash-page"><PageHead
       title="Cash Management"
       sub={`${rangeLabel} money flow and closings · ${selectedBranchName}`}
     />
@@ -10577,21 +10622,28 @@ function CashTab({ data, update, branch }) {
         {(dateFrom !== todayStr() || dateTo !== todayStr()) ? <button className="btn sm" type="button" onClick={() => { setDateFrom(todayStr()); setDateTo(todayStr()); }}>Today</button> : null}
       </div>
       <div className="cashtiles">
-        {tile("primary", <Banknote />, "Cash collected", fmt(cash, cur), rangeLabel)}
-        {tile("", <Receipt />, "Invoice sales", fmt(periodSales, cur), rangeInvoices.length + " invoice" + (rangeInvoices.length === 1 ? "" : "s"))}
+        {tile("primary", <Wallet />, "Invoice payments received", fmt(paymentsReceived, cur), rangePays.length + " payment record" + (rangePays.length === 1 ? "" : "s"))}
+        {tile("", <Banknote />, "Cash received", fmt(cash, cur), "Captured cash payments")}
+        {tile("", <Smartphone />, "M-Pesa received", fmt(mpesa, cur), "Captured M-Pesa payments")}
+        {tile("", <CreditCard />, "Other received", fmt(otherPayments, cur), "Other recorded methods")}
         {tile("warn", <TrendingDown />, "Approved expenses", fmt(periodExpenses, cur), rangeLabel)}
-        {tile(net >= 0 ? "good" : "warn", <BarChart3 />, "Net after expenses", fmt(net, cur), "Sales − expenses")}
-        {tile("", <Smartphone />, "M-Pesa cleared", fmt(mpesa, cur))}
-        {tile("", <CreditCard />, "Card cleared", fmt(card, cur))}
-        {tile("", <FileText />, "Outstanding", fmt(outstanding, cur), "Unpaid invoice balance")}
-        {tile("", <ShoppingBag />, "Transactions", String(rangeInvoices.length), "Invoices in selected dates")}
+        {tile(netRecordedInflow >= 0 ? "good" : "warn", <BarChart3 />, "Net recorded inflow", fmt(netRecordedInflow, cur), "Invoice payments − approved expenses")}
+        {tile("", <Receipt />, "Invoice sales issued", fmt(periodSales, cur), rangeInvoices.length + " invoice" + (rangeInvoices.length === 1 ? "" : "s"))}
+        {tile(outstanding > 0 ? "warn" : "", <FileText />, "Current outstanding", fmt(outstanding, cur), "Balance on invoices issued in range")}
       </div>
+      <div className="cash-reconcile">
+        <div className="cash-equation"><span>Recorded invoice money flow</span><b>{fmt(paymentsReceived, cur)} − {fmt(periodExpenses, cur)} = {fmt(netRecordedInflow, cur)}</b></div>
+        <div className="cash-equation"><span>Invoice balance</span><b>{fmt(periodSales, cur)} − {fmt(outstanding, cur)} = {fmt(settledSales, cur)} settled</b></div>
+      </div>
+      {settlementRecordGap > 0 ? (
+        <div className="notice cash-ledger-warning"><AlertCircle /> {fmt(settlementRecordGap, cur)} of settled invoice value has no matching payment-method record. It remains settled on the invoices but cannot be assigned reliably to Cash or M-Pesa.</div>
+      ) : null}
 
       <div className="section-title" style={{ margin: "4px 0 10px" }}>Recent end-of-day closings</div>
       {eods.length === 0 ? <div className="notice">No end-of-day closings saved yet.</div> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{eods.map((e) => (
           <div className="eodrow" key={e.id}><div className="avatar"><Wallet style={{ width: 17, height: 17 }} /></div>
-            <div className="meta"><div className="nm">{dt(e.ts)} · {bname(e.branchId)}</div><div className="mt2">{e.cashier || "—"} · {(e.txns ?? e.invoiceCount ?? "—")} txns</div></div>
+            <div className="meta"><div className="nm">{dt(eodTs(e))} · {bname(e.branchId)}</div><div className="mt2">{e.cashier || e.closedBy || "—"} · {(e.transactions ?? e.txns ?? e.invoiceCount ?? "—")} txns</div></div>
             <span className="pill plain">{fmt(e.totalCents ?? e.totalSalesCents ?? 0, cur)}</span></div>))}
         </div>
       )}
