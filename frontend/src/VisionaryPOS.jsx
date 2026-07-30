@@ -3564,6 +3564,7 @@ body{overscroll-behavior:none}
 .ist.open{background:rgba(14,165,181,.16);color:#4F58D6}
 .ist.overdue{background:rgba(255,180,84,.16);color:var(--warn)}
 .ist.debt{background:rgba(230,67,104,.14);color:#C23A56}
+.ist.void-pending{background:rgba(220,38,38,.14);color:#DC2626}
 .ist.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .ist.paid{background:rgba(52,211,153,.16);color:var(--ok)}
 .paycell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -5818,12 +5819,34 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const txns = operationalInvoices(data).filter((i) => isToday(i.ts)).length;
   const reorders = reorderList(data, branch.id).length;
   const pendingExpenseCount = (data.expenses || []).filter((e) => e.status === "pending").length;
+  const pendingVoidCount = operationalInvoices(data)
+    .filter((invoice) => invoice.branchId === branch.id && invoiceVoidState(data, invoice.id).status === "pending")
+    .length;
   const openCashierCreditInvoices = (cashier) => {
     setInvoiceFocus({ cashier, filter: "debt", key: Date.now() });
     setTab("invoices");
   };
-  const NavBtn = ({ item, main }) => { const I = item.icon; return (
-    <button className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")} title={item.label} onClick={() => { if (item.id === "invoices") setInvoiceFocus(null); setTab(item.id); }}><I /> <span className="navlabel">{item.label}</span>{item.id === "expenses" && pendingExpenseCount > 0 ? <span className="navbadge">{pendingExpenseCount}</span> : null}</button>); };
+  const NavBtn = ({ item, main }) => {
+    const I = item.icon;
+    const badgeCount = item.id === "expenses" ? pendingExpenseCount : item.id === "invoices" ? pendingVoidCount : 0;
+    const badgeLabel = item.id === "invoices" ? "void requests pending approval" : "expenses pending approval";
+    return (
+      <button
+        className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")}
+        title={badgeCount > 0 ? `${item.label}: ${badgeCount} ${badgeLabel}` : item.label}
+        onClick={() => {
+          if (item.id === "invoices") {
+            setInvoiceFocus(pendingVoidCount > 0 ? { filter: "void_pending", key: Date.now() } : null);
+          }
+          setTab(item.id);
+        }}
+      >
+        <I />
+        <span className="navlabel">{item.label}</span>
+        {badgeCount > 0 ? <span className="navbadge" aria-label={`${badgeCount} ${badgeLabel}`}>{badgeCount}</span> : null}
+      </button>
+    );
+  };
   const render = () => {
     if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} />;
     switch (tab) {
@@ -5955,6 +5978,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       if (filter === "all") return true;
       if (filter === "voided") return voidStatus === "approved";
       if (voidStatus === "approved") return false;
+      if (filter === "void_pending") return voidStatus === "pending";
       if (filter === "debt") return invIsDebt(i);
       if (filter === "overdue") return invIsOverdue(i);
       if (filter === "open") return invOutstanding(i) > 0 && !invIsDebt(i) && !invIsOverdue(i);
@@ -6084,7 +6108,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>
       <div className="settlebar">
         <div className="seg">
-          {[["open", "Open"], ["overdue", "Overdue"], ["debt", "Debts"], ["paid", "Paid"], ["voided", "Voided"], ["all", "All"]].map(([key, label]) => (
+          {[["void_pending", `Void pending (${activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length})`], ["open", "Open"], ["overdue", "Overdue"], ["debt", "Debts"], ["paid", "Paid"], ["voided", "Voided"], ["all", "All"]].map(([key, label]) => (
             <button key={key} className={"wtab" + (filter === key ? " on" : "")} onClick={() => setFilter(key)}>{label}</button>
           ))}
         </div>
@@ -6725,7 +6749,7 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
   const displayStatus = voidStatus === "approved" ? "voided"
     : voidStatus === "pending" ? "void pending" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "overdue" : status;
+    : voidStatus === "pending" ? "void-pending" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>

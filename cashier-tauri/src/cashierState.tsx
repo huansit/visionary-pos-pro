@@ -139,9 +139,8 @@ function ageDays(ts?: number) {
   return Math.max(0, Math.floor(diff / DAY_MS));
 }
 
-function isPendingInvoice(invoice: Invoice) {
-  const status = String(invoice.status || "").toLowerCase();
-  return status === "pending" || status === "pending_approval" || status === "approval_pending";
+function isPendingVoidInvoice(invoice: Invoice) {
+  return invoice.voidRequestStatus === "pending";
 }
 
 function customerKey(value?: string) {
@@ -244,8 +243,12 @@ export function deriveCashierState(source: CashierStateSource): CashierState {
     salesToday: {
       total: todaysInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0),
       paidCount: todaysInvoices.filter((invoice) => invoiceOutstanding(invoice) === 0).length,
-      openCount: openInvoicesToday.length,
-      pendingCount: todaysInvoices.filter(isPendingInvoice).length
+      openCount: todaysInvoices.filter((invoice) => (
+        invoiceOutstanding(invoice) > 0
+        && !invoice.carriedOver
+        && !isPendingVoidInvoice(invoice)
+      )).length,
+      pendingCount: todaysInvoices.filter(isPendingVoidInvoice).length
     },
     openInvoicesToday,
     debts,

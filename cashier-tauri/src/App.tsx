@@ -479,9 +479,8 @@ function isToday(ts?: number) {
     && date.getDate() === today.getDate();
 }
 
-function isPendingInvoice(invoice: Invoice) {
-  const status = String(invoice.status || "").toLowerCase();
-  return status.includes("pending") || status.includes("approval");
+function isPendingVoidInvoice(invoice: Invoice) {
+  return invoice.voidRequestStatus === "pending";
 }
 
 function timeShort(ts?: number) {
@@ -679,7 +678,8 @@ export default function App() {
   );
   const openInvoicesToday = useMemo(() => activeTodayInvoices.filter((invoice) => outstanding(invoice) > 0 && !invoice.carriedOver && invoice.voidRequestStatus !== "approved"), [activeTodayInvoices]);
   const paidTodayCount = activeTodayInvoices.filter((invoice) => outstanding(invoice) <= 0).length;
-  const pendingTodayCount = activeTodayInvoices.filter(isPendingInvoice).length;
+  const pendingTodayCount = activeTodayInvoices.filter(isPendingVoidInvoice).length;
+  const ordinaryOpenTodayCount = openInvoicesToday.filter((invoice) => !isPendingVoidInvoice(invoice)).length;
   const openInvoiceTotal = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const carriedDebtTotal = carriedDebts.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const inventoryDebtTotal = inventoryDebtEntries.reduce((sum, entry) => sum + entry.outstandingCents, 0);
@@ -1405,7 +1405,7 @@ export default function App() {
             </div>
             <div className="rail-sales-chips">
               <div className="rail-chip paid"><b>{paidTodayCount}</b><span>Paid</span></div>
-              <div className="rail-chip open"><b>{openInvoicesToday.length}</b><span>Open</span></div>
+              <div className="rail-chip open"><b>{ordinaryOpenTodayCount}</b><span>Open</span></div>
               <div className="rail-chip pending"><b>{pendingTodayCount}</b><span>Pending</span></div>
             </div>
             {dayClosedAt && activeTodayInvoices.length === 0 && (
@@ -1427,17 +1427,18 @@ export default function App() {
                 </div>
               ) : openInvoicesToday.map((invoice) => {
                 const label = invoiceCustomerLabel(invoice);
+                const voidPending = isPendingVoidInvoice(invoice);
                 return (
                   <button
-                    className="rail-invoice-row"
+                    className={"rail-invoice-row" + (voidPending ? " void-pending" : "")}
                     key={invoice.id}
                     onClick={() => setInvoiceDetail({ invoice, side: "left" })}
-                    title={`Open ${invoice.number}`}
+                    title={voidPending ? `Void pending for ${invoice.number}` : `Open ${invoice.number}`}
                   >
                     <span className="rail-avatar">{avatarInitial(label)}</span>
                     <span className="rail-invoice-main">
                       <b>{label}</b>
-                      <small>{invoice.number} - opened {timeShort(invoice.ts)}</small>
+                      <small>{voidPending ? "Void pending - " : ""}{invoice.number} - opened {timeShort(invoice.ts)}</small>
                     </span>
                     <strong>{money(outstanding(invoice))}</strong>
                   </button>
