@@ -8719,6 +8719,8 @@ function StockTab({ data, update, branch }) {
     totals: [],
     orientation: "portrait",
     prominentBranch: true,
+    branchOnlyHeader: true,
+    hideReportTitle: true,
   });
   const exportStockTakingTemplate = (kind) => {
     if (!selectedTemplateProducts.length) return;

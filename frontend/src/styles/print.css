@@ -29,6 +29,11 @@
   gap: 20px;
 }
 
+.print-header.branch-only {
+  display: block;
+  text-align: left;
+}
+
 .print-brand {
   display: flex;
   align-items: center;
