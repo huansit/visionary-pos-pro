@@ -1,11 +1,13 @@
 {
-  "version": "2.0.63",
+  "version": "2.0.64",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.63_x64-setup.exe",
-  "size": 3240176,
-  "sha512": "DEFDE9674C37B575C86639326BB2742A3D7482A67647679BDB4CB5ECD6FA4F9EA5695088D136F94C2A9A42C3228DCC429C666D84FE6003665EF0981FAB4BDC39",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.64_x64-setup.exe",
+  "size": 3238280,
+  "sha512": "20C3EEC69EB6BB52277434B100477503201BAAE2DAC059E59AD5909D0BD548EB7BE438A0E9FB75D5DBBB40F1AD0A62E08AB66343FC8D0BC395DAEDF176D2B2F3",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.63",
+    "VISIONPOS Cashier 2.0.64",
+    "The Sales Today Pending count now represents invoice void requests awaiting supervisor approval.",
+    "Today's invoice list marks pending void requests with a distinct red treatment while keeping them available for review.",
     "Cashier dashboards now sync each cashier's missing-inventory joint debt and retain it for offline viewing.",
     "Open, overdue, carried invoice debt, and missing-inventory debt are displayed as separate categories with accurate totals.",
     "Unpaid invoices become overdue after one day but become cashier debt only after End of Day carries them forward.",

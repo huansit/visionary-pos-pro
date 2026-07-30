@@ -221,6 +221,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "The Sales Today Pending count now represents invoice void requests awaiting supervisor approval.",
+  "Today's invoice list marks pending void requests with a distinct red treatment while keeping them available for review.",
   "Cashier dashboards now sync each cashier's missing-inventory joint debt and retain it for offline viewing.",
   "Open, overdue, carried invoice debt, and missing-inventory debt are displayed as separate categories with accurate totals.",
   "Unpaid invoices become overdue after one day but become cashier debt only after End of Day carries them forward.",
