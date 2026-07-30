@@ -3477,9 +3477,26 @@ body{overscroll-behavior:none}
 .user-enable-toggle.on .user-enable-track{background:var(--ok)}
 .user-enable-toggle.on .user-enable-track>span{transform:translateX(11px)}
 @keyframes fpScan{0%,100%{top:18%}50%{top:82%}}
-.customer-row{width:100%;grid-template-columns:auto minmax(0,1fr) auto 24px;text-align:left;cursor:pointer;appearance:none;color:inherit}
+.customer-page{max-width:1120px;margin:0 auto}
+.customer-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.customer-toolbar .possearch{flex:1;min-width:260px}
+.customer-filter-tabs{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface-2)}
+.customer-filter{height:34px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:var(--muted);font:700 12px var(--font-ui);cursor:pointer;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.customer-filter:hover{color:var(--text)}
+.customer-filter.on{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.customer-filter-count{min-width:19px;height:19px;padding:0 5px;border-radius:999px;background:var(--surface-3);display:grid;place-items:center;font:750 10px var(--font-mono)}
+.customer-filter.debt.on .customer-filter-count{background:color-mix(in srgb,var(--danger) 16%,transparent);color:var(--danger)}
+.customer-row{width:100%;grid-template-columns:auto minmax(0,1fr) minmax(128px,auto) 24px;text-align:left;cursor:pointer;appearance:none;color:inherit}
 .customer-row:hover{border-color:color-mix(in srgb,var(--accent) 48%,var(--border));background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
 .customer-row:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 35%,transparent);outline-offset:2px}
+.customer-account-balance{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.customer-account-balance strong{font:800 14px var(--font-mono)}
+.customer-account-balance small{font-size:11px;color:var(--muted-2)}
+.customer-account-status{display:inline-flex;align-items:center;width:max-content;padding:3px 7px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
+.customer-account-status.debt{color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.customer-account-status.pending{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.customer-account-status.paid{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.customer-account-status.inactive{color:var(--muted);background:var(--surface-2)}
 .customer-chevron{width:18px;height:18px;color:var(--muted-2)}
 .customer-history-modal{width:min(760px,calc(100vw - 32px));max-width:760px;padding:0;overflow:hidden;display:flex;flex-direction:column;max-height:min(760px,calc(100dvh - 40px))}
 .customer-history-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:22px 24px;border-bottom:1px solid var(--border)}
@@ -3495,19 +3512,21 @@ body{overscroll-behavior:none}
 .customer-invoice-title svg{width:17px;height:17px;color:var(--accent)}
 .customer-invoice-title span{color:var(--muted-2);font-size:12px}
 .customer-invoice-list{min-height:0;overflow-y:auto;padding:0 24px 22px}
-.customer-invoice-columns,.customer-invoice-row{display:grid;grid-template-columns:minmax(150px,1.4fr) minmax(105px,.9fr) 86px minmax(112px,.9fr);align-items:center;gap:12px}
+.customer-invoice-columns,.customer-invoice-row{display:grid;grid-template-columns:minmax(145px,1.35fr) 82px 90px 90px minmax(105px,.9fr);align-items:center;gap:12px}
 .customer-invoice-columns{padding:7px 10px;color:var(--muted-2);font-size:10px;font-weight:800;text-transform:uppercase;border-bottom:1px solid var(--border)}
 .customer-invoice-row{padding:12px 10px;border-bottom:1px solid var(--border)}
 .customer-invoice-row:last-child{border-bottom:0}
-.customer-invoice-receipt{min-width:0}
-.customer-invoice-receipt strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)}
-.customer-invoice-receipt span{display:block;margin-top:3px;color:var(--muted-2);font-size:11px}
+.customer-invoice-main{min-width:0}
+.customer-invoice-main strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)}
+.customer-invoice-main span{display:block;margin-top:3px;color:var(--muted-2);font-size:11px}
 .customer-invoice-status{justify-self:start}
 .customer-invoice-status.open{color:var(--warn)}
+.customer-invoice-status.partial{color:var(--warn)}
+.customer-invoice-status.overdue,.customer-invoice-status.debt{color:var(--danger)}
 .customer-invoice-status.paid{color:var(--ok)}
 .customer-invoice-amount{text-align:right;font-weight:800}
 .customer-invoice-amount small{display:none;color:var(--muted-2);font-weight:700}
-@media(max-width:700px){.customer-row{grid-template-columns:auto minmax(0,1fr) auto}.customer-row>div:nth-of-type(3){grid-column:2;text-align:left!important}.customer-chevron{grid-column:3;grid-row:1/3}.customer-history-modal{max-height:calc(100dvh - 20px)}.customer-history-head{padding:17px}.customer-history-summary{grid-template-columns:1fr;padding:12px 17px;gap:7px}.customer-history-summary>div{display:grid;grid-template-columns:1fr auto;align-items:center;padding:9px 11px}.customer-invoice-title{padding:14px 17px 8px}.customer-invoice-list{padding:0 17px 17px}.customer-invoice-columns{display:none}.customer-invoice-row{grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;padding:11px 5px}.customer-invoice-status{justify-self:end}.customer-invoice-amount{display:flex;justify-content:space-between;grid-column:1/-1;text-align:left}.customer-invoice-amount small{display:block}}
+@media(max-width:700px){.customer-toolbar{align-items:stretch}.customer-toolbar .possearch{min-width:100%;width:100%}.customer-filter-tabs{width:100%;overflow-x:auto}.customer-filter{flex:1;justify-content:center}.customer-row{grid-template-columns:auto minmax(0,1fr) auto}.customer-account-balance{grid-column:2;align-items:flex-start;text-align:left}.customer-chevron{grid-column:3;grid-row:1/3}.customer-history-modal{max-height:calc(100dvh - 20px)}.customer-history-head{padding:17px}.customer-history-summary{grid-template-columns:1fr;padding:12px 17px;gap:7px}.customer-history-summary>div{display:grid;grid-template-columns:1fr auto;align-items:center;padding:9px 11px}.customer-invoice-title{padding:14px 17px 8px}.customer-invoice-list{padding:0 17px 17px}.customer-invoice-columns{display:none}.customer-invoice-row{grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;padding:11px 5px}.customer-invoice-status{justify-self:end}.customer-invoice-amount{display:flex;justify-content:space-between;grid-column:1/-1;text-align:left}.customer-invoice-amount small{display:block}}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .rcpt{font-family:var(--font-mono);background:var(--bg);border:1px dashed var(--border);border-radius:14px;padding:18px;margin:16px 0;font-size:12.5px;color:var(--muted)}
@@ -9780,6 +9799,7 @@ function customerInvoiceCents(invoice, field) {
 }
 function CustomersTab({ data, branch }) {
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("debt");
   const [selectedCustomerKey, setSelectedCustomerKey] = useState(null);
   const customers = useMemo(() => {
     const grouped = new Map();
@@ -9801,6 +9821,11 @@ function CustomersTab({ data, branch }) {
         invoiceCount: 0,
         totalCents: 0,
         outstandingCents: 0,
+        debtCents: 0,
+        pendingCents: 0,
+        paidInvoiceCount: 0,
+        debtInvoiceCount: 0,
+        pendingInvoiceCount: 0,
         lastInvoiceAt: 0,
         lastReceipt: "",
         invoices: [],
@@ -9828,24 +9853,39 @@ function CustomersTab({ data, branch }) {
       const totalCents = customerInvoiceCents(source, "total");
       const paidCents = customerInvoiceCents(source, "paid");
       const receiptNo = String(source.number ?? source.receiptNo ?? source.receipt_no ?? "Invoice");
-      current.invoices.push({
+      const normalizedInvoice = {
         ...source,
         id: String(source.id ?? source.invoiceId ?? source.invoice_id ?? receiptNo),
         number: receiptNo,
         ts: invoiceTs,
         totalCents,
         paidCents: Math.max(0, Math.min(totalCents, paidCents)),
-      });
+      };
+      const outstandingCents = invOutstanding(normalizedInvoice);
+      current.invoices.push(normalizedInvoice);
       current.invoiceCount += 1;
       current.totalCents += totalCents;
-      current.outstandingCents += Math.max(0, totalCents - paidCents);
+      current.outstandingCents += outstandingCents;
+      if (outstandingCents <= 0) {
+        current.paidInvoiceCount += 1;
+      } else if (invIsDebt(normalizedInvoice)) {
+        current.debtCents += outstandingCents;
+        current.debtInvoiceCount += 1;
+      } else {
+        current.pendingCents += outstandingCents;
+        current.pendingInvoiceCount += 1;
+      }
       if (invoiceTs >= current.lastInvoiceAt) {
         current.lastInvoiceAt = invoiceTs;
         current.lastReceipt = receiptNo;
       }
     });
     return [...grouped.values()]
-      .map((customer) => ({ ...customer, invoices: customer.invoices.sort((a, b) => b.ts - a.ts) }))
+      .map((customer) => ({
+        ...customer,
+        accountStatus: customer.debtCents > 0 ? "debt" : customer.pendingCents > 0 ? "pending" : customer.invoiceCount > 0 ? "paid" : "inactive",
+        invoices: customer.invoices.sort((a, b) => b.ts - a.ts),
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [data.customers, data.invoices, data.invoiceVoidRequests, data.invoiceVoidDecisions, branch?.id]);
   const selectedCustomer = customers.find((customer) => customer.groupKey === selectedCustomerKey) || null;
@@ -9858,19 +9898,51 @@ function CustomersTab({ data, branch }) {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [selectedCustomer]);
   const search = query.trim().toLowerCase();
-  const visible = customers.filter((customer) => !search
-    || customer.name.toLowerCase().includes(search)
-    || customer.phone.toLowerCase().includes(search)
-    || customer.lastReceipt.toLowerCase().includes(search));
+  const statusCounts = customers.reduce((counts, customer) => {
+    counts.all += 1;
+    if (customer.accountStatus !== "inactive") counts[customer.accountStatus] += 1;
+    return counts;
+  }, { debt: 0, pending: 0, paid: 0, all: 0 });
+  const visible = customers
+    .filter((customer) => statusFilter === "all" || customer.accountStatus === statusFilter)
+    .filter((customer) => !search
+      || customer.name.toLowerCase().includes(search)
+      || customer.phone.toLowerCase().includes(search)
+      || customer.lastReceipt.toLowerCase().includes(search))
+    .sort((a, b) => statusFilter === "paid"
+      ? b.lastInvoiceAt - a.lastInvoiceAt
+      : statusFilter === "all"
+        ? a.name.localeCompare(b.name)
+        : b.outstandingCents - a.outstandingCents || a.name.localeCompare(b.name));
+  const filterLabels = { debt: "customers with debts", pending: "customers with pending balances", paid: "fully paid customers", all: "customers" };
+  const emptyMessages = {
+    debt: "No customers currently have invoice debts.",
+    pending: "No customers currently have pending invoice balances.",
+    paid: "No fully paid customers match this search.",
+    all: "Customers appear here after a cashier issues an invoice.",
+  };
   return (
-    <div><PageHead title="Customers" sub={`${customers.length} customers for ${branch?.name || "all branches"}`} />
-      <div className="ptools"><div className="possearch"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search customers by name, phone, or receipt..." /></div></div>
+    <div className="customer-page"><PageHead title="Customers" sub={`${statusCounts[statusFilter]} ${filterLabels[statusFilter]} for ${branch?.name || "all branches"}`} />
+      <div className="customer-toolbar">
+        <div className="possearch"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, phone, or receipt" /></div>
+        <div className="customer-filter-tabs" role="tablist" aria-label="Filter customer accounts">
+          {[["debt", "Debts"], ["pending", "Pending"], ["paid", "Paid"], ["all", "All"]].map(([key, label]) => (
+            <button type="button" role="tab" aria-selected={statusFilter === key} className={`customer-filter ${key}${statusFilter === key ? " on" : ""}`} key={key} onClick={() => { setStatusFilter(key); setSelectedCustomerKey(null); }}>
+              {label}<span className="customer-filter-count">{statusCounts[key]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="list">
-        {visible.length === 0 && <div className="notice">Customers appear here after a cashier issues an invoice.</div>}
+        {visible.length === 0 && <div className="notice">{search ? `No ${filterLabels[statusFilter]} match “${query.trim()}”.` : emptyMessages[statusFilter]}</div>}
         {visible.map((customer) => <button type="button" className="row clickable customer-row" key={customer.id} onClick={() => setSelectedCustomerKey(customer.groupKey)}>
           <div className="avatar">{customer.name.charAt(0).toUpperCase()}</div>
           <div className="meta"><div className="nm">{customer.name}</div><div className="mt2">{customer.phone || "No phone"} · {customer.invoiceCount} invoice(s){customer.lastReceipt ? ` · Last ${customer.lastReceipt}` : ""}{customer.lastInvoiceAt ? ` · ${new Date(customer.lastInvoiceAt).toLocaleDateString()}` : ""}</div></div>
-          <div style={{ textAlign: "right" }}><div style={{ fontWeight: 800 }}>{fmt(customer.totalCents, data.settings.currency)} sales</div><div style={{ color: customer.outstandingCents > 0 ? "var(--warn)" : "var(--muted-2)", fontSize: 12 }}>{fmt(customer.outstandingCents, data.settings.currency)} outstanding</div></div>
+          <div className="customer-account-balance">
+            <span className={`customer-account-status ${customer.accountStatus}`}>{customer.accountStatus === "inactive" ? "No invoices" : customer.accountStatus}</span>
+            <strong>{fmt(customer.accountStatus === "paid" ? customer.totalCents : customer.outstandingCents, data.settings.currency)}</strong>
+            <small>{customer.accountStatus === "paid" ? "total sales" : "outstanding"}</small>
+          </div>
           <ChevronRight className="customer-chevron" aria-hidden="true" />
         </button>)}
       </div>
@@ -9880,7 +9952,7 @@ function CustomersTab({ data, branch }) {
             <div>
               <span className="eyebrow">Customer account</span>
               <h2 id="customer-history-title">{selectedCustomer.name}</h2>
-              <p>{selectedCustomer.phone || "No phone recorded"}</p>
+              <p>{selectedCustomer.phone || "No phone recorded"} · <span className={`customer-account-status ${selectedCustomer.accountStatus}`}>{selectedCustomer.accountStatus === "inactive" ? "No invoices" : selectedCustomer.accountStatus}</span></p>
             </div>
             <button type="button" className="icon-btn" aria-label="Close customer invoices" onClick={() => setSelectedCustomerKey(null)}><X /></button>
           </header>
