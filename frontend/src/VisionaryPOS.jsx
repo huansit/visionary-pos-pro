@@ -2739,6 +2739,29 @@ function operationalInvoices(data) {
 const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
 // Combined date + time stamp for documents (invoices, purchases, expenses, stock moves, etc.)
 function dt(ts) { if (ts == null) return "—"; const d = new Date(ts); return d.toLocaleDateString() + " · " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+function localDateValue(date) {
+  const d = new Date(date);
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
+}
+function mondayDateValue(value = Date.now()) {
+  const parsed = typeof value === "string" ? new Date(value + "T12:00:00") : new Date(value);
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return localDateValue(date);
+}
+function stockTemplateWeek(value) {
+  const mondayValue = mondayDateValue(value);
+  const monday = new Date(mondayValue + "T12:00:00");
+  const format = (date) => [String(date.getDate()).padStart(2, "0"), String(date.getMonth() + 1).padStart(2, "0"), date.getFullYear()].join("/");
+  const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const days = dayNames.map((day, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    return { day, date: format(date), label: day + " " + format(date) };
+  });
+  return { mondayValue, days, label: days[0].label + " to " + days[days.length - 1].label };
+}
 function cartLines(data, cart) {
   return Object.entries(cart).filter(([, q]) => q > 0).map(([pid, qty]) => {
     const p = data.products.find((x) => x.id === pid);
@@ -8183,6 +8206,10 @@ function StockTab({ data, update, branch }) {
   const [scannerOn, setScannerOn] = useState(true);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [templateSelectedIds, setTemplateSelectedIds] = useState([]);
+  const [templateWeekMonday, setTemplateWeekMonday] = useState(() => mondayDateValue());
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const [cf, setCf] = useState({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
@@ -8193,6 +8220,12 @@ function StockTab({ data, update, branch }) {
   const rows = stockCountRows(data, session);
   const progress = stockCountProgress(session);
   const uniqueProducts = branchProductsUnique(data, bId);
+  const templateProducts = sortProductsAZ(uniqueProducts.filter((product) => productIsEnabled(product) || productOnHand(data, product, bId) > 0));
+  const templateTerm = templateSearch.trim().toLowerCase();
+  const filteredTemplateProducts = templateProducts.filter((product) => !templateTerm || product.name.toLowerCase().includes(templateTerm));
+  const selectedTemplateProducts = templateProducts.filter((product) => templateSelectedIds.includes(product.id));
+  const templateWeek = stockTemplateWeek(templateWeekMonday);
+  const allFilteredTemplateProductsSelected = filteredTemplateProducts.length > 0 && filteredTemplateProducts.every((product) => templateSelectedIds.includes(product.id));
   const salesDuringCount = session ? rows.reduce((sum, row) => sum + row.soldSince, 0) : 0;
   const visibleRows = rows.filter((row) => {
     const term = q.trim().toLowerCase();
@@ -8556,6 +8589,44 @@ function StockTab({ data, update, branch }) {
     setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
   };
   const exportReport = (kind) => report && exportDiscrepancy(report, cur, kind);
+  const openStockTemplate = () => {
+    setTemplateSearch("");
+    setTemplateSelectedIds([]);
+    setTemplateWeekMonday(mondayDateValue());
+    setTemplateOpen(true);
+  };
+  const toggleTemplateProduct = (productId) => setTemplateSelectedIds((current) => current.includes(productId)
+    ? current.filter((id) => id !== productId)
+    : [...current, productId]);
+  const toggleAllFilteredTemplateProducts = () => setTemplateSelectedIds((current) => {
+    const visibleIds = filteredTemplateProducts.map((product) => product.id);
+    if (visibleIds.length && visibleIds.every((id) => current.includes(id))) return current.filter((id) => !visibleIds.includes(id));
+    return Array.from(new Set([...current, ...visibleIds]));
+  });
+  const stockTemplateRows = () => selectedTemplateProducts.flatMap((product) => templateWeek.days.map((day) => [product.name, day.label, ""]));
+  const stockTakingTemplateDocument = () => buildReportDocument({
+    title: "Weekly Stock Taking Template",
+    companyName: data.settings.store || "VISIONPOS",
+    branchName: bname,
+    generatedBy: operator || "VISIONPOS",
+    dateRange: templateWeek.label,
+    filters: [{ label: "Shop", value: bname }, { label: "Selected products", value: selectedTemplateProducts.length }],
+    headers: ["Product name", "Day / date", "Count"],
+    rows: stockTemplateRows(),
+    totals: [],
+    orientation: "portrait",
+  });
+  const exportStockTakingTemplate = (kind) => {
+    if (!selectedTemplateProducts.length) return;
+    const templateDocument = stockTakingTemplateDocument();
+    if (kind === "print") printReport(templateDocument);
+    else if (kind === "pdf") downloadPDF(templateDocument);
+    else {
+      const metadata = [["Shop", bname], ["Week", templateWeek.label], [], ["Product name", "Day / date", "Count"]];
+      const branchSlug = String(bname).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "shop";
+      downloadFile("stock-taking-" + branchSlug + "-" + templateWeek.mondayValue + ".csv", [...metadata, ...stockTemplateRows()].map((row) => row.map(csvEscape).join(",")).join("\n"), "text/csv");
+    }
+  };
 
   if (inventoryMode === "quick") {
     return <QuickInventoryTab data={data} update={update} branch={branch} initialBranchId={bId} onBack={(nextBranchId) => { setBId(nextBranchId || bId); setInventoryMode("full"); }} />;
@@ -8565,7 +8636,7 @@ function StockTab({ data, update, branch }) {
     <div>
       <PageHead title="Stock" sub={"Locked stock count sessions & levels - " + bname} />
       <div className="ptools">
-        <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => { setBId(e.target.value); setReport(null); }}>
+        <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => { setBId(e.target.value); setReport(null); setTemplateOpen(false); setTemplateSelectedIds([]); }}>
           {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
         <div className="possearch"><Search /><input placeholder="Search product name, SKU, or barcode..." value={q} onChange={(e) => setQ(e.target.value)} /></div>
@@ -8574,6 +8645,7 @@ function StockTab({ data, update, branch }) {
         <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => !v)}><Barcode /> USB scanner</button>
         <button className="btn sm btn-ghost" disabled={session?.status !== "open"} onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
         <button className="btn sm btn-ghost" onClick={openLoss}><TrendingDown /> Record loss / damage</button>
+        <button className="btn sm btn-ghost" onClick={openStockTemplate}><Download /> Stock template</button>
       </div>
       {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
       <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
@@ -8659,6 +8731,42 @@ function StockTab({ data, update, branch }) {
             </div>;
           })}</div> : <div className="notice">No stock corrections recorded for this branch.</div>}
       </DocumentFile>
+      {templateOpen && (
+        <div className="scrim" onClick={() => setTemplateOpen(false)}>
+          <div className="modal" style={{ maxWidth: 720 }} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Stock taking template</div></div>
+              <button className="iconbtn" onClick={() => setTemplateOpen(false)} aria-label="Close stock taking template"><X /></button>
+            </div>
+            <div className="grid2" style={{ marginTop: 14 }}>
+              <div><label className="label">Week starting Monday</label><input className="input" type="date" value={templateWeek.mondayValue} onChange={(event) => setTemplateWeekMonday(mondayDateValue(event.target.value))} /></div>
+              <div><label className="label">Week covered</label><input className="input" value={templateWeek.label} readOnly /></div>
+            </div>
+            <div className="possearch" style={{ marginTop: 14 }}><Search /><input placeholder="Find product by name..." value={templateSearch} onChange={(event) => setTemplateSearch(event.target.value)} /></div>
+            <div className="tablewrap" style={{ marginTop: 12, maxHeight: 340, overflow: "auto" }}>
+              <table className="tbl">
+                <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all matching products" checked={allFilteredTemplateProductsSelected} onChange={toggleAllFilteredTemplateProducts} /></th><th>Product name</th></tr></thead>
+                <tbody>
+                  {filteredTemplateProducts.map((product) => <tr key={product.id} className={templateSelectedIds.includes(product.id) ? "rowsel" : ""}>
+                    <td><input type="checkbox" aria-label={`Select ${product.name}`} checked={templateSelectedIds.includes(product.id)} onChange={() => toggleTemplateProduct(product.id)} /></td>
+                    <td><div className="nm">{product.name}</div>{!productIsEnabled(product) && <div className="mt2">Disabled product with stock on hand</div>}</td>
+                  </tr>)}
+                  {!filteredTemplateProducts.length && <tr><td colSpan="2"><div className="notice">No products match this search.</div></td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div className="page-h" style={{ marginTop: 14, marginBottom: 0 }}>
+              <div><div className="nm">{selectedTemplateProducts.length} selected</div><div className="mt2">Each product gets Monday-to-Sunday rows and one blank count column.</div></div>
+              <div className="expbtns">
+                {selectedTemplateProducts.length > 0 && <button className="btn sm btn-ghost" onClick={() => setTemplateSelectedIds([])}>Clear</button>}
+                <button className="btn sm btn-ghost" disabled={!selectedTemplateProducts.length} onClick={() => exportStockTakingTemplate("csv")}><Download /> CSV</button>
+                <button className="btn sm btn-ghost" disabled={!selectedTemplateProducts.length} onClick={() => exportStockTakingTemplate("pdf")}><FileText /> PDF</button>
+                <button className="btn sm btn-primary" disabled={!selectedTemplateProducts.length} onClick={() => exportStockTakingTemplate("print")}><Printer /> Print</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {cameraOpen && (
         <CameraBarcodeScanner
           eyebrow="Inventory count"
