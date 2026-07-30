@@ -221,6 +221,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashiers can request branch stock transfers by scanning or searching products at their shop.",
+  "Requested stock remains unchanged until an admin or supervisor approves the transfer.",
+  "Cashiers can track pending, approved, and rejected transfer requests from the cashier dashboard.",
   "Cashier inventory debt now accumulates assigned, paid, and outstanding balances across all stock counts.",
   "Supervisor inventory-debt payments sync to the cashier dashboard and reduce each cashier's outstanding balance.",
   "Customer balances remain in Invoice debt and no longer appear in the Inventory debt category.",
