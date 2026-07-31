@@ -55,6 +55,9 @@ const SECUGEN_ENDPOINTS: [(&str, u16); 4] = [
 ];
 const NO_SECUGEN_ENDPOINT: usize = usize::MAX;
 const SECUGEN_START_ATTEMPTS: usize = 40;
+const SECUGEN_DEVICE_RELEASE_DELAY_MS: u64 = 400;
+const SECUGEN_BUSY_RETRY_DELAYS_MS: [u64; 3] = [150, 300, 500];
+const SECUGEN_RESTART_RETRY_DELAYS_MS: [u64; 4] = [250, 400, 650, 900];
 static SECUGEN_ENDPOINT_INDEX: AtomicUsize = AtomicUsize::new(NO_SECUGEN_ENDPOINT);
 static API_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static API_ORIGIN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -103,6 +106,9 @@ fn secugen_client() -> Result<&'static reqwest::Client, String> {
     let client = reqwest::Client::builder()
         // This client is used only with the fixed loopback endpoint list.
         .danger_accept_invalid_certs(true)
+        // The vendor service can retain exclusive access to the reader while
+        // an idle HTTP connection remains pooled.
+        .pool_max_idle_per_host(0)
         .build()
         .map_err(|err| err.to_string())?;
     let _ = SECUGEN_CLIENT.set(client);
@@ -181,6 +187,10 @@ fn restart_secugen_client() -> Result<(), String> {
     if secugen_client_is_ready() {
         return Err("secugen_webapi_restart_failed".into());
     }
+    // The process can release its TCP port before the USB driver releases its
+    // exclusive device handle. Starting a replacement immediately can make
+    // the first capture fail with SecuGen error 59 on every attempt.
+    std::thread::sleep(Duration::from_millis(SECUGEN_DEVICE_RELEASE_DELAY_MS));
     start_secugen_client()
 }
 
@@ -278,6 +288,31 @@ fn secugen_response_error_code(value: &Value) -> Option<i64> {
 
 fn secugen_device_is_busy(value: &Value) -> bool {
     secugen_response_error_code(value) == Some(59)
+}
+
+async fn try_secugen_request_with_recovery(
+    client: &reqwest::Client,
+    req: &SecugenRequest,
+    request_timeout: Duration,
+    retry_delays_ms: &[u64],
+) -> Result<Value, String> {
+    let mut last_error = "secugen_webapi_unreachable".to_string();
+
+    for attempt in 0..=retry_delays_ms.len() {
+        match try_secugen_request(client, req, request_timeout).await {
+            Ok(value) if secugen_device_is_busy(&value) => {
+                last_error = "secugen_device_busy".to_string();
+            }
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = error,
+        }
+
+        if let Some(delay_ms) = retry_delays_ms.get(attempt) {
+            tokio::time::sleep(Duration::from_millis(*delay_ms)).await;
+        }
+    }
+
+    Err(last_error)
 }
 
 #[tauri::command]
@@ -592,20 +627,15 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     }
 
     let client = secugen_client()?;
-    match try_secugen_request(client, &req, request_timeout).await {
-        Ok(value) if !secugen_device_is_busy(&value) => return Ok(value),
-        Ok(_) => {
-            // ErrorCode 59 is a successful HTTP response from a busy reader.
-            // Give a concurrent capture time to release the device before
-            // restarting the vendor client.
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            if let Ok(value) = try_secugen_request(client, &req, request_timeout).await {
-                if !secugen_device_is_busy(&value) {
-                    return Ok(value);
-                }
-            }
-        }
-        Err(_) => {}
+    if let Ok(value) = try_secugen_request_with_recovery(
+        client,
+        &req,
+        request_timeout,
+        &SECUGEN_BUSY_RETRY_DELAYS_MS,
+    )
+    .await
+    {
+        return Ok(value);
     }
 
     // A stale SecuGen process can keep its port open while no longer answering
@@ -614,13 +644,20 @@ async fn secugen_request(req: SecugenRequest) -> Result<Value, String> {
     if !wait_for_secugen_client().await {
         return Err("secugen_webapi_start_timeout".into());
     }
-    let value = try_secugen_request(client, &req, request_timeout)
-        .await
-        .map_err(|_| "secugen_webapi_unreachable".to_string())?;
-    if secugen_device_is_busy(&value) {
-        return Err("secugen_device_busy".into());
-    }
-    Ok(value)
+    try_secugen_request_with_recovery(
+        client,
+        &req,
+        request_timeout,
+        &SECUGEN_RESTART_RETRY_DELAYS_MS,
+    )
+    .await
+    .map_err(|error| {
+        if error == "secugen_device_busy" {
+            error
+        } else {
+            "secugen_webapi_unreachable".to_string()
+        }
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
