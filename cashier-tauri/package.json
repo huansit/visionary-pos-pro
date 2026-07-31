@@ -1,6 +1,6 @@
 {
   "name": "visionpos-tauri-cashier",
-  "version": "2.0.69",
+  "version": "2.0.70",
   "private": true,
   "type": "module",
   "description": "Tauri cashier workstation for VISIONPOS",
