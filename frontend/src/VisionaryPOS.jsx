@@ -3,6 +3,12 @@ import { buildReportDocument, ReportPreviewDialog } from "./components/reports/R
 import { printReport, downloadPDF } from "./services/PrintService.js";
 import { productDisplayImage } from "./productImages.js";
 import { nextTransferNumber, normalizedTransferItems, rankStockTransferSuggestions, transferUnitCount } from "./transferRecords.js";
+import {
+  allocateInvoicePayments,
+  findMpesaReceipt,
+  mpesaReceiptPaymentFields,
+  normalizeMpesaCodeLast4,
+} from "./admin/mpesaReceiptLedger.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -3798,6 +3804,20 @@ body{overscroll-behavior:none}
 .invoice-payment-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;font-size:13px}
 .invoice-payment-head span{color:var(--danger);font-family:var(--font-mono);font-size:12px;font-weight:750}
 .invoice-payment-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mpesa-receipt-grid label{display:grid;gap:4px}
+.mpesa-receipt-grid label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.mpesa-receipt-grid input:disabled{opacity:.72;cursor:not-allowed}
+.invoice-split-payment{margin-top:10px}
+.mpesa-receipt-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:10px;border:1px solid var(--border-soft);border-radius:10px;overflow:hidden;background:var(--border-soft)}
+.mpesa-receipt-status>div{min-width:0;padding:9px 10px;background:var(--surface-2)}
+.mpesa-receipt-status span{display:block;color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
+.mpesa-receipt-status b{display:block;margin-top:3px;font-family:var(--font-mono);font-size:11px;overflow-wrap:anywhere}
+.mpesa-receipt-status.available>div:last-child b{color:var(--ok)}
+.mpesa-receipt-status.blocked>div:last-child b{color:var(--danger)}
+.settlement-inline-total{display:grid;gap:2px;align-content:center}
+.settlement-inline-total span{color:var(--muted-2);font-size:9.5px;font-weight:750;text-transform:uppercase}
+.settlement-inline-total b{font-family:var(--font-mono);font-size:15px}
+.settlement-inline-total small{color:var(--muted-2);font-size:10.5px}
 .invoice-payment-methods{display:grid;grid-template-columns:repeat(2,minmax(108px,1fr));gap:5px;padding:3px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface-2)}
 .invoice-method{height:34px;padding:0 12px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:750;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer}
 .invoice-method svg{width:15px;height:15px}
@@ -3825,7 +3845,7 @@ body{overscroll-behavior:none}
 .invoice-detail-note-form textarea{min-height:58px;padding-top:10px;resize:vertical}
 .invoice-detail-footer{display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border-soft)}
 @media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}.invoice-payment-toolbar{align-items:stretch;flex-direction:column}.invoice-payment-methods{width:100%}.invoice-payment-toolbar>.btn{width:100%}.invoice-payment-entry{grid-template-columns:1fr}.invoice-payment-entry .btn{width:100%}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}.invoice-payment-toolbar{align-items:stretch;flex-direction:column}.invoice-payment-methods{width:100%}.invoice-payment-toolbar>.btn{width:100%}.invoice-payment-entry{grid-template-columns:1fr}.invoice-payment-entry .btn{width:100%}.mpesa-receipt-status{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -6711,6 +6731,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         activeCashierNames={cashierNames}
         initialCashier={cashierFilter}
         branch={branch}
+        data={data}
         update={update}
         cur={cur}
         user={user}
@@ -6931,7 +6952,7 @@ function InventoryDebtPaymentModal({ data, update, branch, user, onClose }) {
   );
 }
 
-function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier = "all", branch, update, cur, user, onClose }) {
+function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier = "all", branch, data, update, cur, user, onClose }) {
   const invoiceCashierNames = new Set(invoices.map(invoiceCashierName).filter(Boolean));
   const cashierNames = activeCashierNames.filter((name) => invoiceCashierNames.has(name));
   const defaultCashier = initialCashier !== "all" && cashierNames.includes(initialCashier) ? initialCashier : "all";
@@ -6941,14 +6962,31 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   const [selectedIds, setSelectedIds] = useState(() => new Set(initialVisibleInvoices.map((invoice) => invoice.id)));
   const selectedInvoices = visibleInvoices.filter((invoice) => selectedIds.has(invoice.id));
   const totalCents = selectedInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
-  const [mpesaAmount, setMpesaAmount] = useState(() => moneyInputValue(initialVisibleInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0)));
+  const [mpesaAmount, setMpesaAmount] = useState("");
   const [cashAmount, setCashAmount] = useState("0");
+  const [mpesaCode, setMpesaCode] = useState("");
+  const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const cashCents = clampPaymentCents(cashAmount, totalCents);
   const mpesaCents = clampPaymentCents(mpesaAmount, totalCents);
-  const allocationMatches = cashCents + mpesaCents === totalCents;
+  const settlementCents = cashCents + mpesaCents;
+  const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
+  const existingReceipt = normalizedMpesaCode.length === 4
+    ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: normalizedMpesaCode })
+    : null;
+  const receiptTotalCents = existingReceipt?.totalCents || centsFromInput(mpesaReceiptAmount);
+  const receiptAvailableCents = existingReceipt?.remainingCents ?? receiptTotalCents;
+  let validationError = "";
+  if (selectedInvoices.length === 0 || totalCents <= 0) validationError = "Select at least one invoice with an outstanding balance.";
+  else if (settlementCents <= 0) validationError = "Enter an M-Pesa or cash amount to apply.";
+  else if (settlementCents > totalCents) validationError = `The payment cannot exceed ${fmt(totalCents, cur)}.`;
+  else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) validationError = "Enter the last 4 characters of the M-Pesa code.";
+  else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) validationError = "This M-Pesa receipt balance is already depleted.";
+  else if (mpesaCents > receiptAvailableCents) validationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
+  else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) validationError = "Enter the total amount paid on the M-Pesa receipt.";
+  const canSettle = !validationError;
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
@@ -6958,7 +6996,8 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       .filter((invoice) => nextIds.has(invoice.id))
       .reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
     setSelectedIds(nextIds);
-    setMpesaAmount(moneyInputValue(nextTotal));
+    const available = existingReceipt?.remainingCents ?? centsFromInput(mpesaReceiptAmount);
+    setMpesaAmount(available > 0 ? moneyInputValue(Math.min(nextTotal, available)) : "");
     setCashAmount("0");
     setError("");
   };
@@ -6983,23 +7022,32 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     replaceSelection(nextIds);
   };
 
-  const balanceFromCash = (value) => {
-    const nextCash = clampPaymentCents(value, totalCents);
-    setCashAmount(moneyInputValue(nextCash));
-    setMpesaAmount(moneyInputValue(totalCents - nextCash));
+  const changeMpesaCode = (value) => {
+    const code = normalizeMpesaCodeLast4(value);
+    const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: code }) : null;
+    setMpesaCode(code);
+    setCashAmount("0");
+    if (receipt) {
+      setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
+      setMpesaAmount(moneyInputValue(Math.min(totalCents, receipt.remainingCents)));
+    } else {
+      setMpesaReceiptAmount("");
+      setMpesaAmount("");
+    }
     setError("");
   };
-  const balanceFromMpesa = (value) => {
-    const nextMpesa = clampPaymentCents(value, totalCents);
-    setMpesaAmount(moneyInputValue(nextMpesa));
-    setCashAmount(moneyInputValue(totalCents - nextMpesa));
+  const changeReceiptAmount = (value) => {
+    const clean = value.replace(/[^\d.]/g, "");
+    const paidCents = centsFromInput(clean);
+    setMpesaReceiptAmount(clean);
+    setMpesaAmount(moneyInputValue(Math.min(totalCents, paidCents)));
     setError("");
   };
 
   const settleInvoices = () => {
     if (submittingRef.current || selectedInvoices.length === 0 || totalCents <= 0) return;
-    if (!allocationMatches) {
-      setError(`Cash and M-Pesa must total exactly ${fmt(totalCents, cur)}.`);
+    if (!canSettle) {
+      setError(validationError);
       return;
     }
 
@@ -7008,42 +7056,56 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     setError("");
     const ts = now();
     const batchId = uid("day-settlement");
-    let cashRemaining = cashCents;
-    let mpesaRemaining = mpesaCents;
     const invoiceIds = new Set(selectedInvoices.map((invoice) => invoice.id));
     const paymentRecords = [];
     const invoiceMethods = new Map();
+    const invoicePaidCents = new Map();
+    const receipt = mpesaCents > 0 ? (existingReceipt || {
+      id: uid("mpesa-receipt"),
+      branchId: branch.id,
+      codeLast4: normalizedMpesaCode,
+      totalCents: receiptTotalCents,
+      allocatedCents: 0,
+      remainingCents: receiptTotalCents,
+      registeredAt: ts,
+      registeredByName: actorName,
+    }) : null;
+    const receiptFields = receipt ? mpesaReceiptPaymentFields(receipt) : {};
+    const allocationPlan = allocateInvoicePayments(selectedInvoices, { mpesaCents, cashCents });
 
-    selectedInvoices.forEach((invoice) => {
-      let due = invOutstanding(invoice);
+    allocationPlan.allocations.forEach((allocation) => {
+      const invoice = selectedInvoices.find((entry) => entry.id === allocation.invoiceId);
+      if (!invoice) return;
       const methods = [];
-      const mpesaPart = Math.min(due, mpesaRemaining);
+      const mpesaPart = allocation.mpesaCents;
       if (mpesaPart > 0) {
         paymentRecords.push({
           id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
           method: "m-pesa", amountCents: mpesaPart, status: "captured", recordedBy: user,
-          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
+          recordedByName: actorName, settledBy: user, settledByName: actorName, ts, synced: false,
+          bulkSettlementId: batchId, cashierId: invoice.cashierId || "", cashierName: invoiceCashierName(invoice),
+          ...receiptFields,
         });
         methods.push("M-Pesa");
-        mpesaRemaining -= mpesaPart;
-        due -= mpesaPart;
       }
-      const cashPart = Math.min(due, cashRemaining);
+      const cashPart = allocation.cashCents;
       if (cashPart > 0) {
         paymentRecords.push({
           id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
           method: "cash", amountCents: cashPart, status: "captured", recordedBy: user,
-          settledBy: user, settledByName: actorName, ts, synced: false, bulkSettlementId: batchId,
+          recordedByName: actorName, settledBy: user, settledByName: actorName, ts, synced: false,
+          bulkSettlementId: batchId, cashierId: invoice.cashierId || "", cashierName: invoiceCashierName(invoice),
         });
         methods.push("Cash");
-        cashRemaining -= cashPart;
-        due -= cashPart;
       }
-      invoiceMethods.set(invoice.id, methods.join(" + "));
+      if (allocation.appliedCents > 0) {
+        invoiceMethods.set(invoice.id, methods.join(" + "));
+        invoicePaidCents.set(invoice.id, allocation.paidCents);
+      }
     });
 
     const allocatedCents = paymentRecords.reduce((sum, payment) => sum + payment.amountCents, 0);
-    if (cashRemaining !== 0 || mpesaRemaining !== 0 || allocatedCents !== totalCents) {
+    if (allocationPlan.cashRemaining !== 0 || allocationPlan.mpesaRemaining !== 0 || allocatedCents !== settlementCents) {
       submittingRef.current = false;
       setSubmitting(false);
       setError("The payment allocation could not be applied exactly. Review the amounts and retry.");
@@ -7052,20 +7114,26 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
 
     update((data) => ({
       ...data,
-      invoices: data.invoices.map((invoice) => invoiceIds.has(invoice.id) ? {
-        ...invoice,
-        paidCents: Number(invoice.totalCents || 0),
-        carriedOver: false,
-        method: invoiceMethods.get(invoice.id) || invoice.method,
-        lastSettledBy: user,
-        lastSettledAt: ts,
-        settledBy: user,
-        settledByName: actorName,
-        settledAt: ts,
-        status: "paid",
-        synced: false,
-        bulkSettlementId: batchId,
-      } : invoice),
+      invoices: data.invoices.map((invoice) => {
+        if (!invoiceIds.has(invoice.id) || !invoicePaidCents.has(invoice.id)) return invoice;
+        const paidCents = invoicePaidCents.get(invoice.id);
+        const cleared = paidCents >= Number(invoice.totalCents || 0);
+        return {
+          ...invoice,
+          paidCents,
+          carriedOver: cleared ? false : invoice.carriedOver,
+          method: invoiceMethods.get(invoice.id) || invoice.method,
+          lastSettledBy: user,
+          lastSettledByName: actorName,
+          lastSettledAt: ts,
+          settledBy: cleared ? user : invoice.settledBy,
+          settledByName: cleared ? actorName : invoice.settledByName,
+          settledAt: cleared ? ts : invoice.settledAt,
+          status: cleared ? "paid" : "open",
+          synced: false,
+          bulkSettlementId: batchId,
+        };
+      }),
       payments: [...(data.payments || []), ...paymentRecords],
     }));
     onClose();
@@ -7077,14 +7145,13 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
         <div className="modal-head">
           <div>
             <div className="sub" style={{ margin: 0 }}>Supervisor bulk settlement</div>
-            <div className="title" style={{ fontSize: 20 }}>Mark all day invoices paid</div>
+            <div className="title" style={{ fontSize: 20 }}>Apply invoice payment</div>
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Close"><X /></button>
         </div>
 
         <div className="notice">
-          Select the paid invoices for {cashierFilter === "all" ? "all cashiers" : cashierFilter} at {branch.name}. The selected balance is <b>{fmt(totalCents, cur)}</b>.
-          Carried-over debts and void requests are excluded.
+          Select invoices at {branch.name}. A single M-Pesa receipt may cover several invoices and cashiers, but never beyond the receipt's saved balance.
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -7120,35 +7187,54 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
 
         {selectedInvoices.length === 0 ? <div className="formerr" style={{ marginTop: 10 }}>Select at least one invoice to settle.</div> : null}
 
-        <div className="grid2" style={{ marginTop: 14 }}>
+        <div className="grid2 mpesa-receipt-grid" style={{ marginTop: 14 }}>
           <div>
-            <label className="label">M-Pesa paid (primary)</label>
-            <input className="input" inputMode="decimal" value={mpesaAmount}
-              onChange={(event) => balanceFromMpesa(event.target.value.replace(/[^\d.]/g, ""))} />
+            <label className="label">Last 4 of M-Pesa code</label>
+            <input className="input innum" inputMode="text" maxLength={4} value={mpesaCode}
+              onChange={(event) => changeMpesaCode(event.target.value)} placeholder="e.g. 7X9Q" />
           </div>
           <div>
-            <label className="label">Cash paid</label>
+            <label className="label">Total paid on code</label>
+            <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
+              onChange={(event) => changeReceiptAmount(event.target.value)} />
+          </div>
+          <div>
+            <label className="label">M-Pesa to apply now</label>
+            <input className="input" inputMode="decimal" value={mpesaAmount}
+              onChange={(event) => { setMpesaAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} />
+          </div>
+          <div>
+            <label className="label">Cash to apply now</label>
             <input className="input" inputMode="decimal" value={cashAmount}
-              onChange={(event) => balanceFromCash(event.target.value.replace(/[^\d.]/g, ""))} />
+              onChange={(event) => { setCashAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} />
           </div>
         </div>
+
+        {normalizedMpesaCode.length === 4 && existingReceipt ? (
+          <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
+            <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
+            <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
+            <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
+            <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
+          </div>
+        ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Enter the full amount paid on this M-Pesa code; only the amount applied now will reduce it.</div> : null}
 
         <div className="settlement-totals" style={{ marginTop: 14 }}>
           <div><span>M-Pesa</span><b>{fmt(mpesaCents, cur)}</b></div>
           <div><span>Cash</span><b>{fmt(cashCents, cur)}</b></div>
-          <div className="due"><span>Allocation total</span><b>{fmt(cashCents + mpesaCents, cur)}</b></div>
+          <div className="due"><span>Apply now</span><b>{fmt(settlementCents, cur)}</b></div>
         </div>
 
         <div className="alert" style={{ marginTop: 14 }}>
-          This records captured payments against every included invoice and marks them paid. The supervisor, time, method, and batch remain in the audit trail.
+          The receipt total is counted once. Each invoice allocation reduces its balance, and invoices remain open whenever M-Pesa plus cash is below the selected amount.
         </div>
-        {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
+        {error || validationError ? <div className="formerr" style={{ marginTop: 10 }}>{error || validationError}</div> : null}
 
         <div className="grid2" style={{ marginTop: 16 }}>
           <button className="btn btn-ghost" onClick={onClose} disabled={submitting}>Cancel</button>
           <button className="btn btn-primary" onClick={settleInvoices}
-            disabled={submitting || selectedInvoices.length === 0 || totalCents <= 0 || !allocationMatches}>
-            <Check /> {submitting ? "Recording..." : `Mark ${selectedInvoices.length} paid`}
+            disabled={submitting || !canSettle}>
+            <Check /> {submitting ? "Recording..." : `Apply ${fmt(settlementCents, cur)}`}
           </button>
         </div>
       </div>
@@ -7509,15 +7595,40 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
   const [tnote, setTnote] = useState(live.trackingNote || "");
   const [saved, setSaved] = useState(false);
-  const [method, setMethod] = useState("M-Pesa");
   const voidInfo = invoiceVoidState(data, live.id);
   const voidPending = voidInfo.status === "pending";
   const voidApproved = voidInfo.status === "approved";
   const out = voidApproved ? 0 : invOutstanding(live);
   const status = voidApproved ? "voided" : invStatus(live);
-  const [amount, setAmount] = useState(moneyInputValue(out));
-  useEffect(() => { setAmount(moneyInputValue(out)); }, [live.id, out]);
-  const paymentCents = clampPaymentCents(amount, out);
+  const [mpesaCode, setMpesaCode] = useState("");
+  const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
+  const [mpesaAmount, setMpesaAmount] = useState("");
+  const [cashAmount, setCashAmount] = useState("0");
+  const [paymentError, setPaymentError] = useState("");
+  useEffect(() => {
+    setMpesaCode("");
+    setMpesaReceiptAmount("");
+    setMpesaAmount("");
+    setCashAmount("0");
+    setPaymentError("");
+  }, [live.id, out]);
+  const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
+  const existingReceipt = normalizedMpesaCode.length === 4
+    ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: normalizedMpesaCode })
+    : null;
+  const receiptTotalCents = existingReceipt?.totalCents || centsFromInput(mpesaReceiptAmount);
+  const receiptAvailableCents = existingReceipt?.remainingCents ?? receiptTotalCents;
+  const mpesaCents = clampPaymentCents(mpesaAmount, out);
+  const cashCents = clampPaymentCents(cashAmount, out);
+  const paymentCents = mpesaCents + cashCents;
+  let paymentValidationError = "";
+  if (paymentCents <= 0) paymentValidationError = "Enter an M-Pesa or cash amount.";
+  else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
+  else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
+  else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) paymentValidationError = "This M-Pesa receipt balance is already depleted.";
+  else if (mpesaCents > receiptAvailableCents) paymentValidationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
+  else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) paymentValidationError = "Enter the total amount paid on the M-Pesa receipt.";
+  const canRecordPayment = !paymentValidationError && !voidPending && !voidApproved && out > 0;
   const isFullPayment = out > 0 && paymentCents === out;
   const [decisionReason, setDecisionReason] = useState("");
   const [voidError, setVoidError] = useState("");
@@ -7539,8 +7650,43 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     || (typeof live.lastSettledBy === "string" ? live.lastSettledBy : live.lastSettledBy?.name || live.lastSettledBy?.displayName || live.lastSettledBy?.email)
     || (latestPayment ? paymentActorName(latestPayment) : "");
   const recordPayment = () => {
-    if (voidPending || voidApproved || paymentCents <= 0 || out <= 0) return;
+    if (!canRecordPayment) {
+      setPaymentError(paymentValidationError);
+      return;
+    }
     const ts = now();
+    const receipt = mpesaCents > 0 ? (existingReceipt || {
+      id: uid("mpesa-receipt"),
+      branchId: live.branchId,
+      codeLast4: normalizedMpesaCode,
+      totalCents: receiptTotalCents,
+      allocatedCents: 0,
+      remainingCents: receiptTotalCents,
+      registeredAt: ts,
+      registeredByName: actorName,
+    }) : null;
+    const receiptFields = receipt ? mpesaReceiptPaymentFields(receipt) : {};
+    const methods = [];
+    const paymentRecords = [];
+    if (mpesaCents > 0) {
+      methods.push("M-Pesa");
+      paymentRecords.push({
+        id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
+        method: "m-pesa", amountCents: mpesaCents, status: "captured", recordedBy: user,
+        recordedByName: actorName, settledBy: user, settledByName: actorName,
+        cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
+        ...receiptFields,
+      });
+    }
+    if (cashCents > 0) {
+      methods.push("Cash");
+      paymentRecords.push({
+        id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
+        method: "cash", amountCents: cashCents, status: "captured", recordedBy: user,
+        recordedByName: actorName, settledBy: user, settledByName: actorName,
+        cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
+      });
+    }
     update((d) => ({ ...d,
       invoices: d.invoices.map((x) => {
         if (x.id !== live.id) return x;
@@ -7550,7 +7696,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           ...x,
           paidCents,
           carriedOver: cleared ? false : x.carriedOver,
-          method,
+          method: methods.join(" + ") || x.method,
           lastSettledBy: user,
           lastSettledByName: actorName,
           lastSettledAt: ts,
@@ -7561,22 +7707,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           synced: false,
         };
       }),
-      payments: [...(d.payments || []), {
-        id: uid("pay"),
-        orderId: live.id,
-        invoiceId: live.id,
-        method: method.toLowerCase(),
-        amountCents: paymentCents,
-        status: "captured",
-        recordedBy: user,
-        recordedByName: actorName,
-        settledBy: user,
-        settledByName: actorName,
-        ts,
-        synced: false,
-      }],
+      payments: [...(d.payments || []), ...paymentRecords],
     }));
-    setAmount("");
+    setPaymentError("");
     if (isFullPayment) onClose();
   };
   const decideVoid = (decision) => {
@@ -7659,20 +7792,62 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <div className="settlement-box invoice-payment-panel">
             <div className="invoice-payment-head"><b>Record payment</b><span>{fmt(out, cur)} due</span></div>
             <div className="invoice-payment-toolbar">
-              <div className="invoice-payment-methods" role="group" aria-label="Payment method">
-                <button type="button" className={"invoice-method" + (method === "M-Pesa" ? " on" : "")} aria-pressed={method === "M-Pesa"} onClick={() => setMethod("M-Pesa")}><Smartphone />M-Pesa</button>
-                <button type="button" className={"invoice-method" + (method === "Cash" ? " on" : "")} aria-pressed={method === "Cash"} onClick={() => setMethod("Cash")}><Banknote />Cash</button>
-              </div>
-              <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(out))}>Full balance</button>
+              <span className="muted">Use a saved M-Pesa balance, cash, or both.</span>
+              <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button>
             </div>
-            <div className="invoice-payment-entry">
-              <label className="invoice-payment-amount"><span>Payment amount</span>
-                <input className="input" inputMode="decimal" value={amount} onChange={(e) => setAmount(moneyInputValue(clampPaymentCents(e.target.value, out)))} placeholder="0.00" />
+            <div className="grid2 mpesa-receipt-grid invoice-split-payment">
+              <label><span>Last 4 of M-Pesa code</span>
+                <input className="input innum" inputMode="text" maxLength={4} value={mpesaCode} placeholder="e.g. 7X9Q"
+                  onChange={(e) => {
+                    const code = normalizeMpesaCodeLast4(e.target.value);
+                    const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: code }) : null;
+                    setMpesaCode(code);
+                    setCashAmount("0");
+                    if (receipt) {
+                      setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
+                      setMpesaAmount(moneyInputValue(Math.min(out, receipt.remainingCents)));
+                    } else {
+                      setMpesaReceiptAmount("");
+                      setMpesaAmount("");
+                    }
+                    setPaymentError("");
+                  }} />
               </label>
-              <button className="btn btn-primary" disabled={paymentCents <= 0} onClick={recordPayment}>
+              <label><span>Total paid on code</span>
+                <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/[^\d.]/g, "");
+                    const paidCents = centsFromInput(clean);
+                    setMpesaReceiptAmount(clean);
+                    setMpesaAmount(moneyInputValue(Math.min(out, paidCents)));
+                    setCashAmount("0");
+                    setPaymentError("");
+                  }} />
+              </label>
+              <label><span>M-Pesa to apply</span>
+                <input className="input" inputMode="decimal" value={mpesaAmount}
+                  onChange={(e) => { setMpesaAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
+              </label>
+              <label><span>Cash to apply</span>
+                <input className="input" inputMode="decimal" value={cashAmount}
+                  onChange={(e) => { setCashAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
+              </label>
+            </div>
+            {normalizedMpesaCode.length === 4 && existingReceipt ? (
+              <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
+                <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
+                <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
+                <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
+                <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
+              </div>
+            ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Save its full M-Pesa amount once, then reuse this code until the balance is depleted.</div> : null}
+            <div className="invoice-payment-entry">
+              <div className="settlement-inline-total"><span>Apply now</span><b>{fmt(paymentCents, cur)}</b><small>{fmt(Math.max(0, out - paymentCents), cur)} remains after payment</small></div>
+              <button className="btn btn-primary" disabled={!canRecordPayment} onClick={recordPayment}>
                 <Check /> {isFullPayment ? "Settle full balance" : "Record partial payment"}
               </button>
             </div>
+            {paymentError || paymentValidationError ? <div className="formerr">{paymentError || paymentValidationError}</div> : null}
           </div>
         ) : null}
 
@@ -7694,7 +7869,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <summary><span>Payment history <b>{pays.length}</b></span><ChevronDown /></summary>
             <div className="invoice-detail-history">{pays.map((p) => (
               <div className="invoice-detail-history-row" key={p.id}>
-                <div><b>{p.method}</b><span>{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
+                <div><b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b><span>{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
                 <strong>{fmt(p.amountCents, cur)}</strong>
               </div>))}</div>
           </details>
