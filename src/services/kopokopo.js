@@ -206,7 +206,7 @@ export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
   return subscriptions;
 }
 
-export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 300_000 } = {}, config = kopokopoConfig()) {
+export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 300_000, onProgress } = {}, config = kopokopoConfig()) {
   if (!config.enabled) throw new Error("kopokopo_not_configured");
   if (!fromTime || !toTime) throw new Error("kopokopo_polling_range_required");
   const accessToken = await requestKopokopoAccessToken(config);
@@ -239,9 +239,16 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 3
     "/api/v2/polling/",
     config
   );
+  const providerResourceId = new URL(location).pathname.split("/").filter(Boolean).pop();
   const deadline = Date.now() + Math.max(5_000, Math.min(Number(timeoutMs) || 300_000, 15 * 60_000));
+  const startedAt = Date.now();
   let lastStatus = "Pending";
   let lastErrors = null;
+  let lastReportedStatus = "";
+  let nextProgressAt = 0;
+  if (typeof onProgress === "function") {
+    onProgress({ phase: "created", status: "Accepted", providerResourceId, elapsedMs: 0 });
+  }
   while (Date.now() < deadline) {
     const statusResponse = await fetch(location, {
       signal: AbortSignal.timeout(providerRequestTimeoutMs),
@@ -262,6 +269,12 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 3
     const status = text(attributes.status).toLowerCase();
     lastStatus = text(attributes.status) || lastStatus;
     lastErrors = Array.isArray(attributes.errors) ? attributes.errors : null;
+    const now = Date.now();
+    if (typeof onProgress === "function" && (lastStatus !== lastReportedStatus || now >= nextProgressAt)) {
+      onProgress({ phase: "waiting", status: lastStatus, providerResourceId, elapsedMs: now - startedAt });
+      lastReportedStatus = lastStatus;
+      nextProgressAt = now + 10_000;
+    }
     if (status === "failed") {
       const error = new Error("kopokopo_polling_failed");
       error.providerMessage = Array.isArray(attributes.errors) ? attributes.errors.join("; ") : null;
@@ -278,7 +291,7 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 3
   }
   const error = new Error("kopokopo_polling_timeout");
   error.providerStatus = lastStatus;
-  error.providerResourceId = new URL(location).pathname.split("/").filter(Boolean).pop();
+  error.providerResourceId = providerResourceId;
   error.providerMessage = lastErrors?.join("; ") || "Polling resource did not reach Success before the configured deadline.";
   throw error;
 }

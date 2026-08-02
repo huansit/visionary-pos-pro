@@ -151,6 +151,7 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
 test("polls the official provider endpoint using the configured company scope", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
+  const progress = [];
   const polledTransaction = {
     type: "Buygoods Transaction",
     resource: {
@@ -197,6 +198,7 @@ test("polls the official provider endpoint using the configured company scope", 
     const result = await pollKopokopoTransactions({
       fromTime: "2026-08-02T07:00:00.000Z",
       toTime: "2026-08-02T08:00:00.000Z",
+      onProgress: (entry) => progress.push(entry),
     }, config);
     assert.equal(result.transactions.length, 1);
     assert.equal(result.transactions[0].resource.id, "provider-poll-transaction");
@@ -206,6 +208,8 @@ test("polls the official provider endpoint using the configured company scope", 
     assert.equal(requestBody.scope_reference, "");
     assert.equal(requestBody._links.callback_url, process.env.KOPOKOPO_WEBHOOK_URL);
     assert.equal(calls[2].url, "https://sandbox.kopokopo.com/api/v2/polling/poll-request-1");
+    assert.deepEqual(progress.map((entry) => entry.status), ["Accepted", "Success"]);
+    assert.ok(progress.every((entry) => entry.providerResourceId === "poll-request-1"));
   } finally {
     globalThis.fetch = originalFetch;
   }
