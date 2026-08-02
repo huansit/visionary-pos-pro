@@ -72,3 +72,67 @@ test("sandbox startup does not require live-only setup and SMTP secrets", () => 
 
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("enabled Kopo Kopo integration fails closed when credentials or branch mapping are missing", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "live",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /KOPOKOPO_CLIENT_ID/);
+  assert.match(result.stderr, /KOPOKOPO_TILL_BRANCH_MAP/);
+});
+
+test("enabled Kopo Kopo sandbox accepts complete HTTPS configuration", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "sandbox",
+    KOPOKOPO_CLIENT_ID: "sandbox-client-id",
+    KOPOKOPO_CLIENT_SECRET: "sandbox-client-secret",
+    KOPOKOPO_API_KEY: "sandbox-api-key",
+    KOPOKOPO_WEBHOOK_URL: "https://visionarypos.cloud/api/integrations/kopokopo/webhook",
+    KOPOKOPO_SCOPE: "company",
+    KOPOKOPO_SANDBOX_BRANCH_ID: "b_sip",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("enabled Kopo Kopo refuses to send OAuth credentials to an unofficial origin", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "sandbox",
+    KOPOKOPO_BASE_URL: "https://payments.example.test",
+    KOPOKOPO_CLIENT_ID: "sandbox-client-id",
+    KOPOKOPO_CLIENT_SECRET: "sandbox-client-secret",
+    KOPOKOPO_API_KEY: "sandbox-api-key",
+    KOPOKOPO_WEBHOOK_URL: "https://visionarypos.cloud/api/integrations/kopokopo/webhook",
+    KOPOKOPO_SANDBOX_BRANCH_ID: "b_sip",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /official sandbox Kopo Kopo HTTPS origin/i);
+});
+
