@@ -14,6 +14,7 @@
                     "migrate:test":  "node --env-file=.env.test db/migrate.js",
                     "products:go-live":  "node db/go-live-products.js",
                     "kopokopo:subscribe":  "node db/subscribe-kopokopo.js",
+                    "kopokopo:diagnose":  "node --env-file=.env.live db/diagnose-kopokopo.js",
                     "seed:device":  "node db/make-device.js",
                     "seed:staff-logins":  "node db/provision-staff-logins.js",
                     "repair:branches":  "node db/repair-cloud-branches.js",
