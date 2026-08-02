@@ -258,3 +258,61 @@ CREATE TABLE IF NOT EXISTS auth_verification_codes (
 
 CREATE INDEX IF NOT EXISTS auth_verification_codes_lookup_idx
   ON auth_verification_codes (channel, target, purpose, consumed_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS kopokopo_webhook_events (
+  event_id      text PRIMARY KEY,
+  topic         text NOT NULL,
+  resource_id   text,
+  payload       jsonb NOT NULL,
+  received_at   timestamptz NOT NULL DEFAULT now(),
+  processed_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS kopokopo_webhook_events_topic_idx
+  ON kopokopo_webhook_events (topic, received_at DESC);
+
+CREATE TABLE IF NOT EXISTS kopokopo_transactions (
+  id                text PRIMARY KEY,
+  webhook_event_id  text NOT NULL,
+  reference         text NOT NULL,
+  reference_last4   text NOT NULL,
+  amount_cents      bigint NOT NULL CHECK (amount_cents >= 0),
+  allocated_cents   bigint NOT NULL DEFAULT 0 CHECK (allocated_cents >= 0 AND allocated_cents <= amount_cents),
+  currency          text NOT NULL DEFAULT 'KES',
+  status            text NOT NULL,
+  till_number       text,
+  branch_id         text,
+  payer_name        text,
+  origination_time  timestamptz,
+  reversed_at       timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS kopokopo_transactions_reference_idx
+  ON kopokopo_transactions (upper(reference));
+CREATE INDEX IF NOT EXISTS kopokopo_transactions_lookup_idx
+  ON kopokopo_transactions (branch_id, reference_last4, status, origination_time DESC);
+
+CREATE TABLE IF NOT EXISTS kopokopo_allocations (
+  id                      text PRIMARY KEY,
+  transaction_id          text NOT NULL REFERENCES kopokopo_transactions(id),
+  invoice_id               text NOT NULL,
+  branch_id                text NOT NULL,
+  amount_cents             bigint NOT NULL CHECK (amount_cents > 0),
+  allocated_by             text,
+  allocated_by_name        text,
+  batch_idempotency_key    text NOT NULL,
+  local_payment_id         text,
+  status                   text NOT NULL DEFAULT 'active',
+  allocated_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS kopokopo_allocations_batch_invoice_idx
+  ON kopokopo_allocations (batch_idempotency_key, invoice_id);
+CREATE UNIQUE INDEX IF NOT EXISTS kopokopo_allocations_local_payment_idx
+  ON kopokopo_allocations (local_payment_id) WHERE local_payment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS kopokopo_allocations_transaction_idx
+  ON kopokopo_allocations (transaction_id, allocated_at DESC);
+CREATE INDEX IF NOT EXISTS kopokopo_allocations_invoice_idx
+  ON kopokopo_allocations (invoice_id, allocated_at DESC);
