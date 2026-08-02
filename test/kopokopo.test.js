@@ -83,6 +83,19 @@ before(async () => {
     .send({ identifier: "sip.manager@example.com", password: "Manager@123" })
     .expect(200);
   branchSessionToken = branchLogin.body.sessionToken;
+
+  for (const invoice of [
+    { id: "inv-1", branchId: "b_sip", totalCents: 30000 },
+    { id: "inv-2", branchId: "b_sip", totalCents: 20000 },
+    { id: "inv-3", branchId: "b_sip", totalCents: 100000 },
+    { id: "inv-cpt", branchId: "b_cpt", totalCents: 100000 },
+  ]) {
+    await pool.query(
+      `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+       VALUES ($1, 'invoice', $2, NULL, 1, $3, $4::jsonb)`,
+      [invoice.id, invoice.branchId, Date.now(), JSON.stringify(invoice)]
+    );
+  }
 });
 
 after(async () => {
@@ -173,6 +186,47 @@ test("allocates atomically, rejects excess, and makes retries idempotent", async
   assert.equal(excess.body.remainingCents, 50000);
 });
 
+test("rejects allocations for missing, cross-branch, or overpaid invoices", async () => {
+  await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", sessionToken)
+    .send({
+      transactionId: "txn-1",
+      branchId: "b_sip",
+      idempotencyKey: "missing-invoice-batch",
+      allocations: [{ invoiceId: "invoice-does-not-exist", amountCents: 100, localPaymentId: "missing-pay" }],
+    })
+    .expect(409)
+    .expect((response) => assert.equal(response.body.error, "kopokopo_invoice_not_found"));
+
+  await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", sessionToken)
+    .send({
+      transactionId: "txn-1",
+      branchId: "b_sip",
+      idempotencyKey: "cross-branch-invoice-batch",
+      allocations: [{ invoiceId: "inv-cpt", amountCents: 100, localPaymentId: "cross-branch-pay" }],
+    })
+    .expect(409)
+    .expect((response) => assert.equal(response.body.error, "kopokopo_invoice_branch_mismatch"));
+
+  await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", sessionToken)
+    .send({
+      transactionId: "txn-1",
+      branchId: "b_sip",
+      idempotencyKey: "overpaid-invoice-batch",
+      allocations: [{ invoiceId: "inv-1", amountCents: 1, localPaymentId: "overpaid-pay" }],
+    })
+    .expect(409)
+    .expect((response) => {
+      assert.equal(response.body.error, "kopokopo_invoice_balance_exceeded");
+      assert.equal(response.body.invoiceRemainingCents, 0);
+    });
+});
+
 test("a verified reversal removes the transaction from settlement lookup", async () => {
   await signedWebhook(webhookPayload({
     topic: "buygoods_transaction_reversed",
@@ -186,4 +240,11 @@ test("a verified reversal removes the transaction from settlement lookup", async
     .set("X-Session-Token", sessionToken)
     .expect(200);
   assert.equal(lookup.body.transactions.length, 0);
+  const allocations = await pool.query(
+    "SELECT status FROM kopokopo_allocations WHERE transaction_id = $1",
+    ["txn-1"]
+  );
+  assert.ok(allocations.rows.length > 0);
+  assert.ok(allocations.rows.every((allocation) => allocation.status === "reversed"));
 });
+

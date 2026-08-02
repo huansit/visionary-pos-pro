@@ -26,8 +26,9 @@ Use `KOPOKOPO_SANDBOX_BRANCH_ID` for the branch currently being tested. Producti
 
 ```bash
 npm run migrate:live
-node --env-file=.env.live db/subscribe-kopokopo.js
+chmod 600 .env.live
 pm2 restart visionary-live --update-env
+node --env-file=.env.live db/subscribe-kopokopo.js
 pm2 save
 ```
 
@@ -42,3 +43,4 @@ The subscription command creates both `buygoods_transaction_received` and `buygo
 5. Apply part of the balance, then reuse the same code on another invoice and confirm only the remaining balance is available.
 
 Webhook signatures are checked against the exact raw request body before an event is stored. Duplicate webhook IDs and settlement retries are idempotent, and allocation uses a row lock so concurrent supervisors cannot spend the same balance twice.
+

@@ -11,10 +11,23 @@ import {
 } from "../services/kopokopo.js";
 
 const router = Router();
+const MAX_IDENTIFIER_LENGTH = 191;
 
 function integerCents(value) {
   const cents = Number(value);
   return Number.isSafeInteger(cents) && cents > 0 ? cents : 0;
+}
+
+function identifier(value) {
+  const id = String(value || "").trim();
+  return id.length > 0 && id.length <= MAX_IDENTIFIER_LENGTH ? id : "";
+}
+
+function payloadCents(payload, centField, moneyField) {
+  const cents = Number(payload?.[centField]);
+  if (Number.isFinite(cents)) return Math.max(0, Math.round(cents));
+  const money = Number(payload?.[moneyField]);
+  return Number.isFinite(money) ? Math.max(0, Math.round(money * 100)) : 0;
 }
 
 function accountCanAccessBranch(account, branchId) {
@@ -104,12 +117,20 @@ async function applyReversedTransaction(client, parsed) {
     [parsed.resourceId, parsed.reference]
   );
   if (existing.rows[0]) {
+    const transactionId = existing.rows[0].id;
     await client.query(
       `UPDATE kopokopo_transactions
           SET webhook_event_id = $2, status = 'Reversed', reversed_at = COALESCE($3, ${isMySql ? "NOW()" : "now()"}),
               updated_at = ${isMySql ? "NOW()" : "now()"}
         WHERE id = $1`,
-      [existing.rows[0].id, parsed.eventId, parsed.eventTime]
+      [transactionId, parsed.eventId, parsed.eventTime]
+    );
+    await client.query(
+      `UPDATE kopokopo_allocations
+          SET status = 'reversed'
+        WHERE transaction_id = $1
+          AND lower(status) = 'active'`,
+      [transactionId]
     );
     return;
   }
@@ -119,6 +140,86 @@ async function applyReversedTransaction(client, parsed) {
      VALUES ($1, $2, $3, $4, $5, $6, 'Reversed', $7, $8, $9, $10, COALESCE($11, ${isMySql ? "NOW()" : "now()"}))`,
     [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.originationTime, parsed.eventTime]
   );
+}
+
+async function validateAllocationInvoices(client, allocations, branchId) {
+  const invoiceIds = allocations.map((entry) => entry.invoiceId);
+  const placeholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
+  const invoices = await client.query(
+    `SELECT id, branch_id, payload
+       FROM events
+      WHERE type = 'invoice'
+        AND id IN (${placeholders})
+      FOR UPDATE`,
+    invoiceIds
+  );
+  const invoiceById = new Map(invoices.rows.map((row) => [row.id, row]));
+  const relatedEvents = await client.query(
+    `SELECT id, type, payload
+       FROM events
+      WHERE type IN ('payment', 'invoiceVoidDecision')
+        AND (branch_id = $1 OR branch_id IS NULL)`,
+    [branchId]
+  );
+  const paymentIds = new Set();
+  const paidByInvoice = new Map();
+  const voidedInvoiceIds = new Set();
+  for (const row of relatedEvents.rows) {
+    const payload = row.payload || {};
+    const invoiceId = String(payload.invoiceId || payload.orderId || "").trim();
+    if (!invoiceId) continue;
+    if (row.type === "invoiceVoidDecision") {
+      if (String(payload.decision || "").toLowerCase() === "approved") voidedInvoiceIds.add(invoiceId);
+      continue;
+    }
+    if (payload.status && String(payload.status).toLowerCase() !== "captured") continue;
+    paymentIds.add(String(row.id));
+    if (payload.id) paymentIds.add(String(payload.id));
+    paidByInvoice.set(invoiceId, (paidByInvoice.get(invoiceId) || 0) + payloadCents(payload, "amountCents", "amount"));
+  }
+
+  const reservations = await client.query(
+    `SELECT invoice_id, amount_cents, local_payment_id
+       FROM kopokopo_allocations
+      WHERE lower(status) = 'active'
+        AND invoice_id IN (${placeholders})`,
+    invoiceIds
+  );
+  const reservedByInvoice = new Map();
+  for (const row of reservations.rows) {
+    const localPaymentId = String(row.local_payment_id ?? row.localPaymentId ?? "");
+    if (localPaymentId && paymentIds.has(localPaymentId)) continue;
+    const invoiceId = row.invoice_id ?? row.invoiceId;
+    reservedByInvoice.set(invoiceId, (reservedByInvoice.get(invoiceId) || 0) + Number(row.amount_cents ?? row.amountCents ?? 0));
+  }
+
+  for (const allocation of allocations) {
+    const invoice = invoiceById.get(allocation.invoiceId);
+    if (!invoice) return { conflict: "kopokopo_invoice_not_found", invoiceId: allocation.invoiceId };
+    const payload = invoice.payload || {};
+    const invoiceBranchId = String(invoice.branch_id ?? invoice.branchId ?? payload.branchId ?? "").trim();
+    if (!invoiceBranchId || invoiceBranchId !== branchId) {
+      return { conflict: "kopokopo_invoice_branch_mismatch", invoiceId: allocation.invoiceId };
+    }
+    if (voidedInvoiceIds.has(allocation.invoiceId) || String(payload.status || "").toLowerCase() === "voided") {
+      return { conflict: "kopokopo_invoice_voided", invoiceId: allocation.invoiceId };
+    }
+    const totalCents = payloadCents(payload, "totalCents", "total");
+    const recordedPaidCents = Math.max(
+      payloadCents(payload, "paidCents", "paid"),
+      paidByInvoice.get(allocation.invoiceId) || 0
+    );
+    const reservedCents = reservedByInvoice.get(allocation.invoiceId) || 0;
+    const outstandingCents = Math.max(0, totalCents - recordedPaidCents - reservedCents);
+    if (totalCents <= 0 || allocation.amountCents > outstandingCents) {
+      return {
+        conflict: "kopokopo_invoice_balance_exceeded",
+        invoiceId: allocation.invoiceId,
+        invoiceRemainingCents: outstandingCents,
+      };
+    }
+  }
+  return null;
 }
 
 router.post("/webhook", async (req, res) => {
@@ -214,9 +315,9 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
 router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
   try {
     if (!kopokopoConfig().enabled) return res.status(409).json({ error: "kopokopo_disabled" });
-    const transactionId = String(req.body?.transactionId || "").trim();
-    const branchId = String(req.body?.branchId || "").trim();
-    const idempotencyKey = String(req.body?.idempotencyKey || "").trim();
+    const transactionId = identifier(req.body?.transactionId);
+    const branchId = identifier(req.body?.branchId);
+    const idempotencyKey = identifier(req.body?.idempotencyKey);
     const requested = Array.isArray(req.body?.allocations) ? req.body.allocations : [];
     if (!transactionId || !branchId || !idempotencyKey || requested.length < 1 || requested.length > 50) {
       return res.status(400).json({ error: "invalid_kopokopo_allocation_request" });
@@ -225,8 +326,8 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
     const invoiceIds = new Set();
     const allocations = [];
     for (const entry of requested) {
-      const invoiceId = String(entry?.invoiceId || "").trim();
-      const localPaymentId = String(entry?.localPaymentId || "").trim();
+      const invoiceId = identifier(entry?.invoiceId);
+      const localPaymentId = identifier(entry?.localPaymentId);
       const amountCents = integerCents(entry?.amountCents);
       if (!invoiceId || !localPaymentId || !amountCents || invoiceIds.has(invoiceId)) {
         return res.status(400).json({ error: "invalid_kopokopo_allocation_entry" });
@@ -235,9 +336,12 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
       allocations.push({ invoiceId, localPaymentId, amountCents });
     }
     const requestedTotal = allocations.reduce((sum, entry) => sum + entry.amountCents, 0);
+    if (!Number.isSafeInteger(requestedTotal) || requestedTotal <= 0) {
+      return res.status(400).json({ error: "invalid_kopokopo_allocation_total" });
+    }
     const result = await tx(async (client) => {
       const prior = await client.query(
-        `SELECT id, transaction_id, invoice_id, amount_cents, local_payment_id, allocated_at
+        `SELECT id, transaction_id, invoice_id, branch_id, amount_cents, local_payment_id, allocated_at
            FROM kopokopo_allocations
           WHERE batch_idempotency_key = $1
           ORDER BY allocated_at, id`,
@@ -246,10 +350,17 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
       if (prior.rows.length) {
         const same = prior.rows.length === allocations.length && prior.rows.every((row) => {
           const requestedEntry = allocations.find((entry) => entry.invoiceId === (row.invoice_id ?? row.invoiceId));
-          return requestedEntry && row.transaction_id === transactionId && Number(row.amount_cents) === requestedEntry.amountCents && row.local_payment_id === requestedEntry.localPaymentId;
+          return requestedEntry
+            && (row.transaction_id ?? row.transactionId) === transactionId
+            && (row.branch_id ?? row.branchId) === branchId
+            && Number(row.amount_cents ?? row.amountCents) === requestedEntry.amountCents
+            && (row.local_payment_id ?? row.localPaymentId) === requestedEntry.localPaymentId;
         });
         if (!same) return { conflict: "idempotency_key_reused" };
         const transaction = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+        if (!transaction.rows[0] || (transaction.rows[0].branch_id ?? transaction.rows[0].branchId) !== branchId) {
+          return { conflict: "idempotency_key_reused" };
+        }
         return { duplicate: true, transaction: publicTransaction(transaction.rows[0]), allocations: prior.rows };
       }
 
@@ -258,8 +369,11 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
       if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
       if ((transaction.branch_id ?? transaction.branchId) !== branchId) return { conflict: "kopokopo_branch_mismatch" };
       if (String(transaction.status).toLowerCase() !== "received" || transaction.reversed_at) return { conflict: "kopokopo_transaction_unavailable" };
+      if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
       const remaining = Number(transaction.amount_cents) - Number(transaction.allocated_cents);
       if (requestedTotal > remaining) return { conflict: "kopokopo_amount_exceeds_balance", remainingCents: Math.max(0, remaining) };
+      const invoiceConflict = await validateAllocationInvoices(client, allocations, branchId);
+      if (invoiceConflict) return invoiceConflict;
 
       const inserted = [];
       for (const entry of allocations) {
@@ -281,7 +395,14 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
       const updated = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
       return { duplicate: false, transaction: publicTransaction(updated.rows[0]), allocations: inserted };
     });
-    if (result.conflict) return res.status(409).json({ error: result.conflict, remainingCents: result.remainingCents });
+    if (result.conflict) {
+      return res.status(409).json({
+        error: result.conflict,
+        remainingCents: result.remainingCents,
+        invoiceId: result.invoiceId,
+        invoiceRemainingCents: result.invoiceRemainingCents,
+      });
+    }
     return res.json(result);
   } catch (error) {
     console.error("Kopo Kopo allocation failed:", error);
@@ -290,3 +411,4 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
 });
 
 export default router;
+
