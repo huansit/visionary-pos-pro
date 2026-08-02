@@ -23,7 +23,8 @@ const permanentRecoveryErrors = new Set([
   "kopokopo_result_amount_mismatch",
   "kopokopo_result_currency_unsupported",
 ]);
-const sandboxTestKeyPrefix = "sandbox-test:";
+const sandboxRetrievalTestKeyPrefix = "sandbox-test:";
+const sandboxAllocationTestKeyPrefix = "sandbox-allocation-test:";
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
@@ -64,13 +65,33 @@ export async function getKopokopoIncomingPaymentRequest(id) {
   return row ? publicRequest(row) : null;
 }
 
+function sandboxTestType(row) {
+  const key = text(rowValue(row, "idempotency_key", "idempotencyKey"));
+  if (key.startsWith(sandboxAllocationTestKeyPrefix)) return "allocation";
+  if (key.startsWith(sandboxRetrievalTestKeyPrefix)) return "retrieval";
+  return "";
+}
+
 function isSandboxTestRequest(row) {
-  return text(rowValue(row, "idempotency_key", "idempotencyKey")).startsWith(sandboxTestKeyPrefix);
+  return Boolean(sandboxTestType(row));
+}
+
+export function kopokopoSandboxTestInvoiceId(requestId) {
+  return `sandbox-invoice:${text(requestId)}`;
+}
+
+export function kopokopoSandboxTestAllocationIds(requestId) {
+  const id = text(requestId);
+  return {
+    invoiceId: kopokopoSandboxTestInvoiceId(id),
+    idempotencyKey: `sandbox-allocation:${id}`,
+    localPaymentId: `sandbox-payment:${id}`,
+  };
 }
 
 export async function getKopokopoSandboxTestRequest(id) {
   const row = await findRequestById(id);
-  return row && isSandboxTestRequest(row) ? publicRequest(row) : null;
+  return row && isSandboxTestRequest(row) ? { ...publicRequest(row), testType: sandboxTestType(row) } : null;
 }
 
 export async function cleanupKopokopoSandboxTestRequest(id, config = kopokopoConfig()) {
@@ -85,15 +106,30 @@ export async function cleanupKopokopoSandboxTestRequest(id, config = kopokopoCon
     if (!request) return { removed: false };
     if (!isSandboxTestRequest(request)) throw new Error("kopokopo_sandbox_test_not_found");
 
+    const testType = sandboxTestType(request);
+    const testIds = kopokopoSandboxTestAllocationIds(id);
     const transactionId = text(rowValue(request, "provider_transaction_id", "providerTransactionId"));
     let webhookEventId = "";
     if (transactionId) {
       const allocations = await client.query(
-        "SELECT COUNT(*) AS allocation_count FROM kopokopo_allocations WHERE transaction_id = $1",
+        `SELECT id, invoice_id, batch_idempotency_key, local_payment_id
+           FROM kopokopo_allocations
+          WHERE transaction_id = $1`,
         [transactionId]
       );
-      if (Number(allocations.rows[0]?.allocation_count ?? allocations.rows[0]?.allocationCount ?? 0) > 0) {
+      const testAllocationsOnly = testType === "allocation" && allocations.rows.every((row) => (
+        text(rowValue(row, "invoice_id", "invoiceId")) === testIds.invoiceId
+        && text(rowValue(row, "batch_idempotency_key", "batchIdempotencyKey")) === testIds.idempotencyKey
+        && text(rowValue(row, "local_payment_id", "localPaymentId")) === testIds.localPaymentId
+      ));
+      if (allocations.rows.length && !testAllocationsOnly) {
         throw new Error("kopokopo_sandbox_test_has_allocations");
+      }
+      if (allocations.rows.length) {
+        await client.query(
+          "DELETE FROM kopokopo_allocations WHERE transaction_id = $1 AND batch_idempotency_key = $2",
+          [transactionId, testIds.idempotencyKey]
+        );
       }
       const transaction = await client.query(
         "SELECT webhook_event_id FROM kopokopo_transactions WHERE id = $1 LIMIT 1",
@@ -367,6 +403,7 @@ async function dueRequestIds(limit = 10) {
        FROM kopokopo_incoming_payment_requests
       WHERE lower(status) IN ('pending', 'retrying')
         AND idempotency_key NOT LIKE 'sandbox-test:%'
+        AND idempotency_key NOT LIKE 'sandbox-allocation-test:%'
         AND next_check_at IS NOT NULL
         AND next_check_at <= ${isMySql ? "NOW()" : "now()"}
         AND expires_at > ${isMySql ? "NOW()" : "now()"}

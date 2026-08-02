@@ -3796,8 +3796,11 @@ body{overscroll-behavior:none}
 .kopokopo-test-meta>div{border-top:1px solid var(--border-soft);padding-top:10px;min-width:0}
 .kopokopo-test-meta span{display:block;color:var(--muted-2);font-size:10.5px;font-weight:800;text-transform:uppercase}
 .kopokopo-test-meta b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kopokopo-test-modes{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:5px;margin-bottom:14px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:7px}
+.kopokopo-test-modes button{min-height:38px;border:0;border-radius:5px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.kopokopo-test-modes button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .kopokopo-test-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
-@media(max-width:700px){.kopokopo-test-head{align-items:flex-start}.kopokopo-test-meta{grid-template-columns:1fr}.kopokopo-test-actions .btn{width:100%}}
+@media(max-width:700px){.kopokopo-test-head{align-items:flex-start}.kopokopo-test-modes{grid-template-columns:1fr}.kopokopo-test-meta{grid-template-columns:1fr}.kopokopo-test-actions .btn{width:100%}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .row-add{width:100%;height:46px;border-radius:12px;cursor:pointer;border:1px dashed var(--border);background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600;transition:.15s;margin-bottom:14px}
@@ -14288,10 +14291,12 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 /* ---- Settings ---- */
 function KopokopoSandboxTest({ data }) {
   const [provider, setProvider] = useState({ loading: true });
+  const [testType, setTestType] = useState("retrieval");
   const [phone, setPhone] = useState("+254999999999");
   const [amount, setAmount] = useState("10");
   const [paymentRequest, setPaymentRequest] = useState(null);
   const [transaction, setTransaction] = useState(null);
+  const [allocationTest, setAllocationTest] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [cleanupNote, setCleanupNote] = useState("");
@@ -14319,12 +14324,16 @@ function KopokopoSandboxTest({ data }) {
         setPaymentRequest(nextRequest);
         if (nextRequest.status === "completed" && result.transaction) {
           setTransaction(result.transaction);
+          setAllocationTest(result.allocationTest || null);
           setError("");
           try {
             const cleanup = await cleanupKopokopoSandboxTest(nextRequest.id);
             if (active) {
               setCleanupFailed(false);
-              setCleanupNote(cleanup.removed ? "Test data removed from VISIONPOS." : "Test data was already removed.");
+              const removedMessage = nextRequest.testType === "allocation"
+                ? "Sandbox allocation and payment data removed from VISIONPOS."
+                : "Test data removed from VISIONPOS.";
+              setCleanupNote(cleanup.removed ? removedMessage : "Test data was already removed.");
             }
           } catch (_) {
             if (active) {
@@ -14370,10 +14379,11 @@ function KopokopoSandboxTest({ data }) {
     setBusy(true);
     setError("");
     setTransaction(null);
+    setAllocationTest(null);
     setCleanupNote("");
     setCleanupFailed(false);
     try {
-      const created = await createKopokopoSandboxTest({ phoneNumber, amountCents });
+      const created = await createKopokopoSandboxTest({ phoneNumber, amountCents, testType });
       setPaymentRequest(created.request || null);
     } catch (requestError) {
       const message = requestError.message === "kopokopo_sandbox_test_unavailable"
@@ -14390,6 +14400,7 @@ function KopokopoSandboxTest({ data }) {
   const resetTest = () => {
     setPaymentRequest(null);
     setTransaction(null);
+    setAllocationTest(null);
     setError("");
     setCleanupNote("");
     setCleanupFailed(false);
@@ -14401,7 +14412,10 @@ function KopokopoSandboxTest({ data }) {
     try {
       const cleanup = await cleanupKopokopoSandboxTest(paymentRequest.id);
       setCleanupFailed(false);
-      setCleanupNote(cleanup.removed ? "Test data removed from VISIONPOS." : "Test data was already removed.");
+      const removedMessage = paymentRequest.testType === "allocation"
+        ? "Sandbox allocation and payment data removed from VISIONPOS."
+        : "Test data removed from VISIONPOS.";
+      setCleanupNote(cleanup.removed ? removedMessage : "Test data was already removed.");
     } catch (_) {
       setCleanupFailed(true);
       setCleanupNote("Cleanup failed. No invoice can use this test payment; try again.");
@@ -14419,7 +14433,7 @@ function KopokopoSandboxTest({ data }) {
         <div className="kopokopo-test-head">
           <div>
             <div className="kopokopo-test-title"><Smartphone /> Sandbox payment test</div>
-            <div className="sub" style={{ marginTop: 4 }}>Verify M-Pesa retrieval without creating or clearing an invoice.</div>
+            <div className="sub" style={{ marginTop: 4 }}>Verify M-Pesa retrieval and invoice allocation without touching live records.</div>
           </div>
           <span className={`kopokopo-test-state ${status}`}>{provider.loading ? "Checking" : status}</span>
         </div>
@@ -14430,6 +14444,10 @@ function KopokopoSandboxTest({ data }) {
 
         {canTest && !paymentRequest ? (
           <>
+            <div className="kopokopo-test-modes" aria-label="Sandbox test type">
+              <button type="button" className={testType === "retrieval" ? "active" : ""} onClick={() => setTestType("retrieval")}>Payment retrieval</button>
+              <button type="button" className={testType === "allocation" ? "active" : ""} onClick={() => setTestType("allocation")}>Invoice allocation</button>
+            </div>
             <div className="grid2">
               <div><label className="label">Sandbox phone</label><input className="input" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></div>
               <div><label className="label">Amount (KES)</label><input className="input" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
@@ -14437,21 +14455,24 @@ function KopokopoSandboxTest({ data }) {
             <div className="kopokopo-test-meta">
               <div><span>Mode</span><b>Sandbox</b></div>
               <div><span>Branch</span><b>{branchName}</b></div>
-              <div><span>Invoice impact</span><b>None</b></div>
+              <div><span>Invoice impact</span><b>{testType === "allocation" ? "Virtual test only" : "None"}</b></div>
             </div>
-            <div className="kopokopo-test-actions"><button className="btn btn-primary" disabled={busy} onClick={startTest}><Zap /> {busy ? "Starting..." : "Run payment test"}</button></div>
+            <div className="kopokopo-test-actions"><button className="btn btn-primary" disabled={busy} onClick={startTest}><Zap /> {busy ? "Starting..." : testType === "allocation" ? "Run allocation test" : "Run payment test"}</button></div>
           </>
         ) : null}
 
         {paymentRequest ? (
           <>
             <div className="kopokopo-test-meta">
-              <div><span>Status</span><b>{transaction ? "Verified" : paymentRequest.providerStatus || paymentRequest.status}</b></div>
+              <div><span>Status</span><b>{allocationTest?.verified ? "Allocation verified" : transaction ? "Payment verified" : paymentRequest.providerStatus || paymentRequest.status}</b></div>
               <div><span>Amount</span><b>{fmt(paymentRequest.amountCents, "KES")}</b></div>
               <div><span>Branch</span><b>{branchName}</b></div>
               {transaction ? <div><span>M-Pesa reference</span><b>{transaction.referenceMasked}</b></div> : null}
               {transaction ? <div><span>Payer</span><b>{transaction.payerName || "Sandbox customer"}</b></div> : null}
               {transaction ? <div><span>Provider result</span><b>{paymentRequest.providerStatus || "Verified"}</b></div> : null}
+              {allocationTest ? <div><span>Virtual test invoice</span><b>{allocationTest.invoiceId}</b></div> : null}
+              {allocationTest ? <div><span>Allocated</span><b>{fmt(allocationTest.allocatedCents, "KES")}</b></div> : null}
+              {allocationTest ? <div><span>Invoice balance</span><b>{fmt(allocationTest.invoiceBalanceCents, "KES")}</b></div> : null}
             </div>
             {cleanupNote ? <div className="notice">{cleanupNote}</div> : null}
             <div className="kopokopo-test-actions">
