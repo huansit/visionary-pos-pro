@@ -9,6 +9,7 @@ reconcileKopokopoTransactions({ lookbackMs: 24 * 60 * 60 * 1000 })
   .catch((error) => {
     console.error(`Kopo Kopo polling reconciliation failed: ${error.message}`);
     if (error.providerStatus) console.error(`Provider HTTP status: ${error.providerStatus}`);
+    if (error.providerResourceId) console.error(`Provider polling resource: ${error.providerResourceId}`);
     if (error.providerMessage) console.error(`Provider message: ${error.providerMessage}`);
     process.exitCode = 1;
   })

@@ -206,7 +206,7 @@ export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
   return subscriptions;
 }
 
-export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 45_000 } = {}, config = kopokopoConfig()) {
+export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 300_000 } = {}, config = kopokopoConfig()) {
   if (!config.enabled) throw new Error("kopokopo_not_configured");
   if (!fromTime || !toTime) throw new Error("kopokopo_polling_range_required");
   const accessToken = await requestKopokopoAccessToken(config);
@@ -239,7 +239,9 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 4
     "/api/v2/polling/",
     config
   );
-  const deadline = Date.now() + Math.max(5_000, Math.min(Number(timeoutMs) || 45_000, 120_000));
+  const deadline = Date.now() + Math.max(5_000, Math.min(Number(timeoutMs) || 300_000, 15 * 60_000));
+  let lastStatus = "Pending";
+  let lastErrors = null;
   while (Date.now() < deadline) {
     const statusResponse = await fetch(location, {
       signal: AbortSignal.timeout(providerRequestTimeoutMs),
@@ -258,6 +260,8 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 4
     }
     const attributes = statusPayload?.data?.attributes || {};
     const status = text(attributes.status).toLowerCase();
+    lastStatus = text(attributes.status) || lastStatus;
+    lastErrors = Array.isArray(attributes.errors) ? attributes.errors : null;
     if (status === "failed") {
       const error = new Error("kopokopo_polling_failed");
       error.providerMessage = Array.isArray(attributes.errors) ? attributes.errors.join("; ") : null;
@@ -272,5 +276,9 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 4
     }
     await delay(1_000);
   }
-  throw new Error("kopokopo_polling_timeout");
+  const error = new Error("kopokopo_polling_timeout");
+  error.providerStatus = lastStatus;
+  error.providerResourceId = new URL(location).pathname.split("/").filter(Boolean).pop();
+  error.providerMessage = lastErrors?.join("; ") || "Polling resource did not reach Success before the configured deadline.";
+  throw error;
 }

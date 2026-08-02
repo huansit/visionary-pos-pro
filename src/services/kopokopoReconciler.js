@@ -66,6 +66,7 @@ async function runReconciliation({ lookbackMs } = {}) {
   const polled = await pollKopokopoTransactions({
     fromTime: from.toISOString(),
     toTime: to.toISOString(),
+    timeoutMs: Number(process.env.KOPOKOPO_POLL_TIMEOUT_MS || 300_000),
   }, config);
   const summary = await ingestKopokopoPollingTransactions(polled.transactions, config);
   lastCompletedAt = to;
