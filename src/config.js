@@ -73,7 +73,53 @@ export function assertStartupConfig() {
     }
   }
 
+  if (process.env.KOPOKOPO_ENABLED === "1") {
+    const kopokopoMode = String(process.env.KOPOKOPO_MODE || "").trim().toLowerCase();
+    if (!new Set(["sandbox", "live"]).has(kopokopoMode)) {
+      errors.push("KOPOKOPO_MODE must be explicitly set to sandbox or live when Kopo Kopo is enabled");
+    }
+    const expectedProviderOrigin = kopokopoMode === "live"
+      ? "https://api.kopokopo.com"
+      : "https://sandbox.kopokopo.com";
+    try {
+      const providerUrl = new URL(process.env.KOPOKOPO_BASE_URL || expectedProviderOrigin);
+      if (providerUrl.protocol !== "https:" || providerUrl.origin !== expectedProviderOrigin) {
+        errors.push(`KOPOKOPO_BASE_URL must use the official ${kopokopoMode || "selected"} Kopo Kopo HTTPS origin`);
+      }
+    } catch {
+      errors.push("KOPOKOPO_BASE_URL must be a valid official Kopo Kopo HTTPS URL");
+    }
+    for (const name of ["KOPOKOPO_CLIENT_ID", "KOPOKOPO_CLIENT_SECRET", "KOPOKOPO_API_KEY", "KOPOKOPO_WEBHOOK_URL"]) {
+      if (!String(process.env[name] || "").trim()) errors.push(`${name} is required when Kopo Kopo is enabled`);
+    }
+    try {
+      const webhookUrl = new URL(process.env.KOPOKOPO_WEBHOOK_URL || "");
+      if (webhookUrl.protocol !== "https:") errors.push("KOPOKOPO_WEBHOOK_URL must use HTTPS");
+    } catch {
+      errors.push("KOPOKOPO_WEBHOOK_URL must be a valid HTTPS URL");
+    }
+    const scope = String(process.env.KOPOKOPO_SCOPE || "company").trim().toLowerCase();
+    if (!new Set(["company", "till"]).has(scope)) errors.push("KOPOKOPO_SCOPE must be company or till");
+    if (scope === "till" && !String(process.env.KOPOKOPO_SCOPE_REFERENCE || "").trim()) {
+      errors.push("KOPOKOPO_SCOPE_REFERENCE is required for till scope");
+    }
+    if (kopokopoMode === "sandbox" && !String(process.env.KOPOKOPO_SANDBOX_BRANCH_ID || "").trim()) {
+      errors.push("KOPOKOPO_SANDBOX_BRANCH_ID is required in sandbox mode");
+    }
+    if (kopokopoMode === "live") {
+      try {
+        const tillMap = JSON.parse(process.env.KOPOKOPO_TILL_BRANCH_MAP || "{}");
+        if (!tillMap || Array.isArray(tillMap) || typeof tillMap !== "object" || Object.keys(tillMap).length === 0) {
+          errors.push("KOPOKOPO_TILL_BRANCH_MAP must map at least one live till to a branch");
+        }
+      } catch {
+        errors.push("KOPOKOPO_TILL_BRANCH_MAP must be valid JSON");
+      }
+    }
+  }
+
   if (errors.length) {
     throw new Error(`Invalid VisionPOS startup configuration:\n- ${errors.join("\n- ")}`);
   }
 }
+
