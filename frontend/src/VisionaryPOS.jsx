@@ -1166,6 +1166,14 @@ async function authGet(path, options = {}) {
   }
   return data;
 }
+async function authDelete(path, options = {}) {
+  const cfg = syncConfig();
+  const headers = options.session ? sessionAuthHeaders() : options.device ? await deviceAuthHeaders(options.branchId || null) : {};
+  const response = await fetch(cfg.apiBaseUrl + path, { method: "DELETE", headers, cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "request_failed");
+  return data;
+}
 async function lookupKopokopoTransactions(branchId, codeLast4) {
   const query = new URLSearchParams({ branchId: String(branchId || ""), last4: normalizeMpesaCodeLast4(codeLast4) });
   return await authGet(`/api/integrations/kopokopo/transactions/lookup?${query}`, { session: true });
@@ -1178,6 +1186,18 @@ async function requestKopokopoIncomingPayment(payload) {
 }
 async function getKopokopoIncomingPayment(id) {
   return await authGet(`/api/integrations/kopokopo/incoming-payments/${encodeURIComponent(id)}`, { session: true });
+}
+async function getKopokopoStatus() {
+  return await authGet("/api/integrations/kopokopo/status", { session: true });
+}
+async function createKopokopoSandboxTest(payload) {
+  return await authApi("/api/integrations/kopokopo/sandbox-tests", payload, { session: true });
+}
+async function getKopokopoSandboxTest(id) {
+  return await authGet(`/api/integrations/kopokopo/sandbox-tests/${encodeURIComponent(id)}`, { session: true });
+}
+async function cleanupKopokopoSandboxTest(id) {
+  return await authDelete(`/api/integrations/kopokopo/sandbox-tests/${encodeURIComponent(id)}`, { session: true });
 }
 function normalizeKenyanPhone(value) {
   const digits = String(value || "").replace(/\D/g, "");
@@ -3765,6 +3785,19 @@ body{overscroll-behavior:none}
 .smdel:hover{color:var(--danger);border-color:var(--danger)}
 .smdel svg{width:15px;height:15px}
 .addpanel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:14px}
+.kopokopo-test-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:16px}
+.kopokopo-test-title{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:800}
+.kopokopo-test-title svg{width:18px;height:18px;color:var(--accent)}
+.kopokopo-test-state{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:5px 9px;border-radius:999px;background:var(--surface-2);color:var(--muted)}
+.kopokopo-test-state.ready,.kopokopo-test-state.completed{background:rgba(52,211,153,.14);color:var(--ok)}
+.kopokopo-test-state.pending,.kopokopo-test-state.retrying{background:rgba(255,180,84,.14);color:var(--warn)}
+.kopokopo-test-state.failed,.kopokopo-test-state.expired{background:rgba(230,67,104,.14);color:var(--danger)}
+.kopokopo-test-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
+.kopokopo-test-meta>div{border-top:1px solid var(--border-soft);padding-top:10px;min-width:0}
+.kopokopo-test-meta span{display:block;color:var(--muted-2);font-size:10.5px;font-weight:800;text-transform:uppercase}
+.kopokopo-test-meta b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kopokopo-test-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+@media(max-width:700px){.kopokopo-test-head{align-items:flex-start}.kopokopo-test-meta{grid-template-columns:1fr}.kopokopo-test-actions .btn{width:100%}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .row-add{width:100%;height:46px;border-radius:12px;cursor:pointer;border:1px dashed var(--border);background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600;transition:.15s;margin-bottom:14px}
@@ -14253,7 +14286,188 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 }
 
 /* ---- Settings ---- */
-function SettingsTab({ data, update }) {
+function KopokopoSandboxTest({ data }) {
+  const [provider, setProvider] = useState({ loading: true });
+  const [phone, setPhone] = useState("+254999999999");
+  const [amount, setAmount] = useState("10");
+  const [paymentRequest, setPaymentRequest] = useState(null);
+  const [transaction, setTransaction] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [cleanupNote, setCleanupNote] = useState("");
+  const [cleanupFailed, setCleanupFailed] = useState(false);
+  const [pollNonce, setPollNonce] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    getKopokopoStatus()
+      .then((status) => { if (active) setProvider({ ...status, loading: false }); })
+      .catch(() => { if (active) setProvider({ loading: false, error: "Kopo Kopo status could not be loaded." }); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!paymentRequest?.id || ["completed", "failed", "expired"].includes(paymentRequest.status)) return undefined;
+    let active = true;
+    let timer = null;
+    let checks = 0;
+    const poll = async () => {
+      try {
+        const result = await getKopokopoSandboxTest(paymentRequest.id);
+        if (!active) return;
+        const nextRequest = result.request || paymentRequest;
+        setPaymentRequest(nextRequest);
+        if (nextRequest.status === "completed" && result.transaction) {
+          setTransaction(result.transaction);
+          setError("");
+          try {
+            const cleanup = await cleanupKopokopoSandboxTest(nextRequest.id);
+            if (active) {
+              setCleanupFailed(false);
+              setCleanupNote(cleanup.removed ? "Test data removed from VISIONPOS." : "Test data was already removed.");
+            }
+          } catch (_) {
+            if (active) {
+              setCleanupFailed(true);
+              setCleanupNote("Verified. Test cleanup needs another attempt.");
+            }
+          }
+          return;
+        }
+        if (["failed", "expired"].includes(nextRequest.status)) {
+          setError(nextRequest.status === "expired" ? "The sandbox test expired before confirmation." : "Kopo Kopo rejected the sandbox test.");
+          cleanupKopokopoSandboxTest(nextRequest.id).catch(() => {});
+          return;
+        }
+        checks += 1;
+        if (checks >= 36) {
+          setError("Kopo Kopo is still processing this test. Use Check again to continue.");
+          return;
+        }
+        timer = window.setTimeout(poll, 2500);
+      } catch (_) {
+        if (active) setError("The sandbox result could not be checked. Use Check again.");
+      }
+    };
+    timer = window.setTimeout(poll, 1200);
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [paymentRequest?.id, pollNonce]);
+
+  const startTest = async () => {
+    const phoneNumber = normalizeKenyanPhone(phone);
+    const amountCents = centsFromInput(amount);
+    if (!phoneNumber) {
+      setError("Enter a valid Kenyan phone number.");
+      return;
+    }
+    if (amountCents <= 0 || amountCents > 100_000) {
+      setError("Enter a test amount from KES 0.01 to KES 1,000.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setTransaction(null);
+    setCleanupNote("");
+    setCleanupFailed(false);
+    try {
+      const created = await createKopokopoSandboxTest({ phoneNumber, amountCents });
+      setPaymentRequest(created.request || null);
+    } catch (requestError) {
+      const message = requestError.message === "kopokopo_sandbox_test_unavailable"
+        ? "The sandbox tester is not available in the current Kopo Kopo mode."
+        : requestError.message === "invalid_kopokopo_incoming_payment"
+          ? "Check the phone number and amount, then try again."
+          : "The Kopo Kopo sandbox request could not be created.";
+      setError(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetTest = () => {
+    setPaymentRequest(null);
+    setTransaction(null);
+    setError("");
+    setCleanupNote("");
+    setCleanupFailed(false);
+  };
+
+  const retryCleanup = async () => {
+    if (!paymentRequest?.id) return;
+    setCleanupNote("Removing test data...");
+    try {
+      const cleanup = await cleanupKopokopoSandboxTest(paymentRequest.id);
+      setCleanupFailed(false);
+      setCleanupNote(cleanup.removed ? "Test data removed from VISIONPOS." : "Test data was already removed.");
+    } catch (_) {
+      setCleanupFailed(true);
+      setCleanupNote("Cleanup failed. No invoice can use this test payment; try again.");
+    }
+  };
+
+  const branchName = data.branches?.find((branch) => branch.id === provider.sandboxBranchId)?.name || provider.sandboxBranchId || "Not configured";
+  const status = transaction ? "completed" : paymentRequest?.status || (provider.enabled && provider.mode === "sandbox" ? "ready" : "disabled");
+  const canTest = provider.enabled && provider.mode === "sandbox" && provider.oauthConfigured && provider.webhookConfigured && provider.sandboxBranchId;
+
+  return (
+    <>
+      <div className="section-title" style={{ margin: "18px 0 8px" }}>Kopo Kopo integration</div>
+      <div className="addpanel">
+        <div className="kopokopo-test-head">
+          <div>
+            <div className="kopokopo-test-title"><Smartphone /> Sandbox payment test</div>
+            <div className="sub" style={{ marginTop: 4 }}>Verify M-Pesa retrieval without creating or clearing an invoice.</div>
+          </div>
+          <span className={`kopokopo-test-state ${status}`}>{provider.loading ? "Checking" : status}</span>
+        </div>
+
+        {provider.error ? <div className="errorbox">{provider.error}</div> : null}
+        {!provider.loading && provider.mode && provider.mode !== "sandbox" ? <div className="notice">Sandbox testing is disabled while Kopo Kopo is in live mode.</div> : null}
+        {!provider.loading && provider.mode === "sandbox" && !canTest ? <div className="errorbox">Kopo Kopo sandbox credentials, webhook, or branch mapping are incomplete.</div> : null}
+
+        {canTest && !paymentRequest ? (
+          <>
+            <div className="grid2">
+              <div><label className="label">Sandbox phone</label><input className="input" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></div>
+              <div><label className="label">Amount (KES)</label><input className="input" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
+            </div>
+            <div className="kopokopo-test-meta">
+              <div><span>Mode</span><b>Sandbox</b></div>
+              <div><span>Branch</span><b>{branchName}</b></div>
+              <div><span>Invoice impact</span><b>None</b></div>
+            </div>
+            <div className="kopokopo-test-actions"><button className="btn btn-primary" disabled={busy} onClick={startTest}><Zap /> {busy ? "Starting..." : "Run payment test"}</button></div>
+          </>
+        ) : null}
+
+        {paymentRequest ? (
+          <>
+            <div className="kopokopo-test-meta">
+              <div><span>Status</span><b>{transaction ? "Verified" : paymentRequest.providerStatus || paymentRequest.status}</b></div>
+              <div><span>Amount</span><b>{fmt(paymentRequest.amountCents, "KES")}</b></div>
+              <div><span>Branch</span><b>{branchName}</b></div>
+              {transaction ? <div><span>M-Pesa reference</span><b>{transaction.referenceMasked}</b></div> : null}
+              {transaction ? <div><span>Payer</span><b>{transaction.payerName || "Sandbox customer"}</b></div> : null}
+              {transaction ? <div><span>Provider result</span><b>{paymentRequest.providerStatus || "Verified"}</b></div> : null}
+            </div>
+            {cleanupNote ? <div className="notice">{cleanupNote}</div> : null}
+            <div className="kopokopo-test-actions">
+              {!transaction && !["failed", "expired"].includes(paymentRequest.status) ? <button className="btn btn-ghost" onClick={() => { setError(""); setPollNonce((value) => value + 1); }}><RefreshCw /> Check again</button> : null}
+              {transaction && cleanupFailed ? <button className="btn btn-ghost" onClick={retryCleanup}><RefreshCw /> Retry cleanup</button> : null}
+              {(transaction && !cleanupFailed) || ["failed", "expired"].includes(paymentRequest.status) ? <button className="btn btn-primary" onClick={resetTest}><Check /> New test</button> : null}
+            </div>
+          </>
+        ) : null}
+        {error ? <div className="errorbox" style={{ marginTop: 12 }}>{error}</div> : null}
+      </div>
+    </>
+  );
+}
+
+function SettingsTab({ data, update, isAdmin }) {
   const s = data.settings; const set = (patch) => update((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
   return (
     <div><PageHead title="Settings" sub="Store-wide configuration." />
@@ -14268,6 +14482,7 @@ function SettingsTab({ data, update }) {
         <div><label className="label">Default till (fallback for branches with none set)</label><input className="input" inputMode="numeric" value={s.mpesaTill || ""} onChange={(e) => set({ mpesaTill: e.target.value })} placeholder="e.g. 5204512" /></div>
         <div className="notice" style={{ marginTop: 12 }}>Each branch can have its own till — set it per branch under <b>Branches</b>. This default is only used for branches without one. The till prints on customer receipts; it is for display only and does not collect payment.</div>
       </div>
+      {isAdmin ? <KopokopoSandboxTest data={data} /> : null}
       <div className="notice">Changes save automatically. Prices are stored in cents.</div>
     </div>
   );

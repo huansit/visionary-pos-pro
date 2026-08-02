@@ -23,6 +23,7 @@ const permanentRecoveryErrors = new Set([
   "kopokopo_result_amount_mismatch",
   "kopokopo_result_currency_unsupported",
 ]);
+const sandboxTestKeyPrefix = "sandbox-test:";
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
@@ -61,6 +62,51 @@ async function findRequestById(id) {
 export async function getKopokopoIncomingPaymentRequest(id) {
   const row = await findRequestById(id);
   return row ? publicRequest(row) : null;
+}
+
+function isSandboxTestRequest(row) {
+  return text(rowValue(row, "idempotency_key", "idempotencyKey")).startsWith(sandboxTestKeyPrefix);
+}
+
+export async function getKopokopoSandboxTestRequest(id) {
+  const row = await findRequestById(id);
+  return row && isSandboxTestRequest(row) ? publicRequest(row) : null;
+}
+
+export async function cleanupKopokopoSandboxTestRequest(id, config = kopokopoConfig()) {
+  if (config.mode !== "sandbox") throw new Error("kopokopo_sandbox_test_unavailable");
+  await ready;
+  return tx(async (client) => {
+    const result = await client.query(
+      "SELECT * FROM kopokopo_incoming_payment_requests WHERE id = $1 FOR UPDATE",
+      [id]
+    );
+    const request = result.rows[0];
+    if (!request) return { removed: false };
+    if (!isSandboxTestRequest(request)) throw new Error("kopokopo_sandbox_test_not_found");
+
+    const transactionId = text(rowValue(request, "provider_transaction_id", "providerTransactionId"));
+    let webhookEventId = "";
+    if (transactionId) {
+      const allocations = await client.query(
+        "SELECT COUNT(*) AS allocation_count FROM kopokopo_allocations WHERE transaction_id = $1",
+        [transactionId]
+      );
+      if (Number(allocations.rows[0]?.allocation_count ?? allocations.rows[0]?.allocationCount ?? 0) > 0) {
+        throw new Error("kopokopo_sandbox_test_has_allocations");
+      }
+      const transaction = await client.query(
+        "SELECT webhook_event_id FROM kopokopo_transactions WHERE id = $1 LIMIT 1",
+        [transactionId]
+      );
+      webhookEventId = text(rowValue(transaction.rows[0], "webhook_event_id", "webhookEventId"));
+    }
+
+    await client.query("DELETE FROM kopokopo_incoming_payment_requests WHERE id = $1", [id]);
+    if (transactionId) await client.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+    if (webhookEventId) await client.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", [webhookEventId]);
+    return { removed: true };
+  });
 }
 
 async function reserveRequest({ id, idempotencyKey, branchId, tillNumber, amountCents, createdBy, expiresAt }) {
@@ -224,6 +270,7 @@ export async function ingestKopokopoIncomingPaymentStatus(attributes, expected =
   if (expected.tillNumber && parsed.tillNumber !== expected.tillNumber) throw new Error("kopokopo_result_till_mismatch");
   if (expected.amountCents && parsed.amountCents !== Number(expected.amountCents)) throw new Error("kopokopo_result_amount_mismatch");
   if (parsed.currency !== "KES") throw new Error("kopokopo_result_currency_unsupported");
+  if (expected.sandboxTest) parsed.status = "SandboxTest";
   const stored = await storeKopokopoEvent(parsed, body);
   return {
     stored: !stored.duplicate,
@@ -275,6 +322,7 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = kopok
       branchId: rowValue(request, "branch_id", "branchId"),
       tillNumber: rowValue(request, "till_number", "tillNumber"),
       amountCents: rowValue(request, "amount_cents", "amountCents"),
+      sandboxTest: isSandboxTestRequest(request),
     }, config);
     if (!recovered.pending) {
       await q(
@@ -318,6 +366,7 @@ async function dueRequestIds(limit = 10) {
     `SELECT id
        FROM kopokopo_incoming_payment_requests
       WHERE lower(status) IN ('pending', 'retrying')
+        AND idempotency_key NOT LIKE 'sandbox-test:%'
         AND next_check_at IS NOT NULL
         AND next_check_at <= ${isMySql ? "NOW()" : "now()"}
         AND expires_at > ${isMySql ? "NOW()" : "now()"}

@@ -11,8 +11,10 @@ import {
 } from "../services/kopokopo.js";
 import { storeKopokopoEvent } from "../services/kopokopoLedger.js";
 import {
+  cleanupKopokopoSandboxTestRequest,
   createTrackedKopokopoIncomingPayment,
   getKopokopoIncomingPaymentRequest,
+  getKopokopoSandboxTestRequest,
   reconcileKopokopoIncomingPaymentRequest,
 } from "../services/kopokopoIncomingPayments.js";
 
@@ -39,6 +41,18 @@ function payloadCents(payload, centField, moneyField) {
 function accountCanAccessBranch(account, branchId) {
   const accountBranchId = String(account?.branchId || "").trim();
   return !accountBranchId || accountBranchId === branchId;
+}
+
+function sandboxTestConfig(config) {
+  const callbackUrl = new URL(config.webhookUrl);
+  callbackUrl.pathname = "/api/integrations/kopokopo/sandbox-test-webhook";
+  callbackUrl.search = "";
+  callbackUrl.hash = "";
+  return { ...config, webhookUrl: callbackUrl.toString() };
+}
+
+function sandboxTestAvailable(config) {
+  return config.enabled && config.mode === "sandbox" && Boolean(config.sandboxBranchId);
 }
 
 function publicTransaction(row) {
@@ -189,6 +203,20 @@ router.post("/webhook", async (req, res) => {
   }
 });
 
+router.post("/sandbox-test-webhook", async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    if (!sandboxTestAvailable(config)) return res.status(404).json({ error: "kopokopo_sandbox_test_unavailable" });
+    if (!validKopokopoSignature(req.rawBody, req.get("x-kopokopo-signature"), config.webhookSecret)) {
+      return res.status(401).json({ error: "invalid_kopokopo_signature" });
+    }
+    return res.status(200).json({ ok: true, test: true });
+  } catch (error) {
+    console.error("Kopo Kopo sandbox test callback failed:", error.message);
+    return res.status(500).json({ error: "kopokopo_sandbox_test_callback_failed" });
+  }
+});
+
 router.get("/status", requireAdminOrSupervisor, async (_req, res) => {
   try {
     const config = kopokopoConfig();
@@ -203,6 +231,7 @@ router.get("/status", requireAdminOrSupervisor, async (_req, res) => {
       oauthConfigured: Boolean(config.clientId && config.clientSecret),
       webhookConfigured: Boolean(config.webhookSecret && config.webhookUrl),
       branchMappingConfigured: Boolean(Object.keys(config.tillBranchMap).length || (config.mode === "sandbox" && config.sandboxBranchId)),
+      sandboxBranchId: config.mode === "sandbox" ? config.sandboxBranchId || null : null,
       transactionCount: Number(row.transaction_count ?? row.transactionCount ?? 0),
       lastTransactionAt: row.last_transaction_at ?? row.lastTransactionAt ?? null,
     });
@@ -291,6 +320,83 @@ router.get("/incoming-payments/:id", requireAdminOrSupervisor, async (req, res) 
   } catch (error) {
     console.error("Kopo Kopo incoming payment status failed:", error.message);
     return res.status(502).json({ error: "kopokopo_incoming_payment_status_failed" });
+  }
+});
+
+router.post("/sandbox-tests", requireOwnerOrAdmin, async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    if (!sandboxTestAvailable(config)) return res.status(409).json({ error: "kopokopo_sandbox_test_unavailable" });
+    const amountCents = integerCents(req.body?.amountCents);
+    if (!amountCents || amountCents > 100_000) {
+      return res.status(400).json({ error: "invalid_kopokopo_sandbox_test_amount" });
+    }
+    const result = await createTrackedKopokopoIncomingPayment({
+      idempotencyKey: `sandbox-test:${crypto.randomUUID()}`,
+      branchId: config.sandboxBranchId,
+      amountCents,
+      phoneNumber: req.body?.phoneNumber,
+      firstName: "VISIONPOS",
+      lastName: "Sandbox",
+      reference: `VPOSTEST${Date.now()}`,
+      notes: "VISIONPOS admin sandbox verification",
+      createdBy: req.account?.id,
+    }, sandboxTestConfig(config));
+    return res.status(202).json({ request: result.request, branchId: config.sandboxBranchId });
+  } catch (error) {
+    const invalid = new Set([
+      "invalid_kopokopo_incoming_payment",
+      "kopokopo_payment_reference_required",
+    ]).has(error.message);
+    console.error("Kopo Kopo sandbox test failed:", error.message, error.providerStatus || "");
+    return res.status(invalid ? 400 : 502).json({
+      error: error.message || "kopokopo_sandbox_test_failed",
+      providerStatus: error.providerStatus || null,
+      providerMessage: error.providerMessage || null,
+    });
+  }
+});
+
+router.get("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    if (!sandboxTestAvailable(config)) return res.status(409).json({ error: "kopokopo_sandbox_test_unavailable" });
+    const id = identifier(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid_kopokopo_sandbox_test_id" });
+    const existing = await getKopokopoSandboxTestRequest(id);
+    if (!existing) return res.status(404).json({ error: "kopokopo_sandbox_test_not_found" });
+    const paymentRequest = await reconcileKopokopoIncomingPaymentRequest(id, sandboxTestConfig(config));
+    let transaction = null;
+    if (paymentRequest.status === "completed" && paymentRequest.providerTransactionId) {
+      const result = await q(
+        `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status,
+                till_number, branch_id, payer_name, origination_time
+           FROM kopokopo_transactions
+          WHERE id = $1 AND branch_id = $2
+          LIMIT 1`,
+        [paymentRequest.providerTransactionId, config.sandboxBranchId]
+      );
+      if (result.rows[0]) transaction = publicTransaction(result.rows[0]);
+    }
+    return res.json({ request: paymentRequest, transaction, branchId: config.sandboxBranchId });
+  } catch (error) {
+    console.error("Kopo Kopo sandbox test status failed:", error.message);
+    return res.status(502).json({ error: "kopokopo_sandbox_test_status_failed" });
+  }
+});
+
+router.delete("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    if (!sandboxTestAvailable(config)) return res.status(409).json({ error: "kopokopo_sandbox_test_unavailable" });
+    const id = identifier(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid_kopokopo_sandbox_test_id" });
+    const result = await cleanupKopokopoSandboxTestRequest(id, config);
+    return res.json(result);
+  } catch (error) {
+    const conflict = error.message === "kopokopo_sandbox_test_has_allocations";
+    console.error("Kopo Kopo sandbox test cleanup failed:", error.message);
+    return res.status(conflict ? 409 : 500).json({ error: error.message || "kopokopo_sandbox_test_cleanup_failed" });
   }
 });
 

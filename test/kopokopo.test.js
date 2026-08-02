@@ -392,6 +392,161 @@ test("recovers an accepted incoming payment from its authenticated status withou
   }
 });
 
+test("lets only administrators run an isolated sandbox payment test and removes its ledger data", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const providerLocation = "https://sandbox.kopokopo.com/api/v2/incoming_payments/admin-sandbox-test-1";
+  const providerResource = {
+    id: "admin-sandbox-test-transaction",
+    amount: "10.00",
+    status: "Received",
+    currency: "KES",
+    reference: "ADMINTESTABCD",
+    till_number: "000000",
+    sender_first_name: "Admin",
+    sender_last_name: "Sandbox",
+    origination_time: "2026-08-02T12:00:00+03:00",
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "sandbox-admin-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/incoming_payments") && options.method === "POST") {
+      return new Response("", { status: 201, headers: { Location: providerLocation } });
+    }
+    assert.equal(String(url), providerLocation);
+    return new Response(JSON.stringify({
+      data: {
+        type: "incoming_payment",
+        attributes: {
+          status: "Received",
+          event: { type: "Incoming Payment Request", resource: providerResource },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    await request(app)
+      .post("/api/integrations/kopokopo/sandbox-tests")
+      .send({ phoneNumber: "+254999999999", amountCents: 1000 })
+      .expect(401);
+    await request(app)
+      .post("/api/integrations/kopokopo/sandbox-tests")
+      .set("X-Session-Token", branchSessionToken)
+      .send({ phoneNumber: "+254999999999", amountCents: 1000 })
+      .expect(403);
+
+    const created = await request(app)
+      .post("/api/integrations/kopokopo/sandbox-tests")
+      .set("X-Session-Token", sessionToken)
+      .send({ phoneNumber: "+254999999999", amountCents: 1000, branchId: "b_cpt" })
+      .expect(202);
+    assert.equal(created.body.branchId, "b_sip");
+    assert.equal(created.body.request.branchId, "b_sip");
+    assert.equal(created.body.request.amountCents, 1000);
+
+    const providerBody = JSON.parse(calls.find((entry) => entry.url.endsWith("/api/v2/incoming_payments")).options.body);
+    assert.equal(providerBody._links.callback_url, "https://visionarypos.cloud/api/integrations/kopokopo/sandbox-test-webhook");
+    assert.equal(providerBody.amount.value, 10);
+
+    const checked = await request(app)
+      .get(`/api/integrations/kopokopo/sandbox-tests/${created.body.request.id}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(checked.body.request.status, "completed");
+    assert.equal(checked.body.transaction.referenceMasked, "****ABCD");
+    assert.equal(checked.body.transaction.payerName, "Admin Sandbox");
+    assert.equal(checked.body.transaction.status, "SandboxTest");
+
+    const lookup = await request(app)
+      .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=ABCD")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(lookup.body.transactions.length, 0);
+    await request(app)
+      .post("/api/integrations/kopokopo/allocations")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        transactionId: providerResource.id,
+        branchId: "b_sip",
+        idempotencyKey: "sandbox-test-allocation-refused",
+        allocations: [{ invoiceId: "inv-1", localPaymentId: "sandbox-test-payment-refused", amountCents: 1000 }],
+      })
+      .expect(409)
+      .expect(({ body }) => assert.equal(body.error, "kopokopo_transaction_unavailable"));
+
+    const stored = await pool.query(
+      "SELECT webhook_event_id FROM kopokopo_transactions WHERE id = $1",
+      [providerResource.id]
+    );
+    assert.equal(stored.rows.length, 1);
+    const webhookEventId = stored.rows[0].webhook_event_id;
+
+    await request(app)
+      .delete(`/api/integrations/kopokopo/sandbox-tests/${created.body.request.id}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200)
+      .expect({ removed: true });
+
+    const remainingRequest = await pool.query(
+      "SELECT id FROM kopokopo_incoming_payment_requests WHERE id = $1",
+      [created.body.request.id]
+    );
+    const remainingTransaction = await pool.query(
+      "SELECT id FROM kopokopo_transactions WHERE id = $1",
+      [providerResource.id]
+    );
+    const remainingEvent = await pool.query(
+      "SELECT event_id FROM kopokopo_webhook_events WHERE event_id = $1",
+      [webhookEventId]
+    );
+    assert.equal(remainingRequest.rows.length, 0);
+    assert.equal(remainingTransaction.rows.length, 0);
+    assert.equal(remainingEvent.rows.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const callback = webhookPayload({
+    eventId: "admin-sandbox-noop-event",
+    resourceId: "admin-sandbox-noop-transaction",
+  });
+  const rawBody = JSON.stringify(callback);
+  const signature = crypto.createHmac("sha256", process.env.KOPOKOPO_API_KEY).update(rawBody).digest("hex");
+  await request(app)
+    .post("/api/integrations/kopokopo/sandbox-test-webhook")
+    .set("Content-Type", "application/json")
+    .set("X-KopoKopo-Signature", signature)
+    .send(rawBody)
+    .expect(200)
+    .expect({ ok: true, test: true });
+  const ignoredCallback = await pool.query(
+    "SELECT id FROM kopokopo_transactions WHERE id = $1",
+    ["admin-sandbox-noop-transaction"]
+  );
+  assert.equal(ignoredCallback.rows.length, 0);
+});
+
+test("keeps the admin sandbox tester unavailable in live mode", async () => {
+  const originalMode = process.env.KOPOKOPO_MODE;
+  process.env.KOPOKOPO_MODE = "live";
+  try {
+    await request(app)
+      .post("/api/integrations/kopokopo/sandbox-tests")
+      .set("X-Session-Token", sessionToken)
+      .send({ phoneNumber: "+254999999999", amountCents: 1000 })
+      .expect(409)
+      .expect({ error: "kopokopo_sandbox_test_unavailable" });
+  } finally {
+    process.env.KOPOKOPO_MODE = originalMode;
+  }
+});
+
 test("recovers a sandbox result without a simulated M-Pesa reference and supports amount objects", async () => {
   const resourceId = "sandbox-result-without-reference-9z8y";
   const result = await ingestKopokopoIncomingPaymentStatus({
