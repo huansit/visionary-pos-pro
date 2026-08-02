@@ -15,6 +15,7 @@
                     "products:go-live":  "node db/go-live-products.js",
                     "kopokopo:subscribe":  "node db/subscribe-kopokopo.js",
                     "kopokopo:diagnose":  "node --env-file=.env.live db/diagnose-kopokopo.js",
+                    "kopokopo:live-readiness":  "node --env-file=.env.live db/check-kopokopo-live-readiness.js",
                     "kopokopo:probe-polling":  "node --env-file=.env.live db/probe-kopokopo-polling.js",
                     "kopokopo:reconcile":  "node --env-file=.env.live db/reconcile-kopokopo.js",
                     "seed:device":  "node db/make-device.js",

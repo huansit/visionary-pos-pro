@@ -27,6 +27,8 @@ const {
   kopokopoConfig,
   pollKopokopoTransactions,
   readKopokopoIncomingPayment,
+  requestKopokopoAccessToken,
+  requestKopokopoIncomingPayment,
 } = await import("../src/services/kopokopo.js");
 const { ingestKopokopoIncomingPaymentStatus } = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
@@ -660,6 +662,51 @@ test("keeps the admin sandbox tester unavailable in live mode", async () => {
       .expect({ error: "kopokopo_sandbox_test_unavailable" });
   } finally {
     process.env.KOPOKOPO_MODE = originalMode;
+  }
+});
+
+test("uses separate official production OAuth and API hosts", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const liveConfig = {
+    ...kopokopoConfig(),
+    mode: "live",
+    baseUrl: "https://api.kopokopo.com",
+    authUrl: "https://app.kopokopo.com",
+    tillBranchMap: { "1234567": "b_sip" },
+    sandboxBranchId: "",
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || "GET" });
+    if (String(url) === "https://app.kopokopo.com/oauth/token") {
+      return new Response(JSON.stringify({ access_token: "live-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    assert.equal(String(url), "https://api.kopokopo.com/api/v2/incoming_payments");
+    return new Response("", {
+      status: 201,
+      headers: { Location: "https://api.kopokopo.com/api/v2/incoming_payments/live-request-1" },
+    });
+  };
+
+  try {
+    assert.equal(await requestKopokopoAccessToken(liveConfig), "live-access-token");
+    const payment = await requestKopokopoIncomingPayment({
+      tillNumber: "1234567",
+      phoneNumber: "+254712345678",
+      amountCents: 1000,
+      reference: "RCP-SIP-TEST",
+    }, liveConfig);
+    assert.equal(payment.providerRequestId, "live-request-1");
+    assert.deepEqual(calls.map((entry) => entry.url), [
+      "https://app.kopokopo.com/oauth/token",
+      "https://app.kopokopo.com/oauth/token",
+      "https://api.kopokopo.com/api/v2/incoming_payments",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

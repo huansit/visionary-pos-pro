@@ -81,6 +81,9 @@ export function assertStartupConfig() {
     const expectedProviderOrigin = kopokopoMode === "live"
       ? "https://api.kopokopo.com"
       : "https://sandbox.kopokopo.com";
+    const expectedAuthOrigin = kopokopoMode === "live"
+      ? "https://app.kopokopo.com"
+      : "https://sandbox.kopokopo.com";
     try {
       const providerUrl = new URL(process.env.KOPOKOPO_BASE_URL || expectedProviderOrigin);
       if (providerUrl.protocol !== "https:" || providerUrl.origin !== expectedProviderOrigin) {
@@ -88,6 +91,14 @@ export function assertStartupConfig() {
       }
     } catch {
       errors.push("KOPOKOPO_BASE_URL must be a valid official Kopo Kopo HTTPS URL");
+    }
+    try {
+      const authUrl = new URL(process.env.KOPOKOPO_AUTH_URL || expectedAuthOrigin);
+      if (authUrl.protocol !== "https:" || authUrl.origin !== expectedAuthOrigin) {
+        errors.push(`KOPOKOPO_AUTH_URL must use the official ${kopokopoMode || "selected"} Kopo Kopo OAuth HTTPS origin`);
+      }
+    } catch {
+      errors.push("KOPOKOPO_AUTH_URL must be a valid official Kopo Kopo OAuth HTTPS URL");
     }
     for (const name of ["KOPOKOPO_CLIENT_ID", "KOPOKOPO_CLIENT_SECRET", "KOPOKOPO_API_KEY", "KOPOKOPO_WEBHOOK_URL"]) {
       if (!String(process.env[name] || "").trim()) errors.push(`${name} is required when Kopo Kopo is enabled`);
@@ -109,8 +120,24 @@ export function assertStartupConfig() {
     if (kopokopoMode === "live") {
       try {
         const tillMap = JSON.parse(process.env.KOPOKOPO_TILL_BRANCH_MAP || "{}");
-        if (!tillMap || Array.isArray(tillMap) || typeof tillMap !== "object" || Object.keys(tillMap).length === 0) {
+        const entries = tillMap && !Array.isArray(tillMap) && typeof tillMap === "object"
+          ? Object.entries(tillMap)
+          : [];
+        if (entries.length === 0) {
           errors.push("KOPOKOPO_TILL_BRANCH_MAP must map at least one live till to a branch");
+        } else if (entries.some(([till, branchId]) => !String(till).trim() || !String(branchId).trim())) {
+          errors.push("KOPOKOPO_TILL_BRANCH_MAP cannot contain blank till numbers or branch IDs");
+        } else {
+          const mappedBranches = entries.map(([, branchId]) => String(branchId).trim());
+          if (new Set(mappedBranches).size !== mappedBranches.length) {
+            errors.push("KOPOKOPO_TILL_BRANCH_MAP must map only one live till to each branch");
+          }
+          if (scope === "till") {
+            const scopeReference = String(process.env.KOPOKOPO_SCOPE_REFERENCE || "").trim();
+            if (entries.length !== 1 || String(entries[0][0]).trim() !== scopeReference) {
+              errors.push("Till-scoped live Kopo Kopo configuration must map exactly KOPOKOPO_SCOPE_REFERENCE; use company scope for multiple tills");
+            }
+          }
         }
       } catch {
         errors.push("KOPOKOPO_TILL_BRANCH_MAP must be valid JSON");

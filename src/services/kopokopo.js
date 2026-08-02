@@ -27,10 +27,13 @@ function parseTillMap(value) {
 export function kopokopoConfig() {
   const mode = text(process.env.KOPOKOPO_MODE || "sandbox").toLowerCase() === "live" ? "live" : "sandbox";
   const apiKey = text(process.env.KOPOKOPO_API_KEY);
+  const defaultApiUrl = mode === "live" ? "https://api.kopokopo.com" : "https://sandbox.kopokopo.com";
+  const defaultAuthUrl = mode === "live" ? "https://app.kopokopo.com" : "https://sandbox.kopokopo.com";
   return {
     enabled: process.env.KOPOKOPO_ENABLED === "1",
     mode,
-    baseUrl: cleanBaseUrl(process.env.KOPOKOPO_BASE_URL || (mode === "live" ? "https://api.kopokopo.com" : "https://sandbox.kopokopo.com")),
+    baseUrl: cleanBaseUrl(process.env.KOPOKOPO_BASE_URL || defaultApiUrl),
+    authUrl: cleanBaseUrl(process.env.KOPOKOPO_AUTH_URL || defaultAuthUrl),
     clientId: text(process.env.KOPOKOPO_CLIENT_ID),
     clientSecret: text(process.env.KOPOKOPO_CLIENT_SECRET),
     apiKey,
@@ -231,7 +234,7 @@ export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
     client_secret: config.clientSecret,
     grant_type: "client_credentials",
   });
-  const response = await fetch(`${config.baseUrl}/oauth/token`, {
+  const response = await fetch(`${config.authUrl}/oauth/token`, {
     method: "POST",
     signal: AbortSignal.timeout(providerRequestTimeoutMs),
     headers: {

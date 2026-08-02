@@ -12,6 +12,7 @@ Set these values in `.env.live`:
 KOPOKOPO_ENABLED=1
 KOPOKOPO_MODE=sandbox
 KOPOKOPO_BASE_URL=https://sandbox.kopokopo.com
+KOPOKOPO_AUTH_URL=https://sandbox.kopokopo.com
 KOPOKOPO_CLIENT_ID=<sandbox application client id>
 KOPOKOPO_CLIENT_SECRET=<sandbox application client secret>
 KOPOKOPO_API_KEY=<sandbox application api key>
