@@ -21,6 +21,8 @@ process.env.KOPOKOPO_SANDBOX_BRANCH_ID = "b_sip";
 const { pool, ready } = await import("../src/db.js");
 await ready;
 const { default: app } = await import("../src/server.js");
+const { kopokopoConfig, pollKopokopoTransactions } = await import("../src/services/kopokopo.js");
+const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
 
 let sessionToken = "";
 let branchSessionToken = "";
@@ -144,6 +146,173 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
     .set("X-Session-Token", branchSessionToken)
     .expect(403)
     .expect({ error: "branch_not_authorized" });
+});
+
+test("polls the official provider endpoint using the configured company scope", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const polledTransaction = {
+    type: "Buygoods Transaction",
+    resource: {
+      id: "provider-poll-transaction",
+      amount: "125.00",
+      status: "Received",
+      currency: "KES",
+      reference: "POLLAPI4321",
+      till_number: "000000",
+      origination_time: "2026-08-02T11:00:00+03:00",
+    },
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "test-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/polling") && options.method === "POST") {
+      return new Response("", {
+        status: 201,
+        headers: { Location: "https://sandbox.kopokopo.com/api/v2/polling/poll-request-1" },
+      });
+    }
+    return new Response(JSON.stringify({
+      data: {
+        attributes: {
+          status: "Success",
+          transactions: [polledTransaction],
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    const config = {
+      ...kopokopoConfig(),
+      clientId: "poll-client-id",
+      clientSecret: "poll-client-secret",
+      scope: "company",
+      scopeReference: "",
+    };
+    const result = await pollKopokopoTransactions({
+      fromTime: "2026-08-02T07:00:00.000Z",
+      toTime: "2026-08-02T08:00:00.000Z",
+    }, config);
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].resource.id, "provider-poll-transaction");
+    assert.equal(calls.length, 3);
+    const requestBody = JSON.parse(calls[1].options.body);
+    assert.equal(requestBody.scope, "company");
+    assert.equal(requestBody.scope_reference, "");
+    assert.equal(requestBody._links.callback_url, process.env.KOPOKOPO_WEBHOOK_URL);
+    assert.equal(calls[2].url, "https://sandbox.kopokopo.com/api/v2/polling/poll-request-1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects a polling resource location outside the configured provider", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "test-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    assert.equal(options.method, "POST");
+    return new Response("", {
+      status: 201,
+      headers: { Location: "https://example.com/api/v2/polling/stolen-token" },
+    });
+  };
+  try {
+    await assert.rejects(
+      pollKopokopoTransactions({
+        fromTime: "2026-08-02T07:00:00.000Z",
+        toTime: "2026-08-02T08:00:00.000Z",
+      }, {
+        ...kopokopoConfig(),
+        clientId: "poll-client-id",
+        clientSecret: "poll-client-secret",
+      }),
+      /kopokopo_resource_location_invalid/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("polling recovery stores missing Buygoods transactions once and redacts its audit payload", async () => {
+  const transactions = [
+    {
+      type: "Buygoods Transaction",
+      resource: {
+        id: "poll-recovery-transaction",
+        amount: "275.50",
+        status: "Received",
+        system: "Lipa Na M-PESA",
+        currency: "KES",
+        reference: "POLLREC1234",
+        till_number: "000000",
+        sender_phone_number: "+254711111111",
+        sender_first_name: "Polling",
+        sender_last_name: "Customer",
+        origination_time: "2026-08-02T12:00:00+03:00",
+      },
+    },
+    {
+      type: "External Till to Till Transaction",
+      resource: { id: "ignored-poll-transaction" },
+    },
+  ];
+  const first = await ingestKopokopoPollingTransactions(transactions);
+  assert.deepEqual(first, { received: 2, stored: 1, duplicates: 0, ignored: 1 });
+  const second = await ingestKopokopoPollingTransactions(transactions);
+  assert.deepEqual(second, { received: 2, stored: 0, duplicates: 1, ignored: 1 });
+
+  const stored = await pool.query(
+    "SELECT reference_last4, amount_cents, branch_id, payer_name, status FROM kopokopo_transactions WHERE id = $1",
+    ["poll-recovery-transaction"]
+  );
+  assert.equal(stored.rows[0].reference_last4, "1234");
+  assert.equal(Number(stored.rows[0].amount_cents), 27550);
+  assert.equal(stored.rows[0].branch_id, "b_sip");
+  assert.equal(stored.rows[0].payer_name, "Polling Customer");
+  assert.equal(stored.rows[0].status, "Received");
+
+  const audit = await pool.query(
+    "SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1",
+    ["poll:poll-recovery-transaction:received"]
+  );
+  assert.equal(audit.rows[0].payload.event.resource.sender_phone_number, undefined);
+  assert.equal(audit.rows[0].payload.event.resource.sender_first_name, undefined);
+});
+
+test("polling recovery applies a provider reversal through the existing ledger controls", async () => {
+  const received = {
+    type: "Buygoods Transaction",
+    resource: {
+      id: "poll-reversed-transaction",
+      amount: "50.00",
+      status: "Received",
+      currency: "KES",
+      reference: "POLLREV9876",
+      till_number: "000000",
+      origination_time: "2026-08-02T12:30:00+03:00",
+    },
+  };
+  await ingestKopokopoPollingTransactions([received]);
+  await ingestKopokopoPollingTransactions([{
+    ...received,
+    resource: { ...received.resource, status: "Reversed" },
+  }]);
+  const stored = await pool.query(
+    "SELECT status, reversed_at FROM kopokopo_transactions WHERE id = $1",
+    ["poll-reversed-transaction"]
+  );
+  assert.equal(stored.rows[0].status, "Reversed");
+  assert.ok(stored.rows[0].reversed_at);
 });
 
 test("allocates atomically, rejects excess, and makes retries idempotent", async () => {

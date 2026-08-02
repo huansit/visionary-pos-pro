@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 const RECEIVED_TOPICS = new Set(["buygoods_transaction_received", "b2b_transaction_received"]);
 const REVERSED_TOPICS = new Set(["buygoods_transaction_reversed", "b2b_transaction_reversed"]);
+const providerRequestTimeoutMs = 15_000;
 
 function text(value) {
   return String(value ?? "").trim();
@@ -131,6 +133,16 @@ async function providerJson(response) {
   try { return JSON.parse(raw); } catch (_) { return { message: raw.slice(0, 500) }; }
 }
 
+function officialProviderLocation(location, pathPrefix, config) {
+  if (!location) throw new Error("kopokopo_resource_location_missing");
+  const expected = new URL(config.baseUrl);
+  const actual = new URL(location);
+  if (actual.origin !== expected.origin || !actual.pathname.startsWith(pathPrefix)) {
+    throw new Error("kopokopo_resource_location_invalid");
+  }
+  return actual.toString();
+}
+
 export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
   if (!config.clientId || !config.clientSecret) throw new Error("kopokopo_oauth_not_configured");
   const body = new URLSearchParams({
@@ -140,6 +152,7 @@ export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
   });
   const response = await fetch(`${config.baseUrl}/oauth/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "User-Agent": "VISIONPOS/1.0",
@@ -172,6 +185,7 @@ export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
     if (config.scopeReference) requestBody.scope_reference = config.scopeReference;
     const response = await fetch(`${config.baseUrl}/api/v2/webhook_subscriptions`, {
       method: "POST",
+      signal: AbortSignal.timeout(providerRequestTimeoutMs),
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
@@ -190,4 +204,73 @@ export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
     subscriptions.push({ eventType, location: response.headers.get("location") || null });
   }
   return subscriptions;
+}
+
+export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 45_000 } = {}, config = kopokopoConfig()) {
+  if (!config.enabled) throw new Error("kopokopo_not_configured");
+  if (!fromTime || !toTime) throw new Error("kopokopo_polling_range_required");
+  const accessToken = await requestKopokopoAccessToken(config);
+  const response = await fetch(`${config.baseUrl}/api/v2/polling`, {
+    method: "POST",
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "User-Agent": "VISIONPOS/1.0",
+    },
+    body: JSON.stringify({
+      scope: config.scope,
+      scope_reference: config.scopeReference || "",
+      from_time: fromTime,
+      to_time: toTime,
+      _links: { callback_url: config.webhookUrl },
+    }),
+  });
+  const payload = await providerJson(response);
+  if (response.status !== 201) {
+    const error = new Error("kopokopo_polling_request_failed");
+    error.providerStatus = response.status;
+    error.providerMessage = payload.error_message || payload.error || payload.message;
+    throw error;
+  }
+  const location = officialProviderLocation(
+    response.headers.get("location"),
+    "/api/v2/polling/",
+    config
+  );
+  const deadline = Date.now() + Math.max(5_000, Math.min(Number(timeoutMs) || 45_000, 120_000));
+  while (Date.now() < deadline) {
+    const statusResponse = await fetch(location, {
+      signal: AbortSignal.timeout(providerRequestTimeoutMs),
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "VISIONPOS/1.0",
+      },
+    });
+    const statusPayload = await providerJson(statusResponse);
+    if (!statusResponse.ok) {
+      const error = new Error("kopokopo_polling_status_failed");
+      error.providerStatus = statusResponse.status;
+      error.providerMessage = statusPayload.error_message || statusPayload.error || statusPayload.message;
+      throw error;
+    }
+    const attributes = statusPayload?.data?.attributes || {};
+    const status = text(attributes.status).toLowerCase();
+    if (status === "failed") {
+      const error = new Error("kopokopo_polling_failed");
+      error.providerMessage = Array.isArray(attributes.errors) ? attributes.errors.join("; ") : null;
+      throw error;
+    }
+    if (status === "success" || Array.isArray(attributes.transactions)) {
+      return {
+        location,
+        status: attributes.status || "Success",
+        transactions: Array.isArray(attributes.transactions) ? attributes.transactions : [],
+      };
+    }
+    await delay(1_000);
+  }
+  throw new Error("kopokopo_polling_timeout");
 }

@@ -18,6 +18,7 @@ import whatsappRoutes from "./routes/whatsapp.js";
 import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
 import { isMySql, q, ready } from "./db.js";
 import { startWhatsAppScheduler, stopWhatsAppScheduler } from "./services/whatsappScheduler.js";
+import { startKopokopoReconciler, stopKopokopoReconciler } from "./services/kopokopoReconciler.js";
 
 let dbReadyError = null;
 const dbReady = ready.catch((error) => {
@@ -168,6 +169,7 @@ let server;
 if (process.env.NODE_ENV !== "test") {
   server = app.listen(port, () => console.log(`Visionary POS API listening on ${port}`));
   startWhatsAppScheduler();
+  startKopokopoReconciler();
   // Surface bind failures (e.g. EADDRINUSE) to stderr so the platform logs show them.
   server.on("error", (err) => console.error("FATAL: server failed to bind to", port, "-", err.message));
 }
@@ -175,6 +177,7 @@ if (process.env.NODE_ENV !== "test") {
 async function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
   stopWhatsAppScheduler();
+  stopKopokopoReconciler();
   if (!server) return;
   server.close(async () => {
     const { pool } = await import("./db.js");
