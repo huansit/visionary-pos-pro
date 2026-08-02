@@ -94,7 +94,7 @@ async function scheduledReconciliation() {
 
 export function startKopokopoReconciler() {
   const config = kopokopoConfig();
-  if (intervalTimer || startupTimer || !config.enabled || process.env.KOPOKOPO_POLLING_ENABLED === "0" || process.env.NODE_ENV === "test") return;
+  if (intervalTimer || startupTimer || !config.enabled || process.env.KOPOKOPO_POLLING_ENABLED !== "1" || process.env.NODE_ENV === "test") return;
   const requestedInterval = Number(process.env.KOPOKOPO_POLL_INTERVAL_MS || 120_000);
   const intervalMs = Math.max(60_000, Math.min(Number.isFinite(requestedInterval) ? requestedInterval : 120_000, 15 * 60_000));
   startupTimer = setTimeout(() => {
