@@ -4,6 +4,7 @@ import {
   branchForTill,
   kopokopoConfig,
   maxIncomingPaymentCents,
+  normalizeKopokopoReference,
   normalizeKopokopoCallback,
   parseKopokopoWebhook,
   readKopokopoIncomingPayment,
@@ -170,11 +171,55 @@ function recoveryEvent(attributes) {
   return callback.events[0] || null;
 }
 
+function normalizedRecoveryAttributes(attributes, config) {
+  const resource = attributes?.event?.resource;
+  if (!resource || typeof resource !== "object") return attributes;
+  const amountObject = resource.amount && typeof resource.amount === "object" ? resource.amount : null;
+  const resourceId = normalizeKopokopoReference(resource.id);
+  const providerReference = text(resource.reference)
+    || text(resource.transaction_reference)
+    || text(resource.transactionReference);
+  const reference = providerReference
+    || (config.mode === "sandbox" && resourceId ? `SANDBOX${resourceId}` : "");
+  return {
+    ...attributes,
+    event: {
+      ...attributes.event,
+      resource: {
+        ...resource,
+        amount: amountObject ? amountObject.value : resource.amount,
+        currency: resource.currency || amountObject?.currency,
+        reference,
+        till_number: text(resource.till_number) || text(resource.tillNumber),
+      },
+    },
+  };
+}
+
+function invalidResultError(attributes) {
+  const resource = attributes?.event?.resource;
+  const error = new Error("invalid_kopokopo_incoming_payment_result");
+  error.providerMessage = JSON.stringify({
+    providerStatus: text(attributes?.status) || null,
+    resourceFields: resource && typeof resource === "object" ? Object.keys(resource).sort() : [],
+    hasResourceId: Boolean(text(resource?.id)),
+    hasReference: Boolean(
+      text(resource?.reference) || text(resource?.transaction_reference) || text(resource?.transactionReference)
+    ),
+    amountType: Array.isArray(resource?.amount) ? "array" : typeof resource?.amount,
+    hasCurrency: Boolean(text(resource?.currency ?? resource?.amount?.currency)),
+    hasTill: Boolean(text(resource?.till_number) || text(resource?.tillNumber)),
+    resourceStatus: text(resource?.status) || null,
+  });
+  return error;
+}
+
 export async function ingestKopokopoIncomingPaymentStatus(attributes, expected = {}, config = kopokopoConfig()) {
-  const body = recoveryEvent(attributes);
+  const normalizedAttributes = normalizedRecoveryAttributes(attributes, config);
+  const body = recoveryEvent(normalizedAttributes);
   if (!body) return { stored: false, pending: true, providerStatus: text(attributes?.status) || "Pending" };
   const parsed = parseKopokopoWebhook(body, config);
-  if (!parsed.supported || !parsed.valid) throw new Error("invalid_kopokopo_incoming_payment_result");
+  if (!parsed.supported || !parsed.valid) throw invalidResultError(attributes);
   if (expected.branchId && parsed.branchId !== expected.branchId) throw new Error("kopokopo_result_branch_mismatch");
   if (expected.tillNumber && parsed.tillNumber !== expected.tillNumber) throw new Error("kopokopo_result_till_mismatch");
   if (expected.amountCents && parsed.amountCents !== Number(expected.amountCents)) throw new Error("kopokopo_result_amount_mismatch");

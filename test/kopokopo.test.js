@@ -28,6 +28,7 @@ const {
   pollKopokopoTransactions,
   readKopokopoIncomingPayment,
 } = await import("../src/services/kopokopo.js");
+const { ingestKopokopoIncomingPaymentStatus } = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
 
 let sessionToken = "";
@@ -389,6 +390,75 @@ test("recovers an accepted incoming payment from its authenticated status withou
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("recovers a sandbox result without a simulated M-Pesa reference and supports amount objects", async () => {
+  const resourceId = "sandbox-result-without-reference-9z8y";
+  const result = await ingestKopokopoIncomingPaymentStatus({
+    status: "Success",
+    event: {
+      type: "Incoming Payment Request",
+      resource: {
+        id: resourceId,
+        amount: { currency: "KES", value: "125.00" },
+        status: "Received",
+        till_number: "000000",
+        sender_first_name: "Sandbox",
+        sender_last_name: "Customer",
+        origination_time: "2026-08-02T11:48:00+03:00",
+      },
+    },
+  }, {
+    branchId: "b_sip",
+    tillNumber: "000000",
+    amountCents: 12500,
+  }, kopokopoConfig());
+
+  assert.equal(result.pending, false);
+  assert.equal(result.transactionId, resourceId);
+  const stored = await pool.query(
+    "SELECT reference, reference_last4, amount_cents FROM kopokopo_transactions WHERE id = $1",
+    [resourceId]
+  );
+  assert.equal(stored.rows[0].reference, "SANDBOXSANDBOXRESULTWITHOUTREFERENCE9Z8Y");
+  assert.equal(stored.rows[0].reference_last4, "9Z8Y");
+  assert.equal(Number(stored.rows[0].amount_cents), 12500);
+});
+
+test("still rejects a production payment result without a genuine provider reference", async () => {
+  const attributes = {
+    status: "Success",
+    event: {
+      type: "Incoming Payment Request",
+      resource: {
+        id: "production-result-without-reference",
+        amount: "125.00",
+        currency: "KES",
+        status: "Received",
+        till_number: "000000",
+      },
+    },
+  };
+  const liveConfig = {
+    ...kopokopoConfig(),
+    mode: "live",
+    sandboxBranchId: "",
+    tillBranchMap: { "000000": "b_sip" },
+  };
+  await assert.rejects(
+    ingestKopokopoIncomingPaymentStatus(attributes, {
+      branchId: "b_sip",
+      tillNumber: "000000",
+      amountCents: 12500,
+    }, liveConfig),
+    (error) => error.message === "invalid_kopokopo_incoming_payment_result"
+      && error.providerMessage.includes('"hasReference":false')
+  );
+  const stored = await pool.query(
+    "SELECT id FROM kopokopo_transactions WHERE id = $1",
+    [attributes.event.resource.id]
+  );
+  assert.equal(stored.rows.length, 0);
 });
 
 test("fails closed when the authenticated incoming-payment result does not match the requested amount", async () => {
