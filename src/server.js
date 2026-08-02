@@ -12,6 +12,7 @@ import authRoutes from "./routes/auth.js";
 import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
 import environmentRoutes from "./routes/environment.js";
+import kopokopoRoutes from "./routes/kopokopo.js";
 import syncRoutes from "./routes/sync.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
@@ -31,7 +32,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const frontendDist = join(here, "..", "frontend", "dist");
 
 app.use(helmet());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({
+  limit: "5mb",
+  verify(req, _res, buffer) {
+    if (req.originalUrl.startsWith("/api/integrations/kopokopo/webhook")) {
+      req.rawBody = Buffer.from(buffer);
+    }
+  },
+}));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev", {
   skip: (req) => req.path === "/health",
   stream: {
@@ -97,6 +105,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/barcodes", barcodeRoutes);
 app.use("/api/environment", environmentRoutes);
+app.use("/api/integrations/kopokopo", kopokopoRoutes);
 app.use("/api/sync", syncRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 

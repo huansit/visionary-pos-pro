@@ -1166,6 +1166,54 @@ async function authGet(path, options = {}) {
   }
   return data;
 }
+async function lookupKopokopoTransactions(branchId, codeLast4) {
+  const query = new URLSearchParams({ branchId: String(branchId || ""), last4: normalizeMpesaCodeLast4(codeLast4) });
+  return await authGet(`/api/integrations/kopokopo/transactions/lookup?${query}`, { session: true });
+}
+async function allocateKopokopoTransaction(payload) {
+  return await authApi("/api/integrations/kopokopo/allocations", payload, { session: true });
+}
+function kopokopoReceipt(transaction, branchId, actorName) {
+  if (!transaction) return null;
+  return {
+    id: `kopokopo:${transaction.id}`,
+    branchId,
+    codeLast4: transaction.referenceLast4,
+    totalCents: transaction.amountCents,
+    allocatedCents: transaction.allocatedCents,
+    remainingCents: transaction.remainingCents,
+    registeredAt: transaction.originationTime ? new Date(transaction.originationTime).getTime() : now(),
+    registeredByName: actorName,
+    payerName: transaction.payerName || "",
+    providerVerified: true,
+    kopokopoTransactionId: transaction.id,
+  };
+}
+function useKopokopoLookup(branchId, codeLast4) {
+  const normalizedCode = normalizeMpesaCodeLast4(codeLast4);
+  const [state, setState] = useState({ enabled: null, loading: false, transactions: [], error: "" });
+  useEffect(() => {
+    let active = true;
+    if (!branchId || normalizedCode.length !== 4) {
+      setState({ enabled: null, loading: false, transactions: [], error: "" });
+      return () => { active = false; };
+    }
+    setState((current) => ({ ...current, loading: true, transactions: [], error: "" }));
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await lookupKopokopoTransactions(branchId, normalizedCode);
+        if (active) setState({ enabled: result.enabled !== false, loading: false, transactions: result.transactions || [], error: "" });
+      } catch (_) {
+        if (active) setState({ enabled: null, loading: false, transactions: [], error: "Kopo Kopo could not be reached. Manual entry is still available." });
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [branchId, normalizedCode]);
+  return state;
+}
 async function environmentPublic() {
   const cfg = syncConfig();
   const response = await fetch(cfg.apiBaseUrl + "/api/environment/public", { cache: "no-store" });
@@ -3814,6 +3862,8 @@ body{overscroll-behavior:none}
 .mpesa-receipt-status b{display:block;margin-top:3px;font-family:var(--font-mono);font-size:11px;overflow-wrap:anywhere}
 .mpesa-receipt-status.available>div:last-child b{color:var(--ok)}
 .mpesa-receipt-status.blocked>div:last-child b{color:var(--danger)}
+.kopokopo-verified{display:flex;align-items:center;gap:8px;color:var(--ok)}
+.kopokopo-verified svg{width:16px;height:16px;flex:0 0 auto}
 .settlement-inline-total{display:grid;gap:2px;align-content:center}
 .settlement-inline-total span{color:var(--muted-2);font-size:9.5px;font-weight:750;text-transform:uppercase}
 .settlement-inline-total b{font-family:var(--font-mono);font-size:15px}
@@ -6968,28 +7018,49 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [providerTransactionId, setProviderTransactionId] = useState("");
   const submittingRef = useRef(false);
+  const settlementBatchIdRef = useRef(uid("day-settlement"));
+  const providerPaymentIdsRef = useRef(new Map());
+  const actorName = typeof user === "string"
+    ? user
+    : (user?.name || user?.displayName || user?.email || "Supervisor");
   const cashCents = clampPaymentCents(cashAmount, totalCents);
   const mpesaCents = clampPaymentCents(mpesaAmount, totalCents);
   const settlementCents = cashCents + mpesaCents;
   const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
-  const existingReceipt = normalizedMpesaCode.length === 4
+  const savedReceipt = normalizedMpesaCode.length === 4
     ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: normalizedMpesaCode })
     : null;
+  const providerLookup = useKopokopoLookup(branch.id, normalizedMpesaCode);
+  const providerTransaction = providerLookup.transactions.find((transaction) => transaction.id === providerTransactionId)
+    || (providerLookup.transactions.length === 1 ? providerLookup.transactions[0] : null);
+  const verifiedReceipt = kopokopoReceipt(providerTransaction, branch.id, actorName);
+  const existingReceipt = verifiedReceipt || (providerLookup.enabled === true ? null : savedReceipt);
   const receiptTotalCents = existingReceipt?.totalCents || centsFromInput(mpesaReceiptAmount);
   const receiptAvailableCents = existingReceipt?.remainingCents ?? receiptTotalCents;
+  useEffect(() => {
+    if (providerLookup.transactions.length === 1) setProviderTransactionId(providerLookup.transactions[0].id);
+    else if (!providerLookup.transactions.some((transaction) => transaction.id === providerTransactionId)) setProviderTransactionId("");
+  }, [providerLookup.transactions, providerTransactionId]);
+  useEffect(() => {
+    if (!verifiedReceipt) return;
+    setMpesaReceiptAmount(moneyInputValue(verifiedReceipt.totalCents));
+    setMpesaAmount(moneyInputValue(Math.min(totalCents, verifiedReceipt.remainingCents)));
+    setError("");
+  }, [providerTransaction?.id]);
   let validationError = "";
   if (selectedInvoices.length === 0 || totalCents <= 0) validationError = "Select at least one invoice with an outstanding balance.";
   else if (settlementCents <= 0) validationError = "Enter an M-Pesa or cash amount to apply.";
   else if (settlementCents > totalCents) validationError = `The payment cannot exceed ${fmt(totalCents, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) validationError = "Enter the last 4 characters of the M-Pesa code.";
+  else if (mpesaCents > 0 && providerLookup.loading) validationError = "Checking the M-Pesa transaction with Kopo Kopo...";
+  else if (mpesaCents > 0 && providerLookup.transactions.length > 1 && !providerTransaction) validationError = "Select the matching Kopo Kopo transaction.";
+  else if (mpesaCents > 0 && providerLookup.enabled === true && !verifiedReceipt) validationError = "No available Kopo Kopo transaction matches this code.";
   else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) validationError = "This M-Pesa receipt balance is already depleted.";
   else if (mpesaCents > receiptAvailableCents) validationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
   else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) validationError = "Enter the total amount paid on the M-Pesa receipt.";
   const canSettle = !validationError;
-  const actorName = typeof user === "string"
-    ? user
-    : (user?.name || user?.displayName || user?.email || "Supervisor");
 
   const replaceSelection = (nextIds) => {
     const nextTotal = invoices
@@ -7026,6 +7097,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     const code = normalizeMpesaCodeLast4(value);
     const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: code }) : null;
     setMpesaCode(code);
+    setProviderTransactionId("");
     setCashAmount("0");
     if (receipt) {
       setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
@@ -7044,7 +7116,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     setError("");
   };
 
-  const settleInvoices = () => {
+  const settleInvoices = async () => {
     if (submittingRef.current || selectedInvoices.length === 0 || totalCents <= 0) return;
     if (!canSettle) {
       setError(validationError);
@@ -7055,7 +7127,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     setSubmitting(true);
     setError("");
     const ts = now();
-    const batchId = uid("day-settlement");
+    const batchId = settlementBatchIdRef.current;
     const invoiceIds = new Set(selectedInvoices.map((invoice) => invoice.id));
     const paymentRecords = [];
     const invoiceMethods = new Map();
@@ -7079,8 +7151,11 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       const methods = [];
       const mpesaPart = allocation.mpesaCents;
       if (mpesaPart > 0) {
+        if (verifiedReceipt && !providerPaymentIdsRef.current.has(invoice.id)) {
+          providerPaymentIdsRef.current.set(invoice.id, uid("pay"));
+        }
         paymentRecords.push({
-          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
+          id: verifiedReceipt ? providerPaymentIdsRef.current.get(invoice.id) : uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
           method: "m-pesa", amountCents: mpesaPart, status: "captured", recordedBy: user,
           recordedByName: actorName, settledBy: user, settledByName: actorName, ts, synced: false,
           bulkSettlementId: batchId, cashierId: invoice.cashierId || "", cashierName: invoiceCashierName(invoice),
@@ -7112,9 +7187,30 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       return;
     }
 
-    update((data) => ({
-      ...data,
-      invoices: data.invoices.map((invoice) => {
+    try {
+      if (verifiedReceipt && mpesaCents > 0) {
+        const mpesaPayments = paymentRecords.filter((payment) => payment.method === "m-pesa");
+        const providerResult = await allocateKopokopoTransaction({
+          transactionId: providerTransaction.id,
+          branchId: branch.id,
+          idempotencyKey: batchId,
+          allocations: mpesaPayments.map((payment) => ({
+            invoiceId: payment.invoiceId,
+            amountCents: payment.amountCents,
+            localPaymentId: payment.id,
+          })),
+        });
+        const providerAllocationByPayment = new Map((providerResult.allocations || []).map((allocation) => [allocation.localPaymentId || allocation.local_payment_id, allocation]));
+        mpesaPayments.forEach((payment) => {
+          const allocation = providerAllocationByPayment.get(payment.id);
+          payment.providerVerified = true;
+          payment.kopokopoTransactionId = providerTransaction.id;
+          payment.kopokopoAllocationId = allocation?.id || "";
+        });
+      }
+      update((data) => ({
+        ...data,
+        invoices: data.invoices.map((invoice) => {
         if (!invoiceIds.has(invoice.id) || !invoicePaidCents.has(invoice.id)) return invoice;
         const paidCents = invoicePaidCents.get(invoice.id);
         const cleared = paidCents >= Number(invoice.totalCents || 0);
@@ -7133,10 +7229,17 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
           synced: false,
           bulkSettlementId: batchId,
         };
-      }),
-      payments: [...(data.payments || []), ...paymentRecords],
-    }));
-    onClose();
+        }),
+        payments: [...(data.payments || []), ...paymentRecords],
+      }));
+      onClose();
+    } catch (allocationError) {
+      submittingRef.current = false;
+      setSubmitting(false);
+      setError(allocationError.message === "kopokopo_amount_exceeds_balance"
+        ? "The Kopo Kopo balance changed before settlement. Enter the code again to refresh it."
+        : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
+    }
   };
 
   return (
@@ -7194,7 +7297,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
               onChange={(event) => changeMpesaCode(event.target.value)} placeholder="e.g. 7X9Q" />
           </div>
           <div>
-            <label className="label">Total paid on code</label>
+            <label className="label">Total paid on code {verifiedReceipt ? "- verified" : "- manual"}</label>
             <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
               onChange={(event) => changeReceiptAmount(event.target.value)} />
           </div>
@@ -7209,6 +7312,23 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
               onChange={(event) => { setCashAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} />
           </div>
         </div>
+
+        {providerLookup.transactions.length > 1 ? (
+          <div style={{ marginTop: 10 }}>
+            <label className="label">Matching Kopo Kopo transaction</label>
+            <select className="select" value={providerTransactionId} onChange={(event) => setProviderTransactionId(event.target.value)}>
+              <option value="">Select by amount and time</option>
+              {providerLookup.transactions.map((transaction) => (
+                <option key={transaction.id} value={transaction.id}>
+                  {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? new Date(transaction.originationTime).toLocaleString() : transaction.referenceMasked}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
+        {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /> Verified Kopo Kopo transaction{verifiedReceipt.payerName ? ` from ${verifiedReceipt.payerName}` : ""}. The provider balance controls this settlement.</div> : null}
+        {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
 
         {normalizedMpesaCode.length === 4 && existingReceipt ? (
           <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
@@ -7605,19 +7725,42 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [mpesaAmount, setMpesaAmount] = useState("");
   const [cashAmount, setCashAmount] = useState("0");
   const [paymentError, setPaymentError] = useState("");
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [providerTransactionId, setProviderTransactionId] = useState("");
+  const settlementBatchIdRef = useRef(uid("invoice-settlement"));
+  const providerPaymentIdRef = useRef(uid("pay"));
+  const actorName = typeof user === "string"
+    ? user
+    : (user?.name || user?.displayName || user?.email || "Supervisor");
   useEffect(() => {
     setMpesaCode("");
     setMpesaReceiptAmount("");
     setMpesaAmount("");
     setCashAmount("0");
     setPaymentError("");
+    setProviderTransactionId("");
   }, [live.id, out]);
   const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
-  const existingReceipt = normalizedMpesaCode.length === 4
+  const savedReceipt = normalizedMpesaCode.length === 4
     ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: normalizedMpesaCode })
     : null;
+  const providerLookup = useKopokopoLookup(live.branchId, normalizedMpesaCode);
+  const providerTransaction = providerLookup.transactions.find((transaction) => transaction.id === providerTransactionId)
+    || (providerLookup.transactions.length === 1 ? providerLookup.transactions[0] : null);
+  const verifiedReceipt = kopokopoReceipt(providerTransaction, live.branchId, actorName);
+  const existingReceipt = verifiedReceipt || (providerLookup.enabled === true ? null : savedReceipt);
   const receiptTotalCents = existingReceipt?.totalCents || centsFromInput(mpesaReceiptAmount);
   const receiptAvailableCents = existingReceipt?.remainingCents ?? receiptTotalCents;
+  useEffect(() => {
+    if (providerLookup.transactions.length === 1) setProviderTransactionId(providerLookup.transactions[0].id);
+    else if (!providerLookup.transactions.some((transaction) => transaction.id === providerTransactionId)) setProviderTransactionId("");
+  }, [providerLookup.transactions, providerTransactionId]);
+  useEffect(() => {
+    if (!verifiedReceipt) return;
+    setMpesaReceiptAmount(moneyInputValue(verifiedReceipt.totalCents));
+    setMpesaAmount(moneyInputValue(Math.min(out, verifiedReceipt.remainingCents)));
+    setPaymentError("");
+  }, [providerTransaction?.id]);
   const mpesaCents = clampPaymentCents(mpesaAmount, out);
   const cashCents = clampPaymentCents(cashAmount, out);
   const paymentCents = mpesaCents + cashCents;
@@ -7625,16 +7768,16 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   if (paymentCents <= 0) paymentValidationError = "Enter an M-Pesa or cash amount.";
   else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
+  else if (mpesaCents > 0 && providerLookup.loading) paymentValidationError = "Checking the M-Pesa transaction with Kopo Kopo...";
+  else if (mpesaCents > 0 && providerLookup.transactions.length > 1 && !providerTransaction) paymentValidationError = "Select the matching Kopo Kopo transaction.";
+  else if (mpesaCents > 0 && providerLookup.enabled === true && !verifiedReceipt) paymentValidationError = "No available Kopo Kopo transaction matches this code.";
   else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) paymentValidationError = "This M-Pesa receipt balance is already depleted.";
   else if (mpesaCents > receiptAvailableCents) paymentValidationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
   else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) paymentValidationError = "Enter the total amount paid on the M-Pesa receipt.";
-  const canRecordPayment = !paymentValidationError && !voidPending && !voidApproved && out > 0;
+  const canRecordPayment = !recordingPayment && !paymentValidationError && !voidPending && !voidApproved && out > 0;
   const isFullPayment = out > 0 && paymentCents === out;
   const [decisionReason, setDecisionReason] = useState("");
   const [voidError, setVoidError] = useState("");
-  const actorName = typeof user === "string"
-    ? user
-    : (user?.name || user?.displayName || user?.email || "Supervisor");
   const paymentActorName = (payment) => payment.recordedByName || payment.settledByName
     || (typeof payment.recordedBy === "string" ? payment.recordedBy : payment.recordedBy?.name || payment.recordedBy?.displayName || payment.recordedBy?.email)
     || (typeof payment.settledBy === "string" ? payment.settledBy : payment.settledBy?.name || payment.settledBy?.displayName || payment.settledBy?.email)
@@ -7649,12 +7792,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     || (typeof live.settledBy === "string" ? live.settledBy : live.settledBy?.name || live.settledBy?.displayName || live.settledBy?.email)
     || (typeof live.lastSettledBy === "string" ? live.lastSettledBy : live.lastSettledBy?.name || live.lastSettledBy?.displayName || live.lastSettledBy?.email)
     || (latestPayment ? paymentActorName(latestPayment) : "");
-  const recordPayment = () => {
+  const recordPayment = async () => {
     if (!canRecordPayment) {
       setPaymentError(paymentValidationError);
       return;
     }
+    setRecordingPayment(true);
+    setPaymentError("");
     const ts = now();
+    const batchId = settlementBatchIdRef.current;
     const receipt = mpesaCents > 0 ? (existingReceipt || {
       id: uid("mpesa-receipt"),
       branchId: live.branchId,
@@ -7671,7 +7817,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     if (mpesaCents > 0) {
       methods.push("M-Pesa");
       paymentRecords.push({
-        id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
+        id: verifiedReceipt ? providerPaymentIdRef.current : uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
         method: "m-pesa", amountCents: mpesaCents, status: "captured", recordedBy: user,
         recordedByName: actorName, settledBy: user, settledByName: actorName,
         cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
@@ -7687,8 +7833,22 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
       });
     }
-    update((d) => ({ ...d,
-      invoices: d.invoices.map((x) => {
+    try {
+      if (verifiedReceipt && mpesaCents > 0) {
+        const mpesaPayment = paymentRecords.find((payment) => payment.method === "m-pesa");
+        const providerResult = await allocateKopokopoTransaction({
+          transactionId: providerTransaction.id,
+          branchId: live.branchId,
+          idempotencyKey: batchId,
+          allocations: [{ invoiceId: live.id, amountCents: mpesaCents, localPaymentId: mpesaPayment.id }],
+        });
+        const allocation = (providerResult.allocations || [])[0];
+        mpesaPayment.providerVerified = true;
+        mpesaPayment.kopokopoTransactionId = providerTransaction.id;
+        mpesaPayment.kopokopoAllocationId = allocation?.id || "";
+      }
+      update((d) => ({ ...d,
+        invoices: d.invoices.map((x) => {
         if (x.id !== live.id) return x;
         const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + paymentCents);
         const cleared = paidCents >= x.totalCents;
@@ -7706,11 +7866,18 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           status: cleared ? "paid" : "open",
           synced: false,
         };
-      }),
-      payments: [...(d.payments || []), ...paymentRecords],
-    }));
-    setPaymentError("");
-    if (isFullPayment) onClose();
+        }),
+        payments: [...(d.payments || []), ...paymentRecords],
+      }));
+      setPaymentError("");
+      setRecordingPayment(false);
+      if (isFullPayment) onClose();
+    } catch (allocationError) {
+      setRecordingPayment(false);
+      setPaymentError(allocationError.message === "kopokopo_amount_exceeds_balance"
+        ? "The Kopo Kopo balance changed before settlement. Enter the code again to refresh it."
+        : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
+    }
   };
   const decideVoid = (decision) => {
     if (!voidInfo.request || voidInfo.status !== "pending") return;
@@ -7802,6 +7969,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     const code = normalizeMpesaCodeLast4(e.target.value);
                     const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: code }) : null;
                     setMpesaCode(code);
+                    setProviderTransactionId("");
                     setCashAmount("0");
                     if (receipt) {
                       setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
@@ -7813,7 +7981,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     setPaymentError("");
                   }} />
               </label>
-              <label><span>Total paid on code</span>
+              <label><span>Total paid on code {verifiedReceipt ? "- verified" : "- manual"}</span>
                 <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
                   onChange={(e) => {
                     const clean = e.target.value.replace(/[^\d.]/g, "");
@@ -7833,6 +8001,21 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                   onChange={(e) => { setCashAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
               </label>
             </div>
+            {providerLookup.transactions.length > 1 ? (
+              <label style={{ marginTop: 10 }}><span>Matching Kopo Kopo transaction</span>
+                <select className="select" value={providerTransactionId} onChange={(event) => setProviderTransactionId(event.target.value)}>
+                  <option value="">Select by amount and time</option>
+                  {providerLookup.transactions.map((transaction) => (
+                    <option key={transaction.id} value={transaction.id}>
+                      {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? new Date(transaction.originationTime).toLocaleString() : transaction.referenceMasked}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
+            {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /> Verified Kopo Kopo transaction{verifiedReceipt.payerName ? ` from ${verifiedReceipt.payerName}` : ""}. The provider balance controls this settlement.</div> : null}
+            {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
             {normalizedMpesaCode.length === 4 && existingReceipt ? (
               <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
                 <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
@@ -7844,7 +8027,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <div className="invoice-payment-entry">
               <div className="settlement-inline-total"><span>Apply now</span><b>{fmt(paymentCents, cur)}</b><small>{fmt(Math.max(0, out - paymentCents), cur)} remains after payment</small></div>
               <button className="btn btn-primary" disabled={!canRecordPayment} onClick={recordPayment}>
-                <Check /> {isFullPayment ? "Settle full balance" : "Record partial payment"}
+                <Check /> {recordingPayment ? "Recording..." : isFullPayment ? "Settle full balance" : "Record partial payment"}
               </button>
             </div>
             {paymentError || paymentValidationError ? <div className="formerr">{paymentError || paymentValidationError}</div> : null}
@@ -7869,7 +8052,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <summary><span>Payment history <b>{pays.length}</b></span><ChevronDown /></summary>
             <div className="invoice-detail-history">{pays.map((p) => (
               <div className="invoice-detail-history-row" key={p.id}>
-                <div><b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b><span>{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
+                <div><b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b><span>{p.mpesaPayerName ? `${p.mpesaPayerName} - ` : ""}{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
                 <strong>{fmt(p.amountCents, cur)}</strong>
               </div>))}</div>
           </details>

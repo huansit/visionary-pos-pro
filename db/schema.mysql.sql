@@ -222,3 +222,59 @@ CREATE TABLE IF NOT EXISTS auth_verification_codes (
 
 CREATE INDEX auth_verification_codes_lookup_idx
   ON auth_verification_codes (channel, target, purpose, consumed_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS kopokopo_webhook_events (
+  event_id      varchar(191) PRIMARY KEY,
+  topic         varchar(100) NOT NULL,
+  resource_id   varchar(191),
+  payload       json NOT NULL,
+  received_at   datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  processed_at  datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX kopokopo_webhook_events_topic_idx
+  ON kopokopo_webhook_events (topic, received_at);
+
+CREATE TABLE IF NOT EXISTS kopokopo_transactions (
+  id                varchar(191) PRIMARY KEY,
+  webhook_event_id  varchar(191) NOT NULL,
+  reference         varchar(191) NOT NULL,
+  reference_last4   varchar(4) NOT NULL,
+  amount_cents      bigint NOT NULL,
+  allocated_cents   bigint NOT NULL DEFAULT 0,
+  currency          varchar(20) NOT NULL DEFAULT 'KES',
+  status            varchar(40) NOT NULL,
+  till_number       varchar(80),
+  branch_id         varchar(191),
+  payer_name        varchar(255),
+  origination_time  datetime,
+  reversed_at       datetime,
+  created_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT kopokopo_transactions_reference_unique UNIQUE (reference)
+);
+
+CREATE INDEX kopokopo_transactions_lookup_idx
+  ON kopokopo_transactions (branch_id, reference_last4, status, origination_time);
+
+CREATE TABLE IF NOT EXISTS kopokopo_allocations (
+  id                      varchar(191) PRIMARY KEY,
+  transaction_id          varchar(191) NOT NULL,
+  invoice_id               varchar(191) NOT NULL,
+  branch_id                varchar(191) NOT NULL,
+  amount_cents             bigint NOT NULL,
+  allocated_by             varchar(191),
+  allocated_by_name        varchar(255),
+  batch_idempotency_key    varchar(191) NOT NULL,
+  local_payment_id         varchar(191),
+  status                   varchar(40) NOT NULL DEFAULT 'active',
+  allocated_at             datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT kopokopo_allocations_transaction_fk FOREIGN KEY (transaction_id) REFERENCES kopokopo_transactions(id),
+  CONSTRAINT kopokopo_allocations_batch_invoice_unique UNIQUE (batch_idempotency_key, invoice_id),
+  CONSTRAINT kopokopo_allocations_local_payment_unique UNIQUE (local_payment_id)
+);
+
+CREATE INDEX kopokopo_allocations_transaction_idx
+  ON kopokopo_allocations (transaction_id, allocated_at);
+CREATE INDEX kopokopo_allocations_invoice_idx
+  ON kopokopo_allocations (invoice_id, allocated_at);

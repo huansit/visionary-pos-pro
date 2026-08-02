@@ -24,11 +24,17 @@ export function mpesaReceiptLedger(payments, { branchId, codeLast4 } = {}) {
       allocatedCents: 0,
       registeredAt: Number(payment.mpesaReceiptRegisteredAt || payment.ts || 0),
       registeredByName: normalizeText(payment.mpesaReceiptRegisteredByName || payment.recordedByName),
+      payerName: normalizeText(payment.mpesaPayerName),
+      providerVerified: Boolean(payment.providerVerified),
+      kopokopoTransactionId: normalizeText(payment.kopokopoTransactionId),
       allocations: [],
     };
     current.totalCents = Math.max(current.totalCents, Math.max(0, Math.round(Number(payment.mpesaReceiptTotalCents) || 0)));
     current.allocatedCents += Math.max(0, Math.round(Number(payment.amountCents) || 0));
     current.registeredAt = Math.min(current.registeredAt || Infinity, Number(payment.mpesaReceiptRegisteredAt || payment.ts || 0)) || 0;
+    current.payerName ||= normalizeText(payment.mpesaPayerName);
+    current.providerVerified ||= Boolean(payment.providerVerified);
+    current.kopokopoTransactionId ||= normalizeText(payment.kopokopoTransactionId);
     current.allocations.push(payment);
     groups.set(receiptId, current);
   }
@@ -79,11 +85,15 @@ export function allocateInvoicePayments(invoices, { mpesaCents = 0, cashCents = 
 }
 
 export function mpesaReceiptPaymentFields(receipt) {
-  return {
+  const fields = {
     mpesaReceiptId: receipt.id,
     mpesaCodeLast4: receipt.codeLast4,
     mpesaReceiptTotalCents: receipt.totalCents,
     mpesaReceiptRegisteredAt: receipt.registeredAt,
     mpesaReceiptRegisteredByName: receipt.registeredByName,
   };
+  if (receipt.providerVerified) fields.providerVerified = true;
+  if (receipt.kopokopoTransactionId) fields.kopokopoTransactionId = receipt.kopokopoTransactionId;
+  if (receipt.payerName) fields.mpesaPayerName = receipt.payerName;
+  return fields;
 }
