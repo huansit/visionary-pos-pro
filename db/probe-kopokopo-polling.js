@@ -16,7 +16,7 @@ console.log("VISIONPOS Kopo Kopo polling probe");
 console.log(`Scope: ${config.scope}${config.scopeReference ? ` (${config.scopeReference})` : ""}`);
 console.log(`Range: ${from.toISOString()} to ${to.toISOString()}`);
 
-pollKopopoTransactions({
+pollKopokopoTransactions({
   fromTime: from.toISOString(),
   toTime: to.toISOString(),
   timeoutMs: 60_000,
