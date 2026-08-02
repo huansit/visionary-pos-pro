@@ -110,6 +110,18 @@ test("rejects a webhook whose raw-body signature is invalid", async () => {
     .expect({ error: "invalid_kopokopo_signature" });
 });
 
+test("keeps unsupported and malformed subscription behavior stable", async () => {
+  await signedWebhook({ topic: "unsupported_provider_event", id: "unsupported-event" })
+    .expect(202)
+    .expect({ ok: true, ignored: true });
+
+  const malformed = webhookPayload({ eventId: "malformed-subscription-event" });
+  delete malformed.event.resource.reference;
+  await signedWebhook(malformed)
+    .expect(400)
+    .expect({ error: "invalid_kopokopo_webhook" });
+});
+
 test("stores a verified payment once and exposes only a branch-scoped masked lookup", async () => {
   const payload = webhookPayload();
   await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
@@ -146,6 +158,105 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
     .set("X-Session-Token", branchSessionToken)
     .expect(403)
     .expect({ error: "branch_not_authorized" });
+});
+
+test("stores signed polling callbacks instead of silently ignoring them", async () => {
+  const payload = {
+    data: {
+      id: "polling-result-1",
+      type: "polling",
+      attributes: {
+        status: "Success",
+        created_at: "2026-08-02T11:01:00+03:00",
+        transactions: [{
+          type: "Buygoods Transaction",
+          resource: {
+            id: "callback-poll-transaction",
+            amount: "275.50",
+            status: "Received",
+            currency: "KES",
+            reference: "CALLBACK5678",
+            till_number: "000000",
+            sender_phone_number: "+254711111111",
+            sender_first_name: "Callback",
+            sender_last_name: "Customer",
+            origination_time: "2026-08-02T11:00:00+03:00",
+          },
+        }, {
+          type: "External Till to Till Transaction",
+          resource: { id: "callback-ignored-b2b", status: "Complete" },
+        }],
+      },
+    },
+  };
+
+  const response = await signedWebhook(payload).expect(200);
+  assert.deepEqual(response.body, {
+    ok: true,
+    kind: "polling",
+    received: 2,
+    stored: 1,
+    duplicates: 0,
+    ignored: 1,
+  });
+  await signedWebhook(payload).expect(200).expect((result) => {
+    assert.equal(result.body.stored, 0);
+    assert.equal(result.body.duplicates, 1);
+  });
+
+  const stored = await pool.query(
+    "SELECT reference_last4, amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+    ["callback-poll-transaction"]
+  );
+  assert.equal(stored.rows[0].reference_last4, "5678");
+  assert.equal(Number(stored.rows[0].amount_cents), 27550);
+  assert.equal(stored.rows[0].payer_name, "Callback Customer");
+
+  const audit = await pool.query(
+    "SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1",
+    ["poll:callback-poll-transaction:received"]
+  );
+  assert.equal(audit.rows[0].payload.event.resource.sender_phone_number, undefined);
+  assert.equal(audit.rows[0].payload.event.resource.sender_first_name, undefined);
+});
+
+test("stores signed incoming-payment callbacks through the shared ledger", async () => {
+  const payload = {
+    data: {
+      id: "incoming-request-1",
+      type: "incoming_payment",
+      attributes: {
+        status: "Success",
+        created_at: "2026-08-02T11:31:00+03:00",
+        event: {
+          type: "Incoming Payment Request",
+          resource: {
+            id: "incoming-callback-transaction",
+            amount: "125.00",
+            status: "Received",
+            currency: "KES",
+            reference: "INCOMING4321",
+            till_number: "000000",
+            sender_first_name: "Incoming",
+            sender_last_name: "Customer",
+            origination_time: "2026-08-02T11:30:00+03:00",
+          },
+        },
+      },
+    },
+  };
+
+  await signedWebhook(payload).expect(200).expect((response) => {
+    assert.equal(response.body.kind, "incoming_payment");
+    assert.equal(response.body.stored, 1);
+  });
+  const stored = await pool.query(
+    "SELECT reference_last4, amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+    ["incoming-callback-transaction"]
+  );
+  assert.equal(stored.rows[0].reference_last4, "4321");
+  assert.equal(Number(stored.rows[0].amount_cents), 12500);
+  assert.equal(stored.rows[0].payer_name, "Incoming Customer");
 });
 
 test("polls the official provider endpoint using the configured company scope", async () => {

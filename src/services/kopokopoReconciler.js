@@ -1,6 +1,7 @@
 import { ready } from "../db.js";
 import {
   kopokopoConfig,
+  kopokopoTransactionEvent,
   parseKopokopoWebhook,
   pollKopokopoTransactions,
 } from "./kopokopo.js";
@@ -13,31 +14,11 @@ let startupTimer = null;
 let activeRun = null;
 let lastCompletedAt = null;
 
-function providerEvent(transaction, index, polledAt) {
-  const resource = transaction?.resource;
-  if (String(transaction?.type || "").trim().toLowerCase() !== "buygoods transaction" || !resource?.id) {
-    return null;
-  }
-  const status = String(resource.status || "").trim().toLowerCase();
-  if (status !== "received" && status !== "reversed") return null;
-  const reversed = status === "reversed";
-  return {
-    topic: reversed ? "buygoods_transaction_reversed" : "buygoods_transaction_received",
-    id: `poll:${resource.id}:${status}`,
-    created_at: resource.origination_time || polledAt,
-    event: {
-      type: transaction.type,
-      resource,
-    },
-    _links: { source: "kopokopo_polling", index },
-  };
-}
-
 export async function ingestKopokopoPollingTransactions(transactions, config = kopokopoConfig()) {
   const polledAt = new Date().toISOString();
   const summary = { received: Array.isArray(transactions) ? transactions.length : 0, stored: 0, duplicates: 0, ignored: 0 };
   for (const [index, transaction] of (Array.isArray(transactions) ? transactions : []).entries()) {
-    const body = providerEvent(transaction, index, polledAt);
+    const body = kopokopoTransactionEvent(transaction, { index, eventTime: polledAt });
     if (!body) {
       summary.ignored += 1;
       continue;

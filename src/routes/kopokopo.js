@@ -5,6 +5,7 @@ import { isMySql, q, tx } from "../db.js";
 import {
   createKopokopoSubscriptions,
   kopokopoConfig,
+  normalizeKopokopoCallback,
   parseKopokopoWebhook,
   validKopokopoSignature,
 } from "../services/kopokopo.js";
@@ -143,11 +144,40 @@ router.post("/webhook", async (req, res) => {
     if (!validKopokopoSignature(req.rawBody, req.get("x-kopokopo-signature"), config.webhookSecret)) {
       return res.status(401).json({ error: "invalid_kopokopo_signature" });
     }
-    const parsed = parseKopokopoWebhook(req.body, config);
-    if (!parsed.supported) return res.status(202).json({ ok: true, ignored: true });
-    if (!parsed.valid) return res.status(400).json({ error: "invalid_kopokopo_webhook" });
-    const result = await storeKopokopoEvent(parsed, req.body);
-    return res.status(200).json({ ok: true, ...result });
+    const callback = normalizeKopokopoCallback(req.body);
+    if (!callback.recognized) return res.status(202).json({ ok: true, ignored: true });
+    if (!callback.events.length) return res.status(202).json({ ok: true, ignored: true, kind: callback.kind });
+
+    const summary = {
+      received: callback.received,
+      stored: 0,
+      duplicates: 0,
+      ignored: Math.max(0, callback.received - callback.events.length),
+    };
+    for (const body of callback.events) {
+      const parsed = parseKopokopoWebhook(body, config);
+      if (!parsed.supported) {
+        summary.ignored += 1;
+        continue;
+      }
+      if (!parsed.valid) {
+        if (callback.kind === "subscription") {
+          return res.status(400).json({ error: "invalid_kopokopo_webhook" });
+        }
+        summary.ignored += 1;
+        continue;
+      }
+      const result = await storeKopokopoEvent(parsed, body);
+      if (result.duplicate) summary.duplicates += 1;
+      else summary.stored += 1;
+    }
+    if (callback.kind === "subscription" && summary.ignored > 0) {
+      return res.status(202).json({ ok: true, ignored: true });
+    }
+    if (callback.kind === "subscription") {
+      return res.status(200).json({ ok: true, duplicate: summary.duplicates === 1 });
+    }
+    return res.status(200).json({ ok: true, kind: callback.kind, ...summary });
   } catch (error) {
     console.error("Kopo Kopo webhook failed:", error);
     return res.status(500).json({ error: "kopokopo_webhook_failed" });

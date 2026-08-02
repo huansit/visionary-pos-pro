@@ -97,13 +97,81 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
   };
 }
 
+export function kopokopoTransactionEvent(transaction, {
+  source = "kopokopo_polling",
+  eventIdPrefix = "poll",
+  index = 0,
+  eventTime = new Date().toISOString(),
+} = {}) {
+  const resource = transaction?.resource;
+  if (text(transaction?.type).toLowerCase() !== "buygoods transaction" || !text(resource?.id)) {
+    return null;
+  }
+  const status = text(resource?.status).toLowerCase();
+  if (status !== "received" && status !== "reversed") return null;
+  return {
+    topic: status === "reversed" ? "buygoods_transaction_reversed" : "buygoods_transaction_received",
+    id: `${eventIdPrefix}:${text(resource.id)}:${status}`,
+    created_at: text(resource.origination_time) || eventTime,
+    event: {
+      type: "Buygoods Transaction",
+      resource,
+    },
+    _links: { source, index },
+  };
+}
+
+export function normalizeKopokopoCallback(body) {
+  if (text(body?.topic)) {
+    return { kind: "subscription", recognized: true, received: 1, events: [body] };
+  }
+
+  const data = body?.data;
+  const attributes = data?.attributes;
+  if (!attributes || typeof attributes !== "object") {
+    return { kind: "unknown", recognized: false, received: 0, events: [] };
+  }
+
+  const eventTime = text(attributes.created_at) || new Date().toISOString();
+  if (Array.isArray(attributes.transactions)) {
+    const events = attributes.transactions
+      .map((transaction, index) => kopokopoTransactionEvent(transaction, {
+        source: "kopokopo_polling",
+        index,
+        eventTime,
+      }))
+      .filter(Boolean);
+    return { kind: "polling", recognized: true, received: attributes.transactions.length, events };
+  }
+
+  const resource = attributes?.event?.resource;
+  if (resource && typeof resource === "object") {
+    const event = kopokopoTransactionEvent({ type: "Buygoods Transaction", resource }, {
+      source: "kopokopo_incoming_payment",
+      eventIdPrefix: "incoming",
+      eventTime,
+    });
+    return { kind: "incoming_payment", recognized: true, received: event ? 1 : 0, events: event ? [event] : [] };
+  }
+
+  if (text(data?.type).toLowerCase().includes("incoming") || text(data?.type).toLowerCase() === "polling") {
+    return { kind: text(data.type).toLowerCase(), recognized: true, received: 0, events: [] };
+  }
+  return { kind: "unknown", recognized: false, received: 0, events: [] };
+}
+
 export function redactKopokopoPayload(body) {
   const payload = JSON.parse(JSON.stringify(body || {}));
-  const resource = payload?.event?.resource;
-  if (resource && typeof resource === "object") {
+  const redactResource = (resource) => {
+    if (!resource || typeof resource !== "object") return;
     for (const field of ["sender_phone_number", "sender_first_name", "sender_middle_name", "sender_last_name"]) {
       delete resource[field];
     }
+  };
+  redactResource(payload?.event?.resource);
+  redactResource(payload?.data?.attributes?.event?.resource);
+  for (const transaction of (Array.isArray(payload?.data?.attributes?.transactions) ? payload.data.attributes.transactions : [])) {
+    redactResource(transaction?.resource);
   }
   return payload;
 }
