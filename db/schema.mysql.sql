@@ -257,6 +257,33 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
 CREATE INDEX kopokopo_transactions_lookup_idx
   ON kopokopo_transactions (branch_id, reference_last4, status, origination_time);
 
+CREATE TABLE IF NOT EXISTS kopokopo_incoming_payment_requests (
+  id                       varchar(191) PRIMARY KEY,
+  idempotency_key          varchar(191) NOT NULL UNIQUE,
+  branch_id                varchar(191) NOT NULL,
+  till_number              varchar(80) NOT NULL,
+  amount_cents             bigint NOT NULL,
+  currency                 varchar(20) NOT NULL DEFAULT 'KES',
+  status                   varchar(40) NOT NULL DEFAULT 'creating',
+  provider_status          varchar(80),
+  provider_location        varchar(500) UNIQUE,
+  provider_request_id      varchar(191),
+  provider_transaction_id  varchar(191),
+  attempts                 int NOT NULL DEFAULT 0,
+  next_check_at            datetime,
+  expires_at               datetime NOT NULL,
+  last_error               varchar(255),
+  created_by               varchar(191),
+  created_at               datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at               datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at             datetime
+);
+
+CREATE INDEX kopokopo_incoming_payment_due_idx
+  ON kopokopo_incoming_payment_requests (status, next_check_at);
+CREATE INDEX kopokopo_incoming_payment_branch_idx
+  ON kopokopo_incoming_payment_requests (branch_id, created_at);
+
 CREATE TABLE IF NOT EXISTS kopokopo_allocations (
   id                      varchar(191) PRIMARY KEY,
   transaction_id          varchar(191) NOT NULL,

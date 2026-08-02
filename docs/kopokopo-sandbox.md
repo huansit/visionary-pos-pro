@@ -2,6 +2,8 @@
 
 VISIONPOS receives Kopo Kopo Buygoods webhooks and makes verified M-Pesa balances available to supervisor invoice settlement. Credentials stay on the API server and are never sent to the browser or cashier app.
 
+VISIONPOS also tracks M-Pesa STK prompts started from invoice settlement. If Kopo Kopo does not deliver the webhook, the API reads that request's authenticated status resource and stores the completed transaction through the same idempotent ledger. This recovery is intentionally limited to STK requests created by VISIONPOS; arbitrary till payments still require a valid provider webhook or a successful provider polling job.
+
 ## Server configuration
 
 Set these values in `.env.live`:
@@ -36,11 +38,21 @@ The subscription command creates both `buygoods_transaction_received` and `buygo
 
 ## Test
 
-1. Open **Incoming Payment Simulations** in the Kopo Kopo sandbox.
-2. Simulate a Buygoods payment.
-3. In VISIONPOS invoice settlement, enter the final four characters of the simulated M-Pesa reference.
-4. Confirm the form displays **Verified Kopo Kopo transaction** and the provider amount.
-5. Apply part of the balance, then reuse the same code on another invoice and confirm only the remaining balance is available.
+Run the end-to-end diagnostic first:
+
+```bash
+npm run kopokopo:diagnose
+```
+
+The sandbox may omit its Buygoods webhook. In that case the diagnostic reports a warning, verifies the authenticated status fallback, and must still finish with successful persistence and cleanup messages.
+
+For the operator flow:
+
+1. Open an unpaid invoice in VISIONPOS.
+2. Expand **Send M-Pesa prompt**, enter the customer's phone and amount, then send it.
+3. Complete the sandbox prompt and wait for **Payment received and verified**.
+4. Confirm the final four reference characters, amount, and payer are populated from Kopo Kopo.
+5. Record the payment. The same verified reference can cover later invoices only until its remaining balance reaches zero.
 
 Webhook signatures are checked against the exact raw request body before an event is stored. Duplicate webhook IDs and settlement retries are idempotent, and allocation uses a row lock so concurrent supervisors cannot spend the same balance twice.
 

@@ -1173,6 +1173,19 @@ async function lookupKopokopoTransactions(branchId, codeLast4) {
 async function allocateKopokopoTransaction(payload) {
   return await authApi("/api/integrations/kopokopo/allocations", payload, { session: true });
 }
+async function requestKopokopoIncomingPayment(payload) {
+  return await authApi("/api/integrations/kopokopo/incoming-payments", payload, { session: true });
+}
+async function getKopokopoIncomingPayment(id) {
+  return await authGet(`/api/integrations/kopokopo/incoming-payments/${encodeURIComponent(id)}`, { session: true });
+}
+function normalizeKenyanPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (/^254\d{9}$/.test(digits)) return `+${digits}`;
+  if (/^0\d{9}$/.test(digits)) return `+254${digits.slice(1)}`;
+  if (/^[17]\d{8}$/.test(digits)) return `+254${digits}`;
+  return "";
+}
 function kopokopoReceipt(transaction, branchId, actorName) {
   if (!transaction) return null;
   return {
@@ -3883,8 +3896,14 @@ body{overscroll-behavior:none}
 .invoice-detail-disclosure summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;color:var(--text);font-size:12.5px;font-weight:750;cursor:pointer;list-style:none}
 .invoice-detail-disclosure summary::-webkit-details-marker{display:none}
 .invoice-detail-disclosure summary>span{display:flex;align-items:center;gap:8px}
+.invoice-detail-disclosure summary>span>svg{width:15px;height:15px;color:var(--accent)}
 .invoice-detail-disclosure summary>svg{width:16px;height:16px;color:var(--muted-2);transition:transform .15s ease}
 .invoice-detail-disclosure[open] summary>svg{transform:rotate(180deg)}
+.stk-request-disclosure{margin-top:10px;border-bottom:1px solid var(--border-soft)}
+.stk-request-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,.55fr) auto;gap:8px;align-items:end;padding:0 0 10px}
+.stk-request-form label{display:grid;gap:4px;min-width:0}
+.stk-request-form label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.stk-request-form .btn{height:40px;white-space:nowrap}
 .invoice-detail-history{display:grid;padding-bottom:8px}
 .invoice-detail-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 0;border-top:1px solid var(--border-soft)}
 .invoice-detail-history-row>div{display:grid;gap:2px;min-width:0}
@@ -3895,7 +3914,7 @@ body{overscroll-behavior:none}
 .invoice-detail-note-form textarea{min-height:58px;padding-top:10px;resize:vertical}
 .invoice-detail-footer{display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border-soft)}
 @media (max-width:1180px){.settlebar{grid-template-columns:1fr 1fr}.settlebar .seg,.settlesearch{grid-column:1 / -1}}
-@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}.invoice-payment-toolbar{align-items:stretch;flex-direction:column}.invoice-payment-methods{width:100%}.invoice-payment-toolbar>.btn{width:100%}.invoice-payment-entry{grid-template-columns:1fr}.invoice-payment-entry .btn{width:100%}.mpesa-receipt-status{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:820px){.settlebar{grid-template-columns:1fr}.settlebar .seg,.settlesearch{grid-column:auto}.settledates{grid-column:auto;justify-content:stretch}.settledates label{flex:1 1 140px;min-width:0}.settlement-heading .settlement-scope{width:100%;margin-left:0;text-align:left}.settlement-totals{grid-template-columns:1fr}.settlement-modal{max-width:min(680px,calc(100vw - 20px))}.invoice-detail-totals{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-detail-note-form{grid-template-columns:1fr}.invoice-detail-note-form .btn{width:100%}.invoice-payment-toolbar{align-items:stretch;flex-direction:column}.invoice-payment-methods{width:100%}.invoice-payment-toolbar>.btn{width:100%}.invoice-payment-entry{grid-template-columns:1fr}.invoice-payment-entry .btn{width:100%}.mpesa-receipt-status{grid-template-columns:repeat(2,minmax(0,1fr))}.stk-request-form{grid-template-columns:1fr}.stk-request-form .btn{width:100%}}
 .tablewrap{overflow-x:auto}
 .tblscroll{max-height:calc(100dvh - 340px);overflow:auto;border:1px solid var(--border-soft);border-radius:14px}
 .tblscroll.lg{max-height:calc(100dvh - 230px)}
@@ -7727,6 +7746,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [providerTransactionId, setProviderTransactionId] = useState("");
+  const [stkPhone, setStkPhone] = useState("");
+  const [stkAmount, setStkAmount] = useState("");
+  const [stkRequest, setStkRequest] = useState(null);
+  const [stkBusy, setStkBusy] = useState(false);
+  const [stkError, setStkError] = useState("");
+  const stkIdempotencyKeyRef = useRef("");
   const settlementBatchIdRef = useRef(uid("invoice-settlement"));
   const providerPaymentIdRef = useRef(uid("pay"));
   const actorName = typeof user === "string"
@@ -7739,6 +7764,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setCashAmount("0");
     setPaymentError("");
     setProviderTransactionId("");
+    setStkPhone("");
+    setStkAmount(moneyInputValue(out));
+    setStkRequest(null);
+    setStkBusy(false);
+    setStkError("");
+    stkIdempotencyKeyRef.current = "";
   }, [live.id, out]);
   const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
   const savedReceipt = normalizedMpesaCode.length === 4
@@ -7761,6 +7792,48 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setMpesaAmount(moneyInputValue(Math.min(out, verifiedReceipt.remainingCents)));
     setPaymentError("");
   }, [providerTransaction?.id]);
+  useEffect(() => {
+    const requestId = stkRequest?.id;
+    if (!requestId || ["completed", "failed", "expired"].includes(stkRequest.status)) return undefined;
+    let cancelled = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        const result = await getKopokopoIncomingPayment(requestId);
+        if (cancelled) return;
+        const nextRequest = result.request || null;
+        setStkRequest(nextRequest);
+        if (nextRequest?.status === "completed" && result.transaction) {
+          const transaction = result.transaction;
+          setMpesaCode(transaction.referenceLast4 || "");
+          setProviderTransactionId(transaction.id || "");
+          setMpesaReceiptAmount(moneyInputValue(transaction.amountCents));
+          setMpesaAmount(moneyInputValue(Math.min(out, transaction.remainingCents)));
+          setCashAmount("0");
+          setPaymentError("");
+          setStkError("");
+          return;
+        }
+        if (["failed", "expired"].includes(nextRequest?.status)) {
+          setStkError(nextRequest.status === "expired"
+            ? "The M-Pesa request expired before payment was confirmed."
+            : "Kopo Kopo did not complete this M-Pesa request.");
+          return;
+        }
+        timer = window.setTimeout(poll, 3_000);
+      } catch (_) {
+        if (!cancelled) {
+          setStkError("Payment confirmation is delayed. VISIONPOS will keep checking securely in the background.");
+          timer = window.setTimeout(poll, 5_000);
+        }
+      }
+    };
+    timer = window.setTimeout(poll, 1_500);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [stkRequest?.id, out]);
   const mpesaCents = clampPaymentCents(mpesaAmount, out);
   const cashCents = clampPaymentCents(cashAmount, out);
   const paymentCents = mpesaCents + cashCents;
@@ -7792,6 +7865,45 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     || (typeof live.settledBy === "string" ? live.settledBy : live.settledBy?.name || live.settledBy?.displayName || live.settledBy?.email)
     || (typeof live.lastSettledBy === "string" ? live.lastSettledBy : live.lastSettledBy?.name || live.lastSettledBy?.displayName || live.lastSettledBy?.email)
     || (latestPayment ? paymentActorName(latestPayment) : "");
+  const sendStkPrompt = async () => {
+    const phoneNumber = normalizeKenyanPhone(stkPhone);
+    const amountCents = centsFromInput(stkAmount);
+    if (!phoneNumber) {
+      setStkError("Enter a valid Kenyan M-Pesa phone number.");
+      return;
+    }
+    if (amountCents <= 0 || amountCents > out) {
+      setStkError(`Enter an amount between KES 0.01 and ${fmt(out, cur)}.`);
+      return;
+    }
+    const invoiceKey = String(live.id || live.number || "invoice").replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 120) || "invoice";
+    const baseIdempotencyKey = `invoice-stk:${invoiceKey}:${out}:${amountCents}`;
+    if (!stkIdempotencyKeyRef.current) stkIdempotencyKeyRef.current = baseIdempotencyKey;
+    if (["failed", "expired"].includes(stkRequest?.status)) {
+      stkIdempotencyKeyRef.current = `${baseIdempotencyKey}:${uid("retry").slice(-12)}`;
+    }
+    setStkBusy(true);
+    setStkError("");
+    try {
+      const result = await requestKopokopoIncomingPayment({
+        idempotencyKey: stkIdempotencyKeyRef.current,
+        branchId: live.branchId,
+        amountCents,
+        phoneNumber,
+        firstName: live.customerName || "VISIONPOS",
+        lastName: "Customer",
+        reference: live.number || live.receiptNo || live.id,
+        notes: `Invoice ${live.number || live.receiptNo || live.id}`,
+      });
+      setStkRequest(result.request || null);
+    } catch (requestError) {
+      setStkError(requestError.message === "kopokopo_branch_till_not_configured"
+        ? "This branch has no Kopo Kopo till configured."
+        : "The M-Pesa prompt could not be sent. No invoice was changed.");
+    } finally {
+      setStkBusy(false);
+    }
+  };
   const recordPayment = async () => {
     if (!canRecordPayment) {
       setPaymentError(paymentValidationError);
@@ -7962,6 +8074,25 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               <span className="muted">Use a saved M-Pesa balance, cash, or both.</span>
               <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button>
             </div>
+            <details className="invoice-detail-disclosure stk-request-disclosure">
+              <summary><span><Smartphone /> Send M-Pesa prompt</span><ChevronDown /></summary>
+              <div className="stk-request-form">
+                <label><span>Customer phone</span>
+                  <input className="input" inputMode="tel" autoComplete="tel" value={stkPhone} placeholder="07XXXXXXXX"
+                    onChange={(event) => { setStkPhone(event.target.value); setStkError(""); }} />
+                </label>
+                <label><span>Amount</span>
+                  <input className="input" inputMode="decimal" value={stkAmount}
+                    onChange={(event) => { setStkAmount(event.target.value.replace(/[^\d.]/g, "")); setStkError(""); }} />
+                </label>
+                <button type="button" className="btn btn-ghost" disabled={stkBusy || ["creating", "pending", "retrying"].includes(stkRequest?.status)} onClick={sendStkPrompt}>
+                  <Smartphone /> {stkBusy ? "Sending..." : ["creating", "pending", "retrying"].includes(stkRequest?.status) ? "Waiting for payment" : "Send prompt"}
+                </button>
+              </div>
+              {stkRequest?.status === "completed" ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /> Payment received and verified. The M-Pesa fields below are ready.</div> : null}
+              {["creating", "pending", "retrying"].includes(stkRequest?.status) ? <div className="notice compact-notice">Waiting for the customer to complete the M-Pesa prompt. You may close this invoice; VISIONPOS will continue checking.</div> : null}
+              {stkError ? <div className="formerr">{stkError}</div> : null}
+            </details>
             <div className="grid2 mpesa-receipt-grid invoice-split-payment">
               <label><span>Last 4 of M-Pesa code</span>
                 <input className="input innum" inputMode="text" maxLength={4} value={mpesaCode} placeholder="e.g. 7X9Q"

@@ -5,9 +5,11 @@ import {
   kopokopoConfig,
   requestKopokopoAccessToken,
 } from "../src/services/kopokopo.js";
+import { ingestKopokopoIncomingPaymentStatus } from "../src/services/kopokopoIncomingPayments.js";
 
 const config = kopokopoConfig();
 const providerWaitMs = 60_000;
+const webhookGraceMs = 10_000;
 const diagnosticTill = process.env.KOPOKOPO_DIAGNOSTIC_TILL
   || (config.scope === "till" ? config.scopeReference : "000000");
 
@@ -171,7 +173,7 @@ async function waitForProviderResult(accessToken, location) {
 
 async function waitForStoredProviderTransaction(resource) {
   if (!resource?.id && !resource?.reference) return null;
-  const deadline = Date.now() + providerWaitMs;
+  const deadline = Date.now() + webhookGraceMs;
   while (Date.now() < deadline) {
     const result = await q(
       "SELECT id, webhook_event_id, reference_last4, amount_cents, status, branch_id FROM kopokopo_transactions WHERE id = $1 OR upper(reference) = $2 LIMIT 1",
@@ -224,11 +226,21 @@ async function main() {
     });
   }
 
-  const stored = await waitForStoredProviderTransaction(resource);
-  if (!stored) {
-    fail("Kopo Kopo completed the sandbox payment but did not deliver its Buygoods webhook to VISIONPOS within 60 seconds.");
+  let stored = await waitForStoredProviderTransaction(resource);
+  if (stored) {
+    console.log("PASS Kopo Kopo Buygoods webhook delivered and stored");
+  } else {
+    console.log("WARN Kopo Kopo did not deliver the Buygoods webhook; testing authenticated status recovery");
+    const recovered = await ingestKopokopoIncomingPaymentStatus(attributes, {
+      branchId: config.sandboxBranchId,
+      tillNumber: diagnosticTill,
+      amountCents: 100,
+    }, config);
+    if (recovered.pending) fail("Kopo Kopo status resource did not contain a completed Buygoods transaction.");
+    stored = await waitForStoredProviderTransaction(resource);
+    if (!stored) fail("VISIONPOS could not persist the authenticated Kopo Kopo status result.");
+    console.log("PASS authenticated payment-status recovery stored the missing Buygoods transaction");
   }
-  console.log("PASS Kopo Kopo Buygoods webhook delivered and stored");
   await cleanupProviderTransaction(stored);
   console.log("PASS diagnostic database rows cleaned up");
 }

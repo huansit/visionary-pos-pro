@@ -14,6 +14,8 @@ process.env.BCRYPT_ROUNDS = "10";
 process.env.ADMIN_EMAIL_CODE_REQUIRED = "0";
 process.env.KOPOKOPO_ENABLED = "1";
 process.env.KOPOKOPO_MODE = "sandbox";
+process.env.KOPOKOPO_CLIENT_ID = "test-client-id";
+process.env.KOPOKOPO_CLIENT_SECRET = "test-client-secret";
 process.env.KOPOKOPO_API_KEY = "test-kopokopo-api-key";
 process.env.KOPOKOPO_WEBHOOK_URL = "https://visionarypos.cloud/api/integrations/kopokopo/webhook";
 process.env.KOPOKOPO_SANDBOX_BRANCH_ID = "b_sip";
@@ -21,7 +23,11 @@ process.env.KOPOKOPO_SANDBOX_BRANCH_ID = "b_sip";
 const { pool, ready } = await import("../src/db.js");
 await ready;
 const { default: app } = await import("../src/server.js");
-const { kopokopoConfig, pollKopokopoTransactions } = await import("../src/services/kopokopo.js");
+const {
+  kopokopoConfig,
+  pollKopokopoTransactions,
+  readKopokopoIncomingPayment,
+} = await import("../src/services/kopokopo.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
 
 let sessionToken = "";
@@ -257,6 +263,232 @@ test("stores signed incoming-payment callbacks through the shared ledger", async
   assert.equal(stored.rows[0].reference_last4, "4321");
   assert.equal(Number(stored.rows[0].amount_cents), 12500);
   assert.equal(stored.rows[0].payer_name, "Incoming Customer");
+});
+
+test("recovers an accepted incoming payment from its authenticated status without duplicating a late webhook", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const providerLocation = "https://sandbox.kopokopo.com/api/v2/incoming_payments/recovery-request-1";
+  const providerResource = {
+    id: "status-recovery-transaction",
+    amount: "125.00",
+    status: "Received",
+    currency: "KES",
+    reference: "RECOVERY9Z8Y",
+    till_number: "000000",
+    sender_phone_number: "+254711111111",
+    sender_first_name: "Recovery",
+    sender_last_name: "Customer",
+    origination_time: "2026-08-02T11:45:00+03:00",
+  };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "test-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/incoming_payments") && options.method === "POST") {
+      return new Response("", { status: 201, headers: { Location: providerLocation } });
+    }
+    assert.equal(String(url), providerLocation);
+    assert.equal(options.headers.Authorization, "Bearer test-access-token");
+    return new Response(JSON.stringify({
+      data: {
+        type: "incoming_payment",
+        attributes: {
+          status: "Received",
+          event: { type: "Incoming Payment Request", resource: providerResource },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  const payload = {
+    idempotencyKey: "invoice-settlement-recovery-1",
+    branchId: "b_sip",
+    tillNumber: "999999",
+    amountCents: 12500,
+    phoneNumber: "+254711111111",
+    firstName: "Recovery",
+    lastName: "Customer",
+    reference: "INV-RECOVERY-1",
+  };
+  try {
+    const created = await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send(payload)
+      .expect(202);
+    assert.equal(created.body.duplicate, false);
+    assert.equal(created.body.request.status, "pending");
+    assert.equal("providerLocation" in created.body.request, false);
+    const requestId = created.body.request.id;
+
+    const duplicate = await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send(payload)
+      .expect(200);
+    assert.equal(duplicate.body.duplicate, true);
+    assert.equal(duplicate.body.request.id, requestId);
+    assert.equal(calls.filter((entry) => entry.url.endsWith("/api/v2/incoming_payments")).length, 1);
+
+    await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...payload, amountCents: 12600 })
+      .expect(409)
+      .expect(({ body }) => assert.equal(body.error, "kopokopo_idempotency_key_reused"));
+    assert.equal(calls.filter((entry) => entry.url.endsWith("/api/v2/incoming_payments")).length, 1);
+
+    const requestBody = JSON.parse(calls.find((entry) => entry.url.endsWith("/api/v2/incoming_payments")).options.body);
+    assert.equal(requestBody.amount.value, 125);
+    assert.equal(requestBody.till_number, "000000");
+    assert.equal(requestBody._links.callback_url, process.env.KOPOKOPO_WEBHOOK_URL);
+
+    const recovered = await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${requestId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(recovered.body.request.status, "completed");
+    assert.equal(recovered.body.request.providerTransactionId, providerResource.id);
+    assert.equal("providerLocation" in recovered.body.request, false);
+    assert.equal(recovered.body.transaction.referenceLast4, "9Z8Y");
+    assert.equal(recovered.body.transaction.amountCents, 12500);
+    assert.equal(recovered.body.transaction.payerName, "Recovery Customer");
+
+    const ledgerRows = await pool.query(
+      "SELECT id, reference_last4, amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+      [providerResource.id]
+    );
+    assert.equal(ledgerRows.rows.length, 1);
+    assert.equal(ledgerRows.rows[0].reference_last4, "9Z8Y");
+    assert.equal(Number(ledgerRows.rows[0].amount_cents), 12500);
+    assert.equal(ledgerRows.rows[0].payer_name, "Recovery Customer");
+
+    const requestRows = await pool.query(
+      "SELECT * FROM kopokopo_incoming_payment_requests WHERE id = $1",
+      [requestId]
+    );
+    assert.equal("phone_number" in requestRows.rows[0], false);
+
+    const lateWebhook = {
+      topic: "buygoods_transaction_received",
+      id: "late-recovery-webhook",
+      created_at: "2026-08-02T11:45:02+03:00",
+      event: { type: "Buygoods Transaction", resource: providerResource },
+    };
+    await signedWebhook(lateWebhook).expect(200);
+    const afterWebhook = await pool.query(
+      "SELECT COUNT(*) AS count FROM kopokopo_transactions WHERE id = $1 OR upper(reference) = $2",
+      [providerResource.id, providerResource.reference]
+    );
+    assert.equal(Number(afterWebhook.rows[0].count), 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fails closed when the authenticated incoming-payment result does not match the requested amount", async () => {
+  const originalFetch = globalThis.fetch;
+  const providerLocation = "https://sandbox.kopokopo.com/api/v2/incoming_payments/mismatched-request-1";
+  const transactionId = "mismatched-status-transaction";
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "test-access-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/incoming_payments") && options.method === "POST") {
+      return new Response("", { status: 201, headers: { Location: providerLocation } });
+    }
+    assert.equal(String(url), providerLocation);
+    return new Response(JSON.stringify({
+      data: {
+        type: "incoming_payment",
+        attributes: {
+          status: "Received",
+          event: {
+            type: "Incoming Payment Request",
+            resource: {
+              id: transactionId,
+              amount: "124.99",
+              status: "Received",
+              currency: "KES",
+              reference: "MISMATCH1234",
+              till_number: "000000",
+              origination_time: "2026-08-02T11:50:00+03:00",
+            },
+          },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  try {
+    const created = await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        idempotencyKey: "invoice-settlement-mismatch-1",
+        branchId: "b_sip",
+        tillNumber: "000000",
+        amountCents: 12500,
+        phoneNumber: "+254711111111",
+        reference: "INV-MISMATCH-1",
+      })
+      .expect(202);
+
+    const checked = await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${created.body.request.id}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(checked.body.request.status, "failed");
+
+    const ledgerRows = await pool.query("SELECT id FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+    assert.equal(ledgerRows.rows.length, 0);
+    const requestRows = await pool.query(
+      "SELECT status, last_error, next_check_at FROM kopokopo_incoming_payment_requests WHERE id = $1",
+      [created.body.request.id]
+    );
+    assert.equal(requestRows.rows[0].status, "failed");
+    assert.equal(requestRows.rows[0].last_error, "kopokopo_result_amount_mismatch");
+    assert.equal(requestRows.rows[0].next_check_at, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("requires an authenticated supervisor or administrator to create incoming payments", async () => {
+  await request(app)
+    .post("/api/integrations/kopokopo/incoming-payments")
+    .send({})
+    .expect(401);
+});
+
+test("rejects incoming-payment status resources outside Kopo Kopo before making a request", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetched = false;
+  globalThis.fetch = async () => {
+    fetched = true;
+    throw new Error("unexpected_fetch");
+  };
+  try {
+    await assert.rejects(
+      readKopokopoIncomingPayment(
+        "https://example.com/api/v2/incoming_payments/stolen",
+        kopokopoConfig(),
+        "test-access-token"
+      ),
+      /kopokopo_resource_location_invalid/
+    );
+    assert.equal(fetched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("polls the official provider endpoint using the configured company scope", async () => {

@@ -10,6 +10,11 @@ import {
   validKopokopoSignature,
 } from "../services/kopokopo.js";
 import { storeKopokopoEvent } from "../services/kopokopoLedger.js";
+import {
+  createTrackedKopokopoIncomingPayment,
+  getKopokopoIncomingPaymentRequest,
+  reconcileKopokopoIncomingPaymentRequest,
+} from "../services/kopokopoIncomingPayments.js";
 
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
@@ -220,6 +225,72 @@ router.post("/subscriptions", requireOwnerOrAdmin, async (_req, res) => {
       providerStatus: error.providerStatus || null,
       providerMessage: error.providerMessage || null,
     });
+  }
+});
+
+router.post("/incoming-payments", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    if (!config.enabled) return res.status(409).json({ error: "kopokopo_disabled" });
+    const branchId = identifier(req.body?.branchId);
+    if (!branchId) return res.status(400).json({ error: "branch_required" });
+    if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const result = await createTrackedKopokopoIncomingPayment({
+      idempotencyKey: req.body?.idempotencyKey,
+      branchId,
+      amountCents: req.body?.amountCents,
+      phoneNumber: req.body?.phoneNumber,
+      firstName: req.body?.firstName,
+      lastName: req.body?.lastName,
+      reference: req.body?.reference,
+      notes: req.body?.notes,
+      createdBy: req.account?.id,
+    }, config);
+    return res.status(result.duplicate ? 200 : 202).json(result);
+  } catch (error) {
+    const invalid = new Set([
+      "invalid_kopokopo_idempotency_key",
+      "invalid_kopokopo_incoming_payment",
+      "kopokopo_payment_reference_required",
+    ]);
+    const conflict = new Set([
+      "kopokopo_branch_till_not_configured",
+      "kopokopo_till_branch_mismatch",
+      "kopokopo_idempotency_key_reused",
+    ]).has(error.message);
+    console.error("Kopo Kopo incoming payment request failed:", error.message, error.providerStatus || "");
+    return res.status(invalid.has(error.message) ? 400 : conflict ? 409 : 502).json({
+      error: error.message || "kopokopo_incoming_payment_request_failed",
+      providerStatus: error.providerStatus || null,
+      providerMessage: error.providerMessage || null,
+    });
+  }
+});
+
+router.get("/incoming-payments/:id", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    const id = identifier(req.params.id);
+    if (!id) return res.status(400).json({ error: "invalid_kopokopo_incoming_payment_id" });
+    const existing = await getKopokopoIncomingPaymentRequest(id);
+    if (!existing) return res.status(404).json({ error: "kopokopo_incoming_payment_not_found" });
+    if (!accountCanAccessBranch(req.account, existing.branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const paymentRequest = await reconcileKopokopoIncomingPaymentRequest(id);
+    let transaction = null;
+    if (paymentRequest.status === "completed" && paymentRequest.providerTransactionId) {
+      const result = await q(
+        `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status,
+                till_number, branch_id, payer_name, origination_time
+           FROM kopokopo_transactions
+          WHERE id = $1 AND branch_id = $2
+          LIMIT 1`,
+        [paymentRequest.providerTransactionId, existing.branchId]
+      );
+      if (result.rows[0]) transaction = publicTransaction(result.rows[0]);
+    }
+    return res.json({ request: paymentRequest, transaction });
+  } catch (error) {
+    console.error("Kopo Kopo incoming payment status failed:", error.message);
+    return res.status(502).json({ error: "kopokopo_incoming_payment_status_failed" });
   }
 });
 

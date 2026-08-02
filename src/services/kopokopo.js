@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 const RECEIVED_TOPICS = new Set(["buygoods_transaction_received", "b2b_transaction_received"]);
 const REVERSED_TOPICS = new Set(["buygoods_transaction_reversed", "b2b_transaction_reversed"]);
 const providerRequestTimeoutMs = 15_000;
+export const maxIncomingPaymentCents = 10_000_000_000;
 
 function text(value) {
   return String(value ?? "").trim();
@@ -201,7 +202,7 @@ async function providerJson(response) {
   try { return JSON.parse(raw); } catch (_) { return { message: raw.slice(0, 500) }; }
 }
 
-function officialProviderLocation(location, pathPrefix, config) {
+export function officialKopokopoLocation(location, pathPrefix, config = kopokopoConfig()) {
   if (!location) throw new Error("kopokopo_resource_location_missing");
   const expected = new URL(config.baseUrl);
   const actual = new URL(location);
@@ -209,6 +210,18 @@ function officialProviderLocation(location, pathPrefix, config) {
     throw new Error("kopokopo_resource_location_invalid");
   }
   return actual.toString();
+}
+
+export function tillForBranch(branchId, config = kopokopoConfig()) {
+  const wanted = text(branchId);
+  const matches = Object.entries(config.tillBranchMap)
+    .filter(([, mappedBranchId]) => mappedBranchId === wanted)
+    .map(([till]) => till);
+  if (matches.length === 1) return matches[0];
+  if (config.mode === "sandbox" && wanted === config.sandboxBranchId) {
+    return config.scope === "till" && config.scopeReference ? config.scopeReference : "000000";
+  }
+  return null;
 }
 
 export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
@@ -235,6 +248,89 @@ export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
     throw error;
   }
   return payload.access_token;
+}
+
+export async function requestKopokopoIncomingPayment({
+  tillNumber,
+  phoneNumber,
+  amountCents,
+  firstName = "VISIONPOS",
+  lastName = "Customer",
+  reference,
+  notes = "VISIONPOS invoice settlement",
+} = {}, config = kopokopoConfig()) {
+  const till = text(tillNumber);
+  const phone = text(phoneNumber);
+  const cents = Number(amountCents);
+  const normalizedReference = text(reference).slice(0, 100);
+  if (!config.enabled) throw new Error("kopokopo_not_configured");
+  if (!till || !/^\+254\d{9}$/.test(phone) || !Number.isSafeInteger(cents) || cents <= 0 || cents > maxIncomingPaymentCents) {
+    throw new Error("invalid_kopokopo_incoming_payment");
+  }
+  if (!normalizedReference) throw new Error("kopokopo_payment_reference_required");
+  const accessToken = await requestKopokopoAccessToken(config);
+  const response = await fetch(`${config.baseUrl}/api/v2/incoming_payments`, {
+    method: "POST",
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "User-Agent": "VISIONPOS/1.0",
+    },
+    body: JSON.stringify({
+      payment_channel: "M-PESA STK Push",
+      till_number: till,
+      subscriber: {
+        first_name: text(firstName).slice(0, 80) || "VISIONPOS",
+        last_name: text(lastName).slice(0, 80) || "Customer",
+        phone_number: phone,
+      },
+      amount: { currency: "KES", value: cents / 100 },
+      metadata: {
+        reference: normalizedReference,
+        notes: text(notes).slice(0, 255),
+      },
+      _links: { callback_url: config.webhookUrl },
+    }),
+  });
+  const payload = await providerJson(response);
+  if (response.status !== 201) {
+    const error = new Error("kopokopo_incoming_payment_request_failed");
+    error.providerStatus = response.status;
+    error.providerMessage = payload.error_message || payload.error || payload.message;
+    throw error;
+  }
+  const location = officialKopokopoLocation(
+    response.headers.get("location"),
+    "/api/v2/incoming_payments/",
+    config
+  );
+  return {
+    location,
+    providerRequestId: new URL(location).pathname.split("/").filter(Boolean).pop(),
+  };
+}
+
+export async function readKopokopoIncomingPayment(location, config = kopokopoConfig(), suppliedAccessToken = "") {
+  const officialLocation = officialKopokopoLocation(location, "/api/v2/incoming_payments/", config);
+  const accessToken = suppliedAccessToken || await requestKopokopoAccessToken(config);
+  const response = await fetch(officialLocation, {
+    signal: AbortSignal.timeout(providerRequestTimeoutMs),
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "User-Agent": "VISIONPOS/1.0",
+    },
+  });
+  const payload = await providerJson(response);
+  if (!response.ok) {
+    const error = new Error("kopokopo_incoming_payment_status_failed");
+    error.providerStatus = response.status;
+    error.providerMessage = payload.error_message || payload.error || payload.message;
+    throw error;
+  }
+  return payload?.data?.attributes || {};
 }
 
 export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
@@ -302,7 +398,7 @@ export async function pollKopokopoTransactions({ fromTime, toTime, timeoutMs = 3
     error.providerMessage = payload.error_message || payload.error || payload.message;
     throw error;
   }
-  const location = officialProviderLocation(
+  const location = officialKopokopoLocation(
     response.headers.get("location"),
     "/api/v2/polling/",
     config

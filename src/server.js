@@ -19,6 +19,10 @@ import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
 import { isMySql, q, ready } from "./db.js";
 import { startWhatsAppScheduler, stopWhatsAppScheduler } from "./services/whatsappScheduler.js";
 import { startKopokopoReconciler, stopKopokopoReconciler } from "./services/kopokopoReconciler.js";
+import {
+  startKopokopoIncomingPaymentReconciler,
+  stopKopokopoIncomingPaymentReconciler,
+} from "./services/kopokopoIncomingPayments.js";
 
 let dbReadyError = null;
 const dbReady = ready.catch((error) => {
@@ -170,6 +174,7 @@ if (process.env.NODE_ENV !== "test") {
   server = app.listen(port, () => console.log(`Visionary POS API listening on ${port}`));
   startWhatsAppScheduler();
   startKopokopoReconciler();
+  startKopokopoIncomingPaymentReconciler();
   // Surface bind failures (e.g. EADDRINUSE) to stderr so the platform logs show them.
   server.on("error", (err) => console.error("FATAL: server failed to bind to", port, "-", err.message));
 }
@@ -178,6 +183,7 @@ async function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
   stopWhatsAppScheduler();
   stopKopokopoReconciler();
+  stopKopokopoIncomingPaymentReconciler();
   if (!server) return;
   server.close(async () => {
     const { pool } = await import("./db.js");
