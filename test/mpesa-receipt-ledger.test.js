@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   allocateInvoicePayments,
   findMpesaReceipt,
+  mpesaProviderSelectionError,
   mpesaReceiptLedger,
   normalizeMpesaCodeLast4,
+  receiptForSettlement,
 } from "../frontend/src/admin/mpesaReceiptLedger.js";
 
 const allocation = (overrides = {}) => ({
@@ -43,6 +45,19 @@ test("keeps identical last-four codes isolated by branch", () => {
   const payments = [allocation(), allocation({ id: "pay-2", branchId: "branch-b", mpesaReceiptId: "receipt-2" })];
   assert.equal(findMpesaReceipt(payments, { branchId: "branch-a", codeLast4: "7X9Q" }).id, "receipt-1");
   assert.equal(findMpesaReceipt(payments, { branchId: "branch-b", codeLast4: "7X9Q" }).id, "receipt-2");
+});
+
+test("allows manual entry when Kopo Kopo has no matching transaction", () => {
+  assert.equal(mpesaProviderSelectionError({ amountCents: 45000, transactions: [] }), "");
+  assert.equal(mpesaProviderSelectionError({ amountCents: 45000, loading: true }), "Checking the M-Pesa transaction with Kopo Kopo...");
+  assert.equal(mpesaProviderSelectionError({ amountCents: 45000, transactions: [{ id: "txn-1" }, { id: "txn-2" }] }), "Select the matching Kopo Kopo transaction.");
+});
+
+test("reuses a saved manual receipt unless a verified receipt is available", () => {
+  const savedReceipt = { id: "manual-receipt", remainingCents: 25000 };
+  const verifiedReceipt = { id: "provider-receipt", remainingCents: 50000 };
+  assert.equal(receiptForSettlement({ savedReceipt }), savedReceipt);
+  assert.equal(receiptForSettlement({ verifiedReceipt, savedReceipt }), verifiedReceipt);
 });
 
 test("shares one remaining balance across allocations from different invoices", () => {

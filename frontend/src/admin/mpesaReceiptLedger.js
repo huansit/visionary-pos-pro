@@ -52,6 +52,17 @@ export function findMpesaReceipt(payments, { branchId, codeLast4 } = {}) {
   return mpesaReceiptLedger(payments, { branchId, codeLast4 })[0] || null;
 }
 
+export function receiptForSettlement({ verifiedReceipt, savedReceipt } = {}) {
+  return verifiedReceipt || savedReceipt || null;
+}
+
+export function mpesaProviderSelectionError({ amountCents = 0, loading = false, transactions = [], selectedTransaction = null } = {}) {
+  if (Number(amountCents) <= 0) return "";
+  if (loading) return "Checking the M-Pesa transaction with Kopo Kopo...";
+  if (transactions.length > 1 && !selectedTransaction) return "Select the matching Kopo Kopo transaction.";
+  return "";
+}
+
 export function allocateInvoicePayments(invoices, { mpesaCents = 0, cashCents = 0 } = {}) {
   let mpesaRemaining = Math.max(0, Math.round(Number(mpesaCents) || 0));
   let cashRemaining = Math.max(0, Math.round(Number(cashCents) || 0));
