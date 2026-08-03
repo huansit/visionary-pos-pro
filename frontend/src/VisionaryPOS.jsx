@@ -1182,6 +1182,19 @@ async function lookupKopokopoTransactions(branchId, codeLast4) {
   if (normalizedCode) query.set("last4", normalizedCode);
   return await authGet(`/api/integrations/kopokopo/transactions/lookup?${query}`, { session: true });
 }
+async function listKopokopoTransactions(filters = {}) {
+  const query = new URLSearchParams({
+    branchId: String(filters.branchId || ""),
+    status: String(filters.status || "all"),
+    sort: filters.sort === "asc" ? "asc" : "desc",
+    limit: String(filters.limit || 50),
+    offset: String(filters.offset || 0),
+  });
+  if (filters.search) query.set("search", String(filters.search));
+  if (filters.from) query.set("from", String(filters.from));
+  if (filters.to) query.set("to", String(filters.to));
+  return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
+}
 async function allocateKopokopoTransaction(payload) {
   return await authApi("/api/integrations/kopokopo/allocations", payload, { session: true });
 }
@@ -3827,6 +3840,36 @@ body{overscroll-behavior:none}
 .kopokopo-test-modes button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .kopokopo-test-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
 @media(max-width:700px){.kopokopo-test-head{align-items:flex-start}.kopokopo-test-modes{grid-template-columns:1fr}.kopokopo-test-meta{grid-template-columns:1fr}.kopokopo-test-actions .btn{width:100%}}
+.mpesa-ledger-toolbar{display:grid;grid-template-columns:minmax(210px,1fr) 150px 150px 190px 190px auto;gap:8px;align-items:end;margin:12px 0}
+.mpesa-ledger-toolbar label{display:grid;gap:4px;min-width:0}
+.mpesa-ledger-toolbar label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.mpesa-ledger-search{position:relative}
+.mpesa-ledger-search svg{position:absolute;left:12px;bottom:11px;width:16px;height:16px;color:var(--muted-2)}
+.mpesa-ledger-search .input{padding-left:38px}
+.mpesa-ledger-actions{display:flex;align-items:center;gap:6px}
+.mpesa-ledger-actions .btn{height:42px;white-space:nowrap}
+.mpesa-ledger-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-soft);border-left:0;border-right:0;margin:10px 0 14px}
+.mpesa-ledger-summary>div{min-width:0;padding:12px 16px;border-right:1px solid var(--border-soft)}
+.mpesa-ledger-summary>div:last-child{border-right:0}
+.mpesa-ledger-summary span{display:block;color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.mpesa-ledger-summary b{display:block;margin-top:4px;font-family:var(--font-mono);font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-ledger-summary .available b{color:var(--ok)}
+.mpesa-branch-totals{margin:0 0 14px}
+.mpesa-branch-totals .section-title{margin:0 0 8px;font-size:12px;color:var(--muted)}
+.mpesa-branch-totals tfoot td{font-weight:800;border-top:2px solid var(--border)}
+.mpesa-ledger-table td{white-space:nowrap}
+.mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
+.mpesa-ledger-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
+.mpesa-ledger-status.available{background:rgba(52,211,153,.14);color:var(--ok)}
+.mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
+.mpesa-ledger-status.allocated{background:var(--surface-2);color:var(--muted)}
+.mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
+.mpesa-ledger-mobile{display:none}
+.mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
+.mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
+@media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .row-add{width:100%;height:46px;border-radius:12px;cursor:pointer;border:1px dashed var(--border);background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600;transition:.15s;margin-bottom:14px}
@@ -6314,7 +6357,7 @@ const NAV_TOP = [
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
   products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
-  cash: "cash", payments: "cash", expenses: "expenses",
+  cash: "cash", payments: "cash", mpesa: "cash", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
@@ -6334,6 +6377,7 @@ const NAV_GROUPS = [
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, items: [
     { id: "payments", label: "Payments", icon: CreditCard },
+    { id: "mpesa", label: "M-Pesa Transactions", icon: Smartphone },
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
   ] },
@@ -6428,7 +6472,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; if (tabId === "borrowing" && accountRole === "supervisor") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
+  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; if ((tabId === "borrowing" || tabId === "mpesa") && accountRole === "supervisor") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
@@ -6506,6 +6550,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "branches": return <BranchesTab data={data} update={update} />;
@@ -14342,6 +14387,172 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 }
 
 /* ---- Settings ---- */
+function kopokopoLedgerStatus(transaction) {
+  if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Fully used" };
+  if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
+  return { key: "available", label: "Available" };
+}
+
+function kopokopoDateBoundary(value) {
+  if (!value) return "";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
+  const pageSize = 50;
+  const [branchScope, setBranchScope] = useState(() => allowAllBranches ? "all" : branch?.id || "");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState("desc");
+  const [offset, setOffset] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [ledger, setLedger] = useState({
+    loading: true,
+    error: "",
+    enabled: true,
+    providerRequired: false,
+    transactions: [],
+    page: { total: 0, limit: pageSize, offset: 0 },
+    summary: { amountCents: 0, allocatedCents: 0, remainingCents: 0, branches: [] },
+  });
+
+  const selectedBranchId = allowAllBranches ? branchScope : branch?.id || "";
+  const selectedBranchName = selectedBranchId === "all"
+    ? "Both branches"
+    : data?.branches?.find((item) => item.id === selectedBranchId)?.name || branch?.name || "select a branch";
+
+  useEffect(() => {
+    let active = true;
+    const from = kopokopoDateBoundary(dateFrom);
+    const to = kopokopoDateBoundary(dateTo);
+    if (!selectedBranchId) {
+      setLedger((current) => ({ ...current, loading: false, error: "Select a branch to view M-Pesa transactions." }));
+      return () => { active = false; };
+    }
+    if ((dateFrom && !from) || (dateTo && !to) || (from && to && from > to)) {
+      setLedger((current) => ({ ...current, loading: false, error: "Choose a valid transaction date range." }));
+      return () => { active = false; };
+    }
+    setLedger((current) => ({ ...current, loading: true, error: "" }));
+    const timer = setTimeout(() => {
+      listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, sort, limit: pageSize, offset })
+        .then((result) => {
+          if (!active) return;
+          setLedger({
+            loading: false,
+            error: "",
+            enabled: result.enabled !== false,
+            providerRequired: result.providerRequired,
+            transactions: Array.isArray(result.transactions) ? result.transactions : [],
+            page: result.page || { total: 0, limit: pageSize, offset },
+            summary: result.summary || { amountCents: 0, allocatedCents: 0, remainingCents: 0, branches: [] },
+          });
+        })
+        .catch((error) => {
+          if (!active) return;
+          const message = error.message === "branch_not_authorized"
+            ? "Your account cannot view M-Pesa transactions for this branch."
+            : "M-Pesa transactions could not be loaded. Refresh and try again.";
+          setLedger((current) => ({ ...current, loading: false, error: message }));
+        });
+    }, search.trim() ? 280 : 0);
+    return () => { active = false; clearTimeout(timer); };
+  }, [selectedBranchId, search, status, dateFrom, dateTo, sort, offset, refreshNonce]);
+
+  const updateSearch = (value) => { setSearch(value); setOffset(0); };
+  const updateStatus = (value) => { setStatus(value); setOffset(0); };
+  const updateFrom = (value) => { setDateFrom(value); setOffset(0); };
+  const updateTo = (value) => { setDateTo(value); setOffset(0); };
+  const total = Number(ledger.page?.total || 0);
+  const pageStart = total ? offset + 1 : 0;
+  const pageEnd = Math.min(total, offset + pageSize);
+  const canPrevious = offset > 0 && !ledger.loading;
+  const canNext = offset + pageSize < total && !ledger.loading;
+  const transactionTime = (transaction) => transaction.originationTime || transaction.createdAt;
+  const branchName = (branchId) => data?.branches?.find((item) => item.id === branchId)?.name || branchId || "Unassigned";
+  const branchSummaryMap = new Map((ledger.summary.branches || []).map((item) => [item.branchId, item]));
+  const branchTotals = selectedBranchId === "all"
+    ? (data?.branches || []).map((item) => branchSummaryMap.get(item.id) || { branchId: item.id, transactionCount: 0, amountCents: 0, allocatedCents: 0, remainingCents: 0 })
+    : [];
+
+  return (
+    <div className="mpesa-ledger-page">
+      <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
+        right={<button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button>} />
+
+      {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
+      {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
+
+      <div className="mpesa-ledger-toolbar">
+        <label className="mpesa-ledger-search"><span>Payer name or code</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name or last 4 digits" maxLength={80} /></label>
+        <label><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
+          {allowAllBranches ? <option value="all">Both branches</option> : null}
+          {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select></label>
+        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Fully used</option><option value="reversed">Reversed</option></select></label>
+        <label><span>From date and time</span><input className="input" type="datetime-local" value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value)} /></label>
+        <label><span>To date and time</span><input className="input" type="datetime-local" value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value)} /></label>
+        <div className="mpesa-ledger-actions">
+          <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
+          {(search || status !== "all" || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
+        </div>
+      </div>
+
+      <div className="mpesa-ledger-summary">
+        <div><span>Transactions</span><b>{total}</b></div>
+        <div><span>Received</span><b>{fmt(ledger.summary.amountCents || 0, "KES")}</b></div>
+        <div><span>Allocated</span><b>{fmt(ledger.summary.allocatedCents || 0, "KES")}</b></div>
+        <div className="available"><span>Available</span><b>{fmt(ledger.summary.remainingCents || 0, "KES")}</b></div>
+      </div>
+
+      {selectedBranchId === "all" ? <div className="mpesa-branch-totals">
+        <div className="section-title">Totals by branch</div>
+        <div className="tablewrap"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
+          <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
+          <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
+        </table></div>
+      </div> : null}
+
+      {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
+      {!ledger.error && ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading M-Pesa transactions...</div> : null}
+      {!ledger.error && !ledger.loading && ledger.transactions.length === 0 ? <div className="notice">No M-Pesa transactions match these filters.</div> : null}
+
+      {ledger.transactions.length > 0 ? <>
+        <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
+          <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th className="amt">Allocated</th><th className="amt">Available</th><th>Status</th></tr></thead>
+            <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
+              <tr key={transaction.id}>
+                <td>{transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Not supplied"}</td>
+                <td className="innum">{transaction.referenceMasked}</td>
+                <td className="payer">{transaction.payerName || "Not supplied"}</td>
+                {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
+                <td className="innum">{transaction.tillNumber || "-"}</td>
+                <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
+                <td className="amt">{fmt(transaction.allocatedCents, transaction.currency || "KES")}</td>
+                <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
+                <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
+              </tr>); })}</tbody>
+          </table>
+        </div>
+        <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
+          <div className="mpesa-ledger-mobile-row" key={transaction.id}>
+            <div><span className="payer">{transaction.payerName || "Not supplied"}</span><small>{transaction.referenceMasked} · {transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Time not supplied"}{selectedBranchId === "all" ? ` · ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated · {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
+            <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
+          </div>); })}</div>
+      </> : null}
+
+      <div className="mpesa-ledger-pager">
+        <span>Showing {pageStart}-{pageEnd} of {total}</span>
+        <div><button className="btn sm" disabled={!canPrevious} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft /> Previous</button><button className="btn sm" disabled={!canNext} onClick={() => setOffset((value) => value + pageSize)}>Next <ChevronRight /></button></div>
+      </div>
+    </div>
+  );
+}
+
 function KopokopoSandboxTest({ data }) {
   const [provider, setProvider] = useState({ loading: true });
   const [testType, setTestType] = useState("retrieval");

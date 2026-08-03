@@ -79,8 +79,22 @@ function publicTransaction(row) {
     branchId: row.branch_id ?? row.branchId ?? null,
     payerName: row.payer_name ?? row.payerName ?? null,
     originationTime: row.origination_time ?? row.originationTime ?? null,
+    reversedAt: row.reversed_at ?? row.reversedAt ?? null,
+    createdAt: row.created_at ?? row.createdAt ?? null,
     providerVerified: true,
   };
+}
+
+function ledgerInteger(value, fallback, maximum) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return fallback;
+  return Math.min(parsed, maximum);
+}
+
+function ledgerTimestamp(value) {
+  if (!value) return null;
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 async function validateAllocationInvoices(client, allocations, branchId, syntheticInvoices = new Map()) {
@@ -533,6 +547,115 @@ router.delete("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
     const conflict = error.message === "kopokopo_sandbox_test_has_allocations";
     console.error("Kopo Kopo sandbox test cleanup failed:", error.message);
     return res.status(conflict ? 409 : 500).json({ error: error.message || "kopokopo_sandbox_test_cleanup_failed" });
+  }
+});
+
+router.get("/transactions", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    const config = kopokopoConfig();
+    const requestedBranchId = identifier(req.query.branchId);
+    const allBranches = requestedBranchId.toLowerCase() === "all";
+    const accountBranchId = identifier(req.account?.branchId);
+    const search = String(req.query.search || "").trim().toLowerCase();
+    const status = String(req.query.status || "all").trim().toLowerCase();
+    const sort = String(req.query.sort || "desc").trim().toLowerCase() === "asc" ? "ASC" : "DESC";
+    const limit = Math.max(1, ledgerInteger(req.query.limit, 50, 100));
+    const offset = ledgerInteger(req.query.offset, 0, 100000);
+    const from = ledgerTimestamp(req.query.from);
+    const to = ledgerTimestamp(req.query.to);
+    const validStatuses = new Set(["all", "available", "partial", "allocated", "reversed"]);
+
+    if (!requestedBranchId || search.length > 80 || !validStatuses.has(status)) {
+      return res.status(400).json({ error: "invalid_kopokopo_transaction_filters" });
+    }
+    if ((req.query.from && !from) || (req.query.to && !to) || (from && to && from > to)) {
+      return res.status(400).json({ error: "invalid_kopokopo_transaction_dates" });
+    }
+    if ((allBranches && accountBranchId) || (!allBranches && !accountCanAccessBranch(req.account, requestedBranchId))) {
+      return res.status(403).json({ error: "branch_not_authorized" });
+    }
+
+    const values = [];
+    const clauses = [];
+    const addValue = (value) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    if (!allBranches) clauses.push(`branch_id = ${addValue(requestedBranchId)}`);
+    if (search) {
+      const pattern = `%${search}%`;
+      const placeholder = addValue(pattern);
+      clauses.push(`(lower(COALESCE(payer_name, '')) LIKE ${placeholder} OR lower(reference_last4) LIKE ${placeholder})`);
+    }
+    if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
+    if (to) clauses.push(`COALESCE(origination_time, created_at) <= ${addValue(to)}`);
+    if (status === "available") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents < amount_cents");
+    if (status === "partial") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents > 0 AND allocated_cents < amount_cents");
+    if (status === "allocated") clauses.push("reversed_at IS NULL AND allocated_cents >= amount_cents");
+    if (status === "reversed") clauses.push("reversed_at IS NOT NULL");
+    const where = clauses.length ? clauses.join(" AND ") : "1 = 1";
+
+    const summary = await q(
+      `SELECT COUNT(*) AS total_count,
+              COALESCE(SUM(amount_cents), 0) AS total_amount_cents,
+              COALESCE(SUM(allocated_cents), 0) AS total_allocated_cents
+         FROM kopokopo_transactions
+        WHERE ${where}`,
+      values
+    );
+    const branchSummary = await q(
+      `SELECT branch_id, COUNT(*) AS transaction_count,
+              COALESCE(SUM(amount_cents), 0) AS amount_cents,
+              COALESCE(SUM(allocated_cents), 0) AS allocated_cents
+         FROM kopokopo_transactions
+        WHERE ${where}
+        GROUP BY branch_id
+        ORDER BY branch_id`,
+      values
+    );
+    const pageValues = [...values, limit, offset];
+    const result = await q(
+      `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number,
+              branch_id, payer_name, origination_time, reversed_at, created_at
+         FROM kopokopo_transactions
+        WHERE ${where}
+        ORDER BY COALESCE(origination_time, created_at) ${sort}, created_at ${sort}, id ${sort}
+        LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
+      pageValues
+    );
+    const totals = summary.rows[0] || {};
+    const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
+    const allocatedCents = Number(totals.total_allocated_cents ?? totals.totalAllocatedCents ?? 0);
+    return res.json({
+      enabled: config.enabled,
+      branchId: allBranches ? "all" : requestedBranchId,
+      providerRequired: allBranches ? null : branchRequiresVerifiedKopokopo(config, requestedBranchId),
+      transactions: result.rows.map(publicTransaction),
+      page: {
+        total: Number(totals.total_count ?? totals.totalCount ?? 0),
+        limit,
+        offset,
+      },
+      summary: {
+        amountCents,
+        allocatedCents,
+        remainingCents: Math.max(0, amountCents - allocatedCents),
+        branches: branchSummary.rows.map((row) => {
+          const branchAmountCents = Number(row.amount_cents ?? row.amountCents ?? 0);
+          const branchAllocatedCents = Number(row.allocated_cents ?? row.allocatedCents ?? 0);
+          return {
+            branchId: row.branch_id ?? row.branchId ?? null,
+            transactionCount: Number(row.transaction_count ?? row.transactionCount ?? 0),
+            amountCents: branchAmountCents,
+            allocatedCents: branchAllocatedCents,
+            remainingCents: Math.max(0, branchAmountCents - branchAllocatedCents),
+          };
+        }),
+      },
+    });
+  } catch (error) {
+    console.error("Kopo Kopo transaction ledger failed:", error);
+    return res.status(500).json({ error: "kopokopo_transaction_ledger_failed" });
   }
 });
 

@@ -35,6 +35,7 @@ const { ingestKopokopoPollingTransactions } = await import("../src/services/kopo
 
 let sessionToken = "";
 let branchSessionToken = "";
+let supervisorSessionToken = "";
 
 function signedWebhook(payload, secret = process.env.KOPOKOPO_API_KEY) {
   const body = JSON.stringify(payload);
@@ -94,6 +95,18 @@ before(async () => {
     .send({ identifier: "sip.manager@example.com", password: "Manager@123" })
     .expect(200);
   branchSessionToken = branchLogin.body.sessionToken;
+
+  const supervisorPasswordHash = await bcrypt.hash("Supervisor@123", 10);
+  await pool.query(
+    `INSERT INTO credentials (id, kind, name, email, password_hash, branch_id, rights, status, email_verified)
+     VALUES ($1, 'user', $2, $3, $4, $5, $6::jsonb, 'active', true)`,
+    ["kopokopo-supervisor", "SIP Supervisor", "sip.supervisor@example.com", supervisorPasswordHash, "b_sip", JSON.stringify({ role: "Supervisor" })]
+  );
+  const supervisorLogin = await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "sip.supervisor@example.com", password: "Supervisor@123" })
+    .expect(200);
+  supervisorSessionToken = supervisorLogin.body.sessionToken;
 
   for (const invoice of [
     { id: "inv-1", branchId: "b_sip", totalCents: 30000 },
@@ -176,6 +189,80 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
     .set("X-Session-Token", branchSessionToken)
     .expect(403)
     .expect({ error: "branch_not_authorized" });
+});
+
+test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", async () => {
+  await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
+    .expect(401);
+
+  const ledger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=customer&status=available&from=2026-08-02T00:00:00.000Z&to=2026-08-03T00:00:00.000Z&limit=1&offset=0")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(ledger.body.transactions.length, 1);
+  assert.equal(ledger.body.transactions[0].referenceMasked, "****12CD");
+  assert.equal(ledger.body.transactions[0].payerName, "Test Customer");
+  assert.equal(ledger.body.transactions[0].amountCents, 100000);
+  assert.equal(ledger.body.transactions[0].remainingCents, 100000);
+  assert.equal("reference" in ledger.body.transactions[0], false);
+  assert.deepEqual(ledger.body.page, { total: 1, limit: 1, offset: 0 });
+  assert.deepEqual(ledger.body.summary, {
+    amountCents: 100000,
+    allocatedCents: 0,
+    remainingCents: 100000,
+    branches: [{ branchId: "b_sip", transactionCount: 1, amountCents: 100000, allocatedCents: 0, remainingCents: 100000 }],
+  });
+
+  const supervisorLedger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
+    .set("X-Session-Token", supervisorSessionToken)
+    .expect(200);
+  assert.equal(supervisorLedger.body.transactions.length, 1);
+
+  await pool.query(
+    `INSERT INTO kopokopo_transactions
+      (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time)
+     VALUES ($1, $2, $3, $4, $5, $6, 'KES', 'Received', $7, $8, $9, $10)`,
+    ["txn-ledger-cpt", "evt-ledger-cpt", "CPTPAY34EF", "34EF", 50000, 10000, "3432381", "b_cpt", "Cape Payer", "2026-08-02T08:00:00.000Z"]
+  );
+  try {
+    const allBranches = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=all&from=2026-08-02T00:00:00.000Z&to=2026-08-03T00:00:00.000Z")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(allBranches.body.branchId, "all");
+    assert.equal(allBranches.body.page.total, 2);
+    assert.deepEqual(allBranches.body.summary, {
+      amountCents: 150000,
+      allocatedCents: 10000,
+      remainingCents: 140000,
+      branches: [
+        { branchId: "b_cpt", transactionCount: 1, amountCents: 50000, allocatedCents: 10000, remainingCents: 40000 },
+        { branchId: "b_sip", transactionCount: 1, amountCents: 100000, allocatedCents: 0, remainingCents: 100000 },
+      ],
+    });
+
+    await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=all")
+      .set("X-Session-Token", supervisorSessionToken)
+      .expect(403)
+      .expect({ error: "branch_not_authorized" });
+  } finally {
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", ["txn-ledger-cpt"]);
+  }
+
+  await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_cpt")
+    .set("X-Session-Token", branchSessionToken)
+    .expect(403)
+    .expect({ error: "branch_not_authorized" });
+
+  await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=unknown")
+    .set("X-Session-Token", sessionToken)
+    .expect(400)
+    .expect({ error: "invalid_kopokopo_transaction_filters" });
 });
 
 test("stores signed polling callbacks instead of silently ignoring them", async () => {
