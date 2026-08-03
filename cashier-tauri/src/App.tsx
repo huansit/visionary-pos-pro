@@ -2114,12 +2114,18 @@ function CashierMpesaView({
         {ledger.transactions.map((transaction) => {
           const paymentStatus = cashierMpesaStatus(transaction);
           const transactionTime = transaction.originationTime || transaction.createdAt;
+          const referenceLast4 = transaction.referenceLast4 || transaction.referenceMasked?.slice(-4) || "----";
           return (
             <article className="cashier-mpesa-row" key={transaction.id}>
               <div className="cashier-mpesa-row-main">
                 <div>
                   <b>{transaction.payerName || "Payer name not supplied"}</b>
-                  <span>{transaction.referenceMasked} - {transactionTime ? new Date(transactionTime).toLocaleString() : "Time not supplied"}</span>
+                  <div className="cashier-mpesa-meta">
+                    <span className="cashier-mpesa-code-prefix">****</span>
+                    <strong className="cashier-mpesa-code-last4">{referenceLast4}</strong>
+                    <span className="cashier-mpesa-meta-separator">/</span>
+                    <time dateTime={transactionTime || undefined}>{transactionTime ? new Date(transactionTime).toLocaleString() : "Time not supplied"}</time>
+                  </div>
                 </div>
                 <div className="cashier-mpesa-amount">
                   <b>{money(transaction.amountCents)}</b>

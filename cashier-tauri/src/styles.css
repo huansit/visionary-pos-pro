@@ -8653,7 +8653,8 @@ body {
   width: min(760px, 100%);
   min-height: 100%;
   padding: 24px 28px 28px;
-  color: #e8eef2;
+  background: #0d1724;
+  color: #f1f7f9;
   overflow-y: auto;
 }
 
@@ -8671,8 +8672,9 @@ body {
   height: 48px;
   place-items: center;
   border-radius: 8px;
-  background: #18323a;
-  color: #67d5df;
+  border: 1px solid #2b6670;
+  background: #153841;
+  color: #7ce2e8;
 }
 
 .cashier-mpesa-header span,
@@ -8693,7 +8695,7 @@ body {
 
 .cashier-mpesa-header p {
   margin: 4px 0 0;
-  color: #9aa8b2;
+  color: #b3c1ca;
   font-size: 12px;
 }
 
@@ -8719,12 +8721,13 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 20px 0 16px;
-  border-block: 1px solid #293742;
+  border-block: 1px solid #31505d;
+  background: #101f2b;
 }
 
 .cashier-mpesa-summary > div {
   padding: 12px 14px;
-  border-right: 1px solid #293742;
+  border-right: 1px solid #31505d;
 }
 
 .cashier-mpesa-summary > div:last-child {
@@ -8739,7 +8742,7 @@ body {
 }
 
 .cashier-mpesa-summary .available b {
-  color: #6ee7b7;
+  color: #7bf0bd;
 }
 
 .cashier-mpesa-filters {
@@ -8823,10 +8826,10 @@ body {
   align-items: center;
   justify-content: center;
   padding: 7px 10px;
-  border: 1px solid #334550;
+  border: 1px solid #3a5967;
   border-radius: 7px;
-  background: #182229;
-  color: #dce7ec;
+  background: #162936;
+  color: #edf7fa;
   font-weight: 750;
 }
 
@@ -8852,12 +8855,17 @@ body {
 
 .cashier-mpesa-list {
   display: grid;
-  border-top: 1px solid #293842;
+  gap: 8px;
+  border-top: 1px solid #31505d;
+  padding-top: 8px;
 }
 
 .cashier-mpesa-row {
-  padding: 13px 2px;
-  border-bottom: 1px solid #293842;
+  padding: 13px 12px;
+  border: 1px solid #294451;
+  border-left: 3px solid #327b88;
+  border-radius: 6px;
+  background: #111f2d;
 }
 
 .cashier-mpesa-row-main {
@@ -8870,22 +8878,44 @@ body {
   min-width: 0;
 }
 
-.cashier-mpesa-row-main b,
-.cashier-mpesa-row-main span {
+.cashier-mpesa-row-main > div:first-child > b,
+.cashier-mpesa-amount > b {
   display: block;
 }
 
 .cashier-mpesa-row-main > div:first-child > b {
   overflow: hidden;
   font-size: 14px;
+  color: #f7fbfc;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cashier-mpesa-row-main > div:first-child > span {
+.cashier-mpesa-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px;
   margin-top: 3px;
-  color: #82929d;
+  color: #9fb0ba;
   font-size: 10px;
+}
+
+.cashier-mpesa-code-prefix {
+  color: #728894;
+  font-family: "Roboto Mono", monospace;
+}
+
+.cashier-mpesa-code-last4 {
+  color: #67e8f9;
+  font-family: "Roboto Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.cashier-mpesa-meta-separator {
+  margin: 0 3px;
+  color: #57717d;
 }
 
 .cashier-mpesa-amount {
@@ -8898,27 +8928,31 @@ body {
 }
 
 .cashier-mpesa-status {
+  display: inline-flex;
+  align-items: center;
   margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 999px;
   font-size: 9px;
   font-weight: 850;
   text-transform: uppercase;
 }
 
-.cashier-mpesa-status.available { color: #6ee7b7; }
-.cashier-mpesa-status.partial { color: #7dd3fc; }
-.cashier-mpesa-status.allocated { color: #fb7185; }
-.cashier-mpesa-status.reversed { color: #fb7185; }
+.cashier-mpesa-status.available { background: #123b2d; color: #86efc1; }
+.cashier-mpesa-status.partial { background: #15364c; color: #8bd8ff; }
+.cashier-mpesa-status.allocated { background: #491f2c; color: #ff8da1; }
+.cashier-mpesa-status.reversed { background: #5a1f29; color: #fecdd3; }
 
 .cashier-mpesa-balance {
   display: flex;
   justify-content: space-between;
   margin-top: 8px;
-  color: #8797a1;
+  color: #bac7ce;
   font-size: 10px;
 }
 
 .cashier-mpesa-balance b {
-  color: #a7f3d0;
+  color: #83f1c0;
 }
 
 .cashier-mpesa-allocations {
@@ -8928,7 +8962,7 @@ body {
 }
 
 .cashier-mpesa-allocations > span {
-  color: #75858f;
+  color: #91a5af;
   font-size: 10px;
 }
 
@@ -8936,10 +8970,21 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px 10px;
-  padding: 7px 9px;
-  border-left: 3px solid #5bc9d4;
+  padding: 8px 10px;
+  border: 1px solid #2b4650;
+  border-left: 3px solid #67dce5;
   border-radius: 0 6px 6px 0;
-  background: #131e24;
+  background: #172832;
+}
+
+.cashier-mpesa-allocations > div > b {
+  overflow: hidden;
+  color: #e8f2f5;
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cashier-mpesa-allocations strong {
@@ -8948,7 +8993,7 @@ body {
 
 .cashier-mpesa-allocations small {
   grid-column: 1 / -1;
-  color: #82919b;
+  color: #a0b0b9;
   font-size: 9px;
 }
 
