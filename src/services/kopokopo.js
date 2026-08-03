@@ -57,6 +57,11 @@ export function normalizeKopokopoReference(value) {
   return text(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+export function kopokopoPhoneLast4(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : null;
+}
+
 export function amountToCents(value) {
   const amount = Number(value);
   return Number.isFinite(amount) && amount >= 0 ? Math.round((amount + Number.EPSILON) * 100) : -1;
@@ -96,6 +101,7 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
     tillNumber: text(resource?.till_number),
     branchId: branchForTill(resource?.till_number, config),
     payerName: payerName || null,
+    payerPhoneLast4: kopokopoPhoneLast4(resource?.sender_phone_number),
     originationTime: text(resource?.origination_time || body?.created_at) || null,
     eventTime: text(body?.created_at) || null,
   };

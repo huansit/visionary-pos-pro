@@ -7,7 +7,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
   const sql = readFileSync(join(here, "schema.sql"), "utf8");
-  if (!isMySql) await prepareLegacyProductTable();
+  if (!isMySql) {
+    await prepareLegacyProductTable();
+    await ensureKopokopoTransactionColumns();
+  }
   await pool.query(sql);
   if (!isMySql) await normalizeProductBranchModel();
   console.log("schema applied");
@@ -96,6 +99,18 @@ async function normalizeProductBranchModel() {
       AND (p.sku IS NULL OR p.sku = '')
   `);
   await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS products_barcode_catalog_unique_idx ON products (barcode_catalog_id)");
+}
+
+async function ensureKopokopoTransactionColumns() {
+  const table = await pool.query("SELECT to_regclass('public.kopokopo_transactions') AS table_name");
+  if (!table.rows[0]?.table_name) return;
+  if (!(await hasColumn("kopokopo_transactions", "payer_phone_last4"))) {
+    await pool.query("ALTER TABLE kopokopo_transactions ADD COLUMN payer_phone_last4 text");
+  }
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx
+    ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time DESC)
+  `);
 }
 
 async function prepareLegacyProductTable() {

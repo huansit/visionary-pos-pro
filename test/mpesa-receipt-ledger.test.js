@@ -4,6 +4,7 @@ import {
   allocateInvoicePayments,
   findMpesaReceipt,
   mpesaProviderSelectionError,
+  mpesaReceiptPaymentFields,
   mpesaReceiptLedger,
   normalizeMpesaCodeLast4,
   receiptForSettlement,
@@ -33,6 +34,7 @@ test("tracks one receipt total without recounting it for every invoice allocatio
       providerVerified: true,
       kopokopoTransactionId: "txn-1",
       mpesaPayerName: "Test Customer",
+      mpesaPayerPhoneLast4: "2333",
       mpesaOriginationTime: "2026-08-03T10:15:00+03:00",
     }),
     allocation({ id: "pay-2", amountCents: 35000 }),
@@ -44,7 +46,9 @@ test("tracks one receipt total without recounting it for every invoice allocatio
   assert.equal(receipt.providerVerified, true);
   assert.equal(receipt.kopokopoTransactionId, "txn-1");
   assert.equal(receipt.payerName, "Test Customer");
+  assert.equal(receipt.payerPhoneLast4, "2333");
   assert.equal(receipt.originationTime, "2026-08-03T10:15:00+03:00");
+  assert.equal(mpesaReceiptPaymentFields(receipt).mpesaPayerPhoneLast4, "2333");
 });
 
 test("keeps identical last-four codes isolated by branch", () => {

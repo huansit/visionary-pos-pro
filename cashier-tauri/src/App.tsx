@@ -2229,9 +2229,9 @@ function CashierMpesaView({
 
       <div className="cashier-mpesa-filters">
         <label className="cashier-mpesa-search">
-          <span>Payer or last 4 digits</span>
+          <span>Payer, phone, code, or receipt</span>
           <Search size={17} />
-          <input value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Search verified payments" maxLength={80} />
+          <input value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Name, phone ending, code, receipt" maxLength={80} />
         </label>
         <label>
           <span>Status</span>
@@ -2281,7 +2281,10 @@ function CashierMpesaView({
             <article className="cashier-mpesa-row" key={transaction.id}>
               <div className="cashier-mpesa-row-main">
                 <div>
-                  <b>{transaction.payerName || "Payer name not supplied"}</b>
+                  <div className="cashier-mpesa-payer">
+                    <b>{transaction.payerName || "Payer name not supplied"}</b>
+                    {transaction.payerPhoneLast4 && <span>Phone ending {transaction.payerPhoneLast4}</span>}
+                  </div>
                   <div className="cashier-mpesa-meta">
                     <span className="cashier-mpesa-code-prefix">****</span>
                     <strong className="cashier-mpesa-code-last4">{referenceLast4}</strong>

@@ -171,6 +171,7 @@ export type MpesaTransaction = {
   tillNumber?: string | null;
   branchId: string;
   payerName?: string | null;
+  payerPhoneLast4?: string | null;
   originationTime?: string | null;
   reversedAt?: string | null;
   createdAt?: string | null;

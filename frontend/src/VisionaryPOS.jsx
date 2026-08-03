@@ -1244,6 +1244,7 @@ function kopokopoReceipt(transaction, branchId, actorName) {
     registeredAt: transaction.originationTime ? new Date(transaction.originationTime).getTime() : now(),
     registeredByName: actorName,
     payerName: transaction.payerName || "",
+    payerPhoneLast4: transaction.payerPhoneLast4 || "",
     originationTime: transaction.originationTime || "",
     providerVerified: true,
     kopokopoTransactionId: transaction.id,
@@ -3888,6 +3889,7 @@ body{overscroll-behavior:none}
 .mpesa-branch-totals tfoot td{font-weight:800;border-top:2px solid var(--border)}
 .mpesa-ledger-table td{white-space:nowrap}
 .mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
+.mpesa-payer-phone{display:block;margin-top:3px;color:var(--muted-2);font-family:var(--font-mono);font-size:10px;font-weight:650}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
 .mpesa-page-actions{display:flex;align-items:center;gap:12px}
@@ -7541,14 +7543,14 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
               <option value="">Select by amount and time</option>
               {providerLookup.transactions.map((transaction) => (
                 <option key={transaction.id} value={transaction.id}>
-                  {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
+                  {transaction.payerName ? `${transaction.payerName} - ` : ""}{transaction.payerPhoneLast4 ? `phone ${transaction.payerPhoneLast4} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
                 </option>
               ))}
             </select>
           </div>
         ) : null}
         {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
-        {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
+        {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"}{verifiedReceipt.payerPhoneLast4 ? ` | Phone ending ${verifiedReceipt.payerPhoneLast4}` : ""} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
         {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
         {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired ? <div className="notice compact-notice">No verified Kopo Kopo transaction matches this code. Manual M-Pesa amount entry is disabled for {branch.name}.</div> : null}
         {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired === false ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
@@ -7560,6 +7562,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
             <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
             <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
             {existingReceipt.providerVerified ? <div className="provider-detail"><span>Payer</span><b>{existingReceipt.payerName || "Not supplied by Kopo Kopo"}</b></div> : null}
+            {existingReceipt.providerVerified && existingReceipt.payerPhoneLast4 ? <div className="provider-detail"><span>Phone</span><b>Ending {existingReceipt.payerPhoneLast4}</b></div> : null}
             {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
           </div>
         ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Enter the full amount paid on this M-Pesa code; only the amount applied now will reduce it.</div> : null}
@@ -8354,14 +8357,14 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                   <option value="">Select by amount and time</option>
                   {providerLookup.transactions.map((transaction) => (
                     <option key={transaction.id} value={transaction.id}>
-                      {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
+                      {transaction.payerName ? `${transaction.payerName} - ` : ""}{transaction.payerPhoneLast4 ? `phone ${transaction.payerPhoneLast4} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
                     </option>
                   ))}
                 </select>
               </label>
             ) : null}
             {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
-            {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
+            {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"}{verifiedReceipt.payerPhoneLast4 ? ` | Phone ending ${verifiedReceipt.payerPhoneLast4}` : ""} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
             {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
             {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired ? <div className="notice compact-notice">No verified Kopo Kopo transaction matches this code. Manual M-Pesa amount entry is disabled for this branch.</div> : null}
             {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired === false ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
@@ -8372,6 +8375,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                 <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
                 <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
                 {existingReceipt.providerVerified ? <div className="provider-detail"><span>Payer</span><b>{existingReceipt.payerName || "Not supplied by Kopo Kopo"}</b></div> : null}
+                {existingReceipt.providerVerified && existingReceipt.payerPhoneLast4 ? <div className="provider-detail"><span>Phone</span><b>Ending {existingReceipt.payerPhoneLast4}</b></div> : null}
                 {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
               </div>
             ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Save its full M-Pesa amount once, then reuse this code until the balance is depleted.</div> : null}
@@ -14651,7 +14655,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
 
       <div className="mpesa-ledger-toolbar">
-        <label className="mpesa-ledger-search"><span>Payer, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, code or receipt last 4" maxLength={80} /></label>
+        <label className="mpesa-ledger-search"><span>Payer, phone, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, phone ending, code or receipt" maxLength={80} /></label>
         <label><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {allowAllBranches ? <option value="all">Both branches</option> : null}
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -14697,7 +14701,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
               <tr key={transaction.id}>
                 <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
                 <td className="innum">{transaction.referenceMasked}</td>
-                <td className="payer">{transaction.payerName || "Not supplied"}</td>
+                <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                 {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                 <td className="innum">{transaction.tillNumber || "-"}</td>
                 <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
@@ -14709,7 +14713,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         </div>
         <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
           <div className="mpesa-ledger-mobile-row" key={transaction.id}>
-            <div><span className="payer">{transaction.payerName || "Not supplied"}</span><small>{transaction.referenceMasked} / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
+            <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small>{transaction.referenceMasked} / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
             <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
             <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
           </div>); })}</div>
@@ -14903,6 +14907,7 @@ function KopokopoSandboxTest({ data }) {
               <div><span>Branch</span><b>{branchName}</b></div>
               {transaction ? <div><span>M-Pesa reference</span><b>{transaction.referenceMasked}</b></div> : null}
               {transaction ? <div><span>Payer</span><b>{transaction.payerName || "Sandbox customer"}</b></div> : null}
+              {transaction?.payerPhoneLast4 ? <div><span>Phone</span><b>Ending {transaction.payerPhoneLast4}</b></div> : null}
               {transaction ? <div><span>Provider result</span><b>{paymentRequest.providerStatus || "Verified"}</b></div> : null}
               {allocationTest ? <div><span>Virtual test invoice</span><b>{allocationTest.invoiceId}</b></div> : null}
               {allocationTest ? <div><span>Allocated</span><b>{fmt(allocationTest.allocatedCents, "KES")}</b></div> : null}

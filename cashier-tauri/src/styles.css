@@ -8953,6 +8953,20 @@ body {
   font-size: 10px;
 }
 
+.cashier-mpesa-payer {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+}
+
+.cashier-mpesa-payer > span {
+  color: #7de3c4;
+  font-family: "Roboto Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .cashier-mpesa-code-prefix {
   color: #728894;
   font-family: "Roboto Mono", monospace;
@@ -9172,6 +9186,7 @@ body {
 
 .cashier-mpesa-panel.light .cashier-mpesa-code-prefix { color: #94a3b8; }
 .cashier-mpesa-panel.light .cashier-mpesa-code-last4 { color: #087f8c; }
+.cashier-mpesa-panel.light .cashier-mpesa-payer > span { color: #047857; }
 .cashier-mpesa-panel.light .cashier-mpesa-meta-separator { color: #cbd5e1; }
 .cashier-mpesa-panel.light .cashier-mpesa-balance b { color: #047857; }
 

@@ -283,6 +283,7 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
   till_number       text,
   branch_id         text,
   payer_name        text,
+  payer_phone_last4 text,
   origination_time  timestamptz,
   reversed_at       timestamptz,
   created_at        timestamptz NOT NULL DEFAULT now(),
@@ -293,6 +294,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS kopokopo_transactions_reference_idx
   ON kopokopo_transactions (upper(reference));
 CREATE INDEX IF NOT EXISTS kopokopo_transactions_lookup_idx
   ON kopokopo_transactions (branch_id, reference_last4, status, origination_time DESC);
+
+CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx
+  ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time DESC);
 
 CREATE TABLE IF NOT EXISTS kopokopo_incoming_payment_requests (
   id                       text PRIMARY KEY,

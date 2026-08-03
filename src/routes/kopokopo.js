@@ -80,6 +80,7 @@ function publicTransaction(row) {
     tillNumber: row.till_number ?? row.tillNumber ?? null,
     branchId: row.branch_id ?? row.branchId ?? null,
     payerName: row.payer_name ?? row.payerName ?? null,
+    payerPhoneLast4: row.payer_phone_last4 ?? row.payerPhoneLast4 ?? null,
     originationTime: row.origination_time ?? row.originationTime ?? null,
     reversedAt: row.reversed_at ?? row.reversedAt ?? null,
     createdAt: row.created_at ?? row.createdAt ?? null,
@@ -423,7 +424,7 @@ router.get("/incoming-payments/:id", requireAdminOrSupervisor, async (req, res) 
     if (paymentRequest.status === "completed" && paymentRequest.providerTransactionId) {
       const result = await q(
         `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status,
-                till_number, branch_id, payer_name, origination_time
+                till_number, branch_id, payer_name, payer_phone_last4, origination_time
            FROM kopokopo_transactions
           WHERE id = $1 AND branch_id = $2
           LIMIT 1`,
@@ -493,7 +494,7 @@ router.get("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
     if (paymentRequest.status === "completed" && paymentRequest.providerTransactionId) {
       const result = await q(
         `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status,
-                till_number, branch_id, payer_name, origination_time
+                till_number, branch_id, payer_name, payer_phone_last4, origination_time
            FROM kopokopo_transactions
           WHERE id = $1 AND branch_id = $2
           LIMIT 1`,
@@ -608,6 +609,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
       const placeholder = addValue(pattern);
       clauses.push(`(
         lower(COALESCE(payer_name, '')) LIKE ${placeholder}
+        OR lower(COALESCE(payer_phone_last4, '')) LIKE ${placeholder}
         OR lower(COALESCE(reference_last4, '')) LIKE ${placeholder}
         OR id IN (
           SELECT search_allocation.transaction_id
@@ -653,7 +655,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const pageValues = [...values, limit, offset];
     const result = await q(
       `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number,
-              branch_id, payer_name, origination_time, reversed_at, created_at
+              branch_id, payer_name, payer_phone_last4, origination_time, reversed_at, created_at
          FROM kopokopo_transactions
         WHERE ${where}
         ORDER BY COALESCE(origination_time, created_at) ${sort}, created_at ${sort}, id ${sort}
@@ -742,7 +744,7 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
     const providerRequired = branchRequiresVerifiedKopokopo(config, branchId);
     if (!config.enabled || !last4) return res.json({ enabled: config.enabled, providerRequired, transactions: [] });
     const result = await q(
-      `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time
+      `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, payer_phone_last4, origination_time
          FROM kopokopo_transactions
         WHERE branch_id = $1
           AND reference_last4 = $2

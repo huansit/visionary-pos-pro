@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
   till_number       varchar(80),
   branch_id         varchar(191),
   payer_name        varchar(255),
+  payer_phone_last4 varchar(4),
   origination_time  datetime,
   reversed_at       datetime,
   created_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -256,6 +257,9 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
 
 CREATE INDEX kopokopo_transactions_lookup_idx
   ON kopokopo_transactions (branch_id, reference_last4, status, origination_time);
+
+CREATE INDEX kopokopo_transactions_phone_lookup_idx
+  ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time);
 
 CREATE TABLE IF NOT EXISTS kopokopo_incoming_payment_requests (
   id                       varchar(191) PRIMARY KEY,

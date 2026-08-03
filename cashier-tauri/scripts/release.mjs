@@ -240,6 +240,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "M-Pesa transactions now show and search a payer phone ending, making customers with the same name easier to distinguish.",
+  "Only the final four phone digits are retained; full payer phone numbers remain excluded from transaction storage and audit payloads.",
   "M-Pesa transactions can now be filtered by one exact minute or an inclusive custom time range.",
   "Cashier and admin transaction and invoice timestamps now use East Africa Time regardless of the workstation time zone.",
   "Profit and Loss now preserves the cost recorded when each sale or loss occurred, so later purchase prices cannot rewrite historical profit.",

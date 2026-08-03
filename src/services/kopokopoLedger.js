@@ -42,18 +42,19 @@ async function applyReceivedTransaction(client, parsed) {
               till_number = $6,
               branch_id = COALESCE($7, branch_id),
               payer_name = COALESCE($8, payer_name),
-              origination_time = COALESCE($9, origination_time),
+              payer_phone_last4 = COALESCE($9, payer_phone_last4),
+              origination_time = COALESCE($10, origination_time),
               updated_at = ${isMySql ? "NOW()" : "now()"}
         WHERE id = $1`,
-      [row.id, parsed.eventId, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.originationTime]
+      [row.id, parsed.eventId, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime]
     );
     return;
   }
   await client.query(
     `INSERT INTO kopokopo_transactions
-      (id, webhook_event_id, reference, reference_last4, amount_cents, currency, status, till_number, branch_id, payer_name, origination_time)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.originationTime]
+      (id, webhook_event_id, reference, reference_last4, amount_cents, currency, status, till_number, branch_id, payer_name, payer_phone_last4, origination_time)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime]
   );
 }
 
@@ -82,9 +83,9 @@ async function applyReversedTransaction(client, parsed) {
   }
   await client.query(
     `INSERT INTO kopokopo_transactions
-      (id, webhook_event_id, reference, reference_last4, amount_cents, currency, status, till_number, branch_id, payer_name, origination_time, reversed_at)
-     VALUES ($1, $2, $3, $4, $5, $6, 'Reversed', $7, $8, $9, $10, COALESCE($11, ${isMySql ? "NOW()" : "now()"}))`,
-    [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.originationTime, parsed.eventTime]
+      (id, webhook_event_id, reference, reference_last4, amount_cents, currency, status, till_number, branch_id, payer_name, payer_phone_last4, origination_time, reversed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'Reversed', $7, $8, $9, $10, $11, COALESCE($12, ${isMySql ? "NOW()" : "now()"}))`,
+    [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime, parsed.eventTime]
   );
 }
 

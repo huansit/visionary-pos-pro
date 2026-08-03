@@ -152,8 +152,19 @@ async function applyMySqlSchema() {
     try {
       await pool.query(statement);
     } catch (error) {
+      if (error?.code === "ER_BAD_FIELD_ERROR" && statement.includes("kopokopo_transactions_phone_lookup_idx")) continue;
       if (error?.code !== "ER_DUP_KEYNAME") throw error;
     }
+  }
+  try {
+    await pool.query("ALTER TABLE kopokopo_transactions ADD COLUMN payer_phone_last4 varchar(4)");
+  } catch (error) {
+    if (error?.code !== "ER_DUP_FIELDNAME") throw error;
+  }
+  try {
+    await pool.query("CREATE INDEX kopokopo_transactions_phone_lookup_idx ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time)");
+  } catch (error) {
+    if (error?.code !== "ER_DUP_KEYNAME") throw error;
   }
 }
 

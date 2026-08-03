@@ -25,6 +25,7 @@ await ready;
 const { default: app } = await import("../src/server.js");
 const {
   kopokopoConfig,
+  kopokopoPhoneLast4,
   pollKopokopoTransactions,
   readKopokopoIncomingPayment,
   requestKopokopoAccessToken,
@@ -158,6 +159,12 @@ test("keeps unsupported and malformed subscription behavior stable", async () =>
     .expect({ error: "invalid_kopokopo_webhook" });
 });
 
+test("derives only a privacy-safe payer phone ending", () => {
+  assert.equal(kopokopoPhoneLast4("+254 711-222-333"), "2333");
+  assert.equal(kopokopoPhoneLast4("123"), null);
+  assert.equal(kopokopoPhoneLast4(null), null);
+});
+
 test("stores a verified payment once and exposes only a branch-scoped masked lookup", async () => {
   const payload = webhookPayload();
   await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
@@ -180,8 +187,10 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
   assert.equal(lookup.body.transactions[0].providerVerified, true);
   assert.equal(lookup.body.providerRequired, true);
   assert.equal(lookup.body.transactions[0].payerName, "Test Customer");
+  assert.equal(lookup.body.transactions[0].payerPhoneLast4, "0000");
   assert.equal(lookup.body.transactions[0].originationTime, "2026-08-02T07:00:00.000Z");
   assert.equal("reference" in lookup.body.transactions[0], false);
+  assert.equal(JSON.stringify(lookup.body).includes("+254700000000"), false);
 
   const branchPolicy = await request(app)
     .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip")
@@ -219,6 +228,7 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
   assert.equal(ledger.body.transactions.length, 1);
   assert.equal(ledger.body.transactions[0].referenceMasked, "****12CD");
   assert.equal(ledger.body.transactions[0].payerName, "Test Customer");
+  assert.equal(ledger.body.transactions[0].payerPhoneLast4, "0000");
   assert.equal(ledger.body.transactions[0].amountCents, 100000);
   assert.equal(ledger.body.transactions[0].remainingCents, 100000);
   assert.equal("reference" in ledger.body.transactions[0], false);
@@ -229,6 +239,13 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
     remainingCents: 100000,
     branches: [{ branchId: "b_sip", transactionCount: 1, amountCents: 100000, allocatedCents: 0, remainingCents: 100000 }],
   });
+
+  const phoneSearch = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=0000")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(phoneSearch.body.transactions.length, 1);
+  assert.equal(phoneSearch.body.transactions[0].id, "txn-1");
 
   const supervisorLedger = await request(app)
     .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
@@ -378,12 +395,13 @@ test("stores signed polling callbacks instead of silently ignoring them", async 
   });
 
   const stored = await pool.query(
-    "SELECT reference_last4, amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+    "SELECT reference_last4, amount_cents, payer_name, payer_phone_last4 FROM kopokopo_transactions WHERE id = $1",
     ["callback-poll-transaction"]
   );
   assert.equal(stored.rows[0].reference_last4, "5678");
   assert.equal(Number(stored.rows[0].amount_cents), 27550);
   assert.equal(stored.rows[0].payer_name, "Callback Customer");
+  assert.equal(stored.rows[0].payer_phone_last4, "1111");
 
   const audit = await pool.query(
     "SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1",
@@ -525,15 +543,17 @@ test("recovers an accepted incoming payment from its authenticated status withou
     assert.equal(recovered.body.transaction.referenceLast4, "9Z8Y");
     assert.equal(recovered.body.transaction.amountCents, 12500);
     assert.equal(recovered.body.transaction.payerName, "Recovery Customer");
+    assert.equal(recovered.body.transaction.payerPhoneLast4, "1111");
 
     const ledgerRows = await pool.query(
-      "SELECT id, reference_last4, amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+      "SELECT id, reference_last4, amount_cents, payer_name, payer_phone_last4 FROM kopokopo_transactions WHERE id = $1",
       [providerResource.id]
     );
     assert.equal(ledgerRows.rows.length, 1);
     assert.equal(ledgerRows.rows[0].reference_last4, "9Z8Y");
     assert.equal(Number(ledgerRows.rows[0].amount_cents), 12500);
     assert.equal(ledgerRows.rows[0].payer_name, "Recovery Customer");
+    assert.equal(ledgerRows.rows[0].payer_phone_last4, "1111");
 
     const requestRows = await pool.query(
       "SELECT * FROM kopokopo_incoming_payment_requests WHERE id = $1",
@@ -1171,13 +1191,14 @@ test("polling recovery stores missing Buygoods transactions once and redacts its
   assert.deepEqual(second, { received: 2, stored: 0, duplicates: 1, ignored: 1 });
 
   const stored = await pool.query(
-    "SELECT reference_last4, amount_cents, branch_id, payer_name, status FROM kopokopo_transactions WHERE id = $1",
+    "SELECT reference_last4, amount_cents, branch_id, payer_name, payer_phone_last4, status FROM kopokopo_transactions WHERE id = $1",
     ["poll-recovery-transaction"]
   );
   assert.equal(stored.rows[0].reference_last4, "1234");
   assert.equal(Number(stored.rows[0].amount_cents), 27550);
   assert.equal(stored.rows[0].branch_id, "b_sip");
   assert.equal(stored.rows[0].payer_name, "Polling Customer");
+  assert.equal(stored.rows[0].payer_phone_last4, "1111");
   assert.equal(stored.rows[0].status, "Received");
 
   const audit = await pool.query(
