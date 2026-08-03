@@ -66,6 +66,7 @@ import {
   verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
+import { businessDateTimeBoundary, businessDateValue, formatBusinessDate, formatBusinessDateTime, formatBusinessTime } from "./businessTime";
 import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
@@ -328,7 +329,7 @@ function receiptPrintHtml(receipt: Receipt) {
 <body>
   <main class="receipt">
   <h1>${escapeHtml(receipt.branchName)}</h1>
-  <p>${escapeHtml(new Date(receipt.ts).toLocaleString())}</p>
+  <p>${escapeHtml(formatBusinessDateTime(receipt.ts))}</p>
   <p>Receipt: ${escapeHtml(receipt.number)}</p>
   <p>Cashier: ${escapeHtml(receipt.cashierName)}</p>
   <p>Customer: ${escapeHtml(receipt.customerName)}</p>
@@ -396,7 +397,7 @@ function receiptPrintText(receipt: Receipt) {
   const separator = "-".repeat(THERMAL_RECEIPT_COLUMNS);
   return [
     thermalCenter(receipt.branchName),
-    thermalCenter(new Date(receipt.ts).toLocaleString()),
+    thermalCenter(formatBusinessDateTime(receipt.ts)),
     "",
     `Receipt: ${receipt.number}`,
     `Cashier: ${receipt.cashierName}`,
@@ -535,7 +536,7 @@ function syncLabel(ts?: number) {
   if (seconds < 60) return `${seconds} seconds ago`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} minutes ago`;
-  return new Date(ts).toLocaleString();
+  return formatBusinessDateTime(ts);
 }
 
 function outstanding(invoice: Invoice) {
@@ -544,11 +545,7 @@ function outstanding(invoice: Invoice) {
 
 function isToday(ts?: number) {
   if (!ts) return false;
-  const date = new Date(ts);
-  const today = new Date();
-  return date.getFullYear() === today.getFullYear()
-    && date.getMonth() === today.getMonth()
-    && date.getDate() === today.getDate();
+  return businessDateValue(ts) === businessDateValue();
 }
 
 function isPendingVoidInvoice(invoice: Invoice) {
@@ -557,15 +554,15 @@ function isPendingVoidInvoice(invoice: Invoice) {
 
 function timeShort(ts?: number) {
   if (!ts) return "--:--";
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatBusinessTime(ts);
 }
 
 function railDateLabel(ts: number) {
-  return new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  return formatBusinessDate(ts, { weekday: "short", year: undefined });
 }
 
 function railTimeLabel(ts: number) {
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatBusinessTime(ts);
 }
 
 function invoiceCustomerLabel(invoice: Invoice) {
@@ -591,7 +588,7 @@ function isOverdueOpenInvoice(invoice: Invoice) {
 function invoiceDueDate(invoice: Invoice) {
   if (!invoice.ts) return "Not set";
   if (invoice.carriedOver) return "Carried at end of day";
-  return new Date(Number(invoice.ts) + DAY_MS).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
+  return formatBusinessDate(Number(invoice.ts) + DAY_MS);
 }
 
 function invoiceAgeText(invoice: Invoice) {
@@ -645,7 +642,7 @@ function invoiceSearchText(invoice: Invoice) {
 }
 
 function invoiceDate(invoice: Invoice) {
-  return invoice.ts ? new Date(invoice.ts).toLocaleString([], { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Not dated";
+  return invoice.ts ? formatBusinessDateTime(invoice.ts) : "Not dated";
 }
 
 function useScanner(onScan: (barcode: string) => void, enabled = true) {
@@ -1378,7 +1375,8 @@ export default function App() {
         productId: line.product.id,
         name: line.product.name,
         qty: line.qty,
-        priceCents: line.product.priceCents
+        priceCents: line.product.priceCents,
+        unitCostCents: line.product.costCents
       }))
     };
     try {
@@ -2053,10 +2051,8 @@ export default function App() {
   );
 }
 
-function mpesaDateBoundary(value: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+function mpesaDateBoundary(value: string, edge: "start" | "end" = "start") {
+  return businessDateTimeBoundary(value, edge);
 }
 
 function cashierMpesaStatus(transaction: MpesaTransaction) {
@@ -2089,6 +2085,8 @@ function CashierMpesaView({
   });
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [timeFilterMode, setTimeFilterMode] = useState<"specific" | "range">("specific");
+  const [specificTime, setSpecificTime] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sort, setSort] = useState<"asc" | "desc">("desc");
@@ -2117,9 +2115,16 @@ function CashierMpesaView({
   useEffect(() => {
     let active = true;
     let pollTimer = 0;
-    const from = mpesaDateBoundary(dateFrom);
-    const to = mpesaDateBoundary(dateTo);
-    if ((dateFrom && !from) || (dateTo && !to) || (from && to && from > to)) {
+    const from = timeFilterMode === "specific"
+      ? mpesaDateBoundary(specificTime, "start")
+      : mpesaDateBoundary(dateFrom, "start");
+    const to = timeFilterMode === "specific"
+      ? mpesaDateBoundary(specificTime, "end")
+      : mpesaDateBoundary(dateTo, "end");
+    const invalidTime = timeFilterMode === "specific"
+      ? Boolean(specificTime && (!from || !to))
+      : Boolean((dateFrom && !from) || (dateTo && !to));
+    if (invalidTime || (from && to && from > to)) {
       setLedger((current) => ({ ...current, loading: false, error: "Choose a valid transaction date range." }));
       return () => { active = false; };
     }
@@ -2167,7 +2172,7 @@ function CashierMpesaView({
       window.clearTimeout(requestTimer);
       window.clearTimeout(pollTimer);
     };
-  }, [branchId, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
+  }, [branchId, timeFilterMode, specificTime, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
 
   useEffect(() => {
     const refreshVisible = () => {
@@ -2187,6 +2192,7 @@ function CashierMpesaView({
   const clearFilters = () => {
     setSearch("");
     setStatusFilter("all");
+    setSpecificTime("");
     setDateFrom("");
     setDateTo("");
     setOffset(0);
@@ -2242,14 +2248,22 @@ function CashierMpesaView({
       <details className="cashier-mpesa-date-filter">
         <summary><Clock size={16} /> Date and time filter</summary>
         <div>
-          <label><span>From</span><input type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
-          <label><span>To</span><input type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
+          <div className="cashier-mpesa-time-mode" aria-label="Transaction time filter mode">
+            <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
+            <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
+          </div>
+          {timeFilterMode === "specific" ? (
+            <label><span>Exact minute (East Africa Time)</span><input type="datetime-local" step={60} value={specificTime} onChange={(event) => { setSpecificTime(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
+          ) : <>
+            <label><span>From (East Africa Time)</span><input type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
+            <label><span>To (East Africa Time)</span><input type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
+          </>}
         </div>
       </details>
 
       <div className="cashier-mpesa-toolbar">
         <button type="button" onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}><Clock size={16} />{sort === "desc" ? "Newest first" : "Oldest first"}</button>
-        {(search || statusFilter !== "all" || dateFrom || dateTo) && <button type="button" onClick={clearFilters}><X size={16} />Clear filters</button>}
+        {(search || statusFilter !== "all" || specificTime || dateFrom || dateTo) && <button type="button" onClick={clearFilters}><X size={16} />Clear filters</button>}
         <button type="button" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw size={16} />Refresh</button>
       </div>
 
@@ -2272,7 +2286,7 @@ function CashierMpesaView({
                     <span className="cashier-mpesa-code-prefix">****</span>
                     <strong className="cashier-mpesa-code-last4">{referenceLast4}</strong>
                     <span className="cashier-mpesa-meta-separator">/</span>
-                    <time dateTime={transactionTime || undefined}>{transactionTime ? new Date(transactionTime).toLocaleString() : "Time not supplied"}</time>
+                    <time dateTime={transactionTime || undefined}>{transactionTime ? formatBusinessDateTime(transactionTime) : "Time not supplied"}</time>
                   </div>
                 </div>
                 <div className="cashier-mpesa-amount">
@@ -2291,7 +2305,7 @@ function CashierMpesaView({
                   <div key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
                     <b>{allocation.invoiceNumber || allocation.invoiceId}</b>
                     <strong>{money(allocation.amountCents)}</strong>
-                    <small>Cleared by {allocation.allocatedByName || "supervisor"}{allocation.allocatedAt ? ` - ${new Date(allocation.allocatedAt).toLocaleString()}` : ""}</small>
+                    <small>Cleared by {allocation.allocatedByName || "supervisor"}{allocation.allocatedAt ? ` - ${formatBusinessDateTime(allocation.allocatedAt)}` : ""}</small>
                   </div>
                 ))}
               </div>
@@ -3884,7 +3898,7 @@ function ReceiptPreview({ receipt, onClose }: { receipt: Receipt; onClose: () =>
         </div>
         <div className="receipt" id="receipt-print">
           <h2>{receipt.branchName}</h2>
-          <p>{new Date(receipt.ts).toLocaleString()}</p>
+          <p>{formatBusinessDateTime(receipt.ts)}</p>
           <p>Receipt: {receipt.number}</p>
           <p>Cashier: {receipt.cashierName}</p>
           <p>Customer: {receipt.customerName}</p>

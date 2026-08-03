@@ -8835,6 +8835,33 @@ body {
   padding: 0 0 12px;
 }
 
+.cashier-mpesa-time-mode {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #31414d;
+  border-radius: 7px;
+  background: #0b1217;
+}
+
+.cashier-mpesa-time-mode button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #92a1ab;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cashier-mpesa-time-mode button.active {
+  background: #1b3542;
+  color: #edf7fa;
+}
+
 .cashier-mpesa-toolbar {
   display: flex;
   gap: 7px;
@@ -9096,6 +9123,14 @@ body {
 .cashier-mpesa-panel.light .cashier-mpesa-list {
   border-color: #d8e3e8;
 }
+
+.cashier-mpesa-panel.light .cashier-mpesa-time-mode {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.cashier-mpesa-panel.light .cashier-mpesa-time-mode button { color: #64748b; }
+.cashier-mpesa-panel.light .cashier-mpesa-time-mode button.active { background: #ffffff; color: #0f172a; }
 
 .cashier-mpesa-panel.light .cashier-mpesa-date-filter summary {
   color: #334155;

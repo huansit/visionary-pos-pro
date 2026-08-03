@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
+import { businessDateValue } from "./businessTime";
 import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
@@ -1293,7 +1294,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
         cashierId: account.id,
         cashier: account.name,
         branchId: terminal.branchId,
-        date: new Date(ts).toISOString().slice(0, 10),
+        date: businessDateValue(ts),
         totalCents: receipt.totalCents,
         paidCents: 0,
         items: receipt.items,
@@ -1312,6 +1313,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
         productId: item.productId,
         branchId: terminal.branchId,
         qty: -item.qty,
+        unitCostCents: Math.max(0, Number(item.unitCostCents || 0)),
         invoiceId,
         reason: `Sale ${receipt.number}`,
         ts
@@ -1373,7 +1375,7 @@ export async function pushExpense(
           enteredBy: account.name,
           cashierId: account.id,
           branchId: terminal.branchId,
-          date: new Date(ts).toISOString().slice(0, 10),
+          date: businessDateValue(ts),
           ts
         }
       }];

@@ -69,7 +69,7 @@ export type Invoice = {
   voidReason?: string;
   voidDecisionReason?: string;
   ts?: number;
-  items?: Array<{ productId?: string; name: string; qty: number; priceCents: number }>;
+  items?: Array<{ productId?: string; name: string; qty: number; priceCents: number; unitCostCents?: number }>;
 };
 
 export type CashierJointDebtShare = {
@@ -145,7 +145,7 @@ export type Receipt = {
   customerName: string;
   note?: string;
   totalCents: number;
-  items: Array<{ productId: string; name: string; qty: number; priceCents: number }>;
+  items: Array<{ productId: string; name: string; qty: number; priceCents: number; unitCostCents?: number }>;
   ts: number;
 };
 

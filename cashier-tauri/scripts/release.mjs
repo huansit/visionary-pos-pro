@@ -240,6 +240,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "M-Pesa transactions can now be filtered by one exact minute or an inclusive custom time range.",
+  "Cashier and admin transaction and invoice timestamps now use East Africa Time regardless of the workstation time zone.",
+  "Profit and Loss now preserves the cost recorded when each sale or loss occurred, so later purchase prices cannot rewrite historical profit.",
+  "Profit summaries now exclude orphan sale movements and consistently subtract loss and damage.",
   "Open invoices now retain a readable panel width and text size on compact cashier screens.",
   "End of Day now resets cashier and admin daily summaries across the complete branch closing batch, including minor terminal clock differences.",
   "M-Pesa transaction date filters now use hour-and-minute precision without seconds.",

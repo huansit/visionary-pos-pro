@@ -9,6 +9,7 @@ import {
 } from "react";
 import { pullCatalog, pushExpense } from "./api";
 import { cashierRuleSnapshot, classifyExpense, type ExpenseDecision } from "./cashierRules";
+import { businessDateValue } from "./businessTime";
 import type { Account, Branch, CartLine, CashierJointDebt, Invoice, TerminalCredentials } from "./types";
 
 export type CashierSessionState = {
@@ -122,15 +123,8 @@ function invoiceTs(invoice: Invoice) {
   return Number(invoice.ts || 0);
 }
 
-function startOfToday(ts = Date.now()) {
-  const date = new Date(ts);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
 function isToday(ts?: number) {
-  const value = Number(ts || 0);
-  return value >= startOfToday() && value < startOfToday() + DAY_MS;
+  return Boolean(ts) && businessDateValue(Number(ts)) === businessDateValue();
 }
 
 function ageDays(ts?: number) {

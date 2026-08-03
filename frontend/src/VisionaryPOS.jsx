@@ -11,6 +11,14 @@ import {
   normalizeMpesaCodeLast4,
   receiptForSettlement,
 } from "./admin/mpesaReceiptLedger.js";
+import {
+  DEFAULT_BUSINESS_TIME_ZONE,
+  businessDateTimeBoundary,
+  businessDateValue,
+  formatBusinessDateTime,
+  formatBusinessTime,
+  normalizeBusinessTimeZone,
+} from "./admin/businessTime.js";
 import "./styles/print.css";
 import {
   Lock, Delete, Mail, Eye, EyeOff, ArrowLeft, ArrowRight, Plus, Trash2, ShieldCheck, LogOut, Check, Edit, KeyRound,
@@ -50,7 +58,7 @@ const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 let activeSessionToken = "";
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => businessDateValue(Date.now(), DEFAULT_BUSINESS_TIME_ZONE);
 const DEFAULT_EXPENSE_CATEGORIES = [
   { id: "excat_transport", name: "Transport", icon: "truck", active: true, order: 10, synced: true },
   { id: "excat_repairs", name: "Repairs", icon: "wrench", active: true, order: 20, synced: true },
@@ -498,7 +506,7 @@ const SEED = () => {
   const stockMovements = [];
   products.forEach((p) => delete p._stock);
   return {
-    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", activeBranchId: "b_sip", lastEndDay: t - 86400000 },
+    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", timeZone: DEFAULT_BUSINESS_TIME_ZONE, activeBranchId: "b_sip", lastEndDay: t - 86400000 },
     admin: { name: "", email: "", phone: "", password: "", provisioned: false },
     branches,
     employees: [],
@@ -534,7 +542,7 @@ const SEED = () => {
 const CLEAN_SETUP = () => {
   const t = now();
   return {
-    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", activeBranchId: "", lastEndDay: t },
+    settings: { currency: "KES", taxRate: 0, store: "VISIONPOS", reorderLevel: 4, theme: "light", timeZone: DEFAULT_BUSINESS_TIME_ZONE, activeBranchId: "", lastEndDay: t },
     admin: { name: "", email: "", phone: "", password: "", provisioned: false },
     branches: [],
     employees: [],
@@ -726,6 +734,7 @@ function normalizeLoadedData(data) {
   if (!data) return data;
   const clean = CLEAN_SETUP();
   const settings = { ...clean.settings, ...(data.settings || {}) };
+  settings.timeZone = normalizeBusinessTimeZone(settings.timeZone);
   if (["Visionary POS", "VISIONARY POS"].includes(settings.store)) settings.store = "VISIONPOS";
   const normalized = {
     ...clean,
@@ -1244,7 +1253,7 @@ function kopokopoReceipt(transaction, branchId, actorName) {
 function kopokopoTransactionTime(value) {
   if (!value) return "Not supplied by Kopo Kopo";
   const timestamp = new Date(value);
-  return Number.isNaN(timestamp.getTime()) ? "Not supplied by Kopo Kopo" : timestamp.toLocaleString();
+  return Number.isNaN(timestamp.getTime()) ? "Not supplied by Kopo Kopo" : formatBusinessDateTime(timestamp);
 }
 function useKopokopoLookup(branchId, codeLast4) {
   const normalizedCode = normalizeMpesaCodeLast4(codeLast4);
@@ -2232,6 +2241,11 @@ function branchInventoryCostCents(data, product, branchId) {
 
   return preciseCents(product.costCents);
 }
+function movementUnitCostCents(data, movement, product) {
+  const snapshot = Number(movement?.unitCostCents ?? movement?.costCentsAtMovement ?? 0);
+  if (Number.isFinite(snapshot) && snapshot >= 0 && (snapshot > 0 || movement?.unitCostCents === 0)) return preciseCents(snapshot);
+  return product ? branchInventoryCostCents(data, product, movement?.branchId) : 0;
+}
 function productStockValuation(data, product, branchId) {
   const branchIds = branchId ? [branchId] : (data?.branches || []).map((branch) => branch.id);
   if (!branchIds.length) {
@@ -2813,7 +2827,10 @@ function invoiceWasCarriedOver(data, inv) {
 }
 // P&L recognition is intentionally conservative: an invoice must be cleared and its
 // business day must have been closed. Open invoices stay out of profit/margin.
-function invRecognized(inv, settings) { return invOutstanding(inv) <= 0 && inv.ts <= lastEndFor(settings, inv.branchId); }
+function invRecognized(inv, source) {
+  const closedAt = source?.settings ? branchLastEndDay(source, inv.branchId) : lastEndFor(source || {}, inv.branchId);
+  return invOutstanding(inv) <= 0 && Number(inv.ts || 0) <= closedAt;
+}
 function invIsDebt(inv) {
   if (invOutstanding(inv) <= 0) return false;
   return Boolean(inv.carriedOver);
@@ -2836,10 +2853,14 @@ function saleMoveInvoice(data, move) {
   const invoiceNo = reason.slice(5).trim();
   return (data?.invoices || []).find((i) => i.number === invoiceNo) || null;
 }
+function saleMoveOperational(data, move) {
+  const inv = saleMoveInvoice(data, move);
+  return Boolean(inv && !invoiceIsVoided(data, inv));
+}
 function saleMoveRecognized(data, move) {
   const inv = saleMoveInvoice(data, move);
-  if (inv && invoiceIsVoided(data, inv)) return false;
-  return inv ? invRecognized(inv, data.settings) : move.ts <= lastEndFor(data.settings, move.branchId);
+  if (!saleMoveOperational(data, move)) return false;
+  return invRecognized(inv, data);
 }
 // Identifier validation (format only — no network verification in the offline prototype).
 function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").trim()); }
@@ -2875,9 +2896,9 @@ function operationalInvoices(data) {
     .filter((invoice) => !invoiceIsVoided(data, invoice))
     .map((invoice) => ({ ...invoice, carriedOver: invoiceWasCarriedOver(data, invoice) }));
 }
-const isToday = (ts) => new Date(ts).toDateString() === new Date().toDateString();
-// Combined date + time stamp for documents (invoices, purchases, expenses, stock moves, etc.)
-function dt(ts) { if (ts == null) return "—"; const d = new Date(ts); return d.toLocaleDateString() + " · " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+const isToday = (ts) => businessDateValue(ts, DEFAULT_BUSINESS_TIME_ZONE) === businessDateValue(Date.now(), DEFAULT_BUSINESS_TIME_ZONE);
+// Business timestamps remain stable even when the viewing workstation uses another timezone.
+function dt(ts) { return ts == null ? "-" : formatBusinessDateTime(ts, DEFAULT_BUSINESS_TIME_ZONE).replace(",", " -"); }
 function localDateValue(date) {
   const d = new Date(date);
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"), String(d.getDate()).padStart(2, "0")].join("-");
@@ -3851,6 +3872,9 @@ body{overscroll-behavior:none}
 .mpesa-ledger-search{position:relative}
 .mpesa-ledger-search svg{position:absolute;left:12px;bottom:11px;width:16px;height:16px;color:var(--muted-2)}
 .mpesa-ledger-search .input{padding-left:38px}
+.mpesa-time-mode{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2)}
+.mpesa-time-mode button{min-height:32px;padding:4px 8px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:inherit;font-size:10.5px;font-weight:800;cursor:pointer;white-space:nowrap}
+.mpesa-time-mode button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.14)}
 .mpesa-ledger-actions{display:flex;align-items:center;gap:6px}
 .mpesa-ledger-actions .btn{height:42px;white-space:nowrap}
 .mpesa-ledger-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-soft);border-left:0;border-right:0;margin:10px 0 14px}
@@ -3892,8 +3916,8 @@ body{overscroll-behavior:none}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
-@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
-@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
   .mpesa-ledger-page .page-header{align-items:flex-start;gap:10px}
@@ -5853,10 +5877,10 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     }
     const ts = now(); const synced = online;
     const inv = { id: uid("inv"), number: receiptNo, customerId: null, customerName: ident.trim(), note: note.trim(),
-      cashierId: employee.id, cashier: employee.name, branchId: branch.id, date: todayStr(), totalCents: total, paidCents: 0,
-      items: lines.map((l) => ({ name: l.name, qty: l.qty, priceCents: l.priceCents })),
+      cashierId: employee.id, cashier: employee.name, branchId: branch.id, date: businessDateValue(ts, data.settings.timeZone), totalCents: total, paidCents: 0,
+      items: lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { productId: l.productId, name: l.name, sku: product?.sku || "", qty: l.qty, priceCents: l.priceCents, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0 }; }),
       method: "Invoice", carriedOver: false, ts, synced };
-    const movements = lines.map((l) => ({ id: uid("mv"), productId: l.productId, branchId: branch.id, qty: -l.qty, reason: "Sale " + inv.number, ts, synced }));
+    const movements = lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { id: uid("mv"), productId: l.productId, branchId: branch.id, qty: -l.qty, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0, reason: "Sale " + inv.number, ts, synced }; });
     update((d) => ({ ...d, invoices: [...d.invoices, inv], stockMovements: [...d.stockMovements, ...movements] }));
     setReceipt(inv); setCart({}); setIdent(""); setNote("");
   };
@@ -6295,7 +6319,7 @@ function invoiceReceiptPrintHtml(receipts, cur) {
   const sections = receipts.map(({ inv, store }, index) => {
     const items = normalizedReceiptItems(inv);
     const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.qty)} x ${escapeReceiptHtml(fmt(item.priceCents, cur))}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
-    return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(new Date(inv.ts).toLocaleString())}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p><p>Thank you.</p></main>`;
+    return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(formatBusinessDateTime(inv.ts))}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p><p>Thank you.</p></main>`;
   }).join("");
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style id="receipt-page-rules"></style><style>
 *{box-sizing:border-box}html,body{margin:0;width:80mm;background:#fff;color:#000}body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.35;overflow-wrap:anywhere;writing-mode:horizontal-tb}
@@ -6347,7 +6371,7 @@ function InvoiceReceipt({ inv, cur, store, onClose }) {
         <div style={{ textAlign: "center", marginTop: 8 }}><span className="badge pend"><FileText /> {invoiceReceiptStatus(inv, cur)}</span></div>
         <div className="rcpt">
           <div className="rc-h">{store}</div>
-          <div className="rc-s">{new Date(inv.ts).toLocaleString()}</div>
+          <div className="rc-s">{formatBusinessDateTime(inv.ts)}</div>
           <div className="rc-s">Receipt: {inv.number || inv.receiptNo}</div>
           <div className="rc-s">Cashier: {invoiceCashierName(inv)}</div>
           <div className="rc-s">Customer: {inv.customerName || "Walk-in"}</div>
@@ -7517,7 +7541,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
               <option value="">Select by amount and time</option>
               {providerLookup.transactions.map((transaction) => (
                 <option key={transaction.id} value={transaction.id}>
-                  {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? new Date(transaction.originationTime).toLocaleString() : transaction.referenceMasked}
+                  {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
                 </option>
               ))}
             </select>
@@ -7621,7 +7645,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     const cBy = {}; inv.forEach((i) => { const cashierName = invoiceCashierName(i); const c = cBy[cashierName] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[cashierName] = c; });
     const now0 = new Date();
     d = {
-      cashier: user, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: now0.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      cashier: user, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: formatBusinessTime(now0, data.settings.timeZone),
       periodStartedAt: since,
       transactions: inv.length, itemsSold: lines.reduce((s, l) => s + l.qty, 0), totalSalesCents: inv.reduce((s, i) => s + i.totalCents, 0),
       cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC, expenseCents: expenseC,
@@ -8330,7 +8354,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                   <option value="">Select by amount and time</option>
                   {providerLookup.transactions.map((transaction) => (
                     <option key={transaction.id} value={transaction.id}>
-                      {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? new Date(transaction.originationTime).toLocaleString() : transaction.referenceMasked}
+                      {transaction.payerName ? `${transaction.payerName} - ` : ""}{fmt(transaction.remainingCents, cur)} available - {transaction.originationTime ? kopokopoTransactionTime(transaction.originationTime) : transaction.referenceMasked}
                     </option>
                   ))}
                 </select>
@@ -8383,7 +8407,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                   <b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b>
                   {p.providerVerified ? <span>Payer: {p.mpesaPayerName || "Not supplied by Kopo Kopo"}</span> : null}
                   {p.providerVerified ? <span>Transaction time: {kopokopoTransactionTime(p.mpesaOriginationTime)}</span> : null}
-                  <span>Recorded {new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span>
+                  <span>Recorded {formatBusinessDateTime(p.ts)} by {paymentActorName(p)}</span>
                 </div>
                 <strong>{fmt(p.amountCents, cur)}</strong>
               </div>))}</div>
@@ -8417,11 +8441,14 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const businessPeriodStart = branchLastEndDay(data, branch.id);
   const todayInv = branchInvoices.filter((invoice) => Number(invoice.ts || 0) > businessPeriodStart);
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
-  const recognizedTodayInv = todayInv.filter((i) => invRecognized(i, data.settings));
-  const recognizedTodaySales = recognizedTodayInv.reduce((s, i) => s + i.totalCents, 0);
-  const todayCOGS = data.stockMovements.filter((m) => m.branchId === branch.id && Number(m.ts || 0) > businessPeriodStart && typeof m.reason === "string" && m.reason.startsWith("Sale") && saleMoveRecognized(data, m))
-    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (p ? (-m.qty) * branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
-  const todayProfit = recognizedTodaySales - todayCOGS;
+  const currentSaleMoves = data.stockMovements.filter((movement) => {
+    if (movement.branchId !== branch.id || Number(movement.ts || 0) <= businessPeriodStart || !String(movement.reason || "").startsWith("Sale")) return false;
+    const invoice = saleMoveInvoice(data, movement);
+    return Boolean(invoice && !invoiceIsVoided(data, invoice));
+  });
+  const todayCOGS = currentSaleMoves
+    .reduce((s, m) => { const p = data.products.find((x) => x.id === m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
+  const todayProfit = todaySales - todayCOGS;
   const creditInvoices = branchInvoices.filter((invoice) => invIsDebt(invoice));
   const creditTotal = creditInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryDebtBalances = cashierJointDebtCashierBalances(data, branch.id);
@@ -8454,8 +8481,8 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
   const localSummary = () => {
-    const margin = recognizedTodaySales > 0 ? Math.round((todayProfit / recognizedTodaySales) * 100) : 0;
-    let s = "Today's sales are " + fmt(todaySales, cur) + " with recognized profit of " + fmt(todayProfit, cur) + " (" + margin + "% margin after clearing and End of Day). ";
+    const margin = todaySales > 0 ? Math.round((todayProfit / todaySales) * 100) : 0;
+    let s = "Today's sales are " + fmt(todaySales, cur) + " with estimated gross profit of " + fmt(todayProfit, cur) + " (" + margin + "% before expenses and loss). ";
     s += creditTotal > 0 ? "Outstanding credit stands at " + fmt(creditTotal, cur) + ". " : "No outstanding credit. ";
     s += inventoryDebtOutstanding > 0 ? "Cashier inventory debt stands at " + fmt(inventoryDebtOutstanding, cur) + ". " : "Cashier inventory debt is clear. ";
     s += fastReorders.length > 0 ? fastReorders.length + " fast-moving product(s) need reordering — prioritise the lowest cover." : "Fast movers are well stocked.";
@@ -8473,7 +8500,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
       <PageHead title="Dashboard" sub={"Overview · " + branch.name} />
       <div className="cashtiles" style={{ marginBottom: 0 }}>
         <div className="ctile"><div className="ic"><Receipt /></div><div><div className="cl">Sales (today)</div><div className="cv">{fmt(todaySales, cur)}</div><div className="cs">{todayInv.length} invoices</div></div></div>
-        <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Profit (today)</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{recognizedTodaySales > 0 ? Math.round(todayProfit / recognizedTodaySales * 100) + "% margin" : "after EOD & clearing"}</div></div></div>
+        <div className={"ctile " + (todayProfit >= 0 ? "good" : "warn")}><div className="ic"><BarChart3 /></div><div><div className="cl">Est. gross profit</div><div className="cv">{fmt(todayProfit, cur)}</div><div className="cs">{todaySales > 0 ? Math.round(todayProfit / todaySales * 100) + "% before expenses" : "no current sales"}</div></div></div>
         <div className={"ctile " + (creditTotal > 0 ? "warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Credit outstanding</div><div className="cv">{fmt(creditTotal, cur)}</div><div className="cs">{creditInvoices.length ? creditInvoices.length + " debt invoice" + (creditInvoices.length === 1 ? "" : "s") : "all clear"}</div></div></div>
         <div className={"ctile " + (inventoryDebtOutstanding > 0 ? "warn" : "good")} role="button" tabIndex={0} onClick={onOpenPayments} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpenPayments?.(); }} style={{ cursor: "pointer" }}>
           <div className="ic"><CreditCard /></div><div><div className="cl">Inventory joint debt</div><div className="cv">{fmt(inventoryDebtOutstanding, cur)}</div><div className="cs">paid {fmt(inventoryDebtPaid, cur)} of {fmt(inventoryDebtAssigned, cur)}</div></div>
@@ -9042,7 +9069,7 @@ function StockTab({ data, update, branch }) {
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
   const lossValue = lossList.reduce((s, m) => {
     const product = data.products.find((p) => p.id === m.productId);
-    return s + Math.abs(m.qty) * (product ? branchInventoryCostCents(data, product, bId) : 0);
+    return s + Math.abs(m.qty) * movementUnitCostCents(data, m, product);
   }, 0);
   const lossTerm = lf.q.trim().toLowerCase();
   const lossProdMatches = lossTerm === "" || lf.productId ? [] : sortProductsAZ(uniqueProducts.filter((p) => p.name.toLowerCase().includes(lossTerm)
@@ -9380,7 +9407,8 @@ function StockTab({ data, update, branch }) {
       return;
     }
     const reason = "Loss/Damage - " + lf.reason + (lf.note.trim() ? " - " + lf.note.trim() : "");
-    update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, reason, ts: now(), synced: false }] }));
+    const unitCostCents = branchInventoryCostCents(data, lossProd, bId);
+    update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, unitCostCents, reason, ts: now(), synced: false }] }));
     setScanMsg(dq + " x " + lossProd.name + " recorded as " + lf.reason.toLowerCase() + " at " + bname + ".");
     setLossError("");
     setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
@@ -9994,7 +10022,8 @@ function StockTabLegacy({ data, update, branch }) {
     const qty = parseInt(lf.qty, 10); if (!lf.productId || !qty || qty <= 0) return;
     const oh = onHand(data, lf.productId, bId); const dq = Math.min(qty, Math.max(0, oh)); if (dq <= 0) return;
     const reason = "Loss/Damage · " + lf.reason + (lf.note.trim() ? " — " + lf.note.trim() : "");
-    update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, reason, ts: now(), synced: false }] }));
+    const unitCostCents = lossProd ? branchInventoryCostCents(data, lossProd, bId) : 0;
+    update((d) => ({ ...d, stockMovements: [...d.stockMovements, { id: uid("mv"), productId: lf.productId, branchId: bId, qty: -dq, unitCostCents, reason, ts: now(), synced: false }] }));
     setLf({ q: "", productId: "", qty: "", reason: lf.reason, note: "" });
   };
   const handleStockScan = (code) => {
@@ -10186,7 +10215,7 @@ function StockTabLegacy({ data, update, branch }) {
                 <div className="list" style={{ maxHeight: 220, overflow: "auto" }}>{lossList.slice(0, 30).map((m) => { const p = data.products.find((x) => x.id === m.productId); return (
                   <div className="row" key={m.id}><div className="avatar"><TrendingDown style={{ width: 16, height: 16 }} /></div>
                     <div className="meta"><div className="nm">{Math.abs(m.qty)}× {p ? p.name : m.productId}</div><div className="mt2">{m.reason.replace("Loss/Damage · ", "")} · {dt(m.ts)}</div></div>
-                    <span className="pill plain">{fmt(Math.abs(m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0), cur)}</span></div>); })}</div>
+                    <span className="pill plain">{fmt(Math.abs(m.qty) * movementUnitCostCents(data, m, p), cur)}</span></div>); })}</div>
               </>
             )}
           </div>
@@ -10957,15 +10986,20 @@ function BranchesTab({ data, update }) {
       value += valuation.costValue;
     });
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
-    const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data.settings));
+    const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
     const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
-    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, b.id) : 0); }, 0);
+    const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
     const expenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
+    const losses = data.stockMovements.filter((movement) => movement.branchId === b.id && String(movement.reason || "").startsWith("Loss/Damage"));
+    const lossTotal = losses.reduce((sum, movement) => {
+      const product = prod(movement.productId);
+      return sum + Math.abs(Number(movement.qty || 0)) * movementUnitCostCents(data, movement, product);
+    }, 0);
     const grossProfit = grossSales - cogs;
-    const netProfit = grossProfit - expenses;
+    const netProfit = grossProfit - expenses - lossTotal;
     const margin = grossSales > 0 ? Math.round((grossProfit / grossSales) * 100) : 0;
-    return { units, value, reorders: reorderList(data, b.id).length, grossSales, grossProfit, netProfit, margin };
+    return { units, value, reorders: reorderList(data, b.id).length, grossSales, grossProfit, netProfit, lossTotal, margin };
   };
   const reset = () => { setEditId(null); setF(blank); };
   const save = () => {
@@ -11019,6 +11053,7 @@ function BranchesTab({ data, update }) {
             <div className="bkv"><span>Inventory value</span><span className="v">{fmt(s.value, cur)}</span></div>
             <div className="bkv"><span>Sales (recognized)</span><span className="v">{fmt(s.grossSales, cur)}</span></div>
             <div className="bkv"><span>Gross profit</span><span className="v" style={{ color: s.grossProfit >= 0 ? "var(--ok)" : "var(--danger)" }}>{fmt(s.grossProfit, cur)} · {s.margin}%</span></div>
+            <div className="bkv"><span>Loss and damage</span><span className="v" style={{ color: s.lossTotal > 0 ? "var(--danger)" : "var(--text)" }}>{fmt(s.lossTotal, cur)}</span></div>
             <div className="bkv"><span>Net profit</span><span className="v" style={{ color: s.netProfit >= 0 ? "var(--ok)" : "var(--danger)" }}>{fmt(s.netProfit, cur)}</span></div>
             <div className="bkv"><span>Reorder alerts</span><span className="v" style={{ color: s.reorders ? "var(--danger)" : "var(--text)" }}>{s.reorders}</span></div>
             <div className="bkv"><span>M-Pesa till</span><span className="v">{b.mpesaTill || "—"}</span></div>
@@ -12148,7 +12183,10 @@ const ASK_EXAMPLES = [
 ];
 function aiDigest(data) {
   const cur = data.settings.currency; const k = (c) => Math.round(c / 100);
-  const startToday = new Date().setHours(0, 0, 0, 0); const startYest = startToday - 864e5; const start7 = Date.now() - 7 * 864e5;
+  const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
+  const todayBusinessDate = businessDateValue(Date.now(), timeZone);
+  const startToday = Date.parse(businessDateTimeBoundary(`${todayBusinessDate}T00:00`, timeZone, "start"));
+  const startYest = startToday - 864e5; const start7 = Date.now() - 7 * 864e5;
   const activeInvoices = operationalInvoices(data);
   const prod = (id) => data.products.find((p) => p.id === id);
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -12158,16 +12196,16 @@ function aiDigest(data) {
     const iy = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= startYest && i.ts < startToday);
     const i7 = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= start7);
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
-    const recognizedSalesToday = it.filter((i) => invRecognized(i, data.settings)).reduce((s, i) => s + i.totalCents, 0);
-    const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveRecognized(data, m));
-    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
-    return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(recognizedSalesToday - cogs), marginPct: recognizedSalesToday > 0 ? Math.round((recognizedSalesToday - cogs) / recognizedSalesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
+    const recognizedSalesToday = it.filter((i) => invRecognized(i, data)).reduce((s, i) => s + i.totalCents, 0);
+    const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveOperational(data, m));
+    const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
+    return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(salesToday - cogs), marginPct: salesToday > 0 ? Math.round((salesToday - cogs) / salesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
   });
-  const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveRecognized(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
+  const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveOperational(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
   const topProducts = Object.entries(byProd).map(([id, u]) => {
     const p = prod(id);
     if (!p) return null;
-    const revenue = saleMv((m) => m.productId === id && m.ts >= startToday && saleMoveRecognized(data, m))
+    const revenue = saleMv((m) => m.productId === id && m.ts >= startToday && saleMoveOperational(data, m))
       .reduce((sum, movement) => sum + (-movement.qty) * branchProductPriceCents(p, movement.branchId), 0);
     return { product: p.name, sku: p.sku, units: u, revenueKES: k(revenue) };
   }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
@@ -12190,7 +12228,7 @@ function aiDigest(data) {
   }));
   const totalToday = branches.reduce((s, b) => s + b.salesTodayKES, 0); const totalProfit = branches.reduce((s, b) => s + b.grossProfitKES, 0); const totalExp = k(expT.reduce((s, e) => s + e.amountCents, 0));
   return {
-    currency: cur, date: new Date().toLocaleString(), company: data.settings.store || "VISIONPOS",
+    currency: cur, date: formatBusinessDateTime(Date.now(), timeZone), company: data.settings.store || "VISIONPOS",
     totals: { salesTodayKES: totalToday, salesYesterdayKES: branches.reduce((s, b) => s + b.salesYesterdayKES, 0), transactionsToday: branches.reduce((s, b) => s + b.transactionsToday, 0), grossProfitKES: totalProfit, expensesTodayKES: totalExp, netProfitKES: totalProfit - totalExp },
     branches, topProducts,
     paymentMixTodayKES: Object.fromEntries(Object.entries(payT).map(([m, v]) => [m, k(v)])),
@@ -12460,11 +12498,12 @@ function exportDiscrepancy(report, cur, kind) {
 
 function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const cur = data.settings.currency;
+  const reportTimeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [period, setPeriod] = useState("today");
   const [rb, setRb] = useState("all");
   const [sub, setSub] = useState(initialTab === "unpaid" ? "open" : (initialTab || "overview"));
-  const [fromD, setFromD] = useState(todayStr());
-  const [toD, setToD] = useState(todayStr());
+  const [fromD, setFromD] = useState(() => businessDateValue(Date.now(), reportTimeZone));
+  const [toD, setToD] = useState(() => businessDateValue(Date.now(), reportTimeZone));
   const [vel, setVel] = useState("all");
   const [prodSel, setProdSel] = useState(null);
   const [productSearch, setProductSearch] = useState("");
@@ -12529,9 +12568,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     onScan: openScannedReportProduct,
   });
 
-  const dayStart = (s) => new Date(s + "T00:00:00").getTime();
-  const dayEnd = (s) => new Date(s + "T23:59:59.999").getTime();
-  const sinceFor = period === "custom" ? dayStart(fromD) : { today: new Date().setHours(0, 0, 0, 0), "7d": Date.now() - 7 * 864e5, "30d": Date.now() - 30 * 864e5, all: 0 }[period];
+  const dayStart = (s) => Date.parse(businessDateTimeBoundary(s + "T00:00", reportTimeZone, "start"));
+  const dayEnd = (s) => Date.parse(businessDateTimeBoundary(s + "T23:59", reportTimeZone, "end"));
+  const todayBusinessDate = businessDateValue(Date.now(), reportTimeZone);
+  const sinceFor = period === "custom" ? dayStart(fromD) : { today: dayStart(todayBusinessDate), "7d": Date.now() - 7 * 864e5, "30d": Date.now() - 30 * 864e5, all: 0 }[period];
   const untilFor = period === "custom" ? dayEnd(toD) : Infinity;
   const inRange = (ts) => ts >= sinceFor && ts <= untilFor;
   const inBranch = (bid) => rb === "all" || bid === rb;
@@ -12541,7 +12581,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const activeInvoices = operationalInvoices(data);
 
   const invs = activeInvoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
-  const recInvs = invs.filter((i) => invRecognized(i, data.settings)); // counted in P&L only after payment and end-of-day
+  const recInvs = invs.filter((i) => invRecognized(i, data)); // counted in P&L only after payment and end-of-day
   const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
   const paymentTs = (payment) => Number(
@@ -12571,11 +12611,11 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       return transferSort === "latest" ? difference : -difference;
     });
   const lossMoves = data.stockMovements.filter((mv) => typeof mv.reason === "string" && mv.reason.startsWith("Loss/Damage") && inRange(mv.ts) && inBranch(mv.branchId));
-  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); }, 0);
-  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0); });
+  const lossTotal = lossMoves.reduce((s, mv) => { const p = prod(mv.productId); return s + Math.abs(mv.qty) * movementUnitCostCents(data, mv, p); }, 0);
+  const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * movementUnitCostCents(data, mv, p); });
 
   const itemsSold = saleMoves.reduce((s, m) => s + (-m.qty), 0);
-  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * (p ? branchInventoryCostCents(data, p, m.branchId) : 0); }, 0);
+  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
   // Gross sales is the full non-void invoice value for the selected period,
   // including invoices that are still open or have since become overdue.
   // Total sales remains conservative: only paid invoices from a closed
@@ -12740,8 +12780,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       sku: product?.sku || "",
       category: product?.category || "",
     });
-    row.cogs += Math.max(0, -Number(movement.qty || 0))
-      * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
+    row.cogs += Math.max(0, -Number(movement.qty || 0)) * movementUnitCostCents(data, movement, product);
   });
   lossMoves.forEach((movement) => {
     const product = productsById.get(movement.productId) || prod(movement.productId);
@@ -12751,8 +12790,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       sku: product?.sku || "",
       category: product?.category || "",
     });
-    row.lossValue += Math.abs(Number(movement.qty || 0))
-      * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
+    row.lossValue += Math.abs(Number(movement.qty || 0)) * movementUnitCostCents(data, movement, product);
   });
 
   // Preserve reconciliation even for legacy invoices whose item lines were
@@ -12888,7 +12926,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       headers: ["Product", "SKU", "Category", "Units sold", "Sales", "COGS", "Loss & damage", "Gross profit", "Product profit", "Gross margin %"],
       rows: visibleProductPnlRows.map((row) => [row.name, row.sku, row.category, row.qty, m(row.revenue), m(row.cogs), m(row.lossValue), m(row.grossProductProfit), m(row.productProfit), row.margin]),
     };
-    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0))]; }) };
+    if (sub === "loss") return { name: "loss-damage", headers: ["Date", "Product", "SKU", "Qty", "Reason", "Cost value"], rows: lossMoves.map((mv) => { const p = prod(mv.productId); return [dt(mv.ts), p ? p.name : mv.productId, p ? p.sku : "", Math.abs(mv.qty), mv.reason.replace("Loss/Damage · ", ""), m(Math.abs(mv.qty) * movementUnitCostCents(data, mv, p))]; }) };
     if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: reportProducts.map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
@@ -13442,7 +13480,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
                   <td><div className="nm">{p ? p.name : mv.productId}</div><div className="mt2">{p ? p.sku : ""}</div></td>
                   <td style={{ fontWeight: 700, color: "var(--danger)" }}>−{Math.abs(mv.qty)}</td>
                   <td>{mv.reason.replace("Loss/Damage · ", "")}</td>
-                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * (p ? branchInventoryCostCents(data, p, mv.branchId) : 0), cur)}</td></tr>); })}</tbody></table></div>)}
+                  <td className="amt" style={{ color: "var(--danger)" }}>{fmt(Math.abs(mv.qty) * movementUnitCostCents(data, mv, p), cur)}</td></tr>); })}</tbody></table></div>)}
         </>
       )}
 
@@ -13553,7 +13591,7 @@ function DocumentsTab({ data }) {
       .filter((movement) => inRange(movement.ts) && inBranch(movement.branchId) && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
       .map((movement) => {
         const product = prod(movement.productId);
-        const value = Math.abs(Number(movement.qty) || 0) * (product ? branchInventoryCostCents(data, product, movement.branchId) : 0);
+        const value = Math.abs(Number(movement.qty) || 0) * movementUnitCostCents(data, movement, product);
         return {
           id: movement.id,
           label: product?.name || "Product correction",
@@ -13564,7 +13602,7 @@ function DocumentsTab({ data }) {
       });
   } else if (type === "loss") {
     eyebrow = "Shrinkage"; title = "Loss & Damage Reports";
-    docs = data.stockMovements.filter((m) => inRange(m.ts) && inBranch(m.branchId) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * (p ? branchInventoryCostCents(data, p, m.branchId) : 0);
+    docs = data.stockMovements.filter((m) => inRange(m.ts) && inBranch(m.branchId) && (m.reason === "Adjustment" || (m.reason === "Inventory count" && m.qty < 0))).map((m) => { const p = prod(m.productId); const val = m.qty * movementUnitCostCents(data, m, p);
       return { id: m.id, label: p ? p.name : "Product", meta: bname(m.branchId) + " · " + Math.abs(m.qty) + " units lost", date: dt(m.ts), ts: m.ts, amountCents: Math.abs(val),
         detail: [["Product", p ? p.name : ""], ["SKU", p ? p.sku : ""], ["Branch", bname(m.branchId)], ["Units lost", Math.abs(m.qty)], ["Cost value", fmt(Math.abs(val), cur)], ["Source", m.reason], ["When", new Date(m.ts).toLocaleString()]] }; });
   } else if (type === "transfers") {
@@ -14461,13 +14499,11 @@ function kopokopoLedgerStatus(transaction) {
   return { key: "available", label: "Available" };
 }
 
-function kopokopoDateBoundary(value) {
-  if (!value) return "";
-  const date = new Date(String(value));
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+function kopokopoDateBoundary(value, timeZone, edge = "start") {
+  return businessDateTimeBoundary(value, timeZone, edge);
 }
 
-function MpesaAllocationList({ allocations, currency = "KES" }) {
+function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   if (!Array.isArray(allocations) || allocations.length === 0) {
     return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
   }
@@ -14479,7 +14515,7 @@ function MpesaAllocationList({ allocations, currency = "KES" }) {
       <ChevronDown aria-hidden="true" />
     </summary>
     <div className="mpesa-allocations">{allocations.map((allocation) => {
-      const when = allocation.allocatedAt ? new Date(allocation.allocatedAt).toLocaleString() : "Time not supplied";
+      const when = allocation.allocatedAt ? formatBusinessDateTime(allocation.allocatedAt, timeZone) : "Time not supplied";
       const actor = allocation.allocatedByName || "Unknown user";
       return <div className="mpesa-allocation" key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
         <b title={allocation.invoiceId}>{allocation.invoiceNumber || allocation.invoiceId || "Unknown invoice"}</b>
@@ -14492,9 +14528,12 @@ function MpesaAllocationList({ allocations, currency = "KES" }) {
 
 function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const pageSize = 50;
+  const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => allowAllBranches ? "all" : branch?.id || "");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const [timeFilterMode, setTimeFilterMode] = useState("specific");
+  const [specificTime, setSpecificTime] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sort, setSort] = useState("desc");
@@ -14517,13 +14556,20 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
   useEffect(() => {
     let active = true;
-    const from = kopokopoDateBoundary(dateFrom);
-    const to = kopokopoDateBoundary(dateTo);
+    const from = timeFilterMode === "specific"
+      ? kopokopoDateBoundary(specificTime, timeZone, "start")
+      : kopokopoDateBoundary(dateFrom, timeZone, "start");
+    const to = timeFilterMode === "specific"
+      ? kopokopoDateBoundary(specificTime, timeZone, "end")
+      : kopokopoDateBoundary(dateTo, timeZone, "end");
+    const invalidTime = timeFilterMode === "specific"
+      ? Boolean(specificTime && (!from || !to))
+      : Boolean((dateFrom && !from) || (dateTo && !to));
     if (!selectedBranchId) {
       setLedger((current) => ({ ...current, loading: false, error: "Select a branch to view M-Pesa transactions." }));
       return () => { active = false; };
     }
-    if ((dateFrom && !from) || (dateTo && !to) || (from && to && from > to)) {
+    if (invalidTime || (from && to && from > to)) {
       setLedger((current) => ({ ...current, loading: false, error: "Choose a valid transaction date range." }));
       return () => { active = false; };
     }
@@ -14551,7 +14597,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         });
     }, search.trim() ? 280 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [selectedBranchId, search, status, dateFrom, dateTo, sort, offset, refreshNonce]);
+  }, [selectedBranchId, search, status, timeFilterMode, specificTime, dateFrom, dateTo, timeZone, sort, offset, refreshNonce]);
 
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
@@ -14581,6 +14627,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
   const updateSearch = (value) => { setSearch(value); setOffset(0); };
   const updateStatus = (value) => { setStatus(value); setOffset(0); };
+  const updateSpecificTime = (value) => { setSpecificTime(value); setOffset(0); };
   const updateFrom = (value) => { setDateFrom(value); setOffset(0); };
   const updateTo = (value) => { setDateTo(value); setOffset(0); };
   const total = Number(ledger.page?.total || 0);
@@ -14610,11 +14657,17 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
         <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
-        <label><span>From date and time</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
-        <label><span>To date and time</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
+        <div className="mpesa-time-mode" aria-label="Transaction time filter mode">
+          <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
+          <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
+        </div>
+        {timeFilterMode === "specific" ? <label className="mpesa-exact-time"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
+          <label><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
+          <label><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
+        </>}
         <div className="mpesa-ledger-actions">
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
-          {(search || status !== "all" || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
+          {(search || status !== "all" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
         </div>
       </div>
 
@@ -14642,13 +14695,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
             <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
               <tr key={transaction.id}>
-                <td>{transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Not supplied"}</td>
+                <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
                 <td className="innum">{transaction.referenceMasked}</td>
                 <td className="payer">{transaction.payerName || "Not supplied"}</td>
                 {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                 <td className="innum">{transaction.tillNumber || "-"}</td>
                 <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} /></td>
+                <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                 <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                 <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
               </tr>); })}</tbody>
@@ -14656,9 +14709,9 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         </div>
         <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
           <div className="mpesa-ledger-mobile-row" key={transaction.id}>
-            <div><span className="payer">{transaction.payerName || "Not supplied"}</span><small>{transaction.referenceMasked} · {transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Time not supplied"}{selectedBranchId === "all" ? ` · ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated · {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
+            <div><span className="payer">{transaction.payerName || "Not supplied"}</span><small>{transaction.referenceMasked} / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
             <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
-            <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} />
+            <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
           </div>); })}</div>
       </> : null}
 
@@ -14878,7 +14931,9 @@ function SettingsTab({ data, update, isAdmin }) {
         <div><label className="label">Currency</label><select className="select" value={s.currency} onChange={(e) => set({ currency: e.target.value })}><option value="KES">KES — Kenyan Shilling</option><option value="$">USD — US Dollar</option></select></div></div>
         <div className="grid2" style={{ marginTop: 12 }}>
           <div><label className="label">Theme</label><select className="select" value={s.theme || "light"} onChange={(e) => set({ theme: e.target.value })}><option value="light">Light</option><option value="dark">Dark</option></select></div>
-          <div><label className="label">Default reorder level</label><input className="input" inputMode="numeric" value={s.reorderLevel} onChange={(e) => set({ reorderLevel: parseInt(e.target.value, 10) || 0 })} /></div></div></div>
+          <div><label className="label">Default reorder level</label><input className="input" inputMode="numeric" value={s.reorderLevel} onChange={(e) => set({ reorderLevel: parseInt(e.target.value, 10) || 0 })} /></div></div>
+        <div className="field" style={{ marginTop: 12 }}><label className="label">Business timezone</label><select className="select" value={normalizeBusinessTimeZone(s.timeZone)} onChange={(e) => set({ timeZone: e.target.value })}><option value="Africa/Nairobi">Kenya - East Africa Time</option><option value="Africa/Johannesburg">South Africa Time</option><option value="UTC">UTC</option></select></div>
+      </div>
       <div className="section-title" style={{ margin: "18px 0 8px", display: "flex", alignItems: "center", gap: 8 }}><Smartphone style={{ width: 16, height: 16, color: "var(--accent)" }} /> Receipt till number</div>
       <div className="addpanel">
         <div><label className="label">Default till (fallback for branches with none set)</label><input className="input" inputMode="numeric" value={s.mpesaTill || ""} onChange={(e) => set({ mpesaTill: e.target.value })} placeholder="e.g. 5204512" /></div>
