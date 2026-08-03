@@ -2242,8 +2242,8 @@ function CashierMpesaView({
       <details className="cashier-mpesa-date-filter">
         <summary><Clock size={16} /> Date and time filter</summary>
         <div>
-          <label><span>From</span><input type="datetime-local" value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value); setOffset(0); }} /></label>
-          <label><span>To</span><input type="datetime-local" value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value); setOffset(0); }} /></label>
+          <label><span>From</span><input type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
+          <label><span>To</span><input type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
         </div>
       </details>
 

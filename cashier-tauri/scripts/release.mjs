@@ -240,6 +240,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Open invoices now retain a readable panel width and text size on compact cashier screens.",
+  "End of Day now resets cashier and admin daily summaries across the complete branch closing batch, including minor terminal clock differences.",
+  "M-Pesa transaction date filters now use hour-and-minute precision without seconds.",
   "New branch M-Pesa transactions now show a red unread badge until the cashier opens the transaction ledger.",
   "The cashier M-Pesa ledger now supports a remembered light or dark display mode.",
   "M-Pesa controls and transaction cards now fit narrow screens without horizontal scrolling.",

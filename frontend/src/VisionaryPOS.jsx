@@ -2795,7 +2795,12 @@ function branchLastEndDay(data, branchId) {
   const mapped = Number(data?.settings?.lastEndDayByBranch?.[branchId] || 0);
   const recorded = (data?.endOfDays || [])
     .filter((entry) => entry.branchId === branchId)
-    .reduce((latest, entry) => Math.max(latest, Number(entry.closedAt || entry.ts || 0)), 0);
+    .reduce((latest, entry) => Math.max(
+      latest,
+      Number(entry.periodEndedAt || 0),
+      Number(entry.closedAt || 0),
+      Number(entry.ts || 0)
+    ), 0);
   return Math.max(mapped, recorded);
 }
 function invoiceWasCarriedOver(data, inv) {
@@ -7726,7 +7731,11 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     closingRef.current = true;
     setClosing(true);
     setCloseError("");
-    const ts = now();
+    const actionClosedAt = now();
+    // A cashier terminal can be a few seconds ahead of the admin workstation.
+    // Close through the newest invoice already included in this batch so both
+    // dashboards reset immediately instead of treating it as a future sale.
+    const closeBoundary = Math.max(actionClosedAt, periodLastInvoiceAt);
     const closeId = closeBatchId;
     const record = {
       id: closeId,
@@ -7735,7 +7744,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       ...d,
       businessDate,
       periodStartedAt,
-      periodEndedAt: ts,
+      periodEndedAt: closeBoundary,
       lastInvoiceAt: periodLastInvoiceAt,
       invoiceIds: periodInvoices.map((invoice) => invoice.id),
       carriedOverInvoiceIds: periodInvoices
@@ -7744,25 +7753,26 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
       countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null,
       note: note.trim(),
       closedBy: user,
-      closedAt: ts,
-      ts,
+      actionClosedAt,
+      closedAt: closeBoundary,
+      ts: closeBoundary,
       synced: false,
     };
     update((dd) => {
       const current = reconcileInvoicePayments(dd);
       if ((current.endOfDays || []).some((entry) => entry.id === closeId)) return current;
       const since = branchLastEndDay(current, d.branchId);
-      const eligibleInvoices = operationalInvoices(current).filter((i) => i.branchId === d.branchId && i.ts > since && i.ts <= ts);
+      const eligibleInvoices = operationalInvoices(current).filter((i) => i.branchId === d.branchId && i.ts > since && i.ts <= closeBoundary);
       if (eligibleInvoices.length === 0) return current;
       return { ...current,
         endOfDays: [record, ...(current.endOfDays || [])],
         invoices: current.invoices.map((i) => {
-          if (i.branchId !== d.branchId || i.ts <= since || i.ts > ts) return i;
+          if (i.branchId !== d.branchId || i.ts <= since || i.ts > closeBoundary) return i;
           if (invoiceIsVoided(current, i)) return i;
-          if (invOutstanding(i) > 0) return { ...i, carriedOver: true, carriedOverAt: ts, closedDayId: closeId, synced: false };
-          return { ...i, archived: true, archivedAt: ts, closedDayId: closeId, activeForCashier: false, synced: false };
+          if (invOutstanding(i) > 0) return { ...i, carriedOver: true, carriedOverAt: closeBoundary, closedDayId: closeId, synced: false };
+          return { ...i, archived: true, archivedAt: closeBoundary, closedDayId: closeId, activeForCashier: false, synced: false };
         }),
-        settings: { ...current.settings, lastEndDayByBranch: { ...(current.settings.lastEndDayByBranch || {}), [d.branchId]: ts } } };
+        settings: { ...current.settings, lastEndDayByBranch: { ...(current.settings.lastEndDayByBranch || {}), [d.branchId]: closeBoundary } } };
     });
     onClose();
   };
@@ -14600,8 +14610,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
         <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
-        <label><span>From date and time</span><input className="input" type="datetime-local" value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value)} /></label>
-        <label><span>To date and time</span><input className="input" type="datetime-local" value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value)} /></label>
+        <label><span>From date and time</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
+        <label><span>To date and time</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         <div className="mpesa-ledger-actions">
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
           {(search || status !== "all" || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
