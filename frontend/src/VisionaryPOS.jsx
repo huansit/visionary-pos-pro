@@ -3889,6 +3889,38 @@ body{overscroll-behavior:none}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
+@media(max-width:720px){
+  .mpesa-ledger-page{min-width:0;overflow:hidden}
+  .mpesa-ledger-page .page-header{align-items:flex-start;gap:10px}
+  .mpesa-ledger-toolbar .input,.mpesa-ledger-toolbar select{width:100%;min-width:0}
+  .mpesa-ledger-mobile{gap:8px;border-top:0}
+  .mpesa-ledger-mobile-row{padding:12px;border:1px solid var(--border-soft);border-left:3px solid var(--accent);border-radius:7px;background:var(--surface-2)}
+  .mpesa-ledger-mobile-row .payer{color:var(--text);font-size:14px}
+  .mpesa-ledger-mobile-row small{line-height:1.45;overflow-wrap:anywhere}
+  .mpesa-ledger-mobile-row .money{min-width:86px}
+  .mpesa-ledger-mobile-row .money span{font-size:10px}
+  .mpesa-ledger-mobile-row .mpesa-allocation-menu{margin-top:3px}
+  .mpesa-ledger-mobile-row .mpesa-allocation-menu summary{width:100%;justify-content:space-between}
+  .mpesa-ledger-mobile-row .mpesa-allocations{margin-top:7px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface)}
+}
+@media(max-width:470px){
+  .mpesa-ledger-page .page-header{display:grid;grid-template-columns:minmax(0,1fr);padding-bottom:12px}
+  .mpesa-page-actions{display:grid;width:100%;grid-template-columns:1fr 1fr}
+  .mpesa-ledger-actions{display:grid;grid-template-columns:1fr 1fr}
+  .mpesa-ledger-actions .btn{width:100%;min-width:0;padding-inline:8px}
+  .mpesa-ledger-summary{grid-template-columns:1fr 1fr}
+  .mpesa-ledger-summary>div{padding:10px;border-right:0;border-bottom:1px solid var(--border-soft)}
+  .mpesa-ledger-summary>div:nth-child(odd){border-right:1px solid var(--border-soft)}
+  .mpesa-ledger-summary>div:nth-last-child(-n+2){border-bottom:0}
+  .mpesa-ledger-summary b{font-size:14px}
+  .mpesa-ledger-mobile-row{grid-template-columns:minmax(0,1fr) 78px;padding:10px}
+  .mpesa-ledger-mobile-row .payer{font-size:13px}
+  .mpesa-ledger-mobile-row .money{min-width:0}
+  .mpesa-ledger-mobile-row .money b{font-size:12px}
+  .mpesa-ledger-mobile-row .status{max-width:100%;padding:4px 6px;font-size:9px;white-space:normal}
+  .mpesa-ledger-mobile-row .mpesa-allocations{padding:7px}
+  .mpesa-ledger-mobile-row .mpesa-allocation-row{grid-template-columns:minmax(0,1fr) auto;gap:7px}
+}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .row-add{width:100%;height:46px;border-radius:12px;cursor:pointer;border:1px dashed var(--border);background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600;transition:.15s;margin-bottom:14px}

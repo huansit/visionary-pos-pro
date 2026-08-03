@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -23,6 +23,7 @@ import {
   Menu,
   Minus,
   MonitorCheck,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
@@ -31,6 +32,7 @@ import {
   ShieldCheck,
   ShoppingCart,
   Smartphone,
+  Sun,
   Send,
   Trash2,
   UserRound,
@@ -70,6 +72,8 @@ const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
+const MPESA_VIEWED_KEY_PREFIX = "visionpos:cashier:mpesa-viewed:v1:";
+const MPESA_THEME_KEY = "visionpos:cashier:mpesa-theme:v1";
 const COMMON_PRODUCTS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const COMMON_PRODUCTS_LIMIT = 12;
 const DEFAULT_CASHIER_EXPENSE_CATEGORIES: ExpenseCategory[] = [
@@ -96,6 +100,57 @@ type CashierJointDebtEntry = {
   debt: CashierJointDebt;
   outstandingCents: number;
 };
+
+type MpesaViewedMarker = {
+  at: number;
+  ids: string[];
+};
+
+function mpesaViewedKey(terminal: TerminalCredentials) {
+  return `${MPESA_VIEWED_KEY_PREFIX}${terminal.uuid}:${terminal.branchId}`;
+}
+
+function mpesaTransactionTime(transaction: MpesaTransaction) {
+  const createdAt = Date.parse(String(transaction.createdAt || ""));
+  const originatedAt = Date.parse(String(transaction.originationTime || ""));
+  return Math.max(Number.isFinite(createdAt) ? createdAt : 0, Number.isFinite(originatedAt) ? originatedAt : 0);
+}
+
+function newestMpesaMarker(transactions: MpesaTransaction[]): MpesaViewedMarker | null {
+  const at = transactions.reduce((latest, transaction) => Math.max(latest, mpesaTransactionTime(transaction)), 0);
+  if (!at) return null;
+  return {
+    at,
+    ids: transactions.filter((transaction) => mpesaTransactionTime(transaction) === at).map((transaction) => transaction.id)
+  };
+}
+
+function readMpesaViewedMarker(key: string): MpesaViewedMarker | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "null");
+    const at = Number(parsed?.at || 0);
+    if (!Number.isFinite(at) || at <= 0) return null;
+    return { at, ids: Array.isArray(parsed?.ids) ? parsed.ids.map(String) : [] };
+  } catch {
+    return null;
+  }
+}
+
+function writeMpesaViewedMarker(key: string, marker: MpesaViewedMarker) {
+  try {
+    localStorage.setItem(key, JSON.stringify(marker));
+  } catch {
+    // The unread badge remains session-scoped if local storage is unavailable.
+  }
+}
+
+function countUnreadMpesaTransactions(transactions: MpesaTransaction[], marker: MpesaViewedMarker) {
+  const idsAtBoundary = new Set(marker.ids);
+  return transactions.filter((transaction) => {
+    const at = mpesaTransactionTime(transaction);
+    return at > marker.at || (at === marker.at && !idsAtBoundary.has(transaction.id));
+  }).length;
+}
 
 function money(cents: number) {
   return "KES " + Math.round(cents / 100).toLocaleString();
@@ -649,6 +704,8 @@ export default function App() {
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [mpesaOpen, setMpesaOpen] = useState(false);
+  const [mpesaUnreadCount, setMpesaUnreadCount] = useState(0);
+  const [mpesaBadgeRefreshNonce, setMpesaBadgeRefreshNonce] = useState(0);
   const [transferRequestOpen, setTransferRequestOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
@@ -677,6 +734,7 @@ export default function App() {
   const updateCheckInFlight = useRef(false);
   const updateStateRef = useRef<CashierUpdateState>("idle");
   const dayClosedAtRef = useRef<number | null>(null);
+  const mpesaBadgeRequestInFlight = useRef(false);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const cartLines = Object.values(cart);
@@ -764,6 +822,20 @@ export default function App() {
     dateTime: now,
     online
   }), [account?.name, now, online]);
+  const mpesaUnreadLabel = mpesaUnreadCount > 99 ? "99+" : String(mpesaUnreadCount);
+
+  const markMpesaTransactionsViewed = useCallback((transactions: MpesaTransaction[]) => {
+    if (!terminal) return;
+    const nextMarker = newestMpesaMarker(transactions);
+    if (nextMarker) {
+      const key = mpesaViewedKey(terminal);
+      const currentMarker = readMpesaViewedMarker(key);
+      if (!currentMarker || nextMarker.at > currentMarker.at || (nextMarker.at === currentMarker.at && nextMarker.ids.some((id) => !currentMarker.ids.includes(id)))) {
+        writeMpesaViewedMarker(key, nextMarker);
+      }
+    }
+    setMpesaUnreadCount(0);
+  }, [terminal?.branchId, terminal?.uuid]);
 
   const categories = useMemo(() => {
     const names = Array.from(new Set(products.map((product) => product.category || "Uncategorised").filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -1007,6 +1079,7 @@ export default function App() {
       // was closed. The branch-scoped catalog is the only carry-over authority.
       window.clearTimeout(realtimeTimer);
       realtimeTimer = window.setTimeout(syncQuietly, 150);
+      setMpesaBadgeRefreshNonce((value) => value + 1);
     };
     const disconnectStream = connectSyncStream(terminal, scheduleRealtimeSync, setRealtimeState);
     const intervalId = window.setInterval(syncQuietly, 30000);
@@ -1027,6 +1100,47 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [terminal?.uuid]);
+
+  useEffect(() => {
+    if (!terminal || !account || !sessionToken || mpesaOpen) return;
+    let active = true;
+    const refreshBadge = async () => {
+      if (mpesaBadgeRequestInFlight.current || document.hidden || !navigator.onLine) return;
+      mpesaBadgeRequestInFlight.current = true;
+      try {
+        const result = await listMpesaTransactions(sessionToken, terminal.branchId, { sort: "desc", limit: 100, offset: 0 });
+        if (!active) return;
+        const key = mpesaViewedKey(terminal);
+        const viewedMarker = readMpesaViewedMarker(key);
+        const latestMarker = newestMpesaMarker(result.transactions);
+        if (!viewedMarker) {
+          if (latestMarker) writeMpesaViewedMarker(key, latestMarker);
+          setMpesaUnreadCount(0);
+          return;
+        }
+        setMpesaUnreadCount(countUnreadMpesaTransactions(result.transactions, viewedMarker));
+      } catch {
+        // Notification polling is best-effort and must not interrupt sales.
+      } finally {
+        mpesaBadgeRequestInFlight.current = false;
+      }
+    };
+    const refreshVisible = () => {
+      if (!document.hidden && navigator.onLine) void refreshBadge();
+    };
+    void refreshBadge();
+    const intervalId = window.setInterval(refreshVisible, 12000);
+    window.addEventListener("focus", refreshVisible);
+    window.addEventListener("online", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisible);
+      window.removeEventListener("online", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [account?.id, mpesaBadgeRefreshNonce, mpesaOpen, sessionToken, terminal?.branchId, terminal?.uuid]);
 
   useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn && !transferRequestOpen && !mpesaOpen);
 
@@ -1314,6 +1428,7 @@ export default function App() {
     setCheckoutFingerprintOpen(false);
     setExpenseOpen(false);
     setMpesaOpen(false);
+    setMpesaUnreadCount(0);
     setTransferRequestOpen(false);
     setInvoiceListMode(null);
     setInvoiceDetail(null);
@@ -1472,7 +1587,10 @@ export default function App() {
                   {openInvoices.length > 0 && <b>{openInvoices.length}</b>}
                 </button>
                 <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
-                <button onClick={() => setMpesaOpen(true)} title="Verify M-Pesa payment"><Smartphone size={18} /></button>
+                <button className="mini-badge-button" onClick={() => setMpesaOpen(true)} title={mpesaUnreadCount > 0 ? `${mpesaUnreadCount} new M-Pesa transaction${mpesaUnreadCount === 1 ? "" : "s"}` : "Verify M-Pesa payment"}>
+                  <Smartphone size={18} />
+                  {mpesaUnreadCount > 0 && <b>{mpesaUnreadLabel}</b>}
+                </button>
                 <button className="mini-badge-button" onClick={() => setTransferRequestOpen(true)} title={`${pendingTransferRequestCount} stock transfers awaiting approval`}>
                   <ArrowLeftRight size={18} />
                   {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
@@ -1630,7 +1748,7 @@ export default function App() {
           </div>
           <section className="rail-quick-actions">
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
-            <button onClick={() => setMpesaOpen(true)}><Smartphone size={18} />M-Pesa</button>
+            <button className="rail-action-badge" onClick={() => setMpesaOpen(true)}><Smartphone size={18} />M-Pesa{mpesaUnreadCount > 0 && <b>{mpesaUnreadLabel}</b>}</button>
             <button className="rail-action-badge" onClick={() => setTransferRequestOpen(true)}>
               <ArrowLeftRight size={18} />Transfer
               {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
@@ -1830,6 +1948,7 @@ export default function App() {
             branchId={terminal.branchId}
             branchName={branch?.name || terminal.branchId}
             sessionToken={sessionToken}
+            onTransactionsViewed={markMpesaTransactionsViewed}
             onClose={() => { setMpesaOpen(false); focusSearch(); }}
           />
         </Drawer>
@@ -1951,14 +2070,23 @@ function CashierMpesaView({
   branchId,
   branchName,
   sessionToken,
+  onTransactionsViewed,
   onClose
 }: {
   branchId: string;
   branchName: string;
   sessionToken: string;
+  onTransactionsViewed: (transactions: MpesaTransaction[]) => void;
   onClose: () => void;
 }) {
   const pageSize = 30;
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    try {
+      return localStorage.getItem(MPESA_THEME_KEY) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -1977,6 +2105,14 @@ function CashierMpesaView({
     loading: true,
     error: ""
   });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MPESA_THEME_KEY, theme);
+    } catch {
+      // Theme persistence is optional.
+    }
+  }, [theme]);
 
   useEffect(() => {
     let active = true;
@@ -2011,6 +2147,7 @@ function CashierMpesaView({
         if (!active) return;
         setLiveState("connected");
         setLedger({ ...result, loading: false, error: "" });
+        onTransactionsViewed(result.transactions);
       }).catch((error) => {
         if (!active) return;
         setLiveState("reconnecting");
@@ -2030,7 +2167,7 @@ function CashierMpesaView({
       window.clearTimeout(requestTimer);
       window.clearTimeout(pollTimer);
     };
-  }, [branchId, dateFrom, dateTo, offset, refreshNonce, search, sessionToken, sort, statusFilter]);
+  }, [branchId, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
 
   useEffect(() => {
     const refreshVisible = () => {
@@ -2056,7 +2193,7 @@ function CashierMpesaView({
   };
 
   return (
-    <section className="cashier-mpesa-panel">
+    <section className={`cashier-mpesa-panel ${theme}`}>
       <header className="cashier-mpesa-header">
         <div className="cashier-mpesa-heading-icon"><Smartphone size={23} /></div>
         <div>
@@ -2064,7 +2201,18 @@ function CashierMpesaView({
           <h2 id="cashier-mpesa-title">M-Pesa transactions</h2>
           <p>{branchName} - read-only verification</p>
         </div>
-        <span className={`cashier-mpesa-live ${liveState}`}><i />{liveState === "connected" ? "Live" : "Reconnecting"}</span>
+        <div className="cashier-mpesa-header-actions">
+          <span className={`cashier-mpesa-live ${liveState}`}><i />{liveState === "connected" ? "Live" : "Reconnecting"}</span>
+          <button
+            className="cashier-mpesa-theme-toggle"
+            type="button"
+            aria-label={`Use ${theme === "dark" ? "light" : "dark"} mode`}
+            title={`Use ${theme === "dark" ? "light" : "dark"} mode`}
+            onClick={() => setTheme((value) => value === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
       </header>
 
       <div className="cashier-mpesa-summary">

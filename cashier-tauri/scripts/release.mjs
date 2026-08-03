@@ -240,6 +240,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "New branch M-Pesa transactions now show a red unread badge until the cashier opens the transaction ledger.",
+  "The cashier M-Pesa ledger now supports a remembered light or dark display mode.",
+  "M-Pesa controls and transaction cards now fit narrow screens without horizontal scrolling.",
   "M-Pesa transaction cards now use brighter surfaces, balances, and status colors for faster verification.",
   "M-Pesa last-four codes are highlighted and allocated receipt numbers use compact medium text.",
   "Cashier M-Pesa transactions now authenticate correctly through the native API bridge instead of remaining on Reconnecting or Loading.",
