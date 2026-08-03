@@ -1,11 +1,13 @@
 {
-  "version": "2.0.75",
+  "version": "2.0.76",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.75_x64-setup.exe",
-  "size": 3247128,
-  "sha512": "3C38C55C554D961C6A49838B2678290547B686DBF4FD9F156F747CF2A584E82F37E667F0C42FE0442C416E81C7619A9142618B8212DC5411BB1D68C84AD16B56",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.76_x64-setup.exe",
+  "size": 3250232,
+  "sha512": "10E776FD22ABC54EA55DF0074DCB74BF45822EC8B1F78C5079961849589FFA38D406A361B4C67753BECED644EF9D60B548C9A03C02B5CC381AC173317CDBC5D6",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.75",
+    "VISIONPOS Cashier 2.0.76",
+    "M-Pesa transactions now show and search a payer phone ending, making customers with the same name easier to distinguish.",
+    "Only the final four phone digits are retained; full payer phone numbers remain excluded from transaction storage and audit payloads.",
     "M-Pesa transactions can now be filtered by one exact minute or an inclusive custom time range.",
     "Cashier and admin transaction and invoice timestamps now use East Africa Time regardless of the workstation time zone.",
     "Profit and Loss now preserves the cost recorded when each sale or loss occurred, so later purchase prices cannot rewrite historical profit.",
