@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
-import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -48,6 +48,8 @@ export type SyncVersionChange = {
   type?: string;
   event?: string;
   changedType?: string;
+  branchId?: string;
+  types?: string[];
   ts?: number;
   payload?: Record<string, unknown>;
   change?: Record<string, unknown>;
@@ -810,6 +812,57 @@ export async function logout(sessionToken: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionToken })
   }).catch(() => undefined);
+}
+
+export async function listMpesaTransactions(
+  sessionToken: string,
+  branchId: string,
+  filters: {
+    search?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    sort?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<MpesaLedger> {
+  const params = new URLSearchParams({
+    branchId,
+    search: String(filters.search || "").trim(),
+    status: filters.status || "all",
+    sort: filters.sort || "desc",
+    limit: String(filters.limit || 50),
+    offset: String(filters.offset || 0)
+  });
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  return jsonFetch(`/api/integrations/kopokopo/transactions?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      "X-Session-Token": sessionToken,
+      Authorization: `Bearer ${sessionToken}`
+    }
+  });
+}
+
+export function connectMpesaStream(
+  sessionToken: string,
+  onChange: (change: SyncVersionChange) => void,
+  onState?: (state: "connected" | "reconnecting") => void
+) {
+  const source = new EventSource(`${API_BASE_URL}/api/sync/stream?sessionToken=${encodeURIComponent(sessionToken)}&t=${Date.now()}`);
+  const parse = (event: MessageEvent) => {
+    try {
+      onChange(JSON.parse(event.data || "{}"));
+    } catch {
+      // Ignore malformed notifications; the ledger's fallback refresh remains active.
+    }
+  };
+  source.addEventListener("connected", () => onState?.("connected"));
+  source.addEventListener("kopokopo", parse as EventListener);
+  source.onerror = () => onState?.("reconnecting");
+  return () => source.close();
 }
 
 export async function pullCatalog(terminal: TerminalCredentials): Promise<{

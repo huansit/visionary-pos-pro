@@ -3859,6 +3859,16 @@ body{overscroll-behavior:none}
 .mpesa-branch-totals tfoot td{font-weight:800;border-top:2px solid var(--border)}
 .mpesa-ledger-table td{white-space:nowrap}
 .mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
+.mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
+.mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+.mpesa-page-actions{display:flex;align-items:center;gap:12px}
+.mpesa-allocations{display:grid;gap:5px;min-width:220px;white-space:normal}
+.mpesa-allocation{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:6px 0;border-bottom:1px solid var(--border-soft)}
+.mpesa-allocation:last-child{border-bottom:0}
+.mpesa-allocation b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-allocation .amount{font-family:var(--font-mono);font-weight:750;text-align:right}
+.mpesa-allocation small{grid-column:1/-1;color:var(--muted-2);font-size:10px}
+.mpesa-no-allocation{color:var(--muted-2);font-size:11px}
 .mpesa-ledger-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
 .mpesa-ledger-status.available{background:rgba(52,211,153,.14);color:var(--ok)}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
@@ -3868,7 +3878,7 @@ body{overscroll-behavior:none}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
-@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocations{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
@@ -4813,6 +4823,12 @@ export default function VisionPOS() {
         source = new EventSource(url);
         source.addEventListener("connected", scheduleSync);
         source.addEventListener("sync", scheduleSync);
+        source.addEventListener("kopokopo", (event) => {
+          try {
+            const detail = JSON.parse(event.data || "{}");
+            window.dispatchEvent(new CustomEvent("visionpos:realtime", { detail }));
+          } catch (_) {}
+        });
         source.onerror = () => {
           try { source?.close(); } catch (_) {}
           if (!stopped) reconnectTimer = setTimeout(connect, REALTIME_RECONNECT_MS);
@@ -14400,6 +14416,21 @@ function kopokopoDateBoundary(value) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
+function MpesaAllocationList({ allocations, currency = "KES" }) {
+  if (!Array.isArray(allocations) || allocations.length === 0) {
+    return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
+  }
+  return <div className="mpesa-allocations">{allocations.map((allocation) => {
+    const when = allocation.allocatedAt ? new Date(allocation.allocatedAt).toLocaleString() : "Time not supplied";
+    const actor = allocation.allocatedByName || "Unknown user";
+    return <div className="mpesa-allocation" key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
+      <b title={allocation.invoiceId}>{allocation.invoiceNumber || allocation.invoiceId || "Unknown invoice"}</b>
+      <span className="amount">{fmt(allocation.amountCents || 0, currency)}</span>
+      <small>{actor} / {when}{String(allocation.status || "active").toLowerCase() !== "active" ? ` / ${allocation.status}` : ""}</small>
+    </div>;
+  })}</div>;
+}
+
 function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const pageSize = 50;
   const [branchScope, setBranchScope] = useState(() => allowAllBranches ? "all" : branch?.id || "");
@@ -14463,6 +14494,32 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     return () => { active = false; clearTimeout(timer); };
   }, [selectedBranchId, search, status, dateFrom, dateTo, sort, offset, refreshNonce]);
 
+  useEffect(() => {
+    const refresh = () => setRefreshNonce((value) => value + 1);
+    const onRealtime = (event) => {
+      const detail = event.detail || {};
+      const types = Array.isArray(detail.types) ? detail.types : [];
+      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation")) return;
+      if (selectedBranchId !== "all" && detail.branchId && detail.branchId !== selectedBranchId) return;
+      refresh();
+    };
+    const onVisible = () => {
+      if (!document.hidden && navigator.onLine) refresh();
+    };
+    window.addEventListener("visionpos:realtime", onRealtime);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    const fallback = window.setInterval(() => {
+      if (!document.hidden && navigator.onLine) refresh();
+    }, 15000);
+    return () => {
+      window.removeEventListener("visionpos:realtime", onRealtime);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(fallback);
+    };
+  }, [selectedBranchId]);
+
   const updateSearch = (value) => { setSearch(value); setOffset(0); };
   const updateStatus = (value) => { setStatus(value); setOffset(0); };
   const updateFrom = (value) => { setDateFrom(value); setOffset(0); };
@@ -14482,7 +14539,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
-        right={<button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button>} />
+        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
@@ -14523,7 +14580,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
       {ledger.transactions.length > 0 ? <>
         <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
-          <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th className="amt">Allocated</th><th className="amt">Available</th><th>Status</th></tr></thead>
+          <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
             <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
               <tr key={transaction.id}>
                 <td>{transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Not supplied"}</td>
@@ -14532,7 +14589,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
                 {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                 <td className="innum">{transaction.tillNumber || "-"}</td>
                 <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                <td className="amt">{fmt(transaction.allocatedCents, transaction.currency || "KES")}</td>
+                <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} /></td>
                 <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                 <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
               </tr>); })}</tbody>
@@ -14542,6 +14599,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <div className="mpesa-ledger-mobile-row" key={transaction.id}>
             <div><span className="payer">{transaction.payerName || "Not supplied"}</span><small>{transaction.referenceMasked} · {transactionTime(transaction) ? new Date(transactionTime(transaction)).toLocaleString() : "Time not supplied"}{selectedBranchId === "all" ? ` · ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated · {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
             <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
+            <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} />
           </div>); })}</div>
       </> : null}
 

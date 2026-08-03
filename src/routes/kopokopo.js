@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import { Router } from "express";
-import { requireAdminOrSupervisor, requireOwnerOrAdmin } from "../auth.js";
+import { requireAdminOrSupervisor, requireOwnerOrAdmin, requireRoles } from "../auth.js";
 import { isMySql, q, tx } from "../db.js";
+import { publishRealtimeEvent } from "../realtime.js";
 import {
   createKopokopoSubscriptions,
   kopokopoConfig,
@@ -21,6 +22,7 @@ import {
 
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
+const requireKopokopoViewer = requireRoles(new Set(["owner", "admin", "manager", "supervisor", "cashier"]));
 
 function integerCents(value) {
   const cents = Number(value);
@@ -95,6 +97,20 @@ function ledgerTimestamp(value) {
   if (!value) return null;
   const parsed = new Date(String(value));
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function publicAllocation(row, invoicePayload = null) {
+  const payload = invoicePayload || {};
+  const invoiceId = row.invoice_id ?? row.invoiceId;
+  return {
+    id: row.id,
+    invoiceId,
+    invoiceNumber: payload.number || payload.invoiceNumber || payload.receiptNo || invoiceId,
+    amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
+    status: row.status || "active",
+    allocatedByName: row.allocated_by_name ?? row.allocatedByName ?? null,
+    allocatedAt: row.allocated_at ?? row.allocatedAt ?? null,
+  };
 }
 
 async function validateAllocationInvoices(client, allocations, branchId, syntheticInvoices = new Map()) {
@@ -550,12 +566,14 @@ router.delete("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
   }
 });
 
-router.get("/transactions", requireAdminOrSupervisor, async (req, res) => {
+router.get("/transactions", requireKopokopoViewer, async (req, res) => {
   try {
     const config = kopokopoConfig();
     const requestedBranchId = identifier(req.query.branchId);
     const allBranches = requestedBranchId.toLowerCase() === "all";
     const accountBranchId = identifier(req.account?.branchId);
+    const accountRole = String(req.account?.role || req.account?.kind || "").trim().toLowerCase();
+    const cashierViewer = accountRole === "cashier";
     const search = String(req.query.search || "").trim().toLowerCase();
     const status = String(req.query.status || "all").trim().toLowerCase();
     const sort = String(req.query.sort || "desc").trim().toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -570,6 +588,9 @@ router.get("/transactions", requireAdminOrSupervisor, async (req, res) => {
     }
     if ((req.query.from && !from) || (req.query.to && !to) || (from && to && from > to)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_dates" });
+    }
+    if (cashierViewer && (!accountBranchId || allBranches || requestedBranchId !== accountBranchId)) {
+      return res.status(403).json({ error: "branch_not_authorized" });
     }
     if ((allBranches && accountBranchId) || (!allBranches && !accountCanAccessBranch(req.account, requestedBranchId))) {
       return res.status(403).json({ error: "branch_not_authorized" });
@@ -623,6 +644,39 @@ router.get("/transactions", requireAdminOrSupervisor, async (req, res) => {
         LIMIT $${pageValues.length - 1} OFFSET $${pageValues.length}`,
       pageValues
     );
+    const transactionRows = result.rows;
+    const allocationsByTransaction = new Map();
+    if (transactionRows.length) {
+      const transactionIds = transactionRows.map((row) => row.id);
+      const transactionPlaceholders = transactionIds.map((_, index) => `$${index + 1}`).join(", ");
+      const allocationResult = await q(
+        `SELECT id, transaction_id, invoice_id, amount_cents, status, allocated_by_name, allocated_at
+           FROM kopokopo_allocations
+          WHERE transaction_id IN (${transactionPlaceholders})
+          ORDER BY allocated_at, id`,
+        transactionIds
+      );
+      const invoiceIds = [...new Set(allocationResult.rows.map((row) => row.invoice_id ?? row.invoiceId).filter(Boolean))];
+      const invoicePayloadById = new Map();
+      if (invoiceIds.length) {
+        const invoicePlaceholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
+        const invoiceResult = await q(
+          `SELECT id, payload
+             FROM events
+            WHERE type = 'invoice'
+              AND id IN (${invoicePlaceholders})`,
+          invoiceIds
+        );
+        for (const invoice of invoiceResult.rows) invoicePayloadById.set(invoice.id, invoice.payload || {});
+      }
+      for (const allocation of allocationResult.rows) {
+        const transactionId = allocation.transaction_id ?? allocation.transactionId;
+        const invoiceId = allocation.invoice_id ?? allocation.invoiceId;
+        const current = allocationsByTransaction.get(transactionId) || [];
+        current.push(publicAllocation(allocation, invoicePayloadById.get(invoiceId)));
+        allocationsByTransaction.set(transactionId, current);
+      }
+    }
     const totals = summary.rows[0] || {};
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
     const allocatedCents = Number(totals.total_allocated_cents ?? totals.totalAllocatedCents ?? 0);
@@ -630,7 +684,10 @@ router.get("/transactions", requireAdminOrSupervisor, async (req, res) => {
       enabled: config.enabled,
       branchId: allBranches ? "all" : requestedBranchId,
       providerRequired: allBranches ? null : branchRequiresVerifiedKopokopo(config, requestedBranchId),
-      transactions: result.rows.map(publicTransaction),
+      transactions: transactionRows.map((row) => ({
+        ...publicTransaction(row),
+        allocations: allocationsByTransaction.get(row.id) || [],
+      })),
       page: {
         total: Number(totals.total_count ?? totals.totalCount ?? 0),
         limit,
@@ -727,6 +784,14 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
         remainingCents: result.remainingCents,
         invoiceId: result.invoiceId,
         invoiceRemainingCents: result.invoiceRemainingCents,
+      });
+    }
+    if (!result.duplicate) {
+      publishRealtimeEvent("kopokopo", {
+        source: "kopokopo",
+        branchId,
+        accepted: result.allocations.length,
+        types: ["kopokopoAllocation"],
       });
     }
     return res.json(result);

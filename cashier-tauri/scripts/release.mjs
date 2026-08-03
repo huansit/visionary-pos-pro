@@ -105,7 +105,9 @@ function assertSigningCertificateReady() {
   }
   const certificate = powershellJson([
     `$certificate = Get-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${expectedAuthenticodeThumbprint}' -ErrorAction Stop`,
-    "[ordered]@{ HasPrivateKey = $certificate.HasPrivateKey; NotAfter = $certificate.NotAfter.ToUniversalTime().ToString('o'); Subject = $certificate.Subject; Thumbprint = $certificate.Thumbprint } | ConvertTo-Json -Compress"
+    "$codeSigningOid = '1.3.6.1.5.5.7.3.3'",
+    "$hasCodeSigningEku = @($certificate.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } | ForEach-Object { $_.EnhancedKeyUsages } | Where-Object { $_.Value -eq $codeSigningOid }).Count -gt 0",
+    "[ordered]@{ HasPrivateKey = $certificate.HasPrivateKey; HasCodeSigningEku = $hasCodeSigningEku; NotAfter = $certificate.NotAfter.ToUniversalTime().ToString('o'); Subject = $certificate.Subject; Thumbprint = $certificate.Thumbprint; PublicKeyOid = $certificate.PublicKey.Oid.Value; KeySize = $certificate.PublicKey.Key.KeySize } | ConvertTo-Json -Compress"
   ].join("; "));
   if (!certificate.HasPrivateKey) {
     fail(`Signing certificate ${expectedAuthenticodeThumbprint} does not have its private key.`);
@@ -115,6 +117,12 @@ function assertSigningCertificateReady() {
   }
   if (String(certificate.Thumbprint).toUpperCase() !== expectedAuthenticodeThumbprint) {
     fail(`Unexpected signing certificate thumbprint ${certificate.Thumbprint}.`);
+  }
+  if (!certificate.HasCodeSigningEku) {
+    fail(`Signing certificate ${expectedAuthenticodeThumbprint} is not restricted to code signing.`);
+  }
+  if (certificate.PublicKeyOid !== "1.2.840.113549.1.1.1" || Number(certificate.KeySize) < 2048) {
+    fail("Windows releases require an RSA code-signing certificate with a key size of at least 2048 bits.");
   }
   console.log(`Authenticode signer ready: ${certificate.Subject} (${certificate.Thumbprint})`);
 }
@@ -186,6 +194,17 @@ function assertEmbeddedAppAuthenticode(installerPath) {
   }
 }
 
+function assertSignedInstallerCopy(source, destination) {
+  if (!fs.existsSync(destination)) {
+    fail(`Copied Windows installer was not found: ${destination}`);
+  }
+  if (sha512(source) !== sha512(destination)) {
+    fail(`Copied Windows installer does not match its signed source: ${destination}`);
+  }
+  assertValidAuthenticode(destination);
+  assertEmbeddedAppAuthenticode(destination);
+}
+
 assertSigningCertificateReady();
 run(process.execPath, [npmCli, "run", "build"]);
 run(process.execPath, [npmCli, "exec", "--", "tauri", "build"]);
@@ -239,6 +258,8 @@ const releaseNotes = [
   "Open, overdue, carried invoice debt, and missing-inventory debt are displayed as separate categories with accurate totals.",
   "Unpaid invoices become overdue after one day but become cashier debt only after End of Day carries them forward.",
   "Cashier sessions now sign out after 15 minutes of inactivity, including after sleep, backgrounding, or window suspension.",
+  "Cashiers can verify their branch's M-Pesa transactions from a read-only ledger that refreshes as payments arrive.",
+  "M-Pesa transactions show their allocated invoice numbers, amounts, clearing employee, and allocation time.",
   "Fingerprint login and checkout now recover stale SecuGen exclusive-access locks with serialized retries, a clean service restart, and a bounded device-release delay.",
   "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
   "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",
@@ -249,12 +270,15 @@ const releaseNotes = [
   "Updates are now detected and can be installed before cashier sign-in or terminal activation.",
   "The native API bridge now forwards the installed cashier version so the admin terminal dashboard updates during normal activity.",
   "The cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.",
+  "Release publishing now re-verifies the signed installer and embedded cashier executable after every copy step.",
   "Native in-app updater package with automatic signature verification and restart."
 ];
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.copyFileSync(installer.fullPath, versionedInstallerPath);
 fs.copyFileSync(installer.fullPath, stableInstallerPath);
+assertSignedInstallerCopy(installer.fullPath, versionedInstallerPath);
+assertSignedInstallerCopy(installer.fullPath, stableInstallerPath);
 
 const latest = {
   version,
@@ -311,6 +335,15 @@ for (const [source, destination] of frontendReleaseFiles) {
   }
   fs.copyFileSync(source, destination);
 }
+
+assertSignedInstallerCopy(
+  versionedInstallerPath,
+  path.join(frontendDownloadsDir, versionedInstallerName)
+);
+assertSignedInstallerCopy(
+  stableInstallerPath,
+  path.join(frontendDownloadsDir, "VISIONPOS-Cashier-Setup.exe")
+);
 
 const frontendLatest = readJson(path.join(frontendDownloadsDir, "latest.json"));
 if (frontendLatest.version !== version) {

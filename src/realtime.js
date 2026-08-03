@@ -1,6 +1,7 @@
 const clients = new Set();
 let latestVersion = Date.now();
 let latestChange = null;
+const latestEvents = new Map();
 let heartbeatTimer = null;
 
 function safeJson(value) {
@@ -10,6 +11,17 @@ function safeJson(value) {
 function writeEvent(res, event, payload) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${safeJson(payload)}\n\n`);
+}
+
+function broadcast(event, payload, include = () => true) {
+  for (const client of clients) {
+    if (!include(client)) continue;
+    try {
+      writeEvent(client.res, event, payload);
+    } catch (_) {
+      clients.delete(client);
+    }
+  }
 }
 
 function heartbeat() {
@@ -42,7 +54,7 @@ export function addRealtimeClient(req, res) {
   const client = {
     id: `${req.deviceId || "device"}:${Date.now()}:${Math.random().toString(36).slice(2)}`,
     deviceId: req.deviceId || null,
-    branchId: req.deviceBranchId || null,
+    branchId: req.deviceBranchId || req.account?.branchId || null,
     res,
   };
   clients.add(client);
@@ -61,6 +73,20 @@ export function getLatestRealtimeChange() {
   return latestChange;
 }
 
+export function getLatestRealtimeEvent(event) {
+  return latestEvents.get(String(event || "")) || null;
+}
+
+export function publishRealtimeEvent(event, change) {
+  const eventName = String(event || "").trim();
+  if (!/^[a-z][a-z0-9_-]{0,63}$/i.test(eventName)) throw new Error("invalid_realtime_event");
+  const payload = { ts: Date.now(), ...change };
+  latestEvents.set(eventName, payload);
+  const branchId = String(change?.branchId || "").trim();
+  broadcast(eventName, payload, (client) => !branchId || !client.branchId || client.branchId === branchId);
+  return payload;
+}
+
 export function publishSyncChange(change) {
   latestVersion = Math.max(Date.now(), latestVersion + 1);
   const payload = {
@@ -69,11 +95,6 @@ export function publishSyncChange(change) {
     ...change,
   };
   latestChange = payload;
-  for (const client of clients) {
-    try {
-      writeEvent(client.res, "sync", payload);
-    } catch (_) {
-      clients.delete(client);
-    }
-  }
+  const branchId = String(change?.branchId || "").trim();
+  broadcast("sync", payload, (client) => !branchId || !client.branchId || client.branchId === branchId);
 }

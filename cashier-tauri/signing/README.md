@@ -15,6 +15,13 @@ The script verifies the expected thumbprint and code-signing purpose before
 installing the public certificate into the local machine's Trusted Root and
 Trusted Publishers stores. It does not disable Smart App Control or Defender.
 
+Windows Smart App Control enforcement only recognizes publishers whose
+certificate chains to a certificate authority in Microsoft's Trusted Root
+Program. The internal VISIONPOS certificate verifies integrity and publisher
+identity on managed shop computers, but it cannot guarantee admission by Smart
+App Control. A Smart App Control-enforced deployment must use Microsoft Trusted
+Signing, a public code-signing certificate, or Microsoft Store signing.
+
 The release machine must retain the matching private key in
 `Cert:\CurrentUser\My`. Back it up with:
 

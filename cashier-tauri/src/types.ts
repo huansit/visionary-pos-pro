@@ -148,3 +148,52 @@ export type Receipt = {
   items: Array<{ productId: string; name: string; qty: number; priceCents: number }>;
   ts: number;
 };
+
+export type MpesaAllocation = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amountCents: number;
+  status: string;
+  allocatedByName?: string | null;
+  allocatedAt?: string | null;
+};
+
+export type MpesaTransaction = {
+  id: string;
+  referenceMasked: string;
+  referenceLast4: string;
+  amountCents: number;
+  allocatedCents: number;
+  remainingCents: number;
+  currency: string;
+  status: string;
+  tillNumber?: string | null;
+  branchId: string;
+  payerName?: string | null;
+  originationTime?: string | null;
+  reversedAt?: string | null;
+  createdAt?: string | null;
+  providerVerified: boolean;
+  allocations: MpesaAllocation[];
+};
+
+export type MpesaLedger = {
+  enabled: boolean;
+  branchId: string;
+  providerRequired: boolean;
+  transactions: MpesaTransaction[];
+  page: { total: number; limit: number; offset: number };
+  summary: {
+    amountCents: number;
+    allocatedCents: number;
+    remainingCents: number;
+    branches: Array<{
+      branchId: string;
+      transactionCount: number;
+      amountCents: number;
+      allocatedCents: number;
+      remainingCents: number;
+    }>;
+  };
+};

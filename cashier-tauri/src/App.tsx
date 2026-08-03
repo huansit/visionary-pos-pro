@@ -25,10 +25,12 @@ import {
   MonitorCheck,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Server,
   ShieldCheck,
   ShoppingCart,
+  Smartphone,
   Send,
   Trash2,
   UserRound,
@@ -43,10 +45,12 @@ import {
   activateTerminal,
   clearFingerprintTemplateCache,
   connectSyncStream,
+  connectMpesaStream,
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
   loginCashierWithFingerprint,
+  listMpesaTransactions,
   logout,
   patchInvoiceNote,
   preloadCashierFingerprintTemplate,
@@ -61,7 +65,7 @@ import {
   verifyCheckoutWithSupervisorPin
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
-import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
@@ -645,6 +649,7 @@ export default function App() {
   const [checkoutFingerprintOpen, setCheckoutFingerprintOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(true);
   const [expenseOpen, setExpenseOpen] = useState(false);
+  const [mpesaOpen, setMpesaOpen] = useState(false);
   const [transferRequestOpen, setTransferRequestOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
@@ -1024,7 +1029,7 @@ export default function App() {
     };
   }, [terminal?.uuid]);
 
-  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn && !transferRequestOpen);
+  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn && !transferRequestOpen && !mpesaOpen);
 
   useEffect(() => {
     if (!account) return;
@@ -1309,6 +1314,7 @@ export default function App() {
     setLastReceipt(null);
     setCheckoutFingerprintOpen(false);
     setExpenseOpen(false);
+    setMpesaOpen(false);
     setTransferRequestOpen(false);
     setInvoiceListMode(null);
     setInvoiceDetail(null);
@@ -1467,6 +1473,7 @@ export default function App() {
                   {openInvoices.length > 0 && <b>{openInvoices.length}</b>}
                 </button>
                 <button onClick={() => setExpenseOpen(true)} title="Expense"><WalletCards size={18} /></button>
+                <button onClick={() => setMpesaOpen(true)} title="Verify M-Pesa payment"><Smartphone size={18} /></button>
                 <button className="mini-badge-button" onClick={() => setTransferRequestOpen(true)} title={`${pendingTransferRequestCount} stock transfers awaiting approval`}>
                   <ArrowLeftRight size={18} />
                   {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
@@ -1624,6 +1631,7 @@ export default function App() {
           </div>
           <section className="rail-quick-actions">
             <button onClick={() => setExpenseOpen(true)}><WalletCards size={18} />Expense</button>
+            <button onClick={() => setMpesaOpen(true)}><Smartphone size={18} />M-Pesa</button>
             <button className="rail-action-badge" onClick={() => setTransferRequestOpen(true)}>
               <ArrowLeftRight size={18} />Transfer
               {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
@@ -1817,6 +1825,16 @@ export default function App() {
           />
         </Drawer>
       )}
+      {mpesaOpen && terminal && account && sessionToken && (
+        <Drawer side="left" onClose={() => { setMpesaOpen(false); focusSearch(); }} labelledBy="cashier-mpesa-title">
+          <CashierMpesaView
+            branchId={terminal.branchId}
+            branchName={branch?.name || terminal.branchId}
+            sessionToken={sessionToken}
+            onClose={() => { setMpesaOpen(false); focusSearch(); }}
+          />
+        </Drawer>
+      )}
       {transferRequestOpen && terminal && account && (
         <Drawer side="left" onClose={() => { setTransferRequestOpen(false); focusSearch(); }} labelledBy="transfer-request-title">
           <StockTransferRequestView
@@ -1914,6 +1932,223 @@ export default function App() {
         />
       )}
     </main>
+  );
+}
+
+function mpesaDateBoundary(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function cashierMpesaStatus(transaction: MpesaTransaction) {
+  if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Fully used" };
+  if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
+  return { key: "available", label: "Available" };
+}
+
+function CashierMpesaView({
+  branchId,
+  branchName,
+  sessionToken,
+  onClose
+}: {
+  branchId: string;
+  branchName: string;
+  sessionToken: string;
+  onClose: () => void;
+}) {
+  const pageSize = 30;
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState<"asc" | "desc">("desc");
+  const [offset, setOffset] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [liveState, setLiveState] = useState<"connected" | "reconnecting">("reconnecting");
+  const [ledger, setLedger] = useState<MpesaLedger & { loading: boolean; error: string }>({
+    enabled: true,
+    branchId,
+    providerRequired: false,
+    transactions: [],
+    page: { total: 0, limit: pageSize, offset: 0 },
+    summary: { amountCents: 0, allocatedCents: 0, remainingCents: 0, branches: [] },
+    loading: true,
+    error: ""
+  });
+
+  useEffect(() => {
+    let active = true;
+    const from = mpesaDateBoundary(dateFrom);
+    const to = mpesaDateBoundary(dateTo);
+    if ((dateFrom && !from) || (dateTo && !to) || (from && to && from > to)) {
+      setLedger((current) => ({ ...current, loading: false, error: "Choose a valid transaction date range." }));
+      return () => { active = false; };
+    }
+    setLedger((current) => ({ ...current, loading: true, error: "" }));
+    const timer = window.setTimeout(() => {
+      listMpesaTransactions(sessionToken, branchId, {
+        search,
+        status: statusFilter,
+        from,
+        to,
+        sort,
+        limit: pageSize,
+        offset
+      }).then((result) => {
+        if (!active) return;
+        setLedger({ ...result, loading: false, error: "" });
+      }).catch((error) => {
+        if (!active) return;
+        const code = error instanceof Error ? error.message : String(error || "");
+        const message = code.includes("branch_not_authorized")
+          ? "This cashier login cannot view M-Pesa payments for this branch."
+          : code.includes("invalid_or_missing_user_session")
+            ? "Your cashier session has expired. Sign in again to verify M-Pesa."
+            : "M-Pesa transactions could not be loaded. Check the connection and retry.";
+        setLedger((current) => ({ ...current, loading: false, error: message }));
+      });
+    }, search.trim() ? 250 : 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [branchId, dateFrom, dateTo, offset, refreshNonce, search, sessionToken, sort, statusFilter]);
+
+  useEffect(() => {
+    const disconnect = connectMpesaStream(sessionToken, (change) => {
+      const types = Array.isArray(change.types) ? change.types : [];
+      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation")) return;
+      if (change.branchId && change.branchId !== branchId) return;
+      setRefreshNonce((value) => value + 1);
+    }, setLiveState);
+    const refreshVisible = () => {
+      if (!document.hidden && navigator.onLine) setRefreshNonce((value) => value + 1);
+    };
+    const fallback = window.setInterval(refreshVisible, 15000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      disconnect();
+      window.clearInterval(fallback);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [branchId, sessionToken]);
+
+  const total = Number(ledger.page.total || 0);
+  const pageStart = total ? offset + 1 : 0;
+  const pageEnd = Math.min(total, offset + pageSize);
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setOffset(0);
+  };
+
+  return (
+    <section className="cashier-mpesa-panel">
+      <header className="cashier-mpesa-header">
+        <div className="cashier-mpesa-heading-icon"><Smartphone size={23} /></div>
+        <div>
+          <span>Verified payments</span>
+          <h2 id="cashier-mpesa-title">M-Pesa transactions</h2>
+          <p>{branchName} - read-only verification</p>
+        </div>
+        <span className={`cashier-mpesa-live ${liveState}`}><i />{liveState === "connected" ? "Live" : "Reconnecting"}</span>
+      </header>
+
+      <div className="cashier-mpesa-summary">
+        <div><span>Received</span><b>{money(ledger.summary.amountCents)}</b></div>
+        <div><span>Used</span><b>{money(ledger.summary.allocatedCents)}</b></div>
+        <div className="available"><span>Available</span><b>{money(ledger.summary.remainingCents)}</b></div>
+      </div>
+
+      <div className="cashier-mpesa-filters">
+        <label className="cashier-mpesa-search">
+          <span>Payer or last 4 digits</span>
+          <Search size={17} />
+          <input value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Search verified payments" maxLength={80} />
+        </label>
+        <label>
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setOffset(0); }}>
+            <option value="all">All payments</option>
+            <option value="available">Available</option>
+            <option value="partial">Partly used</option>
+            <option value="allocated">Fully used</option>
+            <option value="reversed">Reversed</option>
+          </select>
+        </label>
+      </div>
+
+      <details className="cashier-mpesa-date-filter">
+        <summary><Clock size={16} /> Date and time filter</summary>
+        <div>
+          <label><span>From</span><input type="datetime-local" value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value); setOffset(0); }} /></label>
+          <label><span>To</span><input type="datetime-local" value={dateTo} min={dateFrom || undefined} onChange={(event) => { setDateTo(event.target.value); setOffset(0); }} /></label>
+        </div>
+      </details>
+
+      <div className="cashier-mpesa-toolbar">
+        <button type="button" onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}><Clock size={16} />{sort === "desc" ? "Newest first" : "Oldest first"}</button>
+        {(search || statusFilter !== "all" || dateFrom || dateTo) && <button type="button" onClick={clearFilters}><X size={16} />Clear filters</button>}
+        <button type="button" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw size={16} />Refresh</button>
+      </div>
+
+      {ledger.error && <div className="cashier-mpesa-message error" role="alert">{ledger.error}</div>}
+      {!ledger.error && !ledger.enabled && <div className="cashier-mpesa-message">Kopo Kopo is not enabled on this server.</div>}
+      {!ledger.error && ledger.loading && ledger.transactions.length === 0 && <div className="cashier-mpesa-message">Loading verified payments...</div>}
+      {!ledger.error && !ledger.loading && ledger.transactions.length === 0 && <div className="cashier-mpesa-message">No M-Pesa transactions match these filters.</div>}
+
+      <div className="cashier-mpesa-list" aria-live="polite">
+        {ledger.transactions.map((transaction) => {
+          const paymentStatus = cashierMpesaStatus(transaction);
+          const transactionTime = transaction.originationTime || transaction.createdAt;
+          return (
+            <article className="cashier-mpesa-row" key={transaction.id}>
+              <div className="cashier-mpesa-row-main">
+                <div>
+                  <b>{transaction.payerName || "Payer name not supplied"}</b>
+                  <span>{transaction.referenceMasked} - {transactionTime ? new Date(transactionTime).toLocaleString() : "Time not supplied"}</span>
+                </div>
+                <div className="cashier-mpesa-amount">
+                  <b>{money(transaction.amountCents)}</b>
+                  <span className={`cashier-mpesa-status ${paymentStatus.key}`}>{paymentStatus.label}</span>
+                </div>
+              </div>
+              <div className="cashier-mpesa-balance">
+                <span>{money(transaction.allocatedCents)} used</span>
+                <b>{money(transaction.remainingCents)} available</b>
+              </div>
+              <div className="cashier-mpesa-allocations">
+                {transaction.allocations.length === 0 ? (
+                  <span>Not allocated to an invoice</span>
+                ) : transaction.allocations.map((allocation) => (
+                  <div key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
+                    <b>{allocation.invoiceNumber || allocation.invoiceId}</b>
+                    <strong>{money(allocation.amountCents)}</strong>
+                    <small>Cleared by {allocation.allocatedByName || "supervisor"}{allocation.allocatedAt ? ` - ${new Date(allocation.allocatedAt).toLocaleString()}` : ""}</small>
+                  </div>
+                ))}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <footer className="cashier-mpesa-footer">
+        <span>Showing {pageStart}-{pageEnd} of {total}</span>
+        <div>
+          <button type="button" disabled={offset <= 0 || ledger.loading} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft size={16} />Previous</button>
+          <button type="button" disabled={offset + pageSize >= total || ledger.loading} onClick={() => setOffset((value) => value + pageSize)}>Next<ChevronRight size={16} /></button>
+        </div>
+        <button className="cashier-mpesa-done" type="button" onClick={onClose}><Check size={17} />Done</button>
+      </footer>
+    </section>
   );
 }
 

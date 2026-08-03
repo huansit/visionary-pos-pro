@@ -6,6 +6,7 @@ import { addRealtimeClient, getLatestRealtimeChange, getRealtimeVersion, publish
 const router = Router();
 
 const MANAGEMENT_SYNC_ROLES = new Set(["owner", "admin", "manager", "supervisor"]);
+const REALTIME_SYNC_ROLES = new Set([...MANAGEMENT_SYNC_ROLES, "cashier"]);
 
 async function operationalResetEpoch(client = null) {
   const run = client?.query ? client.query.bind(client) : q;
@@ -36,7 +37,7 @@ function syncRecordDeviceId(req) {
   return req.deviceId || null;
 }
 
-async function trySessionSync(req, res) {
+async function trySessionSync(req, res, allowedRoles = MANAGEMENT_SYNC_ROLES) {
   const token = sessionTokenFromSyncRequest(req);
   if (!token) return "none";
   const session = await loadUserSession(token);
@@ -44,7 +45,7 @@ async function trySessionSync(req, res) {
     res.status(401).json({ error: "invalid_or_missing_user_session" });
     return "handled";
   }
-  if (!MANAGEMENT_SYNC_ROLES.has(syncRole(session.account))) {
+  if (!allowedRoles.has(syncRole(session.account))) {
     res.status(403).json({ error: "insufficient_role" });
     return "handled";
   }
@@ -52,6 +53,17 @@ async function trySessionSync(req, res) {
   req.account = session.account;
   req.syncActor = "session";
   return "ok";
+}
+
+async function requireRealtimeStream(req, res, next) {
+  try {
+    const sessionResult = await trySessionSync(req, res, REALTIME_SYNC_ROLES);
+    if (sessionResult === "handled") return;
+    if (sessionResult === "ok") return next();
+    return requireDevice(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
 }
 
 async function requireSyncRead(req, res, next) {
@@ -87,7 +99,7 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get("/stream", requireSyncRead, (req, res) => {
+router.get("/stream", requireRealtimeStream, (req, res) => {
   addRealtimeClient(req, res);
 });
 

@@ -1,11 +1,11 @@
 {
-  "version": "2.0.70",
+  "version": "2.0.71",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.70_x64-setup.exe",
-  "size": 3244792,
-  "sha512": "86B09042C27A5CA88BBAE0A0A6A9A4478123ABE0120965BE10D87AE58781EECFF5DDF853B6A61E35EFD3CDCB1C64408E732A1D3C57BA020D5CCBA334BB0FD349",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.71_x64-setup.exe",
+  "size": 3247272,
+  "sha512": "924C16A9BA01FC422EB5D9E273F29EB9B3057609501C63C847A9D0DB1BB58D67F7377F1CBA8EA455C78D391D02C5B2FF1CC2D1795E434B922521AD7903ECF7A6",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.70",
+    "VISIONPOS Cashier 2.0.71",
     "End of Day notifications are now resolved from the terminal's own branch catalog before invoices move into cashier debt.",
     "Closing one branch can no longer carry another branch's open invoices into debt.",
     "Incorrect cached day-close boundaries are repaired automatically during the next successful sync.",
@@ -24,6 +24,8 @@
     "Open, overdue, carried invoice debt, and missing-inventory debt are displayed as separate categories with accurate totals.",
     "Unpaid invoices become overdue after one day but become cashier debt only after End of Day carries them forward.",
     "Cashier sessions now sign out after 15 minutes of inactivity, including after sleep, backgrounding, or window suspension.",
+    "Cashiers can verify their branch's M-Pesa transactions from a read-only ledger that refreshes as payments arrive.",
+    "M-Pesa transactions show their allocated invoice numbers, amounts, clearing employee, and allocation time.",
     "Fingerprint login and checkout now recover stale SecuGen exclusive-access locks with serialized retries, a clean service restart, and a bounded device-release delay.",
     "Cashier API requests now switch to the verified direct IPv4 origin when Cloudflare cannot be reached, restoring login, fingerprint templates, checkout, and sync on affected terminals.",
     "Update checks now retry through the DNS-only IPv4 recovery route before sign-in.",
@@ -34,6 +36,7 @@
     "Updates are now detected and can be installed before cashier sign-in or terminal activation.",
     "The native API bridge now forwards the installed cashier version so the admin terminal dashboard updates during normal activity.",
     "The cashier executable and installer are Authenticode-signed and timestamped for trusted VISIONPOS workstations.",
+    "Release publishing now re-verifies the signed installer and embedded cashier executable after every copy step.",
     "Native in-app updater package with automatic signature verification and restart."
   ]
 }

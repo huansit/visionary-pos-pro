@@ -32,10 +32,12 @@ const {
 } = await import("../src/services/kopokopo.js");
 const { ingestKopokopoIncomingPaymentStatus } = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
+const { getLatestRealtimeEvent, publishRealtimeEvent } = await import("../src/realtime.js");
 
 let sessionToken = "";
 let branchSessionToken = "";
 let supervisorSessionToken = "";
+let cashierSessionToken = "";
 
 function signedWebhook(payload, secret = process.env.KOPOKOPO_API_KEY) {
   const body = JSON.stringify(payload);
@@ -108,11 +110,23 @@ before(async () => {
     .expect(200);
   supervisorSessionToken = supervisorLogin.body.sessionToken;
 
+  const cashierPasswordHash = await bcrypt.hash("Cashier@123", 10);
+  await pool.query(
+    `INSERT INTO credentials (id, kind, name, email, password_hash, branch_id, rights, status, email_verified)
+     VALUES ($1, 'user', $2, $3, $4, $5, $6::jsonb, 'active', true)`,
+    ["kopokopo-cashier", "SIP Cashier", "sip.cashier@example.com", cashierPasswordHash, "b_sip", JSON.stringify({ role: "Cashier" })]
+  );
+  const cashierLogin = await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "sip.cashier@example.com", password: "Cashier@123" })
+    .expect(200);
+  cashierSessionToken = cashierLogin.body.sessionToken;
+
   for (const invoice of [
-    { id: "inv-1", branchId: "b_sip", totalCents: 30000 },
-    { id: "inv-2", branchId: "b_sip", totalCents: 20000 },
-    { id: "inv-3", branchId: "b_sip", totalCents: 100000 },
-    { id: "inv-cpt", branchId: "b_cpt", totalCents: 100000 },
+    { id: "inv-1", number: "RCP-SIP-000001", branchId: "b_sip", totalCents: 30000 },
+    { id: "inv-2", number: "RCP-SIP-000002", branchId: "b_sip", totalCents: 20000 },
+    { id: "inv-3", number: "RCP-SIP-000003", branchId: "b_sip", totalCents: 100000 },
+    { id: "inv-cpt", number: "RCP-CPT-000001", branchId: "b_cpt", totalCents: 100000 },
   ]) {
     await pool.query(
       `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
@@ -148,6 +162,8 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
   const payload = webhookPayload();
   await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
   await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: true });
+  assert.equal(getLatestRealtimeEvent("kopokopo").branchId, "b_sip");
+  assert.deepEqual(getLatestRealtimeEvent("kopokopo").types, ["kopokopoTransaction"]);
 
   await request(app)
     .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=12CD")
@@ -220,6 +236,25 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
     .expect(200);
   assert.equal(supervisorLedger.body.transactions.length, 1);
 
+  const cashierLedger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
+    .set("X-Session-Token", cashierSessionToken)
+    .expect(200);
+  assert.equal(cashierLedger.body.transactions.length, 1);
+  assert.equal(cashierLedger.body.transactions[0].branchId, "b_sip");
+
+  await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=all")
+    .set("X-Session-Token", cashierSessionToken)
+    .expect(403)
+    .expect({ error: "branch_not_authorized" });
+
+  await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_cpt")
+    .set("X-Session-Token", cashierSessionToken)
+    .expect(403)
+    .expect({ error: "branch_not_authorized" });
+
   await pool.query(
     `INSERT INTO kopokopo_transactions
       (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time)
@@ -263,6 +298,39 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
     .set("X-Session-Token", sessionToken)
     .expect(400)
     .expect({ error: "invalid_kopokopo_transaction_filters" });
+});
+
+test("streams branch-scoped M-Pesa changes to an authenticated cashier", async () => {
+  const server = app.listen(0);
+  const port = server.address().port;
+  const controller = new AbortController();
+  let reader;
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/sync/stream?sessionToken=${encodeURIComponent(cashierSessionToken)}`, {
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const connected = await reader.read();
+    assert.match(decoder.decode(connected.value), /event: connected/);
+
+    publishRealtimeEvent("kopokopo", {
+      branchId: "b_sip",
+      types: ["kopokopoTransaction"],
+    });
+    const next = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("cashier_realtime_timeout")), 2000)),
+    ]);
+    const eventText = decoder.decode(next.value);
+    assert.match(eventText, /event: kopokopo/);
+    assert.match(eventText, /"branchId":"b_sip"/);
+  } finally {
+    controller.abort();
+    await reader?.cancel().catch(() => undefined);
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("stores signed polling callbacks instead of silently ignoring them", async () => {
@@ -1156,6 +1224,13 @@ test("allocates atomically, rejects excess, and makes retries idempotent", async
       { invoiceId: "inv-2", amountCents: 20000, localPaymentId: "pay-2" },
     ],
   };
+  await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", cashierSessionToken)
+    .send(allocationRequest)
+    .expect(403)
+    .expect({ error: "insufficient_role" });
+
   const allocated = await request(app)
     .post("/api/integrations/kopokopo/allocations")
     .set("X-Session-Token", sessionToken)
@@ -1163,6 +1238,25 @@ test("allocates atomically, rejects excess, and makes retries idempotent", async
     .expect(200);
   assert.equal(allocated.body.duplicate, false);
   assert.equal(allocated.body.transaction.remainingCents, 50000);
+  assert.equal(getLatestRealtimeEvent("kopokopo").branchId, "b_sip");
+  assert.deepEqual(getLatestRealtimeEvent("kopokopo").types, ["kopokopoAllocation"]);
+
+  const ledger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  const ledgerTransaction = ledger.body.transactions.find((transaction) => transaction.id === "txn-1");
+  assert.ok(ledgerTransaction);
+  assert.deepEqual(ledgerTransaction.allocations.map((allocation) => ({
+    invoiceId: allocation.invoiceId,
+    invoiceNumber: allocation.invoiceNumber,
+    amountCents: allocation.amountCents,
+    allocatedByName: allocation.allocatedByName,
+  })).sort((left, right) => left.invoiceId.localeCompare(right.invoiceId)), [
+    { invoiceId: "inv-1", invoiceNumber: "RCP-SIP-000001", amountCents: 30000, allocatedByName: "Kopo Admin" },
+    { invoiceId: "inv-2", invoiceNumber: "RCP-SIP-000002", amountCents: 20000, allocatedByName: "Kopo Admin" },
+  ]);
+  assert.ok(ledgerTransaction.allocations.every((allocation) => allocation.allocatedAt));
 
   const retried = await request(app)
     .post("/api/integrations/kopokopo/allocations")

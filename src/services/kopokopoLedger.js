@@ -1,4 +1,5 @@
 import { isMySql, tx } from "../db.js";
+import { publishRealtimeEvent } from "../realtime.js";
 import { redactKopokopoPayload } from "./kopokopo.js";
 
 async function insertProviderEvent(client, parsed, body) {
@@ -89,11 +90,20 @@ async function applyReversedTransaction(client, parsed) {
 
 export async function storeKopokopoEvent(parsed, body) {
   if (!parsed?.supported || !parsed?.valid) throw new Error("invalid_kopokopo_event");
-  return tx(async (client) => {
+  const result = await tx(async (client) => {
     const inserted = await insertProviderEvent(client, parsed, body);
     if (!inserted) return { duplicate: true };
     if (parsed.reversed) await applyReversedTransaction(client, parsed);
     else await applyReceivedTransaction(client, parsed);
     return { duplicate: false };
   });
+  if (!result.duplicate) {
+    publishRealtimeEvent("kopokopo", {
+      source: "kopokopo",
+      branchId: parsed.branchId || null,
+      accepted: 1,
+      types: ["kopokopoTransaction"],
+    });
+  }
+  return result;
 }
