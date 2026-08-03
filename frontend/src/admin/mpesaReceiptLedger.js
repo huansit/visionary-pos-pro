@@ -25,6 +25,7 @@ export function mpesaReceiptLedger(payments, { branchId, codeLast4 } = {}) {
       registeredAt: Number(payment.mpesaReceiptRegisteredAt || payment.ts || 0),
       registeredByName: normalizeText(payment.mpesaReceiptRegisteredByName || payment.recordedByName),
       payerName: normalizeText(payment.mpesaPayerName),
+      originationTime: normalizeText(payment.mpesaOriginationTime),
       providerVerified: Boolean(payment.providerVerified),
       kopokopoTransactionId: normalizeText(payment.kopokopoTransactionId),
       allocations: [],
@@ -33,6 +34,7 @@ export function mpesaReceiptLedger(payments, { branchId, codeLast4 } = {}) {
     current.allocatedCents += Math.max(0, Math.round(Number(payment.amountCents) || 0));
     current.registeredAt = Math.min(current.registeredAt || Infinity, Number(payment.mpesaReceiptRegisteredAt || payment.ts || 0)) || 0;
     current.payerName ||= normalizeText(payment.mpesaPayerName);
+    current.originationTime ||= normalizeText(payment.mpesaOriginationTime);
     current.providerVerified ||= Boolean(payment.providerVerified);
     current.kopokopoTransactionId ||= normalizeText(payment.kopokopoTransactionId);
     current.allocations.push(payment);
@@ -106,5 +108,6 @@ export function mpesaReceiptPaymentFields(receipt) {
   if (receipt.providerVerified) fields.providerVerified = true;
   if (receipt.kopokopoTransactionId) fields.kopokopoTransactionId = receipt.kopokopoTransactionId;
   if (receipt.payerName) fields.mpesaPayerName = receipt.payerName;
+  if (receipt.originationTime) fields.mpesaOriginationTime = receipt.originationTime;
   return fields;
 }

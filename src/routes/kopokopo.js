@@ -56,6 +56,12 @@ function sandboxTestAvailable(config) {
   return config.enabled && config.mode === "sandbox" && Boolean(config.sandboxBranchId);
 }
 
+function branchRequiresVerifiedKopokopo(config, branchId) {
+  if (!config.enabled || !branchId) return false;
+  if (config.mode === "sandbox") return config.sandboxBranchId === branchId;
+  return Object.values(config.tillBranchMap || {}).some((mappedBranchId) => mappedBranchId === branchId);
+}
+
 function publicTransaction(row) {
   const amountCents = Number(row.amount_cents ?? row.amountCents ?? 0);
   const allocatedCents = Number(row.allocated_cents ?? row.allocatedCents ?? 0);
@@ -535,9 +541,10 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
     const config = kopokopoConfig();
     const branchId = String(req.query.branchId || "").trim();
     const last4 = String(req.query.last4 || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (!branchId || last4.length !== 4) return res.status(400).json({ error: "branch_and_last4_required" });
+    if (!branchId || (last4.length > 0 && last4.length !== 4)) return res.status(400).json({ error: "invalid_branch_or_last4" });
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
-    if (!config.enabled) return res.json({ enabled: false, transactions: [] });
+    const providerRequired = branchRequiresVerifiedKopokopo(config, branchId);
+    if (!config.enabled || !last4) return res.json({ enabled: config.enabled, providerRequired, transactions: [] });
     const result = await q(
       `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time
          FROM kopokopo_transactions
@@ -550,7 +557,7 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
         LIMIT 20`,
       [branchId, last4]
     );
-    return res.json({ enabled: true, transactions: result.rows.map(publicTransaction) });
+    return res.json({ enabled: true, providerRequired, transactions: result.rows.map(publicTransaction) });
   } catch (error) {
     console.error("Kopo Kopo lookup failed:", error);
     return res.status(500).json({ error: "kopokopo_lookup_failed" });

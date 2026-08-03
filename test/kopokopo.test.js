@@ -149,8 +149,17 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
   assert.equal(lookup.body.transactions[0].amountCents, 100000);
   assert.equal(lookup.body.transactions[0].remainingCents, 100000);
   assert.equal(lookup.body.transactions[0].providerVerified, true);
+  assert.equal(lookup.body.providerRequired, true);
   assert.equal(lookup.body.transactions[0].payerName, "Test Customer");
+  assert.equal(lookup.body.transactions[0].originationTime, "2026-08-02T07:00:00.000Z");
   assert.equal("reference" in lookup.body.transactions[0], false);
+
+  const branchPolicy = await request(app)
+    .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(branchPolicy.body.providerRequired, true);
+  assert.deepEqual(branchPolicy.body.transactions, []);
 
   const storedEvent = await pool.query("SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1", [payload.id]);
   assert.equal(storedEvent.rows[0].payload.event.resource.sender_phone_number, undefined);

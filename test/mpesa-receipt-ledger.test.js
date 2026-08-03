@@ -29,7 +29,12 @@ test("normalizes only the last four M-Pesa code characters", () => {
 
 test("tracks one receipt total without recounting it for every invoice allocation", () => {
   const payments = [
-    allocation({ providerVerified: true, kopokopoTransactionId: "txn-1", mpesaPayerName: "Test Customer" }),
+    allocation({
+      providerVerified: true,
+      kopokopoTransactionId: "txn-1",
+      mpesaPayerName: "Test Customer",
+      mpesaOriginationTime: "2026-08-03T10:15:00+03:00",
+    }),
     allocation({ id: "pay-2", amountCents: 35000 }),
   ];
   const [receipt] = mpesaReceiptLedger(payments, { branchId: "branch-a", codeLast4: "7x9q" });
@@ -39,6 +44,7 @@ test("tracks one receipt total without recounting it for every invoice allocatio
   assert.equal(receipt.providerVerified, true);
   assert.equal(receipt.kopokopoTransactionId, "txn-1");
   assert.equal(receipt.payerName, "Test Customer");
+  assert.equal(receipt.originationTime, "2026-08-03T10:15:00+03:00");
 });
 
 test("keeps identical last-four codes isolated by branch", () => {

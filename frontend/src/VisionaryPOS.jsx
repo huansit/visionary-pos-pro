@@ -1177,7 +1177,9 @@ async function authDelete(path, options = {}) {
   return data;
 }
 async function lookupKopokopoTransactions(branchId, codeLast4) {
-  const query = new URLSearchParams({ branchId: String(branchId || ""), last4: normalizeMpesaCodeLast4(codeLast4) });
+  const query = new URLSearchParams({ branchId: String(branchId || "") });
+  const normalizedCode = normalizeMpesaCodeLast4(codeLast4);
+  if (normalizedCode) query.set("last4", normalizedCode);
   return await authGet(`/api/integrations/kopokopo/transactions/lookup?${query}`, { session: true });
 }
 async function allocateKopokopoTransaction(payload) {
@@ -1220,33 +1222,55 @@ function kopokopoReceipt(transaction, branchId, actorName) {
     registeredAt: transaction.originationTime ? new Date(transaction.originationTime).getTime() : now(),
     registeredByName: actorName,
     payerName: transaction.payerName || "",
+    originationTime: transaction.originationTime || "",
     providerVerified: true,
     kopokopoTransactionId: transaction.id,
   };
 }
+
+function kopokopoTransactionTime(value) {
+  if (!value) return "Not supplied by Kopo Kopo";
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? "Not supplied by Kopo Kopo" : timestamp.toLocaleString();
+}
 function useKopokopoLookup(branchId, codeLast4) {
   const normalizedCode = normalizeMpesaCodeLast4(codeLast4);
-  const [state, setState] = useState({ enabled: null, loading: false, transactions: [], error: "" });
+  const lookupCode = normalizedCode.length === 4 ? normalizedCode : "";
+  const [state, setState] = useState({ enabled: null, providerRequired: null, loading: false, transactions: [], error: "" });
   useEffect(() => {
     let active = true;
-    if (!branchId || normalizedCode.length !== 4) {
-      setState({ enabled: null, loading: false, transactions: [], error: "" });
+    if (!branchId) {
+      setState({ enabled: null, providerRequired: null, loading: false, transactions: [], error: "" });
       return () => { active = false; };
     }
-    setState((current) => ({ ...current, loading: true, transactions: [], error: "" }));
+    setState((current) => ({ ...current, loading: Boolean(lookupCode), transactions: [], error: "" }));
     const timer = window.setTimeout(async () => {
       try {
-        const result = await lookupKopokopoTransactions(branchId, normalizedCode);
-        if (active) setState({ enabled: result.enabled !== false, loading: false, transactions: result.transactions || [], error: "" });
+        const result = await lookupKopokopoTransactions(branchId, lookupCode);
+        if (active) setState({
+          enabled: result.enabled !== false,
+          providerRequired: result.providerRequired === true,
+          loading: false,
+          transactions: result.transactions || [],
+          error: "",
+        });
       } catch (_) {
-        if (active) setState({ enabled: null, loading: false, transactions: [], error: "Kopo Kopo could not be reached. Manual entry is still available." });
+        if (active) setState((current) => ({
+          ...current,
+          enabled: null,
+          loading: false,
+          transactions: [],
+          error: current.providerRequired === false
+            ? "Kopo Kopo could not be reached. Manual entry is still available for this branch."
+            : "Kopo Kopo verification is unavailable. Try again before recording an M-Pesa payment.",
+        }));
       }
-    }, 250);
+    }, lookupCode ? 250 : 0);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [branchId, normalizedCode]);
+  }, [branchId, lookupCode]);
   return state;
 }
 async function environmentPublic() {
@@ -3913,8 +3937,12 @@ body{overscroll-behavior:none}
 .mpesa-receipt-status b{display:block;margin-top:3px;font-family:var(--font-mono);font-size:11px;overflow-wrap:anywhere}
 .mpesa-receipt-status.available>div:last-child b{color:var(--ok)}
 .mpesa-receipt-status.blocked>div:last-child b{color:var(--danger)}
-.kopokopo-verified{display:flex;align-items:center;gap:8px;color:var(--ok)}
+.kopokopo-verified{display:flex;align-items:flex-start;gap:8px;color:var(--ok)}
 .kopokopo-verified svg{width:16px;height:16px;flex:0 0 auto}
+.kopokopo-verified>div{display:grid;gap:2px}
+.kopokopo-verified b{font-size:12px}
+.kopokopo-verified span{color:var(--muted);font-size:11px}
+.mpesa-receipt-status .provider-detail{grid-column:span 2}
 .settlement-inline-total{display:grid;gap:2px;align-content:center}
 .settlement-inline-total span{color:var(--muted-2);font-size:9.5px;font-weight:750;text-transform:uppercase}
 .settlement-inline-total b{font-family:var(--font-mono);font-size:15px}
@@ -7118,6 +7146,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   else if (settlementCents > totalCents) validationError = `The payment cannot exceed ${fmt(totalCents, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) validationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) validationError = providerSelectionError;
+  else if (mpesaCents > 0 && providerLookup.providerRequired !== false && !verifiedReceipt) validationError = "This branch requires a verified Kopo Kopo transaction. Manual M-Pesa amounts are disabled.";
   else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) validationError = "This M-Pesa receipt balance is already depleted.";
   else if (mpesaCents > receiptAvailableCents) validationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
   else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) validationError = "Enter the total amount paid on the M-Pesa receipt.";
@@ -7357,11 +7386,11 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
             <input className="input innum" inputMode="text" maxLength={4} value={mpesaCode}
               onChange={(event) => changeMpesaCode(event.target.value)} placeholder="e.g. 7X9Q" />
           </div>
-          <div>
+          {providerLookup.providerRequired === false ? <div>
             <label className="label">Total paid on code {verifiedReceipt ? "- verified" : "- manual"}</label>
             <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
               onChange={(event) => changeReceiptAmount(event.target.value)} />
-          </div>
+          </div> : null}
           <div>
             <label className="label">M-Pesa to apply now</label>
             <input className="input" inputMode="decimal" value={mpesaAmount}
@@ -7388,9 +7417,10 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
           </div>
         ) : null}
         {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
-        {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /> Verified Kopo Kopo transaction{verifiedReceipt.payerName ? ` from ${verifiedReceipt.payerName}` : ""}. The provider balance controls this settlement.</div> : null}
+        {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
         {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
-        {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
+        {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired ? <div className="notice compact-notice">No verified Kopo Kopo transaction matches this code. Manual M-Pesa amount entry is disabled for {branch.name}.</div> : null}
+        {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired === false ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
 
         {normalizedMpesaCode.length === 4 && existingReceipt ? (
           <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
@@ -7398,6 +7428,8 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
             <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
             <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
             <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
+            {existingReceipt.providerVerified ? <div className="provider-detail"><span>Payer</span><b>{existingReceipt.payerName || "Not supplied by Kopo Kopo"}</b></div> : null}
+            {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
           </div>
         ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Enter the full amount paid on this M-Pesa code; only the amount applied now will reduce it.</div> : null}
 
@@ -7891,6 +7923,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) paymentValidationError = providerSelectionError;
+  else if (mpesaCents > 0 && providerLookup.providerRequired !== false && !verifiedReceipt) paymentValidationError = "This branch requires a verified Kopo Kopo transaction. Manual M-Pesa amounts are disabled.";
   else if (mpesaCents > 0 && existingReceipt && receiptAvailableCents <= 0) paymentValidationError = "This M-Pesa receipt balance is already depleted.";
   else if (mpesaCents > receiptAvailableCents) paymentValidationError = `Only ${fmt(receiptAvailableCents, cur)} remains on this M-Pesa receipt.`;
   else if (mpesaCents > 0 && !existingReceipt && receiptTotalCents <= 0) paymentValidationError = "Enter the total amount paid on the M-Pesa receipt.";
@@ -8159,7 +8192,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     setPaymentError("");
                   }} />
               </label>
-              <label><span>Total paid on code {verifiedReceipt ? "- verified" : "- manual"}</span>
+              {providerLookup.providerRequired === false ? <label><span>Total paid on code - manual</span>
                 <input className="input" inputMode="decimal" value={mpesaReceiptAmount} disabled={Boolean(existingReceipt)}
                   onChange={(e) => {
                     const clean = e.target.value.replace(/[^\d.]/g, "");
@@ -8169,7 +8202,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     setCashAmount("0");
                     setPaymentError("");
                   }} />
-              </label>
+              </label> : null}
               <label><span>M-Pesa to apply</span>
                 <input className="input" inputMode="decimal" value={mpesaAmount}
                   onChange={(e) => { setMpesaAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
@@ -8192,15 +8225,18 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               </label>
             ) : null}
             {providerLookup.loading ? <div className="notice compact-notice">Checking Kopo Kopo...</div> : null}
-            {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /> Verified Kopo Kopo transaction{verifiedReceipt.payerName ? ` from ${verifiedReceipt.payerName}` : ""}. The provider balance controls this settlement.</div> : null}
+            {verifiedReceipt ? <div className="notice compact-notice kopokopo-verified"><ShieldCheck /><div><b>Verified Kopo Kopo transaction</b><span>Payer: {verifiedReceipt.payerName || "Not supplied by Kopo Kopo"} | Transaction time: {kopokopoTransactionTime(verifiedReceipt.originationTime)}</span></div></div> : null}
             {providerLookup.error ? <div className="notice compact-notice">{providerLookup.error}</div> : null}
-            {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
+            {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired ? <div className="notice compact-notice">No verified Kopo Kopo transaction matches this code. Manual M-Pesa amount entry is disabled for this branch.</div> : null}
+            {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired === false ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
             {normalizedMpesaCode.length === 4 && existingReceipt ? (
               <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
                 <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
                 <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
                 <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
                 <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
+                {existingReceipt.providerVerified ? <div className="provider-detail"><span>Payer</span><b>{existingReceipt.payerName || "Not supplied by Kopo Kopo"}</b></div> : null}
+                {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
               </div>
             ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Save its full M-Pesa amount once, then reuse this code until the balance is depleted.</div> : null}
             <div className="invoice-payment-entry">
