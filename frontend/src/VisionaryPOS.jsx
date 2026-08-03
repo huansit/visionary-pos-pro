@@ -8267,7 +8267,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <summary><span>Payment history <b>{pays.length}</b></span><ChevronDown /></summary>
             <div className="invoice-detail-history">{pays.map((p) => (
               <div className="invoice-detail-history-row" key={p.id}>
-                <div><b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b><span>{p.mpesaPayerName ? `${p.mpesaPayerName} - ` : ""}{new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span></div>
+                <div>
+                  <b>{p.method}{p.mpesaCodeLast4 ? ` ending ${p.mpesaCodeLast4}` : ""}</b>
+                  {p.providerVerified ? <span>Payer: {p.mpesaPayerName || "Not supplied by Kopo Kopo"}</span> : null}
+                  {p.providerVerified ? <span>Transaction time: {kopokopoTransactionTime(p.mpesaOriginationTime)}</span> : null}
+                  <span>Recorded {new Date(p.ts).toLocaleString()} by {paymentActorName(p)}</span>
+                </div>
                 <strong>{fmt(p.amountCents, cur)}</strong>
               </div>))}</div>
           </details>
