@@ -45,7 +45,6 @@ import {
   activateTerminal,
   clearFingerprintTemplateCache,
   connectSyncStream,
-  connectMpesaStream,
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
@@ -1943,7 +1942,7 @@ function mpesaDateBoundary(value: string) {
 
 function cashierMpesaStatus(transaction: MpesaTransaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
-  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Fully used" };
+  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Used" };
   if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
   return { key: "available", label: "Available" };
 }
@@ -1981,6 +1980,7 @@ function CashierMpesaView({
 
   useEffect(() => {
     let active = true;
+    let pollTimer = 0;
     const from = mpesaDateBoundary(dateFrom);
     const to = mpesaDateBoundary(dateTo);
     if ((dateFrom && !from) || (dateTo && !to) || (from && to && from > to)) {
@@ -1988,7 +1988,17 @@ function CashierMpesaView({
       return () => { active = false; };
     }
     setLedger((current) => ({ ...current, loading: true, error: "" }));
-    const timer = window.setTimeout(() => {
+    const scheduleRefresh = () => {
+      if (!active) return;
+      pollTimer = window.setTimeout(() => {
+        if (active && !document.hidden && navigator.onLine) {
+          setRefreshNonce((value) => value + 1);
+        } else {
+          scheduleRefresh();
+        }
+      }, 5000);
+    };
+    const requestTimer = window.setTimeout(() => {
       listMpesaTransactions(sessionToken, branchId, {
         search,
         status: statusFilter,
@@ -1999,9 +2009,11 @@ function CashierMpesaView({
         offset
       }).then((result) => {
         if (!active) return;
+        setLiveState("connected");
         setLedger({ ...result, loading: false, error: "" });
       }).catch((error) => {
         if (!active) return;
+        setLiveState("reconnecting");
         const code = error instanceof Error ? error.message : String(error || "");
         const message = code.includes("branch_not_authorized")
           ? "This cashier login cannot view M-Pesa payments for this branch."
@@ -2009,34 +2021,28 @@ function CashierMpesaView({
             ? "Your cashier session has expired. Sign in again to verify M-Pesa."
             : "M-Pesa transactions could not be loaded. Check the connection and retry.";
         setLedger((current) => ({ ...current, loading: false, error: message }));
+      }).finally(() => {
+        scheduleRefresh();
       });
     }, search.trim() ? 250 : 0);
     return () => {
       active = false;
-      window.clearTimeout(timer);
+      window.clearTimeout(requestTimer);
+      window.clearTimeout(pollTimer);
     };
   }, [branchId, dateFrom, dateTo, offset, refreshNonce, search, sessionToken, sort, statusFilter]);
 
   useEffect(() => {
-    const disconnect = connectMpesaStream(sessionToken, (change) => {
-      const types = Array.isArray(change.types) ? change.types : [];
-      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation")) return;
-      if (change.branchId && change.branchId !== branchId) return;
-      setRefreshNonce((value) => value + 1);
-    }, setLiveState);
     const refreshVisible = () => {
       if (!document.hidden && navigator.onLine) setRefreshNonce((value) => value + 1);
     };
-    const fallback = window.setInterval(refreshVisible, 15000);
     window.addEventListener("focus", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
     return () => {
-      disconnect();
-      window.clearInterval(fallback);
       window.removeEventListener("focus", refreshVisible);
       document.removeEventListener("visibilitychange", refreshVisible);
     };
-  }, [branchId, sessionToken]);
+  }, []);
 
   const total = Number(ledger.page.total || 0);
   const pageStart = total ? offset + 1 : 0;
@@ -2079,7 +2085,7 @@ function CashierMpesaView({
             <option value="all">All payments</option>
             <option value="available">Available</option>
             <option value="partial">Partly used</option>
-            <option value="allocated">Fully used</option>
+            <option value="allocated">Used</option>
             <option value="reversed">Reversed</option>
           </select>
         </label>

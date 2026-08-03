@@ -500,6 +500,7 @@ fn is_allowed_api_header(name: &str) -> bool {
         name.to_ascii_lowercase().as_str(),
         "x-terminal-uuid"
             | "x-terminal-secret"
+            | "x-session-token"
             | "x-visionpos-app-version"
             | "content-type"
             | "accept"
@@ -696,10 +697,13 @@ mod tests {
     };
 
     #[test]
-    fn native_api_bridge_forwards_terminal_version_header() {
+    fn native_api_bridge_forwards_only_supported_authentication_headers() {
         assert!(is_allowed_api_header("X-VISIONPOS-App-Version"));
         assert!(is_allowed_api_header("x-visionpos-app-version"));
+        assert!(is_allowed_api_header("X-Session-Token"));
+        assert!(is_allowed_api_header("x-session-token"));
         assert!(!is_allowed_api_header("authorization"));
+        assert!(!is_allowed_api_header("cookie"));
     }
 
     #[test]

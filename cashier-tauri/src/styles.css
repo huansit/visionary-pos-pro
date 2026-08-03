@@ -8906,7 +8906,7 @@ body {
 
 .cashier-mpesa-status.available { color: #6ee7b7; }
 .cashier-mpesa-status.partial { color: #7dd3fc; }
-.cashier-mpesa-status.allocated { color: #9ba9b2; }
+.cashier-mpesa-status.allocated { color: #fb7185; }
 .cashier-mpesa-status.reversed { color: #fb7185; }
 
 .cashier-mpesa-balance {

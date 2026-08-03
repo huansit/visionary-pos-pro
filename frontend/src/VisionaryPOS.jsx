@@ -3862,7 +3862,14 @@ body{overscroll-behavior:none}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
 .mpesa-page-actions{display:flex;align-items:center;gap:12px}
-.mpesa-allocations{display:grid;gap:5px;min-width:220px;white-space:normal}
+.mpesa-allocation-menu{position:relative;min-width:180px;white-space:normal}
+.mpesa-allocation-menu summary{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;align-items:center;gap:8px;min-height:34px;padding:6px 9px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface);cursor:pointer;list-style:none;color:var(--text);font-size:11px;font-weight:750}
+.mpesa-allocation-menu summary::-webkit-details-marker{display:none}
+.mpesa-allocation-menu summary b{font-family:var(--font-mono);font-size:11px;white-space:nowrap}
+.mpesa-allocation-menu summary svg{width:15px;height:15px;color:var(--muted);transition:transform .15s}
+.mpesa-allocation-menu[open] summary svg{transform:rotate(180deg)}
+.mpesa-allocation-menu[open] summary{border-color:var(--accent);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.mpesa-allocations{display:grid;gap:5px;min-width:220px;padding:4px 9px 6px;border:1px solid var(--border-soft);border-top:0;border-radius:0 0 5px 5px;background:var(--surface);white-space:normal}
 .mpesa-allocation{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:6px 0;border-bottom:1px solid var(--border-soft)}
 .mpesa-allocation:last-child{border-bottom:0}
 .mpesa-allocation b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3872,13 +3879,13 @@ body{overscroll-behavior:none}
 .mpesa-ledger-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
 .mpesa-ledger-status.available{background:rgba(52,211,153,.14);color:var(--ok)}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
-.mpesa-ledger-status.allocated{background:var(--surface-2);color:var(--muted)}
+.mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-mobile{display:none}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
-@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocations{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{min-width:0}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
@@ -14405,7 +14412,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 /* ---- Settings ---- */
 function kopokopoLedgerStatus(transaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
-  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Fully used" };
+  if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Used" };
   if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
   return { key: "available", label: "Available" };
 }
@@ -14420,15 +14427,23 @@ function MpesaAllocationList({ allocations, currency = "KES" }) {
   if (!Array.isArray(allocations) || allocations.length === 0) {
     return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
   }
-  return <div className="mpesa-allocations">{allocations.map((allocation) => {
-    const when = allocation.allocatedAt ? new Date(allocation.allocatedAt).toLocaleString() : "Time not supplied";
-    const actor = allocation.allocatedByName || "Unknown user";
-    return <div className="mpesa-allocation" key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
-      <b title={allocation.invoiceId}>{allocation.invoiceNumber || allocation.invoiceId || "Unknown invoice"}</b>
-      <span className="amount">{fmt(allocation.amountCents || 0, currency)}</span>
-      <small>{actor} / {when}{String(allocation.status || "active").toLowerCase() !== "active" ? ` / ${allocation.status}` : ""}</small>
-    </div>;
-  })}</div>;
+  const allocatedTotal = allocations.reduce((sum, allocation) => sum + Number(allocation.amountCents || 0), 0);
+  return <details className="mpesa-allocation-menu">
+    <summary>
+      <span>{allocations.length} {allocations.length === 1 ? "invoice" : "invoices"}</span>
+      <b>{fmt(allocatedTotal, currency)}</b>
+      <ChevronDown aria-hidden="true" />
+    </summary>
+    <div className="mpesa-allocations">{allocations.map((allocation) => {
+      const when = allocation.allocatedAt ? new Date(allocation.allocatedAt).toLocaleString() : "Time not supplied";
+      const actor = allocation.allocatedByName || "Unknown user";
+      return <div className="mpesa-allocation" key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
+        <b title={allocation.invoiceId}>{allocation.invoiceNumber || allocation.invoiceId || "Unknown invoice"}</b>
+        <span className="amount">{fmt(allocation.amountCents || 0, currency)}</span>
+        <small>{actor} / {when}{String(allocation.status || "active").toLowerCase() !== "active" ? ` / ${allocation.status}` : ""}</small>
+      </div>;
+    })}</div>
+  </details>;
 }
 
 function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
@@ -14545,12 +14560,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
 
       <div className="mpesa-ledger-toolbar">
-        <label className="mpesa-ledger-search"><span>Payer name or code</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name or last 4 digits" maxLength={80} /></label>
+        <label className="mpesa-ledger-search"><span>Payer, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, code or receipt last 4" maxLength={80} /></label>
         <label><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {allowAllBranches ? <option value="all">Both branches</option> : null}
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
-        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Fully used</option><option value="reversed">Reversed</option></select></label>
+        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
         <label><span>From date and time</span><input className="input" type="datetime-local" value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value)} /></label>
         <label><span>To date and time</span><input className="input" type="datetime-local" value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value)} /></label>
         <div className="mpesa-ledger-actions">

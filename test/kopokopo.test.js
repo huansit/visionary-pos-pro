@@ -1258,6 +1258,14 @@ test("allocates atomically, rejects excess, and makes retries idempotent", async
   ]);
   assert.ok(ledgerTransaction.allocations.every((allocation) => allocation.allocatedAt));
 
+  const receiptSearch = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=0002")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(receiptSearch.body.transactions.length, 1);
+  assert.equal(receiptSearch.body.transactions[0].id, "txn-1");
+  assert.ok(receiptSearch.body.transactions[0].allocations.some((allocation) => allocation.invoiceNumber === "RCP-SIP-000002"));
+
   const retried = await request(app)
     .post("/api/integrations/kopokopo/allocations")
     .set("X-Session-Token", sessionToken)

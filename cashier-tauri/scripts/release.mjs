@@ -240,6 +240,9 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashier M-Pesa transactions now authenticate correctly through the native API bridge instead of remaining on Reconnecting or Loading.",
+  "The cashier M-Pesa ledger now refreshes through serialized native requests every five seconds while the app is active.",
+  "Fully allocated M-Pesa transactions are labelled Used with a clear red status.",
   "End of Day notifications are now resolved from the terminal's own branch catalog before invoices move into cashier debt.",
   "Closing one branch can no longer carry another branch's open invoices into debt.",
   "Incorrect cached day-close boundaries are repaired automatically during the next successful sync.",

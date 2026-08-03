@@ -606,7 +606,23 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     if (search) {
       const pattern = `%${search}%`;
       const placeholder = addValue(pattern);
-      clauses.push(`(lower(COALESCE(payer_name, '')) LIKE ${placeholder} OR lower(reference_last4) LIKE ${placeholder})`);
+      clauses.push(`(
+        lower(COALESCE(payer_name, '')) LIKE ${placeholder}
+        OR lower(COALESCE(reference_last4, '')) LIKE ${placeholder}
+        OR id IN (
+          SELECT search_allocation.transaction_id
+            FROM kopokopo_allocations search_allocation
+            JOIN events search_invoice
+              ON search_invoice.id = search_allocation.invoice_id
+             AND search_invoice.type = 'invoice'
+           WHERE lower(COALESCE(
+               search_invoice.payload->>'number',
+               search_invoice.payload->>'invoiceNumber',
+               search_invoice.payload->>'receiptNo',
+               ''
+             )) LIKE ${placeholder}
+        )
+      )`);
     }
     if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
     if (to) clauses.push(`COALESCE(origination_time, created_at) <= ${addValue(to)}`);

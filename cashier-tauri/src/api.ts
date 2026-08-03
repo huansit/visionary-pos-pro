@@ -840,29 +840,9 @@ export async function listMpesaTransactions(
   return jsonFetch(`/api/integrations/kopokopo/transactions?${params.toString()}`, {
     method: "GET",
     headers: {
-      "X-Session-Token": sessionToken,
-      Authorization: `Bearer ${sessionToken}`
+      "X-Session-Token": sessionToken
     }
   });
-}
-
-export function connectMpesaStream(
-  sessionToken: string,
-  onChange: (change: SyncVersionChange) => void,
-  onState?: (state: "connected" | "reconnecting") => void
-) {
-  const source = new EventSource(`${API_BASE_URL}/api/sync/stream?sessionToken=${encodeURIComponent(sessionToken)}&t=${Date.now()}`);
-  const parse = (event: MessageEvent) => {
-    try {
-      onChange(JSON.parse(event.data || "{}"));
-    } catch {
-      // Ignore malformed notifications; the ledger's fallback refresh remains active.
-    }
-  };
-  source.addEventListener("connected", () => onState?.("connected"));
-  source.addEventListener("kopokopo", parse as EventListener);
-  source.onerror = () => onState?.("reconnecting");
-  return () => source.close();
 }
 
 export async function pullCatalog(terminal: TerminalCredentials): Promise<{
