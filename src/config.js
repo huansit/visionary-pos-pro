@@ -143,6 +143,62 @@ export function assertStartupConfig() {
         errors.push("KOPOKOPO_TILL_BRANCH_MAP must be valid JSON");
       }
     }
+    const additionalAccounts = [...new Set(String(process.env.KOPOKOPO_ADDITIONAL_ACCOUNTS || "")
+      .split(",")
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean))];
+    const invalidAccountKeys = additionalAccounts.filter((key) => !/^[A-Z][A-Z0-9_]*$/.test(key));
+    if (invalidAccountKeys.length) {
+      errors.push("KOPOKOPO_ADDITIONAL_ACCOUNTS must contain comma-separated letters, numbers, and underscores");
+    }
+    if (additionalAccounts.length && kopokopoMode !== "live") {
+      errors.push("Additional Kopo Kopo accounts are supported only in live mode");
+    }
+    const accountMappings = [];
+    try {
+      const primaryMap = JSON.parse(process.env.KOPOKOPO_TILL_BRANCH_MAP || "{}");
+      if (primaryMap && !Array.isArray(primaryMap) && typeof primaryMap === "object") {
+        for (const [tillNumber, branchId] of Object.entries(primaryMap)) {
+          accountMappings.push({
+            account: "PRIMARY",
+            tillNumber: String(tillNumber).trim(),
+            branchId: String(branchId).trim(),
+            clientId: String(process.env.KOPOKOPO_CLIENT_ID || "").trim(),
+            signingSecret: String(process.env.KOPOKOPO_WEBHOOK_SECRET || process.env.KOPOKOPO_API_KEY || "").trim(),
+          });
+        }
+      }
+    } catch {
+      // The primary mapping error is reported above.
+    }
+    for (const key of additionalAccounts.filter((value) => /^[A-Z][A-Z0-9_]*$/.test(value))) {
+      const prefix = `KOPOKOPO_${key}`;
+      for (const suffix of ["CLIENT_ID", "CLIENT_SECRET", "API_KEY", "BRANCH_ID", "TILL_NUMBER"]) {
+        const name = `${prefix}_${suffix}`;
+        if (!String(process.env[name] || "").trim()) errors.push(`${name} is required for Kopo Kopo account ${key}`);
+      }
+      accountMappings.push({
+        account: key,
+        tillNumber: String(process.env[`${prefix}_TILL_NUMBER`] || "").trim(),
+        branchId: String(process.env[`${prefix}_BRANCH_ID`] || "").trim(),
+        clientId: String(process.env[`${prefix}_CLIENT_ID`] || "").trim(),
+        signingSecret: String(process.env[`${prefix}_WEBHOOK_SECRET`] || process.env[`${prefix}_API_KEY`] || "").trim(),
+      });
+    }
+    const duplicateTill = accountMappings.find((entry, index) => entry.tillNumber
+      && accountMappings.some((candidate, candidateIndex) => candidateIndex !== index && candidate.tillNumber === entry.tillNumber));
+    if (duplicateTill) errors.push(`Kopo Kopo till ${duplicateTill.tillNumber} is assigned to more than one account`);
+    const duplicateBranch = accountMappings.find((entry, index) => entry.branchId
+      && accountMappings.some((candidate, candidateIndex) => candidateIndex !== index && candidate.branchId === entry.branchId));
+    if (duplicateBranch) errors.push(`VISIONPOS branch ${duplicateBranch.branchId} is assigned to more than one Kopo Kopo account`);
+    const duplicateClient = accountMappings.find((entry, index) => entry.clientId
+      && accountMappings.some((candidate, candidateIndex) => candidateIndex !== index
+        && candidate.account !== entry.account && candidate.clientId === entry.clientId));
+    if (duplicateClient) errors.push("A Kopo Kopo OAuth client ID is assigned to more than one account");
+    const duplicateSigningSecret = accountMappings.find((entry, index) => entry.signingSecret
+      && accountMappings.some((candidate, candidateIndex) => candidateIndex !== index
+        && candidate.account !== entry.account && candidate.signingSecret === entry.signingSecret));
+    if (duplicateSigningSecret) errors.push("A Kopo Kopo webhook signing secret is assigned to more than one account");
   }
 
   if (errors.length) {

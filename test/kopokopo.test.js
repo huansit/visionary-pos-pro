@@ -25,6 +25,8 @@ await ready;
 const { default: app } = await import("../src/server.js");
 const {
   kopokopoConfig,
+  kopokopoConfigForBranch,
+  kopokopoConfigs,
   kopokopoPhoneLast4,
   pollKopokopoTransactions,
   readKopokopoIncomingPayment,
@@ -50,7 +52,14 @@ function signedWebhook(payload, secret = process.env.KOPOKOPO_API_KEY) {
     .send(body);
 }
 
-function webhookPayload({ topic = "buygoods_transaction_received", eventId = "evt-received-1", resourceId = "txn-1", status = "Received" } = {}) {
+function webhookPayload({
+  topic = "buygoods_transaction_received",
+  eventId = "evt-received-1",
+  resourceId = "txn-1",
+  status = "Received",
+  reference = "TGH7AB12CD",
+  tillNumber = "000000",
+} = {}) {
   return {
     topic,
     id: eventId,
@@ -63,8 +72,8 @@ function webhookPayload({ topic = "buygoods_transaction_received", eventId = "ev
         status,
         system: "Lipa Na M-PESA",
         currency: "KES",
-        reference: "TGH7AB12CD",
-        till_number: "000000",
+        reference,
+        till_number: tillNumber,
         sender_phone_number: "+254700000000",
         sender_first_name: "Test",
         sender_last_name: "Customer",
@@ -163,6 +172,48 @@ test("derives only a privacy-safe payer phone ending", () => {
   assert.equal(kopokopoPhoneLast4("+254 711-222-333"), "2333");
   assert.equal(kopokopoPhoneLast4("123"), null);
   assert.equal(kopokopoPhoneLast4(null), null);
+});
+
+test("keeps additional Kopo Kopo applications isolated by branch and signing key", async () => {
+  const names = {
+    KOPOKOPO_MODE: "live",
+    KOPOKOPO_ADDITIONAL_ACCOUNTS: "SIPCITY",
+    KOPOKOPO_SIPCITY_CLIENT_ID: "sipcity-client-id",
+    KOPOKOPO_SIPCITY_CLIENT_SECRET: "sipcity-client-secret",
+    KOPOKOPO_SIPCITY_API_KEY: "sipcity-api-key",
+    KOPOKOPO_SIPCITY_BRANCH_ID: "b_cpt",
+    KOPOKOPO_SIPCITY_TILL_NUMBER: "3432381",
+  };
+  const previous = Object.fromEntries(Object.keys(names).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, names);
+  const payload = webhookPayload({
+    eventId: "evt-sipcity-account",
+    resourceId: "txn-sipcity-account",
+    reference: "SIPCITY77GH",
+    tillNumber: "3432381",
+  });
+  try {
+    const configs = kopokopoConfigs();
+    assert.equal(configs.length, 2);
+    assert.equal(kopokopoConfigForBranch("b_cpt").accountId, "sipcity");
+    assert.equal(kopokopoConfigForBranch("b_cpt").clientId, "sipcity-client-id");
+
+    await signedWebhook(payload).expect(202).expect({ ok: true, ignored: true });
+    await signedWebhook(payload, "sipcity-api-key").expect(200).expect({ ok: true, duplicate: false });
+    const stored = await pool.query(
+      "SELECT branch_id, till_number FROM kopokopo_transactions WHERE id = $1",
+      [payload.event.resource.id]
+    );
+    assert.equal(stored.rows[0].branch_id, "b_cpt");
+    assert.equal(stored.rows[0].till_number, "3432381");
+  } finally {
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [payload.event.resource.id]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", [payload.id]);
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 });
 
 test("stores a verified payment once and exposes only a branch-scoped masked lookup", async () => {

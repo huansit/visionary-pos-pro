@@ -6,6 +6,9 @@ import { publishRealtimeEvent } from "../realtime.js";
 import {
   createKopokopoSubscriptions,
   kopokopoConfig,
+  kopokopoConfigForBranch,
+  kopokopoConfigs,
+  kopokopoEnabled,
   normalizeKopokopoCallback,
   parseKopokopoWebhook,
   validKopokopoSignature,
@@ -58,10 +61,8 @@ function sandboxTestAvailable(config) {
   return config.enabled && config.mode === "sandbox" && Boolean(config.sandboxBranchId);
 }
 
-function branchRequiresVerifiedKopokopo(config, branchId) {
-  if (!config.enabled || !branchId) return false;
-  if (config.mode === "sandbox") return config.sandboxBranchId === branchId;
-  return Object.values(config.tillBranchMap || {}).some((mappedBranchId) => mappedBranchId === branchId);
+function branchRequiresVerifiedKopokopo(_config, branchId) {
+  return Boolean(kopokopoConfigForBranch(branchId)?.enabled);
 }
 
 function publicTransaction(row) {
@@ -274,9 +275,11 @@ async function allocateKopokopoPayment({
 
 router.post("/webhook", async (req, res) => {
   try {
-    const config = kopokopoConfig();
-    if (!config.enabled || !config.webhookSecret) return res.status(503).json({ error: "kopokopo_not_configured" });
-    if (!validKopokopoSignature(req.rawBody, req.get("x-kopokopo-signature"), config.webhookSecret)) {
+    const configs = kopokopoConfigs().filter((config) => config.enabled && config.webhookSecret);
+    if (!configs.length) return res.status(503).json({ error: "kopokopo_not_configured" });
+    const signature = req.get("x-kopokopo-signature");
+    const config = configs.find((candidate) => validKopokopoSignature(req.rawBody, signature, candidate.webhookSecret));
+    if (!config) {
       return res.status(401).json({ error: "invalid_kopokopo_signature" });
     }
     const callback = normalizeKopokopoCallback(req.body);
@@ -299,6 +302,10 @@ router.post("/webhook", async (req, res) => {
         if (callback.kind === "subscription") {
           return res.status(400).json({ error: "invalid_kopokopo_webhook" });
         }
+        summary.ignored += 1;
+        continue;
+      }
+      if (!parsed.branchId) {
         summary.ignored += 1;
         continue;
       }
@@ -336,18 +343,26 @@ router.post("/sandbox-test-webhook", async (req, res) => {
 router.get("/status", requireAdminOrSupervisor, async (_req, res) => {
   try {
     const config = kopokopoConfig();
+    const configs = kopokopoConfigs().filter((candidate) => candidate.enabled);
     const counts = await q(
       `SELECT COUNT(*) AS transaction_count, MAX(origination_time) AS last_transaction_at
          FROM kopokopo_transactions`
     );
     const row = counts.rows[0] || {};
     return res.json({
-      enabled: config.enabled,
+      enabled: configs.length > 0,
       mode: config.mode,
-      oauthConfigured: Boolean(config.clientId && config.clientSecret),
-      webhookConfigured: Boolean(config.webhookSecret && config.webhookUrl),
-      branchMappingConfigured: Boolean(Object.keys(config.tillBranchMap).length || (config.mode === "sandbox" && config.sandboxBranchId)),
+      oauthConfigured: configs.length > 0 && configs.every((candidate) => candidate.clientId && candidate.clientSecret),
+      webhookConfigured: configs.length > 0 && configs.every((candidate) => candidate.webhookSecret && candidate.webhookUrl),
+      branchMappingConfigured: configs.length > 0 && configs.every((candidate) => Object.keys(candidate.tillBranchMap).length || (candidate.mode === "sandbox" && candidate.sandboxBranchId)),
       sandboxBranchId: config.mode === "sandbox" ? config.sandboxBranchId || null : null,
+      accounts: configs.map((candidate) => ({
+        id: candidate.accountId,
+        branchIds: [...new Set(Object.values(candidate.tillBranchMap || {}))],
+        tillNumbers: Object.keys(candidate.tillBranchMap || {}),
+        oauthConfigured: Boolean(candidate.clientId && candidate.clientSecret),
+        webhookConfigured: Boolean(candidate.webhookSecret && candidate.webhookUrl),
+      })),
       transactionCount: Number(row.transaction_count ?? row.transactionCount ?? 0),
       lastTransactionAt: row.last_transaction_at ?? row.lastTransactionAt ?? null,
     });
@@ -357,10 +372,11 @@ router.get("/status", requireAdminOrSupervisor, async (_req, res) => {
   }
 });
 
-router.post("/subscriptions", requireOwnerOrAdmin, async (_req, res) => {
+router.post("/subscriptions", requireOwnerOrAdmin, async (req, res) => {
   try {
-    const config = kopokopoConfig();
-    if (!config.enabled) return res.status(409).json({ error: "kopokopo_disabled" });
+    const branchId = identifier(req.body?.branchId);
+    const config = branchId ? kopokopoConfigForBranch(branchId) : kopokopoConfig();
+    if (!config?.enabled) return res.status(409).json({ error: branchId ? "kopokopo_disabled_for_branch" : "kopokopo_disabled" });
     const subscriptions = await createKopokopoSubscriptions(config);
     return res.status(201).json({ subscriptions });
   } catch (error) {
@@ -375,11 +391,11 @@ router.post("/subscriptions", requireOwnerOrAdmin, async (_req, res) => {
 
 router.post("/incoming-payments", requireAdminOrSupervisor, async (req, res) => {
   try {
-    const config = kopokopoConfig();
-    if (!config.enabled) return res.status(409).json({ error: "kopokopo_disabled" });
     const branchId = identifier(req.body?.branchId);
     if (!branchId) return res.status(400).json({ error: "branch_required" });
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const config = kopokopoConfigForBranch(branchId);
+    if (!config?.enabled) return res.status(409).json({ error: "kopokopo_disabled_for_branch" });
     const result = await createTrackedKopokopoIncomingPayment({
       idempotencyKey: req.body?.idempotencyKey,
       branchId,
@@ -419,7 +435,9 @@ router.get("/incoming-payments/:id", requireAdminOrSupervisor, async (req, res) 
     const existing = await getKopokopoIncomingPaymentRequest(id);
     if (!existing) return res.status(404).json({ error: "kopokopo_incoming_payment_not_found" });
     if (!accountCanAccessBranch(req.account, existing.branchId)) return res.status(403).json({ error: "branch_not_authorized" });
-    const paymentRequest = await reconcileKopokopoIncomingPaymentRequest(id);
+    const config = kopokopoConfigForBranch(existing.branchId);
+    if (!config?.enabled) return res.status(409).json({ error: "kopokopo_disabled_for_branch" });
+    const paymentRequest = await reconcileKopokopoIncomingPaymentRequest(id, config);
     let transaction = null;
     if (paymentRequest.status === "completed" && paymentRequest.providerTransactionId) {
       const result = await q(
@@ -570,6 +588,7 @@ router.delete("/sandbox-tests/:id", requireOwnerOrAdmin, async (req, res) => {
 router.get("/transactions", requireKopokopoViewer, async (req, res) => {
   try {
     const config = kopokopoConfig();
+    const enabled = kopokopoEnabled();
     const requestedBranchId = identifier(req.query.branchId);
     const allBranches = requestedBranchId.toLowerCase() === "all";
     const accountBranchId = identifier(req.account?.branchId);
@@ -699,7 +718,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
     const allocatedCents = Number(totals.total_allocated_cents ?? totals.totalAllocatedCents ?? 0);
     return res.json({
-      enabled: config.enabled,
+      enabled,
       branchId: allBranches ? "all" : requestedBranchId,
       providerRequired: allBranches ? null : branchRequiresVerifiedKopokopo(config, requestedBranchId),
       transactions: transactionRows.map((row) => ({
@@ -742,7 +761,8 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
     if (!branchId || (last4.length > 0 && last4.length !== 4)) return res.status(400).json({ error: "invalid_branch_or_last4" });
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
     const providerRequired = branchRequiresVerifiedKopokopo(config, branchId);
-    if (!config.enabled || !last4) return res.json({ enabled: config.enabled, providerRequired, transactions: [] });
+    const enabled = kopokopoEnabled();
+    if (!enabled || !last4) return res.json({ enabled, providerRequired, transactions: [] });
     const result = await q(
       `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, payer_phone_last4, origination_time
          FROM kopokopo_transactions
@@ -764,7 +784,7 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
 
 router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
   try {
-    if (!kopokopoConfig().enabled) return res.status(409).json({ error: "kopokopo_disabled" });
+    if (!kopokopoEnabled()) return res.status(409).json({ error: "kopokopo_disabled" });
     const transactionId = identifier(req.body?.transactionId);
     const branchId = identifier(req.body?.branchId);
     const idempotencyKey = identifier(req.body?.idempotencyKey);

@@ -24,12 +24,43 @@ function parseTillMap(value) {
   }
 }
 
+function additionalAccountKeys() {
+  return [...new Set(text(process.env.KOPOKOPO_ADDITIONAL_ACCOUNTS)
+    .split(",")
+    .map((value) => value.trim().toUpperCase())
+    .filter((value) => /^[A-Z][A-Z0-9_]*$/.test(value)))];
+}
+
+function additionalAccountConfig(key, primary) {
+  const prefix = `KOPOKOPO_${key}`;
+  const tillNumber = text(process.env[`${prefix}_TILL_NUMBER`]);
+  const branchId = text(process.env[`${prefix}_BRANCH_ID`]);
+  const apiKey = text(process.env[`${prefix}_API_KEY`]);
+  return {
+    ...primary,
+    accountId: key.toLowerCase(),
+    accountKey: key,
+    additional: true,
+    clientId: text(process.env[`${prefix}_CLIENT_ID`]),
+    clientSecret: text(process.env[`${prefix}_CLIENT_SECRET`]),
+    apiKey,
+    webhookSecret: text(process.env[`${prefix}_WEBHOOK_SECRET`] || apiKey),
+    scope: "till",
+    scopeReference: tillNumber,
+    tillBranchMap: tillNumber && branchId ? { [tillNumber]: branchId } : {},
+    sandboxBranchId: primary.mode === "sandbox" ? branchId : "",
+  };
+}
+
 export function kopokopoConfig() {
   const mode = text(process.env.KOPOKOPO_MODE || "sandbox").toLowerCase() === "live" ? "live" : "sandbox";
   const apiKey = text(process.env.KOPOKOPO_API_KEY);
   const defaultApiUrl = mode === "live" ? "https://api.kopokopo.com" : "https://sandbox.kopokopo.com";
   const defaultAuthUrl = mode === "live" ? "https://app.kopokopo.com" : "https://sandbox.kopokopo.com";
   return {
+    accountId: "primary",
+    accountKey: "PRIMARY",
+    additional: false,
     enabled: process.env.KOPOKOPO_ENABLED === "1",
     mode,
     baseUrl: cleanBaseUrl(process.env.KOPOKOPO_BASE_URL || defaultApiUrl),
@@ -44,6 +75,24 @@ export function kopokopoConfig() {
     tillBranchMap: parseTillMap(process.env.KOPOKOPO_TILL_BRANCH_MAP),
     sandboxBranchId: text(process.env.KOPOKOPO_SANDBOX_BRANCH_ID),
   };
+}
+
+export function kopokopoConfigs() {
+  const primary = kopokopoConfig();
+  return [primary, ...additionalAccountKeys().map((key) => additionalAccountConfig(key, primary))];
+}
+
+export function kopokopoConfigForBranch(branchId) {
+  const wanted = text(branchId);
+  if (!wanted) return null;
+  return kopokopoConfigs().find((config) => (
+    Object.values(config.tillBranchMap || {}).includes(wanted)
+    || (config.mode === "sandbox" && config.sandboxBranchId === wanted)
+  )) || null;
+}
+
+export function kopokopoEnabled() {
+  return kopokopoConfigs().some((config) => config.enabled);
 }
 
 export function branchForTill(tillNumber, config = kopokopoConfig()) {

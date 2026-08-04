@@ -1,5 +1,5 @@
 import { pool, q, ready } from "../src/db.js";
-import { kopokopoConfig, requestKopokopoAccessToken } from "../src/services/kopokopo.js";
+import { kopokopoConfig, kopokopoConfigForBranch, kopokopoConfigs, requestKopokopoAccessToken } from "../src/services/kopokopo.js";
 
 function payloadObject(value) {
   if (value && typeof value === "object") return value;
@@ -8,29 +8,40 @@ function payloadObject(value) {
 
 async function main() {
   await ready;
-  const config = kopokopoConfig();
+  const requestedBranchId = String(process.argv[2] || "").trim();
+  const primary = kopokopoConfig();
+  const configs = requestedBranchId
+    ? [kopokopoConfigForBranch(requestedBranchId)].filter(Boolean)
+    : kopokopoConfigs().filter((config) => config.enabled);
+  if (!configs.length) throw new Error(requestedBranchId
+    ? `No Kopo Kopo account is configured for branch ${requestedBranchId}.`
+    : "KOPOKOPO_ENABLED must be 1.");
+  const config = configs[0];
   if (!config.enabled) throw new Error("KOPOKOPO_ENABLED must be 1.");
-  if (config.mode !== "live") throw new Error("KOPOKOPO_MODE must be live.");
+  if (primary.mode !== "live") throw new Error("KOPOKOPO_MODE must be live.");
 
-  const mappings = Object.entries(config.tillBranchMap);
+  const mappings = configs.flatMap((candidate) => Object.entries(candidate.tillBranchMap)
+    .map(([till, branchId]) => ({ config: candidate, till, branchId })));
   const branches = await q("SELECT id, payload FROM records WHERE type = 'branch' AND deleted = false");
   const branchById = new Map(branches.rows.map((row) => [String(row.id), payloadObject(row.payload)]));
-  const missingBranchIds = [...new Set(mappings.map(([, branchId]) => branchId))]
+  const missingBranchIds = [...new Set(mappings.map(({ branchId }) => branchId))]
     .filter((branchId) => !branchById.has(branchId));
   if (missingBranchIds.length) {
     throw new Error(`KOPOKOPO_TILL_BRANCH_MAP contains unknown VISIONPOS branches: ${missingBranchIds.join(", ")}`);
   }
 
-  await requestKopokopoAccessToken(config);
-
   console.log("VISIONPOS Kopo Kopo live readiness");
-  console.log(`PASS OAuth origin: ${config.authUrl}`);
-  console.log(`PASS API origin: ${config.baseUrl}`);
-  console.log(`PASS webhook: ${config.webhookUrl}`);
-  console.log(`PASS subscription scope: ${config.scope}${config.scopeReference ? ` (${config.scopeReference})` : ""}`);
-  for (const [till, branchId] of mappings) {
+  console.log(`PASS OAuth origin: ${primary.authUrl}`);
+  console.log(`PASS API origin: ${primary.baseUrl}`);
+  console.log(`PASS webhook: ${primary.webhookUrl}`);
+  for (const candidate of configs) {
+    await requestKopokopoAccessToken(candidate);
+    console.log(`PASS OAuth credentials: ${candidate.accountId}`);
+    console.log(`PASS subscription scope: ${candidate.scope}${candidate.scopeReference ? ` (${candidate.scopeReference})` : ""}`);
+  }
+  for (const { config: candidate, till, branchId } of mappings) {
     const branch = branchById.get(branchId);
-    console.log(`PASS till ${till} -> ${branch?.name || branchId} (${branchId})`);
+    console.log(`PASS account ${candidate.accountId}: till ${till} -> ${branch?.name || branchId} (${branchId})`);
   }
   console.log("READY No payment was initiated. Restart the API, then create the live webhook subscriptions.");
 }

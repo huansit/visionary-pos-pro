@@ -137,6 +137,99 @@ test("enabled Kopo Kopo live mode accepts separate official OAuth and API origin
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("enabled Kopo Kopo live mode accepts a separately credentialed SIPCITY application", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "live",
+    KOPOKOPO_BASE_URL: "https://api.kopokopo.com",
+    KOPOKOPO_AUTH_URL: "https://app.kopokopo.com",
+    KOPOKOPO_CLIENT_ID: "cape-client-id",
+    KOPOKOPO_CLIENT_SECRET: "cape-client-secret",
+    KOPOKOPO_API_KEY: "cape-api-key",
+    KOPOKOPO_WEBHOOK_URL: "https://visionarypos.cloud/api/integrations/kopokopo/webhook",
+    KOPOKOPO_SCOPE: "till",
+    KOPOKOPO_SCOPE_REFERENCE: "3432381",
+    KOPOKOPO_TILL_BRANCH_MAP: '{"3432381":"b_cpt"}',
+    KOPOKOPO_ADDITIONAL_ACCOUNTS: "SIPCITY",
+    KOPOKOPO_SIPCITY_CLIENT_ID: "sip-client-id",
+    KOPOKOPO_SIPCITY_CLIENT_SECRET: "sip-client-secret",
+    KOPOKOPO_SIPCITY_API_KEY: "sip-api-key",
+    KOPOKOPO_SIPCITY_BRANCH_ID: "b_sip",
+    KOPOKOPO_SIPCITY_TILL_NUMBER: "7654321",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("enabled Kopo Kopo live mode rejects duplicate account till or branch mappings", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "live",
+    KOPOKOPO_CLIENT_ID: "cape-client-id",
+    KOPOKOPO_CLIENT_SECRET: "cape-client-secret",
+    KOPOKOPO_API_KEY: "cape-api-key",
+    KOPOKOPO_WEBHOOK_URL: "https://visionarypos.cloud/api/integrations/kopokopo/webhook",
+    KOPOKOPO_SCOPE: "till",
+    KOPOKOPO_SCOPE_REFERENCE: "3432381",
+    KOPOKOPO_TILL_BRANCH_MAP: '{"3432381":"b_cpt"}',
+    KOPOKOPO_ADDITIONAL_ACCOUNTS: "SIPCITY",
+    KOPOKOPO_SIPCITY_CLIENT_ID: "sip-client-id",
+    KOPOKOPO_SIPCITY_CLIENT_SECRET: "sip-client-secret",
+    KOPOKOPO_SIPCITY_API_KEY: "sip-api-key",
+    KOPOKOPO_SIPCITY_BRANCH_ID: "b_cpt",
+    KOPOKOPO_SIPCITY_TILL_NUMBER: "3432381",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /till 3432381 is assigned to more than one account/i);
+  assert.match(result.stderr, /branch b_cpt is assigned to more than one Kopo Kopo account/i);
+});
+
+test("enabled Kopo Kopo live mode rejects copied credentials across accounts", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    KOPOKOPO_ENABLED: "1",
+    KOPOKOPO_MODE: "live",
+    KOPOKOPO_CLIENT_ID: "copied-client-id",
+    KOPOKOPO_CLIENT_SECRET: "cape-client-secret",
+    KOPOKOPO_API_KEY: "copied-api-key",
+    KOPOKOPO_WEBHOOK_URL: "https://visionarypos.cloud/api/integrations/kopokopo/webhook",
+    KOPOKOPO_SCOPE: "till",
+    KOPOKOPO_SCOPE_REFERENCE: "3432381",
+    KOPOKOPO_TILL_BRANCH_MAP: '{"3432381":"b_cpt"}',
+    KOPOKOPO_ADDITIONAL_ACCOUNTS: "SIPCITY",
+    KOPOKOPO_SIPCITY_CLIENT_ID: "copied-client-id",
+    KOPOKOPO_SIPCITY_CLIENT_SECRET: "sip-client-secret",
+    KOPOKOPO_SIPCITY_API_KEY: "copied-api-key",
+    KOPOKOPO_SIPCITY_BRANCH_ID: "b_sip",
+    KOPOKOPO_SIPCITY_TILL_NUMBER: "7654321",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /OAuth client ID is assigned to more than one account/i);
+  assert.match(result.stderr, /webhook signing secret is assigned to more than one account/i);
+});
+
 test("enabled Kopo Kopo live mode rejects unofficial OAuth origins and ambiguous branch mappings", () => {
   const result = validateConfig({
     NODE_ENV: "production",

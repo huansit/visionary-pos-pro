@@ -1,6 +1,8 @@
 import { ready } from "../db.js";
 import {
   kopokopoConfig,
+  kopokopoConfigs,
+  kopokopoEnabled,
   kopokopoTransactionEvent,
   parseKopokopoWebhook,
   pollKopokopoTransactions,
@@ -12,7 +14,7 @@ const overlapMs = 5 * 60 * 1000;
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
-let lastCompletedAt = null;
+const lastCompletedAt = new Map();
 
 export async function ingestKopokopoPollingTransactions(transactions, config = kopokopoConfig()) {
   const polledAt = new Date().toISOString();
@@ -36,22 +38,26 @@ export async function ingestKopokopoPollingTransactions(transactions, config = k
 }
 
 async function runReconciliation({ lookbackMs } = {}) {
-  const config = kopokopoConfig();
-  if (!config.enabled) return { skipped: true, reason: "disabled" };
+  const configs = kopokopoConfigs().filter((config) => config.enabled);
+  if (!configs.length) return { skipped: true, reason: "disabled" };
   await ready;
   const to = new Date();
-  const fallbackFrom = new Date(to.getTime() - Math.max(overlapMs, Number(lookbackMs) || startupLookbackMs));
-  const from = lastCompletedAt
-    ? new Date(lastCompletedAt.getTime() - overlapMs)
-    : fallbackFrom;
-  const polled = await pollKopokopoTransactions({
-    fromTime: from.toISOString(),
-    toTime: to.toISOString(),
-    timeoutMs: Number(process.env.KOPOKOPO_POLL_TIMEOUT_MS || 300_000),
-  }, config);
-  const summary = await ingestKopokopoPollingTransactions(polled.transactions, config);
-  lastCompletedAt = to;
-  return { ...summary, fromTime: from.toISOString(), toTime: to.toISOString() };
+  const total = { received: 0, stored: 0, duplicates: 0, ignored: 0, accounts: [] };
+  for (const config of configs) {
+    const fallbackFrom = new Date(to.getTime() - Math.max(overlapMs, Number(lookbackMs) || startupLookbackMs));
+    const previous = lastCompletedAt.get(config.accountId);
+    const from = previous ? new Date(previous.getTime() - overlapMs) : fallbackFrom;
+    const polled = await pollKopokopoTransactions({
+      fromTime: from.toISOString(),
+      toTime: to.toISOString(),
+      timeoutMs: Number(process.env.KOPOKOPO_POLL_TIMEOUT_MS || 300_000),
+    }, config);
+    const summary = await ingestKopokopoPollingTransactions(polled.transactions, config);
+    for (const key of ["received", "stored", "duplicates", "ignored"]) total[key] += Number(summary[key] || 0);
+    total.accounts.push({ accountId: config.accountId, ...summary });
+    lastCompletedAt.set(config.accountId, to);
+  }
+  return { ...total, toTime: to.toISOString() };
 }
 
 export function reconcileKopokopoTransactions(options = {}) {
@@ -74,8 +80,7 @@ async function scheduledReconciliation() {
 }
 
 export function startKopokopoReconciler() {
-  const config = kopokopoConfig();
-  if (intervalTimer || startupTimer || !config.enabled || process.env.KOPOKOPO_POLLING_ENABLED !== "1" || process.env.NODE_ENV === "test") return;
+  if (intervalTimer || startupTimer || !kopokopoEnabled() || process.env.KOPOKOPO_POLLING_ENABLED !== "1" || process.env.NODE_ENV === "test") return;
   const requestedInterval = Number(process.env.KOPOKOPO_POLL_INTERVAL_MS || 120_000);
   const intervalMs = Math.max(60_000, Math.min(Number.isFinite(requestedInterval) ? requestedInterval : 120_000, 15 * 60_000));
   startupTimer = setTimeout(() => {

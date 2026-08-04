@@ -1,9 +1,12 @@
-import { createKopokopoSubscriptions, kopokopoConfig } from "../src/services/kopokopo.js";
+import { createKopokopoSubscriptions, kopokopoConfig, kopokopoConfigForBranch } from "../src/services/kopokopo.js";
 
 async function main() {
-  const config = kopokopoConfig();
-  if (!config.enabled) throw new Error("Set KOPOKOPO_ENABLED=1 before creating subscriptions.");
-  console.log(`Creating ${config.mode} Kopo Kopo subscriptions for ${config.webhookUrl}`);
+  const branchId = String(process.argv[2] || "").trim();
+  const config = branchId ? kopokopoConfigForBranch(branchId) : kopokopoConfig();
+  if (!config?.enabled) throw new Error(branchId
+    ? `No enabled Kopo Kopo account is configured for branch ${branchId}.`
+    : "Set KOPOKOPO_ENABLED=1 before creating subscriptions.");
+  console.log(`Creating ${config.mode} Kopo Kopo subscriptions for account ${config.accountId} at ${config.webhookUrl}`);
   const subscriptions = await createKopokopoSubscriptions(config);
   for (const subscription of subscriptions) {
     console.log(`${subscription.eventType}: ${subscription.location || "created"}`);

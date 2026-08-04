@@ -21,18 +21,24 @@ KOPOKOPO_ENABLED=1
 KOPOKOPO_MODE=live
 KOPOKOPO_BASE_URL=https://api.kopokopo.com
 KOPOKOPO_AUTH_URL=https://app.kopokopo.com
-KOPOKOPO_CLIENT_ID=<production client id>
-KOPOKOPO_CLIENT_SECRET=<production client secret>
-KOPOKOPO_API_KEY=<production api key>
+KOPOKOPO_CLIENT_ID=<Cape Town production client id>
+KOPOKOPO_CLIENT_SECRET=<Cape Town production client secret>
+KOPOKOPO_API_KEY=<Cape Town production api key>
 KOPOKOPO_WEBHOOK_URL=https://visionarypos.cloud/api/integrations/kopokopo/webhook
-KOPOKOPO_SCOPE=company
-KOPOKOPO_SCOPE_REFERENCE=
-KOPOKOPO_TILL_BRANCH_MAP={"<SIPCITY till>":"b_sip","<Cape Town till>":"b_cpt"}
+KOPOKOPO_SCOPE=till
+KOPOKOPO_SCOPE_REFERENCE=<Cape Town till>
+KOPOKOPO_TILL_BRANCH_MAP={"<Cape Town till>":"b_cpt"}
+KOPOKOPO_ADDITIONAL_ACCOUNTS=SIPCITY
+KOPOKOPO_SIPCITY_CLIENT_ID=<SIPCITY production client id>
+KOPOKOPO_SIPCITY_CLIENT_SECRET=<SIPCITY production client secret>
+KOPOKOPO_SIPCITY_API_KEY=<SIPCITY production api key>
+KOPOKOPO_SIPCITY_BRANCH_ID=b_sip
+KOPOKOPO_SIPCITY_TILL_NUMBER=<SIPCITY till>
 KOPOKOPO_SANDBOX_BRANCH_ID=
 KOPOKOPO_POLLING_ENABLED=0
 ```
 
-Company scope is required for this two-till setup. Each branch must map to exactly one till so an invoice STK request cannot be routed ambiguously.
+Cape Town remains the primary account. SIPCITY is a separate approved application with its own OAuth and webhook signing credentials. Do not add the SIPCITY till to `KOPOKOPO_TILL_BRANCH_MAP`; its named account maps that till to `b_sip`.
 
 ## Read-only readiness check
 
@@ -40,7 +46,7 @@ This validates the environment, database branch IDs, official hosts, and product
 
 ```bash
 cd /root/visionary-pos-pro
-npm run kopokopo:live-readiness
+node --env-file=.env.live db/check-kopokopo-live-readiness.js b_sip
 ```
 
 Do not continue unless every line reports `PASS` and the command ends with `READY`.
@@ -51,7 +57,7 @@ Load the live API key before creating subscriptions so webhook signatures can be
 
 ```bash
 pm2 restart visionary-live --update-env
-node --env-file=.env.live db/subscribe-kopokopo.js
+node --env-file=.env.live db/subscribe-kopokopo.js b_sip
 pm2 save
 ```
 

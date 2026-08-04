@@ -3,6 +3,8 @@ import { isMySql, q, ready, tx } from "../db.js";
 import {
   branchForTill,
   kopokopoConfig,
+  kopokopoConfigForBranch,
+  kopokopoEnabled,
   maxIncomingPaymentCents,
   normalizeKopokopoReference,
   normalizeKopokopoCallback,
@@ -321,9 +323,11 @@ function retryDelayMs(attempts) {
   return Math.min(60_000, 2_000 * (2 ** Math.min(Math.max(0, attempts), 5)));
 }
 
-export async function reconcileKopokopoIncomingPaymentRequest(id, config = kopokopoConfig(), suppliedAccessToken = "") {
+export async function reconcileKopokopoIncomingPaymentRequest(id, config = null, suppliedAccessToken = "") {
   const request = await findRequestById(id);
   if (!request) throw new Error("kopokopo_incoming_payment_not_found");
+  const providerConfig = config || kopokopoConfigForBranch(rowValue(request, "branch_id", "branchId"));
+  if (!providerConfig?.enabled) throw new Error("kopokopo_disabled_for_branch");
   if (terminalStatuses.has(text(request.status).toLowerCase())) return publicRequest(request);
   const nextCheckAt = new Date(rowValue(request, "next_check_at", "nextCheckAt") || 0).getTime();
   if (Number.isFinite(nextCheckAt) && nextCheckAt > Date.now()) return publicRequest(request);
@@ -341,7 +345,7 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = kopok
   if (!location) return publicRequest(request);
   const attempts = Number(request.attempts || 0) + 1;
   try {
-    const attributes = await readKopokopoIncomingPayment(location, config, suppliedAccessToken);
+    const attributes = await readKopokopoIncomingPayment(location, providerConfig, suppliedAccessToken);
     const providerStatus = text(attributes?.status) || "Pending";
     const providerFailed = providerStatus.toLowerCase() === "failed";
     if (providerFailed) {
@@ -359,7 +363,7 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = kopok
       tillNumber: rowValue(request, "till_number", "tillNumber"),
       amountCents: rowValue(request, "amount_cents", "amountCents"),
       sandboxTest: isSandboxTestRequest(request),
-    }, config);
+    }, providerConfig);
     if (!recovered.pending) {
       await q(
         `UPDATE kopokopo_incoming_payment_requests
@@ -413,12 +417,13 @@ async function dueRequestIds(limit = 10) {
   return result.rows.map((row) => row.id);
 }
 
-export async function reconcilePendingKopokopoIncomingPayments(config = kopokopoConfig()) {
-  if (!config.enabled) return { checked: 0 };
+export async function reconcilePendingKopokopoIncomingPayments(config = null) {
+  if (config && !config.enabled) return { checked: 0 };
+  if (!config && !kopokopoEnabled()) return { checked: 0 };
   await ready;
   const ids = await dueRequestIds();
   if (!ids.length) return { checked: 0 };
-  const accessToken = await requestKopokopoAccessToken(config);
+  const accessToken = config ? await requestKopokopoAccessToken(config) : "";
   for (const id of ids) {
     await reconcileKopokopoIncomingPaymentRequest(id, config, accessToken);
   }
@@ -438,8 +443,7 @@ async function scheduledReconciliation() {
 }
 
 export function startKopokopoIncomingPaymentReconciler() {
-  const config = kopokopoConfig();
-  if (intervalTimer || startupTimer || !config.enabled || process.env.NODE_ENV === "test") return;
+  if (intervalTimer || startupTimer || !kopokopoEnabled() || process.env.NODE_ENV === "test") return;
   startupTimer = setTimeout(() => {
     startupTimer = null;
     scheduledReconciliation();
