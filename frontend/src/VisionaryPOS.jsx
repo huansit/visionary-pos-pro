@@ -27,7 +27,7 @@ import {
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
-  Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays, Clock3,
+  Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays, Clock3, SlidersHorizontal,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -3783,6 +3783,7 @@ body{overscroll-behavior:none}
 .wtabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
 .adminwrap{display:grid;width:100%;min-width:0;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;transition:grid-template-columns .18s ease}
 .adminwrap.nav-collapsed{grid-template-columns:66px 1fr}
+.admin-mobile-nav{display:none}
 .navside{position:sticky;top:84px;display:flex;flex-direction:column;gap:3px;background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:11px;max-height:calc(100dvh - 104px);overflow-y:auto;overflow-x:hidden}
 .navcollapse{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:10px;border:none;background:none;color:var(--muted-2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:4px;transition:.13s}
 .navcollapse:hover{background:var(--surface-2);color:var(--text)}
@@ -3869,6 +3870,7 @@ body{overscroll-behavior:none}
 .kopokopo-test-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
 @media(max-width:700px){.kopokopo-test-head{align-items:flex-start}.kopokopo-test-modes{grid-template-columns:1fr}.kopokopo-test-meta{grid-template-columns:1fr}.kopokopo-test-actions .btn{width:100%}}
 .mpesa-ledger-toolbar{display:grid;grid-template-columns:minmax(210px,1fr) 150px 150px 190px 190px auto;gap:8px;align-items:end;margin:12px 0}
+.mpesa-filter-toggle{display:none}
 .mpesa-ledger-toolbar label{display:grid;gap:4px;min-width:0}
 .mpesa-ledger-toolbar label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
 .mpesa-ledger-search{position:relative}
@@ -3888,6 +3890,7 @@ body{overscroll-behavior:none}
 .mpesa-branch-totals{margin:0 0 14px}
 .mpesa-branch-totals .section-title{margin:0 0 8px;font-size:12px;color:var(--muted)}
 .mpesa-branch-totals tfoot td{font-weight:800;border-top:2px solid var(--border)}
+.mpesa-branch-totals-mobile{display:none}
 .mpesa-ledger-table td{white-space:nowrap}
 .mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
 .mpesa-payer-phone{display:block;margin-top:3px;color:var(--muted-2);font-family:var(--font-mono);font-size:10px;font-weight:650}
@@ -3920,6 +3923,8 @@ body{overscroll-behavior:none}
 .mpesa-ledger-mobile{display:none}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
+@keyframes ledger-spin{to{transform:rotate(360deg)}}
+.mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
@@ -4153,6 +4158,8 @@ body{overscroll-behavior:none}
 .invoice-period-label b{font-size:12.5px}
 .invoice-period-label span{color:var(--muted-2);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px 145px;gap:10px;align-items:center;margin-bottom:10px}
+.invoice-mobile-filter-toggle{display:none}
+.invoice-filter-clear{display:flex;margin:0 0 10px auto}
 .invoice-more-filters{border-bottom:1px solid var(--border-soft);padding:0 0 9px;margin-bottom:10px}
 .invoice-more-filters summary{width:max-content;color:var(--muted-2);font-size:11.5px;font-weight:700;cursor:pointer;list-style-position:inside}
 .invoice-more-filter-grid{display:grid;grid-template-columns:150px 155px 155px auto;align-items:end;gap:8px;padding-top:9px}
@@ -4167,6 +4174,7 @@ body{overscroll-behavior:none}
 .invoice-table .invoice-ref span,.invoice-table .invoice-customer span{max-width:300px;color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .invoice-table .invoice-customer b{font-size:13px}
 .invoice-table-wrap{max-height:calc(100dvh - 320px);min-height:280px}
+.invoice-mobile-list{display:none}
 .debt-summary{margin-top:0}
 .debt-summary>section{min-width:0}
 .debt-summary .list.mini{max-height:440px}
@@ -4573,6 +4581,109 @@ body{overscroll-behavior:none}
 @media (max-width:430px){.grid{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:820px){.cmain{grid-template-columns:1fr}.ticket{position:static}}
 @media (max-width:560px){.grid2,.grid3{grid-template-columns:1fr}.cathead{flex-direction:column;align-items:stretch}}
+
+/* compact admin navigation and finance workspaces */
+@media (max-width:900px){
+  .adminwrap,.adminwrap.nav-collapsed{grid-template-columns:minmax(0,1fr);gap:12px}
+  .admin-mobile-nav{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px;padding:8px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface)}
+  .admin-mobile-nav>span{display:flex;align-items:center;gap:7px;padding-left:6px;color:var(--muted);font-size:11px;font-weight:800;text-transform:uppercase}
+  .admin-mobile-nav>span svg{width:15px;height:15px;color:var(--accent)}
+  .admin-mobile-nav select{width:100%;height:42px;min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);padding:0 34px 0 12px;font:inherit;font-size:15px;font-weight:750}
+  .navside,.navside.collapsed{display:none}
+}
+@media (max-width:720px){
+  .mpesa-ledger-page{width:100%;max-width:100%;min-width:0;overflow-x:clip}
+  .mpesa-ledger-page .page-h{margin-bottom:10px}
+  .mpesa-page-actions{display:grid!important;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) 44px!important;gap:6px!important;width:100%}
+  .mpesa-page-actions .mpesa-live{align-self:center;justify-content:center}
+  .mpesa-page-actions .btn{min-width:0!important;min-height:42px!important;padding:0 8px!important;font-size:11px}
+  .mpesa-page-actions .btn:last-child{font-size:0}
+  .mpesa-page-actions .btn:last-child svg{margin:0}
+  .mpesa-filter-toggle{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 13px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font:inherit;font-weight:800;cursor:pointer}
+  .mpesa-filter-toggle>span{display:flex;align-items:center;gap:8px}
+  .mpesa-filter-toggle svg{width:17px;height:17px;color:var(--accent);transition:transform .15s}
+  .mpesa-filter-toggle>b,.mpesa-filter-toggle b{min-width:20px;height:20px;display:inline-grid;place-items:center;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;font-size:10px}
+  .mpesa-filter-toggle[aria-expanded="true"]>svg{transform:rotate(180deg)}
+  .mpesa-ledger-toolbar{display:none!important;margin:8px 0 12px;padding:12px;border:1px solid var(--border-soft);border-radius:12px;background:var(--surface)}
+  .mpesa-ledger-toolbar.mobile-open{display:grid!important;grid-template-columns:1fr 1fr!important}
+  .mpesa-ledger-toolbar.mobile-open .mpesa-ledger-search,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-time-mode,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-business-period,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-ledger-actions{grid-column:1/-1!important}
+  .mpesa-ledger-summary{gap:8px;margin:12px 0;border:0}
+  .mpesa-ledger-summary>div{padding:11px!important;border:1px solid var(--border-soft)!important;border-radius:10px;background:var(--surface)}
+  .mpesa-branch-totals-table{display:none}
+  .mpesa-branch-totals-mobile{display:grid;gap:8px}
+  .mpesa-branch-totals-mobile article{padding:12px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface)}
+  .mpesa-branch-totals-mobile article.total{border-color:var(--accent);background:rgba(14,165,181,.07)}
+  .mpesa-branch-totals-mobile header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:9px;border-bottom:1px solid var(--border-soft)}
+  .mpesa-branch-totals-mobile header b{font-size:13px}
+  .mpesa-branch-totals-mobile header span{color:var(--muted-2);font-size:10px}
+  .mpesa-branch-totals-mobile article>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding-top:9px}
+  .mpesa-branch-totals-mobile article>div span{display:grid;gap:3px;min-width:0;color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
+  .mpesa-branch-totals-mobile article>div b{overflow:hidden;text-overflow:ellipsis;color:var(--text);font-family:var(--font-mono);font-size:11px;white-space:nowrap}
+  .mpesa-branch-totals-mobile .available b{color:var(--ok)}
+  .mpesa-ledger-mobile-row{box-shadow:0 7px 20px rgba(9,20,33,.08)}
+}
+@media (max-width:470px){
+  .mpesa-page-actions{grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) 42px!important}
+  .mpesa-ledger-toolbar.mobile-open{grid-template-columns:1fr!important}
+  .mpesa-ledger-toolbar.mobile-open>*{grid-column:auto!important}
+  .mpesa-ledger-toolbar.mobile-open .mpesa-ledger-search,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-time-mode,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-business-period,
+  .mpesa-ledger-toolbar.mobile-open .mpesa-ledger-actions{grid-column:auto!important}
+}
+@media (max-width:620px){
+  .invoice-workspace-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:12px;border:0;overflow:visible}
+  .invoice-workspace-tabs button{height:auto;min-height:58px;justify-content:center;flex-direction:column;gap:3px;padding:7px 4px;border:1px solid var(--border-soft);border-radius:10px;font-size:11px}
+  .invoice-workspace-tabs button.active{border-color:var(--accent);background:rgba(14,165,181,.09)}
+  .invoice-compact-summary{grid-template-columns:1fr 1fr;gap:8px}
+  .invoice-compact-summary>div{padding:10px;border:1px solid var(--border-soft);border-radius:10px;background:var(--surface)}
+  .invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px;border:1px solid var(--border-soft)}
+  .invoice-mobile-filter-toggle{display:flex;width:100%;min-height:46px;align-items:center;justify-content:space-between;padding:0 13px;margin-bottom:9px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font:inherit;font-weight:800;cursor:pointer}
+  .invoice-mobile-filter-toggle>span{display:flex;align-items:center;gap:8px}
+  .invoice-mobile-filter-toggle svg{width:17px;height:17px;color:var(--accent);transition:transform .15s}
+  .invoice-mobile-filter-toggle b{min-width:20px;height:20px;display:inline-grid;place-items:center;padding:0 6px;border-radius:999px;background:var(--accent);color:#fff;font-size:10px}
+  .invoice-mobile-filter-toggle[aria-expanded="true"]>svg{transform:rotate(180deg)}
+  .invoice-filter-panel{display:none}
+  .invoice-filter-panel.open{display:block;padding:12px;margin-bottom:12px;border:1px solid var(--border-soft);border-radius:12px;background:var(--surface)}
+  .invoice-filter-panel.open .invoice-period-filter{padding-top:0}
+  .invoice-filter-clear{width:100%;justify-content:center;margin:0}
+  .invoice-table-desktop{display:none}
+  .invoice-mobile-list{display:grid;gap:9px}
+  .invoice-mobile-card{padding:12px;border:1px solid var(--border-soft);border-radius:12px;background:var(--surface);box-shadow:0 7px 20px rgba(9,20,33,.08);cursor:pointer}
+  .invoice-mobile-card header{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:9px}
+  .invoice-mobile-select input{width:18px;height:18px;accent-color:var(--accent)}
+  .invoice-mobile-reference{display:grid;gap:2px;min-width:0}
+  .invoice-mobile-reference b{overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);font-size:13px;white-space:nowrap}
+  .invoice-mobile-reference span{color:var(--muted-2);font-size:10px}
+  .invoice-mobile-customer{display:grid;gap:3px;padding:11px 0;border-bottom:1px solid var(--border-soft)}
+  .invoice-mobile-customer b{font-size:14px}
+  .invoice-mobile-customer span{overflow:hidden;text-overflow:ellipsis;color:var(--muted-2);font-size:11px;white-space:nowrap}
+  .invoice-mobile-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;padding:10px 0}
+  .invoice-mobile-metrics>span{display:grid;gap:3px;min-width:0}
+  .invoice-mobile-metrics small{color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
+  .invoice-mobile-metrics b{overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);font-size:11px;white-space:nowrap}
+  .invoice-mobile-metrics .due b{color:var(--danger)}
+  .invoice-mobile-card footer{display:flex;align-items:center;justify-content:flex-end;gap:4px;color:var(--accent);font-size:11px;font-weight:800}
+  .invoice-mobile-card footer svg{width:15px;height:15px}
+  .invoice-selection-bar{position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));z-index:10;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:12px;background:var(--surface);box-shadow:0 12px 30px rgba(0,0,0,.2)}
+  .invoice-detail-modal{width:calc(100vw - 12px);max-width:none;max-height:calc(100dvh - 12px - env(safe-area-inset-top) - env(safe-area-inset-bottom));padding:14px;border-radius:18px}
+  .invoice-detail-head{position:sticky;top:-14px;z-index:5;margin:-14px -14px 0;padding:14px;background:var(--surface)}
+  .invoice-detail-heading .title{font-size:17px}
+  .invoice-detail-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+  .invoice-detail-totals>div{padding:11px 8px}
+  .invoice-detail-totals b{font-size:14px}
+  .invoice-payment-panel{padding-top:12px}
+  .invoice-payment-toolbar .muted{font-size:11px;line-height:1.4}
+  .invoice-split-payment{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  .invoice-split-payment label{min-width:0}
+  .invoice-split-payment .input{padding-inline:10px}
+  .invoice-payment-entry{position:sticky;bottom:calc(-14px - env(safe-area-inset-bottom));z-index:5;margin:12px -14px -14px;padding:11px 14px calc(11px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -12px 28px rgba(0,0,0,.16)}
+  .invoice-payment-entry .btn{min-height:48px}
+  .invoice-detail-footer .btn{width:100%}
+}
 `;
 
 /* ================================================================== */
@@ -6607,15 +6718,30 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const openDebtPayments = () => {
     if (canAccess("payments")) setDebtPaymentsOpen(true);
   };
+  const activateWorkspace = (tabId) => {
+    if (tabId === "payments") {
+      openDebtPayments();
+      return;
+    }
+    if (tabId === "invoices") {
+      setInvoiceFocus(pendingVoidCount > 0 ? { filter: "void_pending", key: Date.now() } : null);
+    }
+    setTab(tabId);
+  };
+  const navBadgeCount = (itemId) => itemId === "expenses"
+    ? pendingExpenseCount
+    : itemId === "invoices"
+      ? pendingVoidCount
+      : itemId === "borrowing"
+        ? pendingTransferRequestCount
+        : 0;
+  const mobileNavLabel = (item) => {
+    const badgeCount = navBadgeCount(item.id);
+    return badgeCount > 0 ? `${item.label} (${badgeCount} pending)` : item.label;
+  };
   const NavBtn = ({ item, main }) => {
     const I = item.icon;
-    const badgeCount = item.id === "expenses"
-      ? pendingExpenseCount
-      : item.id === "invoices"
-        ? pendingVoidCount
-        : item.id === "borrowing"
-          ? pendingTransferRequestCount
-          : 0;
+    const badgeCount = navBadgeCount(item.id);
     const badgeLabel = item.id === "invoices"
       ? "void requests pending approval"
       : item.id === "borrowing"
@@ -6625,16 +6751,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       <button
         className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")}
         title={badgeCount > 0 ? `${item.label}: ${badgeCount} ${badgeLabel}` : item.label}
-        onClick={() => {
-          if (item.id === "payments") {
-            openDebtPayments();
-            return;
-          }
-          if (item.id === "invoices") {
-            setInvoiceFocus(pendingVoidCount > 0 ? { filter: "void_pending", key: Date.now() } : null);
-          }
-          setTab(item.id);
-        }}
+        onClick={() => activateWorkspace(item.id)}
       >
         <I />
         <span className="navlabel">{item.label}</span>
@@ -6672,6 +6789,13 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   };
   return (
     <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "")}>
+      <label className="admin-mobile-nav">
+        <span><LayoutDashboard /> Workspace</span>
+        <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
+          {NAV_TOP.filter((item) => canAccess(item.id)).map((item) => <option key={item.id} value={item.id}>{mobileNavLabel(item)}</option>)}
+          {visibleGroups.map((group) => <optgroup key={group.id} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id}>{mobileNavLabel(item)}</option>)}</optgroup>)}
+        </select>
+      </label>
       <nav className={"navside" + (navCollapsed ? " collapsed" : "")}>
         <button className="navcollapse" title={navCollapsed ? "Expand menu" : "Collapse menu"} onClick={() => setNavCollapsed((c) => !c)}>{navCollapsed ? <ChevronRight /> : <ChevronLeft />}<span className="navlabel">Collapse</span></button>
         {NAV_TOP.map((item) => <NavBtn key={item.id} item={item} main />)}
@@ -6737,6 +6861,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [bulkSettlementOpen, setBulkSettlementOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const invoices = operationalInvoices(data);
   const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
@@ -6764,10 +6889,10 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     ? (dateTo ? businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end") : "")
     : "";
   const [mpesaSummaryNonce, setMpesaSummaryNonce] = useState(0);
-  const [mpesaSummary, setMpesaSummary] = useState({ loading: true, error: "", amountCents: 0, transactionCount: 0 });
+  const [mpesaSummary, setMpesaSummary] = useState({ loading: true, loaded: false, error: "", amountCents: 0, transactionCount: 0 });
   useEffect(() => {
     let active = true;
-    setMpesaSummary((current) => ({ ...current, loading: true, error: "" }));
+    setMpesaSummary((current) => ({ ...current, loading: !current.loaded, error: "" }));
     listKopokopoTransactions({
       branchId: branch.id,
       status: "received",
@@ -6779,12 +6904,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       if (!active) return;
       setMpesaSummary({
         loading: false,
+        loaded: true,
         error: "",
         amountCents: Number(result.summary?.amountCents || 0),
         transactionCount: Number(result.page?.total || 0),
       });
     }).catch(() => {
-      if (active) setMpesaSummary({ loading: false, error: "M-Pesa total unavailable", amountCents: 0, transactionCount: 0 });
+      if (!active) return;
+      setMpesaSummary((current) => current.loaded
+        ? { ...current, loading: false, error: "" }
+        : { loading: false, loaded: false, error: "M-Pesa total unavailable", amountCents: 0, transactionCount: 0 });
     });
     return () => { active = false; };
   }, [branch.id, mpesaFrom, mpesaTo, mpesaSummaryNonce]);
@@ -6930,6 +7059,13 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const invoiceDebtOutstanding = debtInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryDebtOutstanding = branchJointDebts.reduce((sum, debt) => sum + cashierJointDebtOutstanding(data, debt), 0);
   const voidPendingCount = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length;
+  const activeInvoiceFilterCount = [
+    query.trim(),
+    filter !== "open",
+    cashierFilter !== "all",
+    sortMode !== "oldest",
+    hasCustomDateRange,
+  ].filter(Boolean).length;
 
   return (
     <div>
@@ -6964,6 +7100,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark day invoices paid"}</button>
         </div>
 
+        <button type="button" className="invoice-mobile-filter-toggle" aria-expanded={mobileFiltersOpen} onClick={() => setMobileFiltersOpen((value) => !value)}>
+          <span><SlidersHorizontal /> Search & filters{activeInvoiceFilterCount > 0 ? <b>{activeInvoiceFilterCount}</b> : null}</span><ChevronDown />
+        </button>
+
+        <div className={"invoice-filter-panel" + (mobileFiltersOpen ? " open" : "")}>
         <div className="invoice-period-filter">
           <div className="invoice-period-label"><CalendarDays /><div><b>{hasCustomDateRange ? "Custom invoice period" : "Current business day"}</b><span>{hasCustomDateRange ? "Filters invoices and verified M-Pesa received" : "Since the last End of Day close"}</span></div></div>
           <label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
@@ -6989,6 +7130,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           </select>
           <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
         </div>
+        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
+        </div>
 
         {selectedInvoices.length > 0 && <div className="invoice-selection-bar">
           <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
@@ -6999,10 +7142,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>}
 
         {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-          <div className="tablewrap tblscroll lg invoice-table-wrap"><table className="tbl invoice-table">
+          <><div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
             <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
             <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
           </table></div>
+          <div className="invoice-mobile-list">{filtered.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div></>
         )}
       </div>}
 
@@ -8018,6 +8162,35 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
         {voidStatus === "rejected" ? <div className="mt2">Void request rejected</div> : null}
       </td>
     </tr>
+  );
+}
+
+function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, onOpen }) {
+  const status = invStatus(inv);
+  const out = voidInfo?.status === "approved" ? 0 : invOutstanding(inv);
+  const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
+  const voidStatus = voidInfo?.status || "none";
+  const displayStatus = voidStatus === "approved" ? "voided"
+    : voidStatus === "pending" ? "void pending" : status;
+  const displayClass = voidStatus === "approved" ? "debt"
+    : voidStatus === "pending" ? "void-pending" : status;
+  return (
+    <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
+      <header>
+        <label className="invoice-mobile-select" onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} />
+        </label>
+        <div className="invoice-mobile-reference"><b>{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</b><span>{dt(inv.ts)} - {age === 0 ? "today" : `${age}d old`}</span></div>
+        <span className={"ist " + displayClass}>{displayStatus}</span>
+      </header>
+      <div className="invoice-mobile-customer"><b>{inv.customerName || "Walk-in"}</b><span>{products || "No product details"}</span></div>
+      <div className="invoice-mobile-metrics">
+        <span><small>Total</small><b>{fmt(Number(inv.totalCents || 0), cur)}</b></span>
+        <span className={out > 0 ? "due" : ""}><small>Balance</small><b>{fmt(out, cur)}</b></span>
+        <span><small>Cashier</small><b>{invoiceCashierName(inv) || "Unknown"}</b></span>
+      </div>
+      <footer><span>Open invoice</span><ChevronRight /></footer>
+    </article>
   );
 }
 
@@ -14620,8 +14793,10 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [ledger, setLedger] = useState({
     loading: true,
+    refreshing: false,
     error: "",
     enabled: true,
     providerRequired: false,
@@ -14660,20 +14835,26 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       ? Boolean(specificTime && (!from || !to))
       : Boolean((dateFrom && !from) || (dateTo && !to));
     if (!selectedBranchId) {
-      setLedger((current) => ({ ...current, loading: false, error: "Select a branch to view M-Pesa transactions." }));
+      setLedger((current) => ({ ...current, loading: false, refreshing: false, error: "Select a branch to view M-Pesa transactions." }));
       return () => { active = false; };
     }
     if (invalidTime || (from && to && from > to)) {
-      setLedger((current) => ({ ...current, loading: false, error: "Choose a valid transaction date range." }));
+      setLedger((current) => ({ ...current, loading: false, refreshing: false, error: "Choose a valid transaction date range." }));
       return () => { active = false; };
     }
-    setLedger((current) => ({ ...current, loading: true, error: "" }));
+    setLedger((current) => ({
+      ...current,
+      loading: current.transactions.length === 0,
+      refreshing: current.transactions.length > 0,
+      error: "",
+    }));
     const timer = setTimeout(() => {
       listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, branchStarts: businessDayFilter ? businessDayStarts : null, sort, limit: pageSize, offset })
         .then((result) => {
           if (!active) return;
           setLedger({
             loading: false,
+            refreshing: false,
             error: "",
             enabled: result.enabled !== false,
             providerRequired: result.providerRequired,
@@ -14687,7 +14868,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           const message = error.message === "branch_not_authorized"
             ? "Your account cannot view M-Pesa transactions for this branch."
             : "M-Pesa transactions could not be loaded. Refresh and try again.";
-          setLedger((current) => ({ ...current, loading: false, error: message }));
+          setLedger((current) => ({ ...current, loading: false, refreshing: false, error: message }));
         });
     }, search.trim() ? 280 : 0);
     return () => { active = false; clearTimeout(timer); };
@@ -14756,16 +14937,26 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const branchTotals = selectedBranchId === "all"
     ? (data?.branches || []).map((item) => branchSummaryMap.get(item.id) || { branchId: item.id, transactionCount: 0, amountCents: 0, allocatedCents: 0, remainingCents: 0 })
     : [];
+  const activeFilterCount = [
+    search.trim(),
+    allowAllBranches && selectedBranchId !== "all",
+    status !== "all",
+    timeFilterMode === "business" || Boolean(specificTime || dateFrom || dateTo),
+  ].filter(Boolean).length;
 
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
-        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
+        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button type="button" className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button type="button" className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button type="button" className="btn sm" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button></div>} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
 
-      <div className="mpesa-ledger-toolbar">
+      <button type="button" className="mpesa-filter-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)}>
+        <span><SlidersHorizontal /> Filters{activeFilterCount > 0 ? <b>{activeFilterCount}</b> : null}</span><ChevronDown />
+      </button>
+
+      <div className={"mpesa-ledger-toolbar" + (filtersOpen ? " mobile-open" : "")}>
         <label className="mpesa-ledger-search"><span>Payer, phone, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, phone ending, code or receipt" maxLength={80} /></label>
         <label><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {allowAllBranches ? <option value="all">Both branches</option> : null}
@@ -14795,10 +14986,18 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
       {selectedBranchId === "all" ? <div className="mpesa-branch-totals">
         <div className="section-title">Totals by branch</div>
-        <div className="tablewrap"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
+        <div className="tablewrap mpesa-branch-totals-table"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
           <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
           <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
         </table></div>
+        <div className="mpesa-branch-totals-mobile">
+          {[...branchTotals, { branchId: "all", transactionCount: total, amountCents: ledger.summary.amountCents || 0, allocatedCents: ledger.summary.allocatedCents || 0, remainingCents: ledger.summary.remainingCents || 0 }].map((item) => (
+            <article className={item.branchId === "all" ? "total" : ""} key={item.branchId}>
+              <header><b>{item.branchId === "all" ? "Both branches" : branchName(item.branchId)}</b><span>{item.transactionCount} transaction{item.transactionCount === 1 ? "" : "s"}</span></header>
+              <div><span>Received<b>{fmt(item.amountCents, "KES")}</b></span><span>Allocated<b>{fmt(item.allocatedCents, "KES")}</b></span><span className="available">Available<b>{fmt(item.remainingCents, "KES")}</b></span></div>
+            </article>
+          ))}
+        </div>
       </div> : null}
 
       {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
