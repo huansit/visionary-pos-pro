@@ -240,6 +240,7 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "M-Pesa transaction rows and summary totals now start after the branch's latest End of Day close unless a custom date or time filter is selected.",
   "M-Pesa transactions now show and search a payer phone ending, making customers with the same name easier to distinguish.",
   "Only the final four phone digits are retained; full payer phone numbers remain excluded from transaction storage and audit payloads.",
   "M-Pesa transactions can now be filtered by one exact minute or an inclusive custom time range.",

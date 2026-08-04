@@ -1946,6 +1946,7 @@ export default function App() {
             branchId={terminal.branchId}
             branchName={branch?.name || terminal.branchId}
             sessionToken={sessionToken}
+            dayClosedAt={dayClosedAt}
             onTransactionsViewed={markMpesaTransactionsViewed}
             onClose={() => { setMpesaOpen(false); focusSearch(); }}
           />
@@ -2066,12 +2067,14 @@ function CashierMpesaView({
   branchId,
   branchName,
   sessionToken,
+  dayClosedAt,
   onTransactionsViewed,
   onClose
 }: {
   branchId: string;
   branchName: string;
   sessionToken: string;
+  dayClosedAt: number | null;
   onTransactionsViewed: (transactions: MpesaTransaction[]) => void;
   onClose: () => void;
 }) {
@@ -2115,9 +2118,13 @@ function CashierMpesaView({
   useEffect(() => {
     let active = true;
     let pollTimer = 0;
-    const from = timeFilterMode === "specific"
+    const selectedFrom = timeFilterMode === "specific"
       ? mpesaDateBoundary(specificTime, "start")
       : mpesaDateBoundary(dateFrom, "start");
+    const businessDayFrom = dayClosedAt && Number.isFinite(dayClosedAt)
+      ? new Date(dayClosedAt + 1).toISOString()
+      : "";
+    const from = selectedFrom || businessDayFrom;
     const to = timeFilterMode === "specific"
       ? mpesaDateBoundary(specificTime, "end")
       : mpesaDateBoundary(dateTo, "end");
@@ -2172,7 +2179,7 @@ function CashierMpesaView({
       window.clearTimeout(requestTimer);
       window.clearTimeout(pollTimer);
     };
-  }, [branchId, timeFilterMode, specificTime, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
+  }, [branchId, dayClosedAt, timeFilterMode, specificTime, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
 
   useEffect(() => {
     const refreshVisible = () => {
