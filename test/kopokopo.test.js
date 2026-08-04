@@ -336,6 +336,24 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
   assert.equal(phoneSearch.body.transactions.length, 1);
   assert.equal(phoneSearch.body.transactions[0].id, "txn-1");
 
+  await pool.query(
+    `INSERT INTO kopokopo_transactions
+      (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time, reversed_at)
+     VALUES ($1, $2, $3, $4, $5, 0, 'KES', 'Received', $6, $7, $8, $9, $10)`,
+    ["txn-ledger-reversed", "evt-ledger-reversed", "REVERSED9XYZ", "9XYZ", 25000, "3018421", "b_sip", "Reversed Payer", "2026-08-02T09:00:00.000Z", "2026-08-02T09:05:00.000Z"]
+  );
+  try {
+    const receivedLedger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=received")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(receivedLedger.body.transactions.length, 1);
+    assert.equal(receivedLedger.body.transactions[0].id, "txn-1");
+    assert.equal(receivedLedger.body.summary.amountCents, 100000);
+  } finally {
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", ["txn-ledger-reversed"]);
+  }
+
   const supervisorLedger = await request(app)
     .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
     .set("X-Session-Token", supervisorSessionToken)

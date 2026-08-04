@@ -601,7 +601,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const offset = ledgerInteger(req.query.offset, 0, 100000);
     const from = ledgerTimestamp(req.query.from);
     const to = ledgerTimestamp(req.query.to);
-    const validStatuses = new Set(["all", "available", "partial", "allocated", "reversed"]);
+    const validStatuses = new Set(["all", "received", "available", "partial", "allocated", "reversed"]);
 
     if (!requestedBranchId || search.length > 80 || !validStatuses.has(status)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_filters" });
@@ -647,6 +647,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     }
     if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
     if (to) clauses.push(`COALESCE(origination_time, created_at) <= ${addValue(to)}`);
+    if (status === "received") clauses.push("lower(status) = 'received' AND reversed_at IS NULL");
     if (status === "available") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents < amount_cents");
     if (status === "partial") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents > 0 AND allocated_cents < amount_cents");
     if (status === "allocated") clauses.push("reversed_at IS NULL AND allocated_cents >= amount_cents");

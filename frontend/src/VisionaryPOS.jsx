@@ -27,7 +27,7 @@ import {
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
-  Wrench, Phone, Zap, Home, Circle, Camera,
+  Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -4129,13 +4129,25 @@ body{overscroll-behavior:none}
 .invoice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 13px}
 .invoice-section-head .section-title{font-size:16px;margin:0 0 3px}
 .invoice-section-head .muted{color:var(--muted-2);font-size:12px}
-.invoice-compact-summary{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
+.invoice-compact-summary{display:grid;grid-template-columns:auto auto minmax(190px,1fr) auto;align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
 .invoice-compact-summary>div{display:grid;gap:2px}
 .invoice-compact-summary b{font-family:var(--font-mono);font-size:16px}
 .invoice-compact-summary b.danger{color:var(--danger)}
 .invoice-compact-summary span{color:var(--muted-2);font-size:10.5px;text-transform:uppercase;font-weight:700}
+.invoice-compact-summary small{color:var(--muted-2);font-size:10px}
+.invoice-compact-summary .invoice-mpesa-total{padding-left:18px;border-left:1px solid var(--border-soft)}
+.invoice-compact-summary .invoice-mpesa-total b{color:var(--ok)}
 .invoice-compact-summary .btn{justify-self:end}
-.invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px;gap:10px;align-items:center;margin-bottom:8px}
+.invoice-period-filter{display:grid;grid-template-columns:minmax(220px,1fr) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
+.invoice-period-filter label{display:grid;gap:4px}
+.invoice-period-filter label>span{color:var(--muted-2);font-size:10px;font-weight:700;text-transform:uppercase}
+.invoice-period-filter .input,.invoice-period-filter .btn{height:38px}
+.invoice-period-label{display:flex;align-items:center;gap:9px;min-width:0}
+.invoice-period-label>svg{width:18px;height:18px;color:var(--accent);flex:none}
+.invoice-period-label>div{display:grid;gap:2px;min-width:0}
+.invoice-period-label b{font-size:12.5px}
+.invoice-period-label span{color:var(--muted-2);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px 145px;gap:10px;align-items:center;margin-bottom:10px}
 .invoice-more-filters{border-bottom:1px solid var(--border-soft);padding:0 0 9px;margin-bottom:10px}
 .invoice-more-filters summary{width:max-content;color:var(--muted-2);font-size:11.5px;font-weight:700;cursor:pointer;list-style-position:inside}
 .invoice-more-filter-grid{display:grid;grid-template-columns:150px 155px 155px auto;align-items:end;gap:8px;padding-top:9px}
@@ -4223,9 +4235,9 @@ body{overscroll-behavior:none}
 .list.mini .row .mt2{font-size:11px}
 .invsummary{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
 @media (max-width:820px){.invsummary{grid-template-columns:1fr}}
-@media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
+@media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-compact-summary{grid-template-columns:auto auto 1fr}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr 1fr}.invoice-period-label{grid-column:1/-1}.invoice-period-filter .btn{grid-column:1/-1}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
 @media (max-width:760px){.inventory-payment-toolbar{align-items:stretch;flex-direction:column}.inventory-payment-toolbar>span{white-space:normal}.inventory-payment-cashier{width:100%}.inventory-payment-methods{grid-template-columns:1fr 1fr}.inventory-payment-entry{grid-template-columns:1fr}.inventory-payment-entry .btn{width:100%}}
-@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
+@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -6710,6 +6722,7 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
+  const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
   const [workspaceView, setWorkspaceView] = useState("invoices");
   const [cashierFilter, setCashierFilter] = useState(initialCashier);
@@ -6733,10 +6746,66 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     const parsed = Date.parse(value);
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const dateFromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
-  const dateToTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+  const dateFromTs = dateFrom ? Date.parse(businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start")) : null;
+  const dateToTs = dateTo ? Date.parse(businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end")) : null;
   const hasCustomDateRange = Boolean(dateFrom || dateTo);
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
+  const currentBusinessDate = businessDateValue(Date.now(), timeZone);
+  const currentBusinessDayStart = businessDateTimeBoundary(`${currentBusinessDate}T00:00`, timeZone, "start");
+  const mpesaFrom = hasCustomDateRange
+    ? (dateFrom ? businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start") : "")
+    : (branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart);
+  const mpesaTo = hasCustomDateRange
+    ? (dateTo ? businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end") : "")
+    : "";
+  const [mpesaSummaryNonce, setMpesaSummaryNonce] = useState(0);
+  const [mpesaSummary, setMpesaSummary] = useState({ loading: true, error: "", amountCents: 0, transactionCount: 0 });
+  useEffect(() => {
+    let active = true;
+    setMpesaSummary((current) => ({ ...current, loading: true, error: "" }));
+    listKopokopoTransactions({
+      branchId: branch.id,
+      status: "received",
+      from: mpesaFrom,
+      to: mpesaTo,
+      limit: 1,
+      offset: 0,
+    }).then((result) => {
+      if (!active) return;
+      setMpesaSummary({
+        loading: false,
+        error: "",
+        amountCents: Number(result.summary?.amountCents || 0),
+        transactionCount: Number(result.page?.total || 0),
+      });
+    }).catch(() => {
+      if (active) setMpesaSummary({ loading: false, error: "M-Pesa total unavailable", amountCents: 0, transactionCount: 0 });
+    });
+    return () => { active = false; };
+  }, [branch.id, mpesaFrom, mpesaTo, mpesaSummaryNonce]);
+  useEffect(() => {
+    const refresh = () => setMpesaSummaryNonce((value) => value + 1);
+    const onRealtime = (event) => {
+      const detail = event.detail || {};
+      const types = Array.isArray(detail.types) ? detail.types : [];
+      if (!types.includes("kopokopoTransaction")) return;
+      if (detail.branchId && detail.branchId !== branch.id) return;
+      refresh();
+    };
+    const onVisible = () => { if (!document.hidden && navigator.onLine) refresh(); };
+    window.addEventListener("visionpos:realtime", onRealtime);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    const fallback = window.setInterval(() => {
+      if (!document.hidden && navigator.onLine) refresh();
+    }, 15000);
+    return () => {
+      window.removeEventListener("visionpos:realtime", onRealtime);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(fallback);
+    };
+  }, [branch.id]);
   const outstanding = activeInvoices.filter((i) => invOutstanding(i) > 0);
   const debtInvoices = outstanding.filter((i) => invIsDebt(i));
   const overdue = outstanding.filter((i) => invIsOverdue(i));
@@ -6877,12 +6946,24 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-compact-summary">
           <div><b>{filtered.length}</b><span>invoices shown</span></div>
           <div><b className={filteredBalanceDue > 0 ? "danger" : ""}>{fmt(filteredBalanceDue, cur)}</b><span>balance due</span></div>
+          <div className="invoice-mpesa-total">
+            <b>{mpesaSummary.loading ? "..." : mpesaSummary.error ? "Unavailable" : fmt(mpesaSummary.amountCents, "KES")}</b>
+            <span>{hasCustomDateRange ? "M-Pesa received - selected dates" : "M-Pesa received - current day"}</span>
+            {!mpesaSummary.loading && !mpesaSummary.error ? <small>{mpesaSummary.transactionCount} verified transaction{mpesaSummary.transactionCount === 1 ? "" : "s"}</small> : null}
+          </div>
           <button
             className="btn sm btn-ghost"
             disabled={currentDayOpenInvoices.length === 0}
             title={currentDayOpenInvoices.length === 0 ? `There are no unpaid current-day invoices for ${branch.name}.` : `Settle ${currentDayOpenInvoices.length} current-day invoice(s)`}
             onClick={() => setBulkSettlementOpen(true)}
           ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark day invoices paid"}</button>
+        </div>
+
+        <div className="invoice-period-filter">
+          <div className="invoice-period-label"><CalendarDays /><div><b>{hasCustomDateRange ? "Custom invoice period" : "Current business day"}</b><span>{hasCustomDateRange ? "Filters invoices and verified M-Pesa received" : "Since the last End of Day close"}</span></div></div>
+          <label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
+          <label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} /></label>
+          {hasCustomDateRange ? <button className="btn sm btn-ghost" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}><RefreshCw /> Current day</button> : null}
         </div>
 
         <div className="invoice-filter-grid simple">
@@ -6901,17 +6982,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             <option value="all">All cashiers</option>
             {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
+          <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
         </div>
-
-        <details className="invoice-more-filters">
-          <summary>{hasCustomDateRange ? "More filters - custom dates active" : "More filters"}</summary>
-          <div className="invoice-more-filter-grid">
-            <label><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
-            <label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
-            <label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} /></label>
-            {hasCustomDateRange ? <button className="btn sm btn-ghost" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>Clear dates</button> : null}
-          </div>
-        </details>
 
         {selectedInvoices.length > 0 && <div className="invoice-selection-bar">
           <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
@@ -14634,6 +14706,18 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const updateSpecificTime = (value) => { setSpecificTime(value); setOffset(0); };
   const updateFrom = (value) => { setDateFrom(value); setOffset(0); };
   const updateTo = (value) => { setDateTo(value); setOffset(0); };
+  const todayDate = businessDateValue(Date.now(), timeZone);
+  const todayFrom = `${todayDate}T00:00`;
+  const todayTo = `${todayDate}T23:59`;
+  const todayFilterActive = timeFilterMode === "range" && dateFrom === todayFrom && dateTo === todayTo;
+  const applyTodayFilter = () => {
+    setTimeFilterMode("range");
+    setSpecificTime("");
+    setDateFrom(todayFrom);
+    setDateTo(todayTo);
+    setStatus("received");
+    setOffset(0);
+  };
   const total = Number(ledger.page?.total || 0);
   const pageStart = total ? offset + 1 : 0;
   const pageEnd = Math.min(total, offset + pageSize);
@@ -14660,7 +14744,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           {allowAllBranches ? <option value="all">Both branches</option> : null}
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
-        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
+        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
         <div className="mpesa-time-mode" aria-label="Transaction time filter mode">
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
@@ -14670,6 +14754,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <label><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
         <div className="mpesa-ledger-actions">
+          <button className={todayFilterActive ? "btn btn-primary" : "btn"} onClick={applyTodayFilter}><CalendarDays /> Today</button>
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
           {(search || status !== "all" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
         </div>
