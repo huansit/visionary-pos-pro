@@ -4,6 +4,8 @@ import { setTimeout as delay } from "node:timers/promises";
 const RECEIVED_TOPICS = new Set(["buygoods_transaction_received", "b2b_transaction_received"]);
 const REVERSED_TOPICS = new Set(["buygoods_transaction_reversed", "b2b_transaction_reversed"]);
 const providerRequestTimeoutMs = 15_000;
+const accessTokenCache = new Map();
+const accessTokenRequests = new Map();
 export const maxIncomingPaymentCents = 10_000_000_000;
 
 function text(value) {
@@ -282,30 +284,83 @@ export function tillForBranch(branchId, config = kopokopoConfig()) {
   return null;
 }
 
+function accessTokenCacheKey(config) {
+  const secretDigest = crypto.createHash("sha256").update(text(config.clientSecret)).digest("hex");
+  return [config.accountId, config.authUrl, config.clientId, secretDigest].map(text).join("|");
+}
+
+export function clearKopokopoAccessTokenCache(config = null) {
+  if (!config) {
+    accessTokenCache.clear();
+    accessTokenRequests.clear();
+    return;
+  }
+  const key = accessTokenCacheKey(config);
+  accessTokenCache.delete(key);
+  accessTokenRequests.delete(key);
+}
+
 export async function requestKopokopoAccessToken(config = kopokopoConfig()) {
   if (!config.clientId || !config.clientSecret) throw new Error("kopokopo_oauth_not_configured");
-  const body = new URLSearchParams({
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "client_credentials",
-  });
-  const response = await fetch(`${config.authUrl}/oauth/token`, {
-    method: "POST",
-    signal: AbortSignal.timeout(providerRequestTimeoutMs),
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "VISIONPOS/1.0",
-    },
-    body,
-  });
-  const payload = await providerJson(response);
-  if (!response.ok || !payload.access_token) {
-    const error = new Error("kopokopo_token_request_failed");
-    error.providerStatus = response.status;
-    error.providerMessage = payload.error_message || payload.error || payload.message;
-    throw error;
+  const key = accessTokenCacheKey(config);
+  const cached = accessTokenCache.get(key);
+  if (cached?.token && cached.expiresAt > Date.now()) return cached.token;
+  if (accessTokenRequests.has(key)) return accessTokenRequests.get(key);
+
+  const request = (async () => {
+    const body = new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      grant_type: "client_credentials",
+    });
+    const response = await fetch(`${config.authUrl}/oauth/token`, {
+      method: "POST",
+      signal: AbortSignal.timeout(providerRequestTimeoutMs),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "VISIONPOS/1.0",
+      },
+      body,
+    });
+    const payload = await providerJson(response);
+    if (!response.ok || !payload.access_token) {
+      const error = new Error("kopokopo_token_request_failed");
+      error.providerStatus = response.status;
+      error.providerMessage = payload.error_message || payload.error || payload.message;
+      throw error;
+    }
+    const providerLifetime = Number(payload.expires_in || payload.expiresIn || 3_600);
+    const lifetimeSeconds = Number.isFinite(providerLifetime)
+      ? Math.max(30, Math.min(86_400, providerLifetime))
+      : 3_600;
+    const safetyMs = Math.min(60_000, lifetimeSeconds * 1_000 * 0.1);
+    accessTokenCache.set(key, {
+      token: payload.access_token,
+      expiresAt: Date.now() + (lifetimeSeconds * 1_000) - safetyMs,
+    });
+    return payload.access_token;
+  })();
+  accessTokenRequests.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (accessTokenRequests.get(key) === request) accessTokenRequests.delete(key);
   }
-  return payload.access_token;
+}
+
+async function fetchWithKopokopoAccessToken(url, options, config, suppliedAccessToken = "") {
+  let accessToken = suppliedAccessToken || await requestKopokopoAccessToken(config);
+  const send = () => fetch(url, {
+    ...options,
+    headers: { ...(options.headers || {}), Authorization: `Bearer ${accessToken}` },
+  });
+  let response = await send();
+  if (response.status === 401) {
+    clearKopokopoAccessTokenCache(config);
+    accessToken = await requestKopokopoAccessToken(config);
+    response = await send();
+  }
+  return response;
 }
 
 export async function requestKopokopoIncomingPayment({
@@ -326,14 +381,12 @@ export async function requestKopokopoIncomingPayment({
     throw new Error("invalid_kopokopo_incoming_payment");
   }
   if (!normalizedReference) throw new Error("kopokopo_payment_reference_required");
-  const accessToken = await requestKopokopoAccessToken(config);
-  const response = await fetch(`${config.baseUrl}/api/v2/incoming_payments`, {
+  const response = await fetchWithKopokopoAccessToken(`${config.baseUrl}/api/v2/incoming_payments`, {
     method: "POST",
     signal: AbortSignal.timeout(providerRequestTimeoutMs),
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
       "User-Agent": "VISIONPOS/1.0",
     },
     body: JSON.stringify({
@@ -351,7 +404,7 @@ export async function requestKopokopoIncomingPayment({
       },
       _links: { callback_url: config.webhookUrl },
     }),
-  });
+  }, config);
   const payload = await providerJson(response);
   if (response.status !== 201) {
     const error = new Error("kopokopo_incoming_payment_request_failed");
@@ -372,15 +425,13 @@ export async function requestKopokopoIncomingPayment({
 
 export async function readKopokopoIncomingPayment(location, config = kopokopoConfig(), suppliedAccessToken = "") {
   const officialLocation = officialKopokopoLocation(location, "/api/v2/incoming_payments/", config);
-  const accessToken = suppliedAccessToken || await requestKopokopoAccessToken(config);
-  const response = await fetch(officialLocation, {
+  const response = await fetchWithKopokopoAccessToken(officialLocation, {
     signal: AbortSignal.timeout(providerRequestTimeoutMs),
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
       "User-Agent": "VISIONPOS/1.0",
     },
-  });
+  }, config, suppliedAccessToken);
   const payload = await providerJson(response);
   if (!response.ok) {
     const error = new Error("kopokopo_incoming_payment_status_failed");

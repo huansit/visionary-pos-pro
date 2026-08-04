@@ -30,6 +30,7 @@ const sandboxAllocationTestKeyPrefix = "sandbox-allocation-test:";
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
+const activeRequestRuns = new Map();
 
 function text(value) {
   return String(value ?? "").trim();
@@ -323,7 +324,13 @@ function retryDelayMs(attempts) {
   return Math.min(60_000, 2_000 * (2 ** Math.min(Math.max(0, attempts), 5)));
 }
 
-export async function reconcileKopokopoIncomingPaymentRequest(id, config = null, suppliedAccessToken = "") {
+export function pendingCheckDelayMs(attempts) {
+  if (attempts <= 10) return 2_000;
+  if (attempts <= 30) return 5_000;
+  return 10_000;
+}
+
+async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, suppliedAccessToken = "") {
   const request = await findRequestById(id);
   if (!request) throw new Error("kopokopo_incoming_payment_not_found");
   const providerConfig = config || kopokopoConfigForBranch(rowValue(request, "branch_id", "branchId"));
@@ -380,7 +387,7 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = null,
           SET status = 'pending', provider_status = $2, attempts = $3, next_check_at = $4,
               last_error = NULL, updated_at = ${isMySql ? "NOW()" : "now()"}
         WHERE id = $1`,
-      [id, providerStatus, attempts, new Date(Date.now() + retryDelayMs(attempts))]
+      [id, providerStatus, attempts, new Date(Date.now() + pendingCheckDelayMs(attempts))]
     );
   } catch (error) {
     const permanentFailure = permanentRecoveryErrors.has(error?.message);
@@ -399,6 +406,18 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = null,
     );
   }
   return publicRequest(await findRequestById(id));
+}
+
+export async function reconcileKopokopoIncomingPaymentRequest(id, config = null, suppliedAccessToken = "") {
+  const requestId = text(id);
+  if (activeRequestRuns.has(requestId)) return activeRequestRuns.get(requestId);
+  const run = reconcileKopokopoIncomingPaymentRequestNow(requestId, config, suppliedAccessToken);
+  activeRequestRuns.set(requestId, run);
+  try {
+    return await run;
+  } finally {
+    if (activeRequestRuns.get(requestId) === run) activeRequestRuns.delete(requestId);
+  }
 }
 
 async function dueRequestIds(limit = 10) {
@@ -447,9 +466,9 @@ export function startKopokopoIncomingPaymentReconciler() {
   startupTimer = setTimeout(() => {
     startupTimer = null;
     scheduledReconciliation();
-  }, 5_000);
+  }, 2_000);
   startupTimer.unref?.();
-  intervalTimer = setInterval(scheduledReconciliation, 15_000);
+  intervalTimer = setInterval(scheduledReconciliation, 5_000);
   intervalTimer.unref?.();
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { after, before, test } from "node:test";
+import { after, before, beforeEach, test } from "node:test";
 import bcrypt from "bcryptjs";
 import request from "supertest";
 
@@ -28,14 +28,20 @@ const {
   kopokopoConfigForBranch,
   kopokopoConfigs,
   kopokopoPhoneLast4,
+  clearKopokopoAccessTokenCache,
   pollKopokopoTransactions,
   readKopokopoIncomingPayment,
   requestKopokopoAccessToken,
   requestKopokopoIncomingPayment,
 } = await import("../src/services/kopokopo.js");
-const { ingestKopokopoIncomingPaymentStatus } = await import("../src/services/kopokopoIncomingPayments.js");
+const {
+  ingestKopokopoIncomingPaymentStatus,
+  pendingCheckDelayMs,
+} = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
 const { getLatestRealtimeEvent, publishRealtimeEvent } = await import("../src/realtime.js");
+
+beforeEach(() => clearKopokopoAccessTokenCache());
 
 let sessionToken = "";
 let branchSessionToken = "";
@@ -595,6 +601,7 @@ test("recovers an accepted incoming payment from its authenticated status withou
     assert.equal(recovered.body.transaction.amountCents, 12500);
     assert.equal(recovered.body.transaction.payerName, "Recovery Customer");
     assert.equal(recovered.body.transaction.payerPhoneLast4, "1111");
+    assert.equal(calls.filter((entry) => entry.url.endsWith("/oauth/token")).length, 1);
 
     const ledgerRows = await pool.query(
       "SELECT id, reference_last4, amount_cents, payer_name, payer_phone_last4 FROM kopokopo_transactions WHERE id = $1",
@@ -937,12 +944,59 @@ test("uses separate official production OAuth and API hosts", async () => {
     assert.equal(payment.providerRequestId, "live-request-1");
     assert.deepEqual(calls.map((entry) => entry.url), [
       "https://app.kopokopo.com/oauth/token",
-      "https://app.kopokopo.com/oauth/token",
       "https://api.kopokopo.com/api/v2/incoming_payments",
     ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("refreshes a cached Kopo Kopo access token once after an unauthorized response", async () => {
+  const originalFetch = globalThis.fetch;
+  const liveConfig = {
+    ...kopokopoConfig(),
+    mode: "live",
+    baseUrl: "https://api.kopokopo.com",
+    authUrl: "https://app.kopokopo.com",
+  };
+  const location = "https://api.kopokopo.com/api/v2/incoming_payments/live-request-2";
+  let tokenRequests = 0;
+  let statusRequests = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url) === "https://app.kopokopo.com/oauth/token") {
+      tokenRequests += 1;
+      return new Response(JSON.stringify({
+        access_token: `live-access-token-${tokenRequests}`,
+        expires_in: 3_600,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    assert.equal(String(url), location);
+    statusRequests += 1;
+    assert.equal(options.headers.Authorization, `Bearer live-access-token-${statusRequests}`);
+    if (statusRequests === 1) return new Response("", { status: 401 });
+    return new Response(JSON.stringify({ data: { attributes: { status: "Received" } } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    assert.equal(await requestKopokopoAccessToken(liveConfig), "live-access-token-1");
+    assert.deepEqual(await readKopokopoIncomingPayment(location, liveConfig), { status: "Received" });
+    assert.equal(await requestKopokopoAccessToken(liveConfig), "live-access-token-2");
+    assert.equal(tokenRequests, 2);
+    assert.equal(statusRequests, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("checks healthy pending Kopo Kopo prompts frequently without aggressive backoff", () => {
+  assert.equal(pendingCheckDelayMs(1), 2_000);
+  assert.equal(pendingCheckDelayMs(10), 2_000);
+  assert.equal(pendingCheckDelayMs(11), 5_000);
+  assert.equal(pendingCheckDelayMs(30), 5_000);
+  assert.equal(pendingCheckDelayMs(31), 10_000);
 });
 
 test("recovers a sandbox result without a simulated M-Pesa reference and supports amount objects", async () => {
