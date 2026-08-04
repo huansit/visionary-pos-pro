@@ -27,7 +27,7 @@ import {
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
   Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
-  Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays,
+  Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays, Clock3,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -1202,6 +1202,7 @@ async function listKopokopoTransactions(filters = {}) {
   if (filters.search) query.set("search", String(filters.search));
   if (filters.from) query.set("from", String(filters.from));
   if (filters.to) query.set("to", String(filters.to));
+  if (filters.branchStarts && Object.keys(filters.branchStarts).length) query.set("branchStarts", JSON.stringify(filters.branchStarts));
   return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
 }
 async function allocateKopokopoTransaction(payload) {
@@ -3892,7 +3893,9 @@ body{overscroll-behavior:none}
 .mpesa-payer-phone{display:block;margin-top:3px;color:var(--muted-2);font-family:var(--font-mono);font-size:10px;font-weight:650}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
-.mpesa-page-actions{display:flex;align-items:center;gap:12px}
+.mpesa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.mpesa-business-period{grid-column:span 2;display:flex;align-items:center;gap:9px;min-height:42px;padding:8px 11px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:11px}
+.mpesa-business-period svg{width:17px;height:17px;color:var(--accent);flex:none}
 .mpesa-allocation-menu{position:relative;min-width:180px;white-space:normal}
 .mpesa-allocation-menu summary{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;align-items:center;gap:8px;min-height:34px;padding:6px 9px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface);cursor:pointer;list-style:none;color:var(--text);font-size:11px;font-weight:750}
 .mpesa-allocation-menu summary::-webkit-details-marker{display:none}
@@ -3918,7 +3921,7 @@ body{overscroll-behavior:none}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
-@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
@@ -3936,7 +3939,8 @@ body{overscroll-behavior:none}
 }
 @media(max-width:470px){
   .mpesa-ledger-page .page-header{display:grid;grid-template-columns:minmax(0,1fr);padding-bottom:12px}
-  .mpesa-page-actions{display:grid;width:100%;grid-template-columns:auto 1fr 1fr}
+  .mpesa-page-actions{display:grid;width:100%;grid-template-columns:1fr 1fr}
+  .mpesa-page-actions .mpesa-live{justify-self:start}
   .mpesa-page-actions .btn{width:100%;min-width:0;padding-inline:8px}
   .mpesa-ledger-actions{display:grid;grid-template-columns:1fr 1fr}
   .mpesa-ledger-actions .btn{width:100%;min-width:0;padding-inline:8px}
@@ -14630,16 +14634,29 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const selectedBranchName = selectedBranchId === "all"
     ? "Both branches"
     : data?.branches?.find((item) => item.id === selectedBranchId)?.name || branch?.name || "select a branch";
+  const todayDate = businessDateValue(Date.now(), timeZone);
+  const todayFrom = `${todayDate}T00:00`;
+  const todayTo = `${todayDate}T23:59`;
+  const calendarBusinessDayStart = businessDateTimeBoundary(todayFrom, timeZone, "start");
+  const businessDayBranchIds = selectedBranchId === "all"
+    ? (data?.branches || []).map((item) => item.id).filter(Boolean)
+    : [selectedBranchId].filter(Boolean);
+  const businessDayStarts = Object.fromEntries(businessDayBranchIds.map((branchId) => {
+    const lastClose = branchLastEndDay(data, branchId);
+    return [branchId, lastClose > 0 ? new Date(lastClose + 1).toISOString() : calendarBusinessDayStart];
+  }));
+  const businessDayStartsKey = JSON.stringify(businessDayStarts);
 
   useEffect(() => {
     let active = true;
-    const from = timeFilterMode === "specific"
+    const businessDayFilter = timeFilterMode === "business";
+    const from = businessDayFilter ? null : timeFilterMode === "specific"
       ? kopokopoDateBoundary(specificTime, timeZone, "start")
       : kopokopoDateBoundary(dateFrom, timeZone, "start");
-    const to = timeFilterMode === "specific"
+    const to = businessDayFilter ? null : timeFilterMode === "specific"
       ? kopokopoDateBoundary(specificTime, timeZone, "end")
       : kopokopoDateBoundary(dateTo, timeZone, "end");
-    const invalidTime = timeFilterMode === "specific"
+    const invalidTime = businessDayFilter ? false : timeFilterMode === "specific"
       ? Boolean(specificTime && (!from || !to))
       : Boolean((dateFrom && !from) || (dateTo && !to));
     if (!selectedBranchId) {
@@ -14652,7 +14669,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     }
     setLedger((current) => ({ ...current, loading: true, error: "" }));
     const timer = setTimeout(() => {
-      listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, sort, limit: pageSize, offset })
+      listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, branchStarts: businessDayFilter ? businessDayStarts : null, sort, limit: pageSize, offset })
         .then((result) => {
           if (!active) return;
           setLedger({
@@ -14674,7 +14691,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         });
     }, search.trim() ? 280 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [selectedBranchId, search, status, timeFilterMode, specificTime, dateFrom, dateTo, timeZone, sort, offset, refreshNonce]);
+  }, [selectedBranchId, search, status, timeFilterMode, specificTime, dateFrom, dateTo, timeZone, businessDayStartsKey, sort, offset, refreshNonce]);
 
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
@@ -14707,10 +14724,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const updateSpecificTime = (value) => { setSpecificTime(value); setOffset(0); };
   const updateFrom = (value) => { setDateFrom(value); setOffset(0); };
   const updateTo = (value) => { setDateTo(value); setOffset(0); };
-  const todayDate = businessDateValue(Date.now(), timeZone);
-  const todayFrom = `${todayDate}T00:00`;
-  const todayTo = `${todayDate}T23:59`;
   const todayFilterActive = timeFilterMode === "range" && dateFrom === todayFrom && dateTo === todayTo;
+  const businessDayFilterActive = timeFilterMode === "business";
   const applyTodayFilter = () => {
     setTimeFilterMode("range");
     setSpecificTime("");
@@ -14719,6 +14734,17 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     setStatus("received");
     setOffset(0);
   };
+  const applyBusinessDayFilter = () => {
+    setTimeFilterMode("business");
+    setSpecificTime("");
+    setDateFrom("");
+    setDateTo("");
+    setStatus("received");
+    setOffset(0);
+  };
+  const businessDayDescription = selectedBranchId === "all"
+    ? "Each branch since its own last End of Day close"
+    : `Since ${formatBusinessDateTime(businessDayStarts[selectedBranchId], timeZone)}`;
   const total = Number(ledger.page?.total || 0);
   const pageStart = total ? offset + 1 : 0;
   const pageEnd = Math.min(total, offset + pageSize);
@@ -14734,7 +14760,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
-        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
+        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
@@ -14750,13 +14776,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
         </div>
-        {timeFilterMode === "specific" ? <label className="mpesa-exact-time"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
+        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
           <label><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
           <label><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
         <div className="mpesa-ledger-actions">
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
-          {(search || status !== "all" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
+          {(search || status !== "all" || timeFilterMode === "business" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setTimeFilterMode("specific"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
         </div>
       </div>
 

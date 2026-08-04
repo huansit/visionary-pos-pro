@@ -402,6 +402,33 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
       ],
     });
 
+    const currentBusinessDay = await request(app)
+      .get("/api/integrations/kopokopo/transactions")
+      .query({
+        branchId: "all",
+        status: "received",
+        branchStarts: JSON.stringify({
+          b_cpt: "2026-08-02T07:30:00.000Z",
+          b_sip: "2026-08-02T07:30:00.000Z",
+        }),
+      })
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(currentBusinessDay.body.page.total, 1);
+    assert.equal(currentBusinessDay.body.transactions[0].id, "txn-ledger-cpt");
+    assert.equal(currentBusinessDay.body.summary.amountCents, 50000);
+
+    await request(app)
+      .get("/api/integrations/kopokopo/transactions")
+      .query({
+        branchId: "all",
+        from: "2026-08-02T00:00:00.000Z",
+        branchStarts: JSON.stringify({ b_cpt: "2026-08-02T07:30:00.000Z" }),
+      })
+      .set("X-Session-Token", sessionToken)
+      .expect(400)
+      .expect({ error: "invalid_kopokopo_transaction_dates" });
+
     await request(app)
       .get("/api/integrations/kopokopo/transactions?branchId=all")
       .set("X-Session-Token", supervisorSessionToken)
