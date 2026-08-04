@@ -3936,7 +3936,8 @@ body{overscroll-behavior:none}
 }
 @media(max-width:470px){
   .mpesa-ledger-page .page-header{display:grid;grid-template-columns:minmax(0,1fr);padding-bottom:12px}
-  .mpesa-page-actions{display:grid;width:100%;grid-template-columns:1fr 1fr}
+  .mpesa-page-actions{display:grid;width:100%;grid-template-columns:auto 1fr 1fr}
+  .mpesa-page-actions .btn{width:100%;min-width:0;padding-inline:8px}
   .mpesa-ledger-actions{display:grid;grid-template-columns:1fr 1fr}
   .mpesa-ledger-actions .btn{width:100%;min-width:0;padding-inline:8px}
   .mpesa-ledger-summary{grid-template-columns:1fr 1fr}
@@ -14733,7 +14734,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
-        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
+        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button className="btn sm" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw /> {ledger.loading ? "Loading" : "Refresh"}</button></div>} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
@@ -14754,7 +14755,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <label><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
         <div className="mpesa-ledger-actions">
-          <button className={todayFilterActive ? "btn btn-primary" : "btn"} onClick={applyTodayFilter}><CalendarDays /> Today</button>
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
           {(search || status !== "all" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
         </div>
