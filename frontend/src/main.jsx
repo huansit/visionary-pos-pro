@@ -86,13 +86,19 @@ if ("serviceWorker" in navigator) {
     const hadController = Boolean(navigator.serviceWorker.controller);
     let refreshing = false;
 
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type !== "VISIONPOS_APP_UPDATED" || refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (!hadController || refreshing) return;
       refreshing = true;
       window.location.reload();
     });
 
-    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+    navigator.serviceWorker.register("/sw.js?v=5", { updateViaCache: "none" })
       .then((registration) => {
         const activateWaitingWorker = () => {
           if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });

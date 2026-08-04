@@ -5101,7 +5101,7 @@ function DesktopDownloadSection() {
       <div className="authdownload-copy">
         <div className="authdownload-kicker">Need to setup a cashier terminal?</div>
         <div className="authdownload-title">Download the VisionPOS Desktop App</div>
-        <div className="authdownload-version">Version {downloads.version}</div>
+        <div className="authdownload-version">Windows cashier installer {downloads.version}</div>
       </div>
       <a className={"authdownload-btn" + (!windows?.available ? " disabled" : "")} href={windows?.available ? windows.url : "/downloads"} aria-disabled={!windows?.available}>
         <Download /> Download for Windows
@@ -5127,7 +5127,7 @@ function DownloadsPage() {
       <main className="downloads-shell">
         <section className="downloads-panel">
           <div className="downloads-section-head">
-            <div><h2>Available applications</h2><p>Version {downloads.version}</p></div>
+            <div><h2>Available applications</h2><p>Windows cashier release {downloads.version}</p></div>
           </div>
           <div className="download-app-grid">
             {configuredApps.map((app) => (

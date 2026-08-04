@@ -1,4 +1,4 @@
-const CACHE_NAME = "visionpos-install-shell-v4";
+const CACHE_NAME = "visionpos-install-shell-v5";
 const INSTALL_ASSETS = [
   "/manifest.webmanifest",
   "/icons/visionpos-180.png",
@@ -17,11 +17,20 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)));
+    await self.clients.claim();
+
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    await Promise.all(windows.map(async (client) => {
+      try {
+        await client.navigate(client.url);
+      } catch {
+        client.postMessage({ type: "VISIONPOS_APP_UPDATED" });
+      }
+    }));
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
