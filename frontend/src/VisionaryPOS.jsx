@@ -4684,6 +4684,98 @@ body{overscroll-behavior:none}
   .invoice-payment-entry .btn{min-height:48px}
   .invoice-detail-footer .btn{width:100%}
 }
+@media (max-width:620px){
+  .vpos{padding:6px}
+  .vpos.app .topbar{gap:6px;padding:calc(7px + env(safe-area-inset-top)) calc(7px + env(safe-area-inset-right)) 7px calc(7px + env(safe-area-inset-left))}
+  .vpos.app .topbar .brand{gap:6px}
+  .vpos.app .topbar .brand.sm .mark svg{width:30px;height:30px}
+  .vpos.app .topbar .brand.sm .name{font-size:16px}
+  .vpos.app .topbar .envbadge{height:28px;padding:0 8px;font-size:9px}
+  .vpos.app .topbar .iconbtn{width:36px;height:36px;border-radius:9px}
+  .vpos.app .topbar .branchsel{height:35px;padding-left:9px;border-radius:9px}
+  .vpos.app .topbar .branchsel select,.vpos.app .topbar .branchsel span{font-size:12px}
+  .adminwrap,.adminwrap.nav-collapsed{gap:8px}
+  .admin-mobile-nav{gap:7px;padding:5px;border-radius:9px}
+  .admin-mobile-nav>span{gap:5px;padding-left:4px;font-size:9.5px}
+  .admin-mobile-nav select{height:36px;padding-left:9px;font-size:14px}
+  .admincontent .page-h{gap:6px;margin-bottom:8px}
+  .admincontent .page-h .title{font-size:18px!important;line-height:1.15}
+  .admincontent .page-h .sub{font-size:11.5px;line-height:1.35}
+  .admincontent .page-h .btn{min-height:38px;height:38px;border-radius:9px;font-size:12px}
+  .admincontent .kpis,.admincontent .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:10px}
+  .admincontent .kpi,.admincontent .stat{min-width:0;padding:9px 10px;border-radius:10px}
+  .admincontent .kpi .kl,.admincontent .stat .sl{font-size:10px}
+  .admincontent .kpi .kv,.admincontent .stat .sv{margin-top:3px;font-size:17px}
+  .admincontent .cashtiles{gap:6px;margin-bottom:10px}
+  .admincontent .ctile{min-height:76px;padding:9px 10px;border-radius:10px;gap:4px}
+  .admincontent .ctile .ic{width:27px;height:27px;border-radius:7px}
+  .admincontent .ctile .cl{font-size:9.5px}
+  .admincontent .ctile .cv,.admincontent .ctile.primary .cv{font-size:17px}
+  .admincontent .ctile .cs{font-size:9.5px}
+  .admincontent .addpanel{padding:10px;border-radius:10px;margin-bottom:8px}
+  .admincontent .list{gap:6px}
+  .admincontent .row{gap:8px;padding:8px 9px;border-radius:9px}
+  .admincontent .row .nm{font-size:13px}
+  .admincontent .row .mt2{font-size:10.5px}
+  .admincontent .avatar{width:32px;height:32px;border-radius:8px;font-size:12px}
+  .admincontent .section-title{margin:12px 0 7px;font-size:12.5px}
+  .admincontent .wtabs{gap:5px;margin-bottom:9px}
+  .admincontent .wtab{min-height:36px;padding:7px 10px;border-radius:8px;font-size:11.5px}
+  .admincontent .input,.admincontent .select{height:42px;border-radius:9px;font-size:16px}
+  .admincontent textarea.input{min-height:72px;padding-block:9px}
+  .admincontent .btn,.admincontent .btn.sm{min-height:40px;height:40px;border-radius:9px;font-size:12.5px}
+  .admincontent .row-add{height:40px;margin-bottom:9px;border-radius:9px;font-size:12px}
+  .admincontent .tablewrap{border-radius:9px}
+  .admincontent .tbl td{padding:8px 9px}
+  .admincontent .tbl thead th{padding:8px 9px;font-size:10.5px}
+  .admincontent .pill{min-height:32px;padding:5px 8px;border-radius:7px;font-size:11px}
+  .modal{max-width:calc(100vw - 12px);padding:12px;border-radius:13px}
+  .modal-head{margin-bottom:10px}
+  .modal-head .title{font-size:17px}
+  .invoice-workspace-tabs{gap:5px;margin-bottom:8px}
+  .invoice-workspace-tabs button{min-height:42px;flex-direction:row;gap:5px;padding:5px;border-radius:8px;font-size:10.5px}
+  .invoice-workspace-tabs button svg{width:14px;height:14px}
+  .invoice-workspace-tabs span{min-width:18px;height:18px;padding:0 4px;font-size:8.5px}
+  .invoice-compact-summary{gap:6px;padding-bottom:8px;margin-bottom:8px}
+  .invoice-compact-summary>div{padding:8px;border-radius:9px}
+  .invoice-compact-summary b{font-size:14px}
+  .invoice-compact-summary span{font-size:8.5px}
+  .invoice-compact-summary small{font-size:8.5px}
+  .invoice-compact-summary .invoice-mpesa-total{grid-column:1;padding:8px}
+  .invoice-compact-summary .btn{grid-column:2;align-self:stretch;width:100%;height:auto;min-height:42px;padding:6px;font-size:10.5px;line-height:1.2}
+  .invoice-mobile-filter-toggle{min-height:40px;padding:0 10px;margin-bottom:6px;border-radius:9px;font-size:13px}
+  .invoice-filter-panel.open{padding:9px;margin-bottom:8px;border-radius:9px}
+  .invoice-mobile-list{gap:6px}
+  .invoice-mobile-card{padding:9px 10px;border-radius:9px;box-shadow:0 3px 10px rgba(9,20,33,.06)}
+  .invoice-mobile-card header{grid-template-columns:auto minmax(0,1fr) auto;gap:7px}
+  .invoice-mobile-select input{width:17px;height:17px;margin:1px 0}
+  .invoice-mobile-reference{gap:1px}
+  .invoice-mobile-reference b{font-size:12px}
+  .invoice-mobile-reference span{font-size:9px}
+  .invoice-mobile-state{display:grid;justify-items:end;gap:3px}
+  .invoice-mobile-state .ist{padding:3px 7px;font-size:9px}
+  .invoice-mobile-open{display:flex;align-items:center;gap:2px;color:var(--accent);font-size:9.5px;font-weight:800}
+  .invoice-mobile-open svg{width:12px;height:12px}
+  .invoice-mobile-customer{gap:2px;padding:6px 0}
+  .invoice-mobile-customer b{font-size:12.5px}
+  .invoice-mobile-customer span{font-size:9.5px}
+  .invoice-mobile-metrics{gap:5px;padding:7px 0 0}
+  .invoice-mobile-metrics small{font-size:8px}
+  .invoice-mobile-metrics b{font-size:10.5px}
+  .mpesa-ledger-summary{gap:6px;margin:8px 0}
+  .mpesa-ledger-summary>div{padding:8px!important;border-radius:8px}
+  .mpesa-ledger-summary b{font-size:13px}
+  .mpesa-branch-totals{margin-bottom:9px}
+  .mpesa-branch-totals-mobile{gap:6px}
+  .mpesa-branch-totals-mobile article{padding:9px;border-radius:8px}
+  .mpesa-ledger-mobile{gap:6px}
+  .mpesa-ledger-mobile-row{gap:6px;padding:9px;border-radius:8px;box-shadow:none}
+  .mpesa-ledger-mobile-row .payer{font-size:12.5px}
+  .mpesa-ledger-pager{gap:8px;padding-top:8px}
+  .expense-summary,.invoice-summary-strip{margin-bottom:9px}
+  .expense-tool,.inventory-payment-workspace{padding:10px;border-radius:10px}
+  .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
+}
 `;
 
 /* ================================================================== */
@@ -8181,7 +8273,10 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
           <input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} />
         </label>
         <div className="invoice-mobile-reference"><b>{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</b><span>{dt(inv.ts)} - {age === 0 ? "today" : `${age}d old`}</span></div>
-        <span className={"ist " + displayClass}>{displayStatus}</span>
+        <div className="invoice-mobile-state">
+          <span className={"ist " + displayClass}>{displayStatus}</span>
+          <span className="invoice-mobile-open">Open <ChevronRight /></span>
+        </div>
       </header>
       <div className="invoice-mobile-customer"><b>{inv.customerName || "Walk-in"}</b><span>{products || "No product details"}</span></div>
       <div className="invoice-mobile-metrics">
@@ -8189,7 +8284,6 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
         <span className={out > 0 ? "due" : ""}><small>Balance</small><b>{fmt(out, cur)}</b></span>
         <span><small>Cashier</small><b>{invoiceCashierName(inv) || "Unknown"}</b></span>
       </div>
-      <footer><span>Open invoice</span><ChevronRight /></footer>
     </article>
   );
 }
