@@ -27,6 +27,9 @@ const permanentRecoveryErrors = new Set([
 ]);
 const sandboxRetrievalTestKeyPrefix = "sandbox-test:";
 const sandboxAllocationTestKeyPrefix = "sandbox-allocation-test:";
+const payerIdentityPendingMarker = "kopokopo_payer_identity_pending";
+const payerIdentityRetryMs = 5_000;
+const payerIdentityGraceMs = 90_000;
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
@@ -311,12 +314,21 @@ export async function ingestKopokopoIncomingPaymentStatus(attributes, expected =
   if (parsed.currency !== "KES") throw new Error("kopokopo_result_currency_unsupported");
   if (expected.sandboxTest) parsed.status = "SandboxTest";
   const stored = await storeKopokopoEvent(parsed, body);
+  let payerNameFound = Boolean(parsed.payerName);
+  if (!payerNameFound) {
+    const transaction = await q(
+      "SELECT payer_name FROM kopokopo_transactions WHERE id = $1 OR upper(reference) = $2 LIMIT 1",
+      [parsed.resourceId, parsed.reference]
+    );
+    payerNameFound = Boolean(text(rowValue(transaction.rows[0], "payer_name", "payerName")));
+  }
   return {
     stored: !stored.duplicate,
     duplicate: stored.duplicate,
     pending: false,
     providerStatus: text(attributes?.status) || parsed.status,
     transactionId: parsed.resourceId,
+    payerNameFound,
   };
 }
 
@@ -335,7 +347,9 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
   if (!request) throw new Error("kopokopo_incoming_payment_not_found");
   const providerConfig = config || kopokopoConfigForBranch(rowValue(request, "branch_id", "branchId"));
   if (!providerConfig?.enabled) throw new Error("kopokopo_disabled_for_branch");
-  if (terminalStatuses.has(text(request.status).toLowerCase())) return publicRequest(request);
+  const identityEnrichment = text(rowValue(request, "last_error", "lastError")) === payerIdentityPendingMarker
+    && Boolean(text(rowValue(request, "provider_transaction_id", "providerTransactionId")));
+  if (terminalStatuses.has(text(request.status).toLowerCase()) && !identityEnrichment) return publicRequest(request);
   const nextCheckAt = new Date(rowValue(request, "next_check_at", "nextCheckAt") || 0).getTime();
   if (Number.isFinite(nextCheckAt) && nextCheckAt > Date.now()) return publicRequest(request);
   const expiresAt = new Date(rowValue(request, "expires_at", "expiresAt") || 0).getTime();
@@ -356,6 +370,16 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
     const providerStatus = text(attributes?.status) || "Pending";
     const providerFailed = providerStatus.toLowerCase() === "failed";
     if (providerFailed) {
+      if (identityEnrichment) {
+        await q(
+          `UPDATE kopokopo_incoming_payment_requests
+              SET status = 'completed', next_check_at = NULL, last_error = NULL,
+                  updated_at = ${isMySql ? "NOW()" : "now()"}
+            WHERE id = $1`,
+          [id]
+        );
+        return publicRequest(await findRequestById(id));
+      }
       await q(
         `UPDATE kopokopo_incoming_payment_requests
             SET status = 'failed', provider_status = $2, attempts = $3, next_check_at = NULL,
@@ -372,13 +396,26 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
       sandboxTest: isSandboxTestRequest(request),
     }, providerConfig);
     if (!recovered.pending) {
+      const firstCompletedAt = new Date(rowValue(request, "completed_at", "completedAt") || Date.now()).getTime();
+      const withinIdentityGrace = Number.isFinite(firstCompletedAt)
+        && (Date.now() - firstCompletedAt) < payerIdentityGraceMs;
+      const retryIdentity = !recovered.payerNameFound && withinIdentityGrace;
       await q(
         `UPDATE kopokopo_incoming_payment_requests
-            SET status = 'completed', provider_status = $2, provider_transaction_id = $3,
-                attempts = $4, next_check_at = NULL, last_error = NULL,
-                completed_at = ${isMySql ? "NOW()" : "now()"}, updated_at = ${isMySql ? "NOW()" : "now()"}
+            SET status = $2, provider_status = $3, provider_transaction_id = $4,
+                attempts = $5, next_check_at = $6, last_error = $7,
+                completed_at = COALESCE(completed_at, ${isMySql ? "NOW()" : "now()"}),
+                updated_at = ${isMySql ? "NOW()" : "now()"}
           WHERE id = $1`,
-        [id, recovered.providerStatus, recovered.transactionId, attempts]
+        [
+          id,
+          retryIdentity ? "pending" : "completed",
+          recovered.providerStatus,
+          recovered.transactionId,
+          attempts,
+          retryIdentity ? new Date(Date.now() + payerIdentityRetryMs) : null,
+          retryIdentity ? payerIdentityPendingMarker : null,
+        ]
       );
       return publicRequest(await findRequestById(id));
     }
@@ -390,6 +427,25 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
       [id, providerStatus, attempts, new Date(Date.now() + pendingCheckDelayMs(attempts))]
     );
   } catch (error) {
+    if (identityEnrichment) {
+      const firstCompletedAt = new Date(rowValue(request, "completed_at", "completedAt") || 0).getTime();
+      const retryIdentity = Number.isFinite(firstCompletedAt)
+        && (Date.now() - firstCompletedAt) < payerIdentityGraceMs;
+      await q(
+        `UPDATE kopokopo_incoming_payment_requests
+            SET status = $2, attempts = $3, next_check_at = $4, last_error = $5,
+                updated_at = ${isMySql ? "NOW()" : "now()"}
+          WHERE id = $1`,
+        [
+          id,
+          retryIdentity ? "pending" : "completed",
+          attempts,
+          retryIdentity ? new Date(Date.now() + payerIdentityRetryMs) : null,
+          retryIdentity ? payerIdentityPendingMarker : null,
+        ]
+      );
+      return publicRequest(await findRequestById(id));
+    }
     const permanentFailure = permanentRecoveryErrors.has(error?.message);
     await q(
       `UPDATE kopokopo_incoming_payment_requests
@@ -424,7 +480,10 @@ async function dueRequestIds(limit = 10) {
   const result = await q(
     `SELECT id
        FROM kopokopo_incoming_payment_requests
-      WHERE lower(status) IN ('pending', 'retrying')
+      WHERE (
+          lower(status) IN ('pending', 'retrying')
+          OR (lower(status) = 'completed' AND last_error = '${payerIdentityPendingMarker}')
+        )
         AND idempotency_key NOT LIKE 'sandbox-test:%'
         AND idempotency_key NOT LIKE 'sandbox-allocation-test:%'
         AND next_check_at IS NOT NULL

@@ -273,6 +273,38 @@ test("stores a verified payment once and exposes only a branch-scoped masked loo
     .expect({ error: "branch_not_authorized" });
 });
 
+test("enriches a received transaction when Kopo Kopo repeats the event with a verified payer name", async () => {
+  const payload = webhookPayload({
+    eventId: "evt-delayed-payer-name",
+    resourceId: "txn-delayed-payer-name",
+    reference: "DELAYEDNAME7K2P",
+  });
+  const firstPayload = structuredClone(payload);
+  delete firstPayload.event.resource.sender_first_name;
+  delete firstPayload.event.resource.sender_last_name;
+
+  try {
+    await signedWebhook(firstPayload).expect(200).expect({ ok: true, duplicate: false });
+    const before = await pool.query(
+      "SELECT amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+      [payload.event.resource.id]
+    );
+    assert.equal(Number(before.rows[0].amount_cents), 100000);
+    assert.equal(before.rows[0].payer_name, null);
+
+    await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: true });
+    const after = await pool.query(
+      "SELECT amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+      [payload.event.resource.id]
+    );
+    assert.equal(Number(after.rows[0].amount_cents), 100000);
+    assert.equal(after.rows[0].payer_name, "Test Customer");
+  } finally {
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [payload.event.resource.id]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", [payload.id]);
+  }
+});
+
 test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", async () => {
   await request(app)
     .get("/api/integrations/kopokopo/transactions?branchId=b_sip")
@@ -633,6 +665,97 @@ test("recovers an accepted incoming payment from its authenticated status withou
     assert.equal(Number(afterWebhook.rows[0].count), 1);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps a successful STK request pending until Kopo Kopo supplies the verified payer name", async () => {
+  const originalFetch = globalThis.fetch;
+  const providerLocation = "https://sandbox.kopokopo.com/api/v2/incoming_payments/delayed-name-request";
+  const providerResource = {
+    id: "delayed-name-status-transaction",
+    amount: "75.00",
+    status: "Received",
+    currency: "KES",
+    reference: "DELAYEDSTK4N8Q",
+    till_number: "000000",
+    sender_phone_number: "+254722222222",
+    origination_time: "2026-08-04T10:15:00+03:00",
+  };
+  let statusReads = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "delayed-name-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/incoming_payments") && options.method === "POST") {
+      return new Response("", { status: 201, headers: { Location: providerLocation } });
+    }
+    assert.equal(String(url), providerLocation);
+    statusReads += 1;
+    const resource = statusReads > 1
+      ? { ...providerResource, sender_first_name: "Verified", sender_last_name: "Holder" }
+      : providerResource;
+    return new Response(JSON.stringify({
+      data: {
+        type: "incoming_payment",
+        attributes: {
+          status: "Received",
+          event: { type: "Incoming Payment Request", resource },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  let requestId = "";
+  try {
+    const created = await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        idempotencyKey: "invoice-settlement-delayed-name",
+        branchId: "b_sip",
+        amountCents: 7500,
+        phoneNumber: "+254722222222",
+        firstName: "Typed",
+        lastName: "Customer",
+        reference: "INV-DELAYED-NAME",
+      })
+      .expect(202);
+    requestId = created.body.request.id;
+
+    const firstCheck = await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${requestId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(firstCheck.body.request.status, "pending");
+    assert.equal(firstCheck.body.transaction, null);
+
+    const firstStored = await pool.query(
+      "SELECT amount_cents, payer_name FROM kopokopo_transactions WHERE id = $1",
+      [providerResource.id]
+    );
+    assert.equal(Number(firstStored.rows[0].amount_cents), 7500);
+    assert.equal(firstStored.rows[0].payer_name, null);
+
+    await pool.query(
+      "UPDATE kopokopo_incoming_payment_requests SET next_check_at = $2 WHERE id = $1",
+      [requestId, new Date(Date.now() - 1000)]
+    );
+    const completed = await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${requestId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(completed.body.request.status, "completed");
+    assert.equal(completed.body.transaction.payerName, "Verified Holder");
+    assert.notEqual(completed.body.transaction.payerName, "Typed Customer");
+    assert.equal(completed.body.transaction.amountCents, 7500);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (requestId) await pool.query("DELETE FROM kopokopo_incoming_payment_requests WHERE id = $1", [requestId]);
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [providerResource.id]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE resource_id = $1", [providerResource.id]);
   }
 });
 

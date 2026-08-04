@@ -41,9 +41,9 @@ async function applyReceivedTransaction(client, parsed) {
               status = CASE WHEN lower(status) = 'reversed' THEN status ELSE $5 END,
               till_number = $6,
               branch_id = COALESCE($7, branch_id),
-              payer_name = COALESCE($8, payer_name),
-              payer_phone_last4 = COALESCE($9, payer_phone_last4),
-              origination_time = COALESCE($10, origination_time),
+              payer_name = COALESCE(payer_name, $8),
+              payer_phone_last4 = COALESCE(payer_phone_last4, $9),
+              origination_time = COALESCE(origination_time, $10),
               updated_at = ${isMySql ? "NOW()" : "now()"}
         WHERE id = $1`,
       [row.id, parsed.eventId, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime]
@@ -56,6 +56,37 @@ async function applyReceivedTransaction(client, parsed) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [parsed.resourceId, parsed.eventId, parsed.reference, parsed.referenceLast4, parsed.amountCents, parsed.currency, parsed.status, parsed.tillNumber || null, parsed.branchId, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime]
   );
+}
+
+async function enrichReceivedTransaction(client, parsed) {
+  if (!parsed.payerName && !parsed.payerPhoneLast4 && !parsed.originationTime) return false;
+  const existing = await client.query(
+    `SELECT id, payer_name, payer_phone_last4, origination_time
+       FROM kopokopo_transactions
+      WHERE id = $1 OR upper(reference) = $2
+      LIMIT 1
+      FOR UPDATE`,
+    [parsed.resourceId, parsed.reference]
+  );
+  const row = existing.rows[0];
+  if (!row) return false;
+  const payerName = row.payer_name ?? row.payerName;
+  const payerPhoneLast4 = row.payer_phone_last4 ?? row.payerPhoneLast4;
+  const originationTime = row.origination_time ?? row.originationTime;
+  const enriched = (!payerName && parsed.payerName)
+    || (!payerPhoneLast4 && parsed.payerPhoneLast4)
+    || (!originationTime && parsed.originationTime);
+  if (!enriched) return false;
+  await client.query(
+    `UPDATE kopokopo_transactions
+        SET payer_name = COALESCE(payer_name, $2),
+            payer_phone_last4 = COALESCE(payer_phone_last4, $3),
+            origination_time = COALESCE(origination_time, $4),
+            updated_at = ${isMySql ? "NOW()" : "now()"}
+      WHERE id = $1`,
+    [row.id, parsed.payerName, parsed.payerPhoneLast4, parsed.originationTime]
+  );
+  return true;
 }
 
 async function applyReversedTransaction(client, parsed) {
@@ -93,16 +124,19 @@ export async function storeKopokopoEvent(parsed, body) {
   if (!parsed?.supported || !parsed?.valid) throw new Error("invalid_kopokopo_event");
   const result = await tx(async (client) => {
     const inserted = await insertProviderEvent(client, parsed, body);
-    if (!inserted) return { duplicate: true };
+    if (!inserted) {
+      const enriched = parsed.reversed ? false : await enrichReceivedTransaction(client, parsed);
+      return { duplicate: true, enriched };
+    }
     if (parsed.reversed) await applyReversedTransaction(client, parsed);
     else await applyReceivedTransaction(client, parsed);
-    return { duplicate: false };
+    return { duplicate: false, enriched: false };
   });
-  if (!result.duplicate) {
+  if (!result.duplicate || result.enriched) {
     publishRealtimeEvent("kopokopo", {
       source: "kopokopo",
       branchId: parsed.branchId || null,
-      accepted: 1,
+      accepted: result.duplicate ? 0 : 1,
       types: ["kopokopoTransaction"],
     });
   }
