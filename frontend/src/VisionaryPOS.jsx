@@ -2578,8 +2578,13 @@ function cameraTrackCapabilities(track) {
   try { return track?.getCapabilities?.() || {}; } catch (_) { return {}; }
 }
 
+function cameraSupportedConstraints() {
+  try { return navigator.mediaDevices?.getSupportedConstraints?.() || {}; } catch (_) { return {}; }
+}
+
 function cameraTorchSupported(capabilities) {
-  return capabilities?.torch === true;
+  if (capabilities?.torch === true) return true;
+  return isAndroidCameraDevice() && cameraSupportedConstraints().torch === true;
 }
 
 async function applyCameraAutofocus(track, capabilities = cameraTrackCapabilities(track)) {
@@ -2588,8 +2593,29 @@ async function applyCameraAutofocus(track, capabilities = cameraTrackCapabilitie
   const focusMode = focusModes.includes("continuous")
     ? "continuous"
     : (focusModes.includes("single-shot") ? "single-shot" : "");
-  if (!focusMode) return "";
-  await track.applyConstraints({ advanced: [{ focusMode }] });
+  if (focusMode) {
+    await track.applyConstraints({ advanced: [{ focusMode }] });
+    return focusMode;
+  }
+  if (!isAndroidCameraDevice() || cameraSupportedConstraints().focusMode !== true) return "";
+  for (const androidFocusMode of ["continuous", "single-shot"]) {
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: androidFocusMode }] });
+      return androidFocusMode;
+    } catch (_) {}
+  }
+  return "";
+}
+
+async function applyAndroidCameraTuning(track, capabilities = cameraTrackCapabilities(track)) {
+  const focusMode = await applyCameraAutofocus(track, capabilities).catch(() => "");
+  const zoom = capabilities?.zoom;
+  if (track?.applyConstraints && zoom && Number.isFinite(Number(zoom.min)) && Number.isFinite(Number(zoom.max)) && Number(zoom.max) > Number(zoom.min)) {
+    const minimum = Number(zoom.min);
+    const maximum = Number(zoom.max);
+    const target = Math.min(maximum, Math.max(minimum, Math.min(1.35, minimum + ((maximum - minimum) * 0.12))));
+    if (target > minimum) await track.applyConstraints({ advanced: [{ zoom: target }] }).catch(() => {});
+  }
   return focusMode;
 }
 
@@ -2701,7 +2727,9 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         const videoTrack = stream.getVideoTracks()[0];
         const videoCapabilities = cameraTrackCapabilities(videoTrack);
         try { if (videoTrack && isAndroidCameraDevice()) videoTrack.contentHint = "detail"; } catch (_) {}
-        const focusMode = await applyCameraAutofocus(videoTrack, videoCapabilities).catch(() => "");
+        const focusMode = isAndroidCameraDevice()
+          ? await applyAndroidCameraTuning(videoTrack, videoCapabilities)
+          : await applyCameraAutofocus(videoTrack, videoCapabilities).catch(() => "");
         if (isAndroidCameraDevice() && focusMode === "single-shot") {
           const maintainAutofocus = async () => {
             if (disposed || !streamRef.current) return;
@@ -2712,26 +2740,26 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         }
 
         const handleDecode = (result, _scanError, activeControls) => {
-          if (disposed) return;
+          if (disposed) return false;
           if (!result) {
             const scanState = scanStateRef.current;
             if (continuous && !scanState.armed && Date.now() - scanState.lastDetectedAt > 700) {
               scanState.armed = true;
               scanState.code = "";
             }
-            return;
+            return false;
           }
-          if (!continuous && foundRef.current) return;
+          if (!continuous && foundRef.current) return false;
           const barcode = normalizeBarcode(result.getText());
           if (!isValidBarcode(barcode)) {
             setStatus("Keep the product barcode inside the frame.");
-            return;
+            return false;
           }
           const detectedAt = Date.now();
           const scanState = scanStateRef.current;
           if (continuous && scanState.code === barcode && !scanState.armed) {
             scanState.lastDetectedAt = detectedAt;
-            return;
+            return false;
           }
           scanState.code = barcode;
           scanState.lastDetectedAt = detectedAt;
@@ -2744,12 +2772,13 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
 
           if (continuous) {
             setStatus(accepted === false ? "Product was not counted. Check the message and try again." : "Counted " + barcode + ". Move to the next product.");
-            return;
+            return true;
           }
           foundRef.current = true;
           try { activeControls.stop(); } catch (_) {}
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
+          return true;
         };
         const startZxingScanner = async () => {
           const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
@@ -2763,7 +2792,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         const startNativeAndroidScanner = async () => {
           const NativeBarcodeDetector = window.BarcodeDetector;
           if (!/Android/i.test(navigator.userAgent || "") || typeof NativeBarcodeDetector !== "function") return null;
-          const wantedFormats = ["aztec", "codabar", "code_39", "code_93", "code_128", "data_matrix", "ean_8", "ean_13", "itf", "pdf417", "qr_code", "upc_a", "upc_e"];
+          const wantedFormats = ["codabar", "code_39", "code_93", "code_128", "ean_8", "ean_13", "itf", "upc_a", "upc_e"];
           let supportedFormats = [];
           try { supportedFormats = await NativeBarcodeDetector.getSupportedFormats?.() || []; } catch (_) {}
           const formats = wantedFormats.filter((format) => supportedFormats.includes(format));
@@ -2815,9 +2844,11 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
               const barcodes = await detector.detect(videoRef.current);
               const rawValue = String(barcodes?.[0]?.rawValue || "").trim();
               if (rawValue) {
-                nativeDetections += 1;
-                nativeErrors = 0;
-                handleDecode({ getText: () => rawValue }, null, controls);
+                const accepted = handleDecode({ getText: () => rawValue }, null, controls);
+                if (accepted) {
+                  nativeDetections += 1;
+                  nativeErrors = 0;
+                }
               } else {
                 handleDecode(null, null, controls);
               }
@@ -4216,7 +4247,7 @@ body{overscroll-behavior:none}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-business-period{grid-template-columns:auto minmax(0,1fr)}.mpesa-business-period label{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
-@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:250px}.mpesa-offset-invoice{grid-template-columns:1fr 110px}.mpesa-offset-invoice-choice{grid-template-columns:18px minmax(0,1fr)}.mpesa-offset-invoice-choice>strong{grid-column:2;justify-self:start}.mpesa-offset-invoice-copy b{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.25}}
+@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:none;overflow:visible}.mpesa-offset-invoice{grid-template-columns:1fr;gap:8px}.mpesa-offset-invoice-choice{grid-template-columns:18px minmax(0,1fr)}.mpesa-offset-invoice-choice>strong{grid-column:2;justify-self:start}.mpesa-offset-invoice-copy b{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.25}.mpesa-offset-invoice-amount{grid-template-columns:auto minmax(0,1fr);align-items:center}.mpesa-offset-invoice-amount .input{width:100%;min-width:0}.mpesa-offset-summary{position:sticky;bottom:-15px;z-index:2;box-shadow:0 -8px 18px var(--surface)}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}.mpesa-offset-transaction{grid-template-columns:1fr}.mpesa-offset-summary{grid-template-columns:1fr 1fr}.mpesa-offset-summary>span:last-child{grid-column:1/-1}.mpesa-offset-invoice{grid-template-columns:1fr}.mpesa-offset-invoice-amount{grid-template-columns:auto 1fr;align-items:center}.mpesa-offset-actions{flex-direction:column-reverse}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
