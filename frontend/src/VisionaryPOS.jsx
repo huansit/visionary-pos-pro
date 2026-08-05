@@ -7863,16 +7863,17 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
               setFilter("all");
               setCashierFilter("all");
             }
+            setMobileFiltersOpen(false);
           }}><option value="current">Current business day</option>{hasCustomDateRange ? <option value="custom">Custom dates</option> : null}{businessDayOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label>
           <label className="invoice-date-filter invoice-date-from"><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
-          <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
-          {(hasCustomDateRange || businessDayFilter !== "current") ? <button className="btn sm btn-ghost" type="button" onClick={() => { setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); }}><RefreshCw /> Current day</button> : null}
+          <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); if (e.target.value) { setBusinessDayFilter("current"); if (dateFrom) setMobileFiltersOpen(false); } }} /></label>
+          {(hasCustomDateRange || businessDayFilter !== "current") ? <button className="btn sm btn-ghost" type="button" onClick={() => { setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); setMobileFiltersOpen(false); }}><RefreshCw /> Current day</button> : null}
         </div>
 
         <div className="invoice-filter-grid simple">
           <label className="invoice-sort-filter"><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
         </div>
-        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
+        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); setMobileFiltersOpen(false); }}><X /> Clear filters</button> : null}
         </div>
         </div>
 
