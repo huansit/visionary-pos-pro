@@ -4718,7 +4718,7 @@ body{overscroll-behavior:none}
   .admin-mobile-nav select{width:100%;height:42px;min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);padding:0 34px 0 12px;font:inherit;font-size:15px;font-weight:750}
   .navside,.navside.collapsed{display:none}
 }
-@media (max-width:720px){
+@media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .mpesa-ledger-page{width:100%;max-width:100%;min-width:0;overflow-x:clip}
   .mpesa-ledger-page .page-h{margin-bottom:10px}
   .mpesa-page-actions{display:grid!important;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) 44px!important;gap:6px!important;width:100%}
@@ -4962,6 +4962,25 @@ body{overscroll-behavior:none}
 .products-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
 .products-workspace>.addpanel{max-height:min(48dvh,420px);overflow:auto;flex:0 1 auto}
 .products-workspace .products-scroll-region{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.catalog-head-actions,.catalog-scan-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.catalog-more-menu,.catalog-filter-menu{position:relative}
+.catalog-more-menu>summary,.catalog-filter-menu>summary{list-style:none;cursor:pointer;user-select:none}
+.catalog-more-menu>summary::-webkit-details-marker,.catalog-filter-menu>summary::-webkit-details-marker{display:none}
+.catalog-more-panel,.catalog-filter-panel{position:absolute;right:0;top:calc(100% + 7px);z-index:30;display:grid;gap:7px;width:220px;padding:9px;border:1px solid var(--border);border-radius:11px;background:var(--surface);box-shadow:0 16px 34px rgba(8,18,29,.18)}
+.catalog-more-panel .btn{width:100%;justify-content:flex-start}
+.catalog-toolbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.catalog-toolbar .possearch{width:100%;min-width:0}
+.catalog-filter-panel label{display:grid;gap:5px}
+.catalog-filter-panel label>span{color:var(--muted-2);font-size:9px;font-weight:800;text-transform:uppercase}
+.catalog-filter-panel .select{width:100%;min-width:0}
+.catalog-filter-count{display:inline-grid;min-width:18px;height:18px;place-items:center;padding:0 5px;border-radius:999px;background:var(--accent);color:#fff;font-size:9px}
+.catalog-filter-menu[open]>summary svg:last-child{transform:rotate(180deg)}
+.pricing-workspace{width:100%;min-width:0}
+.pricing-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) auto auto;gap:8px;align-items:center;margin-bottom:12px}
+.pricing-search{width:100%;min-width:0;height:44px}
+.pricing-options-menu{justify-self:end}
+.catalog-option-note{color:var(--muted);font-size:11px;line-height:1.45}
+.pricing-scan-message{margin:-3px 0 10px}
 .mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
 .mpesa-transaction-results{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .invoice-workspace.invoice-list-active{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
@@ -4980,6 +4999,37 @@ body{overscroll-behavior:none}
 @media (max-width:900px){
   .adminwrap.products-active,.adminwrap.mpesa-active{grid-template-rows:auto minmax(0,1fr)}
   .content:has(.invoice-workspace.invoice-list-active) .adminwrap{grid-template-rows:auto minmax(0,1fr)}
+}
+
+@media (max-width:720px){
+  .content:has(.adminwrap.products-active){overflow-y:auto;overflow-x:hidden}
+  .adminwrap.products-active,.adminwrap.products-active .admincontent{height:auto;min-height:0;overflow:visible}
+  .products-workspace{height:auto;overflow:visible}
+  .products-workspace .products-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible}
+  .admincontent .page-h .catalog-head-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;width:100%;gap:6px}
+  .catalog-scan-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .catalog-scan-actions .btn{width:100%;min-width:0;padding-inline:7px}
+  .catalog-more-menu{justify-self:end}
+  .catalog-more-menu>summary{width:42px!important;padding:0!important;font-size:0!important}
+  .catalog-more-menu>summary svg{margin:0}
+  .catalog-more-panel{position:fixed;top:auto;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));left:10px;width:auto;grid-template-columns:repeat(2,minmax(0,1fr));z-index:70;padding:10px}
+  .catalog-more-panel .btn{min-width:0;justify-content:center;padding-inline:7px;font-size:11px}
+  .catalog-toolbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:9px}
+  .catalog-toolbar .possearch{min-width:0!important;width:100%!important;height:42px!important}
+  .catalog-filter-menu>summary{height:42px!important;min-height:42px!important;padding:0 10px!important;font-size:0!important}
+  .catalog-filter-menu>summary svg{margin:0}
+  .catalog-filter-menu>summary .catalog-filter-count{font-size:9px}
+  .catalog-filter-panel{right:0;left:auto;width:min(270px,calc(100vw - 24px));grid-template-columns:1fr 1fr}
+  .products-workspace>.addpanel{max-height:none;overflow:visible}
+  .pricing-workspace{height:auto;overflow:visible}
+  .pricing-toolbar{grid-template-columns:minmax(0,1fr) auto;gap:6px;margin-bottom:9px}
+  .pricing-search{grid-column:1/-1;height:42px}
+  .pricing-toolbar>.catalog-scan-actions{grid-column:1}
+  .pricing-options-menu{grid-column:2;grid-row:2;align-self:stretch}
+  .pricing-options-menu>summary{width:42px!important}
+  .pricing-options-menu .catalog-filter-panel{grid-template-columns:1fr}
+  .pricing-scan-message{margin:0 0 8px;font-size:10.5px}
+  .pricing-workspace .pricing-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible}
 }
 
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
@@ -9659,14 +9709,21 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   return (
     <div className="products-workspace">
       <PageHead title="Products" sub={visibleBranchProducts.length + " items · " + enabledProductCount + " enabled"}
-        right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        right={<div className="catalog-head-actions">
+          <div className="catalog-scan-actions">
           <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> USB scanner</button>
           <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera /> Camera scan</button>
-          <button className="btn sm btn-ghost" onClick={() => { setCopyOpen((v) => !v); setCopyMsg(""); }}><ArrowLeftRight /> Copy from branch</button>
-          <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
-          <button className="btn sm btn-ghost" onClick={exportCSV}>Export</button>
-          <button className="btn sm btn-ghost" onClick={downloadJSON}>Download</button>
-          <button className="btn sm btn-ghost" onClick={emailSummary}><Mail /> Email</button>
+          </div>
+          <details className="catalog-more-menu">
+            <summary className="btn sm btn-ghost" aria-label="More product actions" title="More product actions"><MoreVertical /> More</summary>
+            <div className="catalog-more-panel">
+              <button className="btn sm btn-ghost" onClick={() => { setCopyOpen((v) => !v); setCopyMsg(""); }}><ArrowLeftRight /> Copy from branch</button>
+              <button className="btn sm btn-ghost" onClick={() => document.getElementById("prodimport").click()}>Import</button>
+              <button className="btn sm btn-ghost" onClick={exportCSV}><Download /> Export CSV</button>
+              <button className="btn sm btn-ghost" onClick={downloadJSON}><Download /> Download JSON</button>
+              <button className="btn sm btn-ghost" onClick={emailSummary}><Mail /> Email summary</button>
+            </div>
+          </details>
         </div>} />
       <input id="prodimport" type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={onImport} />
       {copyOpen && (
@@ -9737,13 +9794,18 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Add product</button></div>
         </div>
       )}
-      <div className="ptools">
+      <div className="ptools catalog-toolbar">
         <div className="possearch"><Search /><input placeholder="Search products by name or SKU…" value={q} onChange={(e) => { setQ(e.target.value); setScannedProductId(""); }} /></div>
-        <select className="select" style={{ width: 170 }} value={catF} onChange={(e) => { setCatF(e.target.value); setScannedProductId(""); }}>
-          {["All", ...Array.from(new Set(visibleBranchProducts.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select>
-        <select className="select" style={{ width: 145 }} value={statusF} onChange={(e) => { setStatusF(e.target.value); setScannedProductId(""); }} aria-label="Product status">
-          <option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
-        </select>
+        <details className="catalog-filter-menu">
+          <summary className="btn sm btn-ghost" aria-label="Product filters" title="Product filters"><SlidersHorizontal /> Filters{catF !== "All" || statusF !== "all" ? <span className="catalog-filter-count">{Number(catF !== "All") + Number(statusF !== "all")}</span> : null}<ChevronDown /></summary>
+          <div className="catalog-filter-panel">
+            <label><span>Category</span><select className="select" value={catF} onChange={(e) => { setCatF(e.target.value); setScannedProductId(""); }}>
+              {["All", ...Array.from(new Set(visibleBranchProducts.map((p) => p.category)))].map((c) => <option key={c} value={c}>{c === "All" ? "All categories" : c}</option>)}</select></label>
+            <label><span>Status</span><select className="select" value={statusF} onChange={(e) => { setStatusF(e.target.value); setScannedProductId(""); }} aria-label="Product status">
+              <option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option>
+            </select></label>
+          </div>
+        </details>
       </div>
       {scannedProduct && (() => {
         const quantity = productOnHand(data, scannedProduct, branch.id);
@@ -12583,25 +12645,25 @@ function PricingTab({ data, update, branch }) {
     }));
   };
   return (
-    <div>
-      <PageHead title="Branch Pricing" sub="Edit selling prices by branch." />
-      <div className="xferinfo" style={{ marginBottom: 14 }}>
-        <strong>Selling prices are editable here.</strong>
-        <div className="sub" style={{ marginTop: 4 }}>Type a new selling price and press Enter, or leave the field to save. Prices below cost are blocked.</div>
-      </div>
+    <div className="pricing-workspace">
+      <PageHead title="Branch Pricing" sub="Edit selling prices by branch. Prices below cost are blocked." />
       {priceErr && <div className="alert error" style={{ marginBottom: 12 }}>{priceErr}</div>}
-      <div className="repctrl" style={{ marginBottom: 16 }}>
-        <div><label className="label">Select branch</label>
-          <select className="select" style={{ minWidth: 220 }} value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-        <div style={{ flex: 1, minWidth: 220 }}><label className="label">Search products</label>
-          <input className="input" placeholder="Filter product name or SKU" value={q} onChange={(e) => { setQ(e.target.value); setScannedPricingKey(""); setScanMessage(""); }} /></div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignSelf: "end" }}>
-          <button type="button" className={"btn sm " + (scannerOn ? "primary" : "btn-ghost")} onClick={() => { const next = !scannerOn; setScannerOn(next); setScanMessage(next ? "USB scanner ready for " + bname + "." : "Scanner off."); }} aria-pressed={scannerOn} title="Use a USB barcode scanner to select a product"><Barcode size={17} /> {scannerOn ? "USB on" : "USB scanner"}</button>
+      <div className="pricing-toolbar">
+        <div className="possearch pricing-search"><Search /><input placeholder="Search product name, SKU, or barcode" value={q} onChange={(e) => { setQ(e.target.value); setScannedPricingKey(""); setScanMessage(""); }} /></div>
+        <div className="catalog-scan-actions">
+          <button type="button" className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => { const next = !scannerOn; setScannerOn(next); setScanMessage(next ? "USB scanner ready for " + bname + "." : "Scanner off."); }} aria-pressed={scannerOn} title="Use a USB barcode scanner to select a product"><Barcode size={17} /> {scannerOn ? "USB on" : "USB scanner"}</button>
           <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera size={17} /> Camera scan</button>
         </div>
+        <details className="catalog-filter-menu pricing-options-menu">
+          <summary className="btn sm btn-ghost" aria-label="Pricing options" title="Pricing options"><SlidersHorizontal /> Options <ChevronDown /></summary>
+          <div className="catalog-filter-panel">
+            <label><span>Pricing branch</span><select className="select" value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+            <div className="catalog-option-note">Prices save when you press Enter or leave the field.</div>
+          </div>
+        </details>
       </div>
-      {scanMessage ? <div className="sub" role="status" style={{ margin: "-8px 0 12px", color: scanMessage.startsWith("Selected") || scannerOn ? "var(--ok)" : "var(--muted)" }}>{scanMessage}</div> : null}
-      <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
+      {scanMessage ? <div className="sub pricing-scan-message" role="status" style={{ color: scanMessage.startsWith("Selected") || scannerOn ? "var(--ok)" : "var(--muted)" }}>{scanMessage}</div> : null}
+      <div className="tablewrap tblscroll pricing-scroll-region"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
         <tbody>{list.map((p) => {
           const price = branchProductPriceCents(p, bId); const cost = branchInventoryCostCents(data, p, bId);
           const margin = price > 0 ? Math.round((price - cost) / price * 100) : null;
