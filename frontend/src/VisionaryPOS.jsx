@@ -4411,16 +4411,16 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-filter-panel,
   .invoice-list-active .invoice-period-filter,
   .invoice-list-active .invoice-filter-grid.simple{display:contents}
-  .invoice-list-active .invoice-search-filter{grid-column:1}
-  .invoice-list-active .invoice-status-filter{grid-column:2}
-  .invoice-list-active .invoice-cashier-filter{grid-column:3}
-  .invoice-list-active .invoice-business-day-filter{grid-column:4}
-  .invoice-list-active .invoice-date-from{grid-column:5}
-  .invoice-list-active .invoice-date-to{grid-column:6}
-  .invoice-list-active .invoice-sort-filter{grid-column:7}
-  .invoice-list-active .invoice-period-filter>.btn{grid-column:8;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-search-filter{grid-column:1;grid-row:1}
+  .invoice-list-active .invoice-status-filter{grid-column:2;grid-row:1}
+  .invoice-list-active .invoice-cashier-filter{grid-column:3;grid-row:1}
+  .invoice-list-active .invoice-business-day-filter{grid-column:4;grid-row:1}
+  .invoice-list-active .invoice-date-from{grid-column:5;grid-row:1}
+  .invoice-list-active .invoice-date-to{grid-column:6;grid-row:1}
+  .invoice-list-active .invoice-sort-filter{grid-column:7;grid-row:1}
+  .invoice-list-active .invoice-period-filter>.btn{grid-column:8;grid-row:1;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-period-filter>.btn svg{width:15px;height:15px;margin:0}
-  .invoice-list-active .invoice-filter-clear{grid-column:9;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-filter-clear{grid-column:9;grid-row:1;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-filter-clear svg{width:15px;height:15px;margin:0}
 }
 
