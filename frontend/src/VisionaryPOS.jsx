@@ -3234,7 +3234,7 @@ body{overscroll-behavior:none}
 .segbtn.on{background:#2bb6c4;color:#0c1418;border-color:#2bb6c4}
 
 
-.shell{width:100%;max-width:1500px;min-width:0;margin:0 auto;height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.shell{width:100%;max-width:none;min-width:0;margin:0;height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:calc(14px + env(safe-area-inset-top)) calc(22px + env(safe-area-inset-right)) 14px calc(22px + env(safe-area-inset-left));border-bottom:1px solid var(--border-soft);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30}
 .envbadge{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:850;letter-spacing:.08em;white-space:nowrap}
 .envbadge.compact{height:32px;font-size:10.5px}
@@ -4306,16 +4306,20 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-filter-clear{grid-column:3;width:auto;height:38px;margin:0;white-space:nowrap}
 
   .mpesa-ledger-page .page-h{margin-bottom:8px}
-  .mpesa-ledger-toolbar{grid-template-columns:minmax(280px,1fr) 170px 170px minmax(170px,210px) minmax(170px,210px);grid-template-rows:auto auto;gap:8px 10px;align-items:end;margin:0 0 9px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface)}
+  .mpesa-ledger-toolbar{grid-template-columns:minmax(280px,1fr) 170px 170px minmax(170px,210px) minmax(170px,210px);grid-template-rows:auto auto;gap:6px 8px;align-items:end;margin:0 0 7px;padding:7px 9px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface)}
+  .mpesa-ledger-toolbar label{gap:2px}
+  .mpesa-ledger-toolbar label>span{font-size:8.5px}
+  .mpesa-ledger-toolbar .input,.mpesa-ledger-toolbar .select{height:36px;min-height:36px;padding-top:0;padding-bottom:0}
   .mpesa-ledger-search{grid-column:1/3;grid-row:1}
   .mpesa-branch-filter{grid-column:3;grid-row:1}
   .mpesa-status-filter{grid-column:4/6;grid-row:1}
-  .mpesa-time-mode{grid-column:1;grid-row:2}
+  .mpesa-time-mode{grid-column:1;grid-row:2;height:36px;padding:3px}
+  .mpesa-time-mode button{min-height:28px;padding:2px 6px}
   .mpesa-exact-time,.mpesa-business-period{grid-column:2/4;grid-row:2}
   .mpesa-time-from{grid-column:2;grid-row:2}
   .mpesa-time-to{grid-column:3;grid-row:2}
   .mpesa-ledger-actions{grid-column:4/6;grid-row:2;justify-content:flex-end}
-  .mpesa-ledger-actions .btn{min-width:124px}
+  .mpesa-ledger-actions .btn{height:36px;min-width:112px;padding-inline:12px}
   .mpesa-ledger-summary{margin:0 0 8px}
   .mpesa-ledger-summary>div{padding:9px 14px}
   .mpesa-branch-totals{margin-bottom:8px}
@@ -4329,6 +4333,20 @@ body{overscroll-behavior:none}
   .mpesa-branch-totals-table{display:none;margin-top:6px}
   .mpesa-branch-totals-table.open{display:block}
   .mpesa-branch-totals-table .tbl th,.mpesa-branch-totals-table .tbl td{padding-top:8px;padding-bottom:8px}
+}
+
+/* Wide desktops keep every payment filter in one shallow toolbar. */
+@media (min-width:1400px){
+  .mpesa-ledger-toolbar{grid-template-columns:minmax(240px,1.4fr) 145px 145px 190px minmax(165px,1fr) minmax(165px,1fr) auto;grid-template-rows:auto;column-gap:8px}
+  .mpesa-ledger-search{grid-column:1;grid-row:1}
+  .mpesa-branch-filter{grid-column:2;grid-row:1}
+  .mpesa-status-filter{grid-column:3;grid-row:1}
+  .mpesa-time-mode{grid-column:4;grid-row:1}
+  .mpesa-exact-time,.mpesa-business-period{grid-column:5/7;grid-row:1}
+  .mpesa-time-from{grid-column:5;grid-row:1}
+  .mpesa-time-to{grid-column:6;grid-row:1}
+  .mpesa-ledger-actions{grid-column:7;grid-row:1}
+  .mpesa-ledger-actions .btn{min-width:104px}
 }
 
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
