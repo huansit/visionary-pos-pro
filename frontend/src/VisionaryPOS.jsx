@@ -44,11 +44,12 @@ const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
 const BARCODE_LOG_KEY = "visionary:pos:barcode-log:v1";
 const MAINTENANCE_META_KEY = "visionary:maintenance:meta:v1";
 const MAINTENANCE_LOG_KEY = "visionary:maintenance:audit:v1";
+const ADMIN_BRANCH_KEY = "visionary:ui:admin-branch:v1";
 const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visionary:tmp:", "visionary:image-cache:"];
-const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, "visionary:sync:deviceId"];
+const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
@@ -59,6 +60,16 @@ let activeSessionToken = "";
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => businessDateValue(Date.now(), DEFAULT_BUSINESS_TIME_ZONE);
+function loadDeviceAdminBranchId() {
+  try { return typeof window !== "undefined" ? window.localStorage?.getItem(ADMIN_BRANCH_KEY) || "" : ""; } catch (_) { return ""; }
+}
+function saveDeviceAdminBranchId(branchId) {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    if (branchId) window.localStorage.setItem(ADMIN_BRANCH_KEY, branchId);
+    else window.localStorage.removeItem(ADMIN_BRANCH_KEY);
+  } catch (_) {}
+}
 const DEFAULT_EXPENSE_CATEGORIES = [
   { id: "excat_transport", name: "Transport", icon: "truck", active: true, order: 10, synced: true },
   { id: "excat_repairs", name: "Repairs", icon: "wrench", active: true, order: 20, synced: true },
@@ -3894,6 +3905,9 @@ body{overscroll-behavior:none}
 .mpesa-ledger-table td{white-space:nowrap}
 .mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
 .mpesa-payer-phone{display:block;margin-top:3px;color:var(--muted-2);font-family:var(--font-mono);font-size:10px;font-weight:650}
+.mpesa-reference{display:inline-flex;align-items:baseline;font-family:var(--font-mono);white-space:nowrap}
+.mpesa-reference .masked{color:var(--muted-2)}
+.mpesa-reference strong{color:var(--accent);font-weight:900}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
 .mpesa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
@@ -3921,6 +3935,7 @@ body{overscroll-behavior:none}
 .mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-mobile{display:none}
+.mpesa-transaction-results{min-width:0}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
@@ -4777,12 +4792,20 @@ body{overscroll-behavior:none}
   .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
 }
 /* Workspaces with stable controls and independently scrolling results. */
-.content:has(.adminwrap.products-active){overflow:hidden}
-.adminwrap.products-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
-.adminwrap.products-active .admincontent{height:100%;min-height:0;overflow:hidden}
+.content:has(.adminwrap.products-active),.content:has(.adminwrap.mpesa-active),.content:has(.invoice-workspace.invoice-list-active){overflow:hidden}
+.adminwrap.products-active,.adminwrap.mpesa-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
+.adminwrap.products-active .admincontent,.adminwrap.mpesa-active .admincontent{height:100%;min-height:0;overflow:hidden}
+.content:has(.invoice-workspace.invoice-list-active) .adminwrap,.content:has(.invoice-workspace.invoice-list-active) .admincontent{height:100%;min-height:0;align-items:stretch;overflow:hidden}
 .products-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
 .products-workspace>.addpanel{max-height:min(48dvh,420px);overflow:auto;flex:0 1 auto}
 .products-workspace .products-scroll-region{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
+.mpesa-transaction-results{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.invoice-workspace.invoice-list-active{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
+.invoice-workspace.invoice-list-active>.invoice-workspace-tabs{flex:0 0 auto}
+.invoice-workspace.invoice-list-active>.invoice-workspace-view{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;overflow:hidden}
+.invoice-results-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.invoice-results-scroll .invoice-table-wrap{max-height:none;min-height:0;overflow:visible}
 .supplier-invoice-mobile{display:none}
 .transfer-route-grid{grid-template-columns:minmax(0,1fr) 36px minmax(0,1fr);align-items:end}
 .transfer-route-arrow{height:44px;display:grid;place-items:center;color:var(--accent)}
@@ -4791,7 +4814,8 @@ body{overscroll-behavior:none}
 .transfer-scan-actions{display:flex;gap:8px}
 
 @media (max-width:900px){
-  .adminwrap.products-active{grid-template-rows:auto minmax(0,1fr)}
+  .adminwrap.products-active,.adminwrap.mpesa-active{grid-template-rows:auto minmax(0,1fr)}
+  .content:has(.invoice-workspace.invoice-list-active) .adminwrap{grid-template-rows:auto minmax(0,1fr)}
 }
 
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
@@ -4926,6 +4950,60 @@ body{overscroll-behavior:none}
   .mpesa-ledger-pager>div{display:grid;grid-template-columns:1fr 1fr;width:100%}
   .mpesa-ledger-pager .btn{width:100%;min-width:0}
 }
+
+@media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .mpesa-page-actions{grid-template-columns:auto repeat(2,minmax(0,1fr))!important}
+  .mpesa-page-actions .btn:last-child{grid-column:1/-1;width:100%;font-size:11px!important}
+  .mpesa-page-actions .btn:last-child svg{margin-right:4px}
+  .mpesa-ledger-summary.combined{display:none!important}
+  .mpesa-branch-totals-mobile article.total{border-width:2px;box-shadow:inset 4px 0 0 var(--accent)}
+  .mpesa-branch-totals-mobile article.total header b{color:var(--accent);font-size:14px;font-weight:900}
+  .mpesa-branch-totals-mobile article.total header span{color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:800}
+  .mpesa-branch-totals-mobile article.total>div span{color:var(--muted);font-weight:850}
+  .mpesa-branch-totals-mobile article.total>div b{font-size:12px;font-weight:900}
+  .mpesa-transaction-results{padding-right:2px;scrollbar-gutter:stable}
+  .mpesa-ledger-mobile{padding-bottom:2px}
+}
+
+/* Keep the iPhone sales controls compact so the invoice list remains primary. */
+@media (max-width:430px){
+  .invoice-workspace.invoice-list-active>.page-h{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;margin-bottom:5px}
+  .invoice-workspace.invoice-list-active>.page-h>div:first-child{min-width:0}
+  .invoice-workspace.invoice-list-active>.page-h .title{overflow:hidden;text-overflow:ellipsis;font-size:16px!important;line-height:1.1;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.page-h .sub{display:none}
+  .invoice-workspace.invoice-list-active>.page-h>.btn{width:auto;min-width:0;height:34px!important;min-height:34px!important;padding:0 8px!important;border-radius:8px;font-size:10px!important;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.page-h>.btn svg{width:13px;height:13px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{gap:4px;margin-bottom:5px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs button{min-width:0;height:35px;min-height:35px;padding:3px 4px;border-radius:7px;font-size:9.5px;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs button svg{width:12px;height:12px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs span{min-width:15px;height:15px;padding:0 3px;font-size:7.5px}
+  .invoice-list-active .invoice-compact-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding-bottom:5px;margin-bottom:5px}
+  .invoice-list-active .invoice-compact-summary>div{min-width:0;padding:6px 7px;border-radius:7px}
+  .invoice-list-active .invoice-compact-summary b{overflow:hidden;text-overflow:ellipsis;font-size:12px;white-space:nowrap}
+  .invoice-list-active .invoice-compact-summary span{font-size:7.5px;line-height:1.2}
+  .invoice-list-active .invoice-compact-summary .invoice-mpesa-total{grid-column:1;padding:6px 7px;border-top:0}
+  .invoice-list-active .invoice-compact-summary .invoice-mpesa-total small{display:none}
+  .invoice-list-active .invoice-compact-summary .btn{grid-column:2;min-height:36px;height:36px;padding:4px;font-size:9px;line-height:1.15}
+  .invoice-list-active .invoice-compact-summary .btn svg{width:12px;height:12px}
+  .invoice-list-active .invoice-mobile-filter-toggle{min-height:34px;height:34px;padding:0 8px;margin-bottom:4px;border-radius:7px;font-size:11px}
+  .invoice-list-active .invoice-mobile-filter-toggle svg{width:14px;height:14px}
+  .invoice-list-active .invoice-filter-panel.open{display:grid;gap:5px;max-height:min(34dvh,240px);padding:6px;margin-bottom:5px;border-radius:7px;overflow-y:auto;overscroll-behavior:contain}
+  .invoice-list-active .invoice-period-filter{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:0 0 5px;margin:0}
+  .invoice-list-active .invoice-period-label{grid-column:1/-1;gap:5px}
+  .invoice-list-active .invoice-period-label svg{width:14px;height:14px}
+  .invoice-list-active .invoice-period-label b{font-size:10px}
+  .invoice-list-active .invoice-period-label span{display:none}
+  .invoice-list-active .invoice-period-filter label{gap:2px;min-width:0}
+  .invoice-list-active .invoice-period-filter label>span{font-size:7.5px}
+  .invoice-list-active .invoice-period-filter .input{width:100%;height:34px!important;min-height:34px!important;padding:0 6px;font-size:11px!important}
+  .invoice-list-active .invoice-period-filter .btn{grid-column:1/-1;width:100%;height:32px!important;min-height:32px!important;font-size:9.5px!important}
+  .invoice-list-active .invoice-filter-grid.simple{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin:0}
+  .invoice-list-active .invoice-filter-grid.simple .settlesearch{grid-column:1/-1;min-width:0}
+  .invoice-list-active .invoice-filter-grid.simple .input,.invoice-list-active .invoice-filter-grid.simple .select{width:100%;min-width:0;height:34px!important;min-height:34px!important;padding-inline:7px;font-size:11px!important}
+  .invoice-list-active .invoice-filter-grid.simple .settlesearch svg{width:14px;height:14px}
+  .invoice-list-active .invoice-filter-clear{width:100%;height:31px!important;min-height:31px!important;font-size:9.5px!important}
+  .invoice-list-active .invoice-results-scroll{padding-right:1px;scrollbar-gutter:stable}
+}
 `;
 
 /* ================================================================== */
@@ -4971,6 +5049,7 @@ function EnvironmentBadge({ mode, compact }) {
 export default function VisionPOS() {
   const [data, setData] = useState(null);
   const dataRef = useRef(null);
+  const [adminBranchId, setAdminBranchId] = useState(loadDeviceAdminBranchId);
   const [view, setView] = useState("adminLogin");
   const [session, setSession] = useState(null);
   const [terminalLoginAvailable, setTerminalLoginAvailable] = useState(false);
@@ -4984,6 +5063,18 @@ export default function VisionPOS() {
   const cloudRecoveryAttemptRef = useRef("");
   const lastActivityAtRef = useRef(0);
   useEffect(() => { dataRef.current = data; }, [data]);
+  const selectAdminBranch = (branchId) => {
+    setAdminBranchId(branchId);
+    saveDeviceAdminBranchId(branchId);
+  };
+  useEffect(() => {
+    const branches = Array.isArray(data?.branches) ? data.branches : [];
+    if (!branches.length || branches.some((branch) => branch.id === adminBranchId)) return;
+    const fallbackId = branches.find((branch) => branch.id === session?.branchId)?.id
+      || branches.find((branch) => branch.id === data?.settings?.activeBranchId)?.id
+      || branches[0].id;
+    selectAdminBranch(fallbackId);
+  }, [data?.branches, data?.settings?.activeBranchId, session?.branchId, adminBranchId]); // eslint-disable-line
   useEffect(() => { (async () => {
     const hasRegisteredTerminal = await hasDesktopTerminalAuth();
     setTerminalLoginAvailable(hasRegisteredTerminal);
@@ -5260,7 +5351,10 @@ export default function VisionPOS() {
     const connect = async () => {
       if (stopped || !navigator.onLine || typeof EventSource === "undefined") return;
       try {
-        const url = await syncStreamUrl(dataRef.current?.settings?.activeBranchId || null);
+        const streamBranchId = view === "register"
+          ? session?.branchId || dataRef.current?.settings?.activeBranchId || null
+          : adminBranchId || dataRef.current?.settings?.activeBranchId || null;
+        const url = await syncStreamUrl(streamBranchId);
         if (stopped) return;
         source = new EventSource(url);
         source.addEventListener("connected", scheduleSync);
@@ -5287,7 +5381,7 @@ export default function VisionPOS() {
       clearTimeout(syncTimer);
       try { source?.close(); } catch (_) {}
     };
-  }, [!!data]); // eslint-disable-line
+  }, [!!data, view, session?.branchId, adminBranchId]); // eslint-disable-line
   useEffect(() => {
     if (!data || didInitialSync.current) return;
     didInitialSync.current = true;
@@ -5345,13 +5439,17 @@ export default function VisionPOS() {
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
       {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignedIn={(emp) => {
         signInSession("admin", emp || null);
-        if (emp) update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: emp.branchId || d.settings.activeBranchId } }));
+        if (emp?.branchId) selectAdminBranch(emp.branchId);
         setTimeout(() => recoverCloudData(), 100);
       }} />}
     </div></div>);
   }
   const branches = Array.isArray(data.branches) ? data.branches : [];
-  const adminBranch = branches.find((b) => b.id === data.settings.activeBranchId) || branches[0] || null;
+  const adminBranch = branches.find((b) => b.id === adminBranchId)
+    || branches.find((b) => b.id === session?.branchId)
+    || branches.find((b) => b.id === data.settings.activeBranchId)
+    || branches[0]
+    || null;
   const cashierBranch = session ? (branches.find((b) => b.id === session.branchId) || adminBranch) : adminBranch;
   return (
     <div className={"vpos app" + themeCls + (view === "register" ? " cashier-app" : "")}><style>{css}</style>
@@ -5366,7 +5464,7 @@ export default function VisionPOS() {
               </div>
             ) : (
               <div className="branchsel"><Building2 />
-                <select value={data.settings.activeBranchId || adminBranch?.id || ""} onChange={(e) => update((d) => ({ ...d, settings: { ...d.settings, activeBranchId: e.target.value } }))}>
+                <select value={adminBranch?.id || ""} onChange={(e) => selectAdminBranch(e.target.value)}>
                   {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
             )}
             {view === "register" && session && <div className="who"><span className="nm">{session.name}</span><span className="rl">{session.role}</span></div>}
@@ -7030,7 +7128,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "products" ? " products-active" : "")}>
+    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "products" ? " products-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
@@ -7310,7 +7408,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   ].filter(Boolean).length;
 
   return (
-    <div>
+    <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "")}>
       <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
         right={<button
           className="btn sm btn-primary"
@@ -7383,13 +7481,15 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           </div>
         </div>}
 
-        {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-          <><div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
-            <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
-            <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
-          </table></div>
-          <div className="invoice-mobile-list">{filtered.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div></>
-        )}
+        <div className="invoice-results-scroll">
+          {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
+            <><div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
+              <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
+              <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+            </table></div>
+            <div className="invoice-mobile-list">{filtered.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div></>
+          )}
+        </div>
       </div>}
 
       {workspaceView === "debts" && <div className="invoice-workspace-view">
@@ -15022,6 +15122,13 @@ function kopokopoDateBoundary(value, timeZone, edge = "start") {
   return businessDateTimeBoundary(value, timeZone, edge);
 }
 
+function MpesaReference({ value }) {
+  const reference = String(value || "-");
+  const suffix = reference.length > 4 ? reference.slice(-4) : reference;
+  const prefix = reference.slice(0, Math.max(0, reference.length - suffix.length));
+  return <span className="mpesa-reference" aria-label={reference}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong></span>;
+}
+
 function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   if (!Array.isArray(allocations) || allocations.length === 0) {
     return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
@@ -15172,7 +15279,19 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const updateTo = (value) => { setDateTo(value); setOffset(0); };
   const todayFilterActive = timeFilterMode === "range" && dateFrom === todayFrom && dateTo === todayTo;
   const businessDayFilterActive = timeFilterMode === "business";
+  const clearQuickDateFilter = () => {
+    setTimeFilterMode("specific");
+    setSpecificTime("");
+    setDateFrom("");
+    setDateTo("");
+    setStatus("all");
+    setOffset(0);
+  };
   const applyTodayFilter = () => {
+    if (todayFilterActive) {
+      clearQuickDateFilter();
+      return;
+    }
     setTimeFilterMode("range");
     setSpecificTime("");
     setDateFrom(todayFrom);
@@ -15181,6 +15300,10 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     setOffset(0);
   };
   const applyBusinessDayFilter = () => {
+    if (businessDayFilterActive) {
+      clearQuickDateFilter();
+      return;
+    }
     setTimeFilterMode("business");
     setSpecificTime("");
     setDateFrom("");
@@ -15212,7 +15335,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
-        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button type="button" className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button type="button" className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button type="button" className="btn sm" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button></div>} />
+        right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button type="button" aria-pressed={businessDayFilterActive} className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button type="button" aria-pressed={todayFilterActive} className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button type="button" className="btn sm" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button></div>} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
@@ -15242,7 +15365,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         </div>
       </div>
 
-      <div className="mpesa-ledger-summary">
+      <div className={"mpesa-ledger-summary" + (selectedBranchId === "all" ? " combined" : "")}>
         <div><span>Transactions</span><b>{total}</b></div>
         <div><span>Received</span><b>{fmt(ledger.summary.amountCents || 0, "KES")}</b></div>
         <div><span>Allocated</span><b>{fmt(ledger.summary.allocatedCents || 0, "KES")}</b></div>
@@ -15265,38 +15388,40 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         </div>
       </div> : null}
 
-      {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
-      {!ledger.error && ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading M-Pesa transactions...</div> : null}
-      {!ledger.error && !ledger.loading && ledger.transactions.length === 0 ? <div className="notice">No M-Pesa transactions match these filters.</div> : null}
+      <div className="mpesa-transaction-results">
+        {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
+        {!ledger.error && ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading M-Pesa transactions...</div> : null}
+        {!ledger.error && !ledger.loading && ledger.transactions.length === 0 ? <div className="notice">No M-Pesa transactions match these filters.</div> : null}
 
-      {ledger.transactions.length > 0 ? <>
-        <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
-          <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
-            <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
-              <tr key={transaction.id}>
-                <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
-                <td className="innum">{transaction.referenceMasked}</td>
-                <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
-                {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
-                <td className="innum">{transaction.tillNumber || "-"}</td>
-                <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
-                <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
-                <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
-              </tr>); })}</tbody>
-          </table>
+        {ledger.transactions.length > 0 ? <>
+          <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
+            <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
+              <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
+                <tr key={transaction.id}>
+                  <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
+                  <td className="innum"><MpesaReference value={transaction.referenceMasked} /></td>
+                  <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
+                  {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
+                  <td className="innum">{transaction.tillNumber || "-"}</td>
+                  <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
+                  <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
+                </tr>); })}</tbody>
+            </table>
+          </div>
+          <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
+            <div className="mpesa-ledger-mobile-row" key={transaction.id}>
+              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
+              <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
+              <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
+            </div>); })}</div>
+        </> : null}
+
+        <div className="mpesa-ledger-pager">
+          <span>Showing {pageStart}-{pageEnd} of {total}</span>
+          <div><button className="btn sm" disabled={!canPrevious} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft /> Previous</button><button className="btn sm" disabled={!canNext} onClick={() => setOffset((value) => value + pageSize)}>Next <ChevronRight /></button></div>
         </div>
-        <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
-          <div className="mpesa-ledger-mobile-row" key={transaction.id}>
-            <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small>{transaction.referenceMasked} / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
-            <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
-            <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
-          </div>); })}</div>
-      </> : null}
-
-      <div className="mpesa-ledger-pager">
-        <span>Showing {pageStart}-{pageEnd} of {total}</span>
-        <div><button className="btn sm" disabled={!canPrevious} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft /> Previous</button><button className="btn sm" disabled={!canNext} onClick={() => setOffset((value) => value + pageSize)}>Next <ChevronRight /></button></div>
       </div>
     </div>
   );
