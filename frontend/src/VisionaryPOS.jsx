@@ -5320,8 +5320,13 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-results-scroll{padding-right:1px;scrollbar-gutter:stable}
 }
 
-/* Mobile sales uses one scroll owner at a time: filters or invoices. */
+/* Mobile sales uses the page as its only scroll owner. */
 @media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior-y:auto;touch-action:pan-y pinch-zoom;-webkit-overflow-scrolling:touch}
+  .content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto!important;min-height:100%;align-items:start;grid-template-rows:auto auto;overflow:visible!important}
+  .content:has(.invoice-workspace.invoice-list-active) .admincontent{height:auto!important;min-height:0;overflow:visible!important}
+  .invoice-workspace.invoice-list-active{height:auto;min-height:100%;overflow:visible}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-view{display:block;min-height:0;overflow:visible}
   .invoice-workspace.invoice-list-active>.page-h{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center!important;gap:6px;margin-bottom:5px}
   .invoice-workspace.invoice-list-active>.page-h>div:first-child{min-width:0}
   .invoice-workspace.invoice-list-active>.page-h .title{overflow:hidden;text-overflow:ellipsis;font-size:16px!important;line-height:1.1;white-space:nowrap}
@@ -5346,9 +5351,9 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-primary-filters .select{height:35px;min-height:35px;padding-inline:7px;font-size:11px}
   .invoice-list-active .invoice-mobile-filter-toggle{height:35px;min-height:35px;padding:0 8px;margin-bottom:4px;border-radius:7px;font-size:11px}
   .invoice-list-active.mobile-filters-open .invoice-compact-summary{display:none}
-  .invoice-list-active.mobile-filters-open .invoice-filter-panel.open{display:block;flex:1 1 auto;min-height:0;max-height:none;padding:8px;margin-bottom:0;overflow-y:scroll;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
-  .invoice-list-active.mobile-filters-open .invoice-results-scroll{display:none}
-  .invoice-list-active .invoice-results-scroll{overflow-y:scroll;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+  .invoice-list-active.mobile-filters-open .invoice-filter-panel.open{display:block;min-height:0;max-height:none;padding:8px;margin-bottom:5px;overflow:visible}
+  .invoice-list-active.mobile-filters-open .invoice-results-scroll{display:block}
+  .invoice-list-active .invoice-results-scroll{display:block;min-height:0;overflow:visible;padding-right:0;scrollbar-gutter:auto;touch-action:pan-y pinch-zoom}
 }
 `;
 
