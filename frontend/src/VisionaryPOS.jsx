@@ -4548,7 +4548,7 @@ body{overscroll-behavior:none}
 .document-file-head .chevron{width:17px;height:17px;color:var(--muted);transition:transform .15s}
 .document-file.open .document-file-head .chevron{transform:rotate(180deg)}
 .document-file-body{padding:4px 0 10px}
-.document-file-body>.list{max-height:460px;overflow:auto}
+.document-file-body>.list{max-height:none;overflow:visible}
 .transfer-record-toolbar{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding:2px 0 9px}
 .transfer-record-toolbar .btn{min-width:128px;justify-content:center}
 .transfer-date-filter{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
