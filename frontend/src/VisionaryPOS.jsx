@@ -4098,6 +4098,7 @@ body{overscroll-behavior:none}
 .mpesa-receipt-grid label{display:grid;gap:4px}
 .mpesa-receipt-grid label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
 .mpesa-receipt-grid input:disabled{opacity:.72;cursor:not-allowed}
+.mpesa-receipt-grid input[readonly]{background:var(--surface-2);color:var(--accent);font-weight:750;cursor:default}
 .invoice-split-payment{margin-top:10px}
 .mpesa-receipt-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin-top:10px;border:1px solid var(--border-soft);border-radius:10px;overflow:hidden;background:var(--border-soft)}
 .mpesa-receipt-status>div{min-width:0;padding:9px 10px;background:var(--surface-2)}
@@ -4810,6 +4811,10 @@ body{overscroll-behavior:none}
   .invoice-payment-entry .btn{min-height:48px}
   .invoice-detail-footer .btn{width:100%}
 }
+@media (min-width:621px) and (max-width:820px){
+  .invoice-detail-modal .stk-request-form{grid-template-columns:minmax(0,1.35fr) minmax(110px,.65fr);gap:7px}
+  .invoice-detail-modal .stk-request-form .btn{grid-column:1/-1;width:100%}
+}
 @media (max-width:620px){
   .invoice-detail-modal{width:calc(100vw - 8px);max-height:calc(100dvh - 8px - env(safe-area-inset-top) - env(safe-area-inset-bottom));padding:10px;border-radius:14px}
   .invoice-detail-head{top:-10px;margin:-10px -10px 0;padding:10px 10px 8px}
@@ -4833,10 +4838,16 @@ body{overscroll-behavior:none}
   .stk-request-disclosure{margin-top:4px}
   .invoice-detail-disclosure summary{padding:8px 0;font-size:11px}
   .invoice-detail-disclosure summary>span{gap:6px}
+  .invoice-detail-modal .stk-request-form{grid-template-columns:minmax(0,1.35fr) minmax(90px,.65fr);gap:5px;padding-bottom:6px}
+  .invoice-detail-modal .stk-request-form label{gap:2px}
+  .invoice-detail-modal .stk-request-form label>span{font-size:7.5px}
+  .invoice-detail-modal .stk-request-form .input{height:36px;min-height:36px;padding-inline:8px;font-size:16px}
+  .invoice-detail-modal .stk-request-form .btn{grid-column:1/-1;width:100%;height:36px;min-height:36px;font-size:10.5px}
   .invoice-split-payment{gap:5px!important;margin-top:6px}
   .mpesa-receipt-grid label{gap:2px}
   .mpesa-receipt-grid label>span{font-size:7.5px}
-  .invoice-split-payment .input{height:36px!important;min-height:36px!important;padding-inline:8px;font-size:12px!important}
+  .invoice-split-payment .input{height:36px!important;min-height:36px!important;padding-inline:8px;font-size:16px!important}
+  .invoice-detail-modal .select,.invoice-detail-modal textarea.input{font-size:16px!important}
   .invoice-detail-modal .compact-notice{padding:8px 10px;margin-bottom:7px;font-size:10px;line-height:1.35}
   .invoice-detail-modal .mpesa-receipt-status{margin-top:6px}
   .invoice-detail-modal .mpesa-receipt-status>div{padding:6px 7px}
@@ -4956,6 +4967,7 @@ body{overscroll-behavior:none}
 .invoice-workspace.invoice-list-active{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
 .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{flex:0 0 auto}
 .invoice-workspace.invoice-list-active>.invoice-workspace-view{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;overflow:hidden}
+.invoice-list-active .invoice-compact-summary{flex:0 0 auto}
 .invoice-results-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .invoice-results-scroll .invoice-table-wrap{max-height:none;min-height:0;overflow:visible}
 .supplier-invoice-mobile{display:none}
@@ -8855,6 +8867,11 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   }, [stkRequest?.id, out]);
   const mpesaCents = clampPaymentCents(mpesaAmount, out);
   const cashCents = clampPaymentCents(cashAmount, out);
+  useEffect(() => {
+    if (normalizedMpesaCode.length !== 4 || receiptAvailableCents <= 0) return;
+    const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, Math.max(0, out - cashCents)));
+    if (nextMpesaAmount !== mpesaAmount) setMpesaAmount(nextMpesaAmount);
+  }, [normalizedMpesaCode, receiptAvailableCents, cashCents, out, mpesaAmount]);
   const paymentCents = mpesaCents + cashCents;
   const providerSelectionError = mpesaProviderSelectionError({
     amountCents: mpesaCents,
@@ -9148,8 +9165,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                   }} />
               </label> : null}
               <label><span>M-Pesa to apply</span>
-                <input className="input" inputMode="decimal" value={mpesaAmount}
-                  onChange={(e) => { setMpesaAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
+                <input className="input" inputMode="decimal" value={mpesaAmount} readOnly aria-readonly="true" />
               </label>
               <label><span>Cash to apply</span>
                 <input className="input" inputMode="decimal" value={cashAmount}
@@ -9190,7 +9206,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                 <Check /> {recordingPayment ? "Recording..." : isFullPayment ? "Settle full balance" : "Record partial payment"}
               </button>
             </div>
-            {paymentError || paymentValidationError ? <div className="formerr">{paymentError || paymentValidationError}</div> : null}
+            {paymentError ? <div className="formerr">{paymentError}</div> : null}
           </div>
         ) : null}
 
