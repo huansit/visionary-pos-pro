@@ -2499,6 +2499,23 @@ function cameraScannerError(error) {
   return "The camera could not start. You can still type the barcode or use a paired scanner.";
 }
 let barcodeAudioContext = null;
+const secondaryRearCameraPattern = /(ultra\s*-?\s*wide|ultrawide|macro|depth|telephoto|tele\b|auxiliary|infrared)/i;
+
+function isAndroidCameraDevice() {
+  return /Android/i.test(navigator.userAgent || "");
+}
+
+function rearCameraScore(label = "") {
+  const normalized = String(label || "").trim();
+  let score = 0;
+  if (/(back|rear|environment)/i.test(normalized)) score += 80;
+  if (/(main|primary)/i.test(normalized)) score += 30;
+  if (/\bwide\b/i.test(normalized) && !/ultra/i.test(normalized)) score += 10;
+  if (/(front|user|selfie)/i.test(normalized)) score -= 300;
+  if (secondaryRearCameraPattern.test(normalized)) score -= 140;
+  return score;
+}
+
 async function openAutomaticRearCamera() {
   const baseVideo = {
     width: { ideal: 1920 },
@@ -2506,19 +2523,85 @@ async function openAutomaticRearCamera() {
     aspectRatio: { ideal: 16 / 9 },
     frameRate: { ideal: 30 },
   };
+  let stream;
   try {
-    return await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { ...baseVideo, facingMode: { exact: "environment" } },
     });
   } catch (error) {
     const name = String(error?.name || "");
     if (!["OverconstrainedError", "ConstraintNotSatisfiedError", "NotFoundError", "DevicesNotFoundError", "TypeError"].includes(name)) throw error;
-    return navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { ...baseVideo, facingMode: { ideal: "environment" } },
     });
   }
+
+  if (!isAndroidCameraDevice() || !navigator.mediaDevices?.enumerateDevices) return stream;
+  try {
+    const currentTrack = stream.getVideoTracks()[0];
+    const currentSettings = currentTrack?.getSettings?.() || {};
+    const currentLabel = String(currentTrack?.label || "");
+    const cameras = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "videoinput" && device.deviceId)
+      .map((device, index) => ({
+        deviceId: device.deviceId,
+        groupId: device.groupId,
+        label: device.label,
+        index,
+        score: rearCameraScore(device.label),
+      }))
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+    const bestCamera = cameras[0];
+    const currentDevice = cameras.find((device) => device.deviceId === currentSettings.deviceId)
+      || cameras.find((device) => device.label && device.label === currentLabel);
+    const currentScore = currentDevice?.score ?? rearCameraScore(currentLabel);
+    const shouldSwitch = bestCamera
+      && bestCamera.deviceId !== currentSettings.deviceId
+      && (bestCamera.score > currentScore || secondaryRearCameraPattern.test(currentLabel) || /(front|user|selfie)/i.test(currentLabel));
+    if (shouldSwitch) {
+      const replacement = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { ...baseVideo, deviceId: { exact: bestCamera.deviceId } },
+      });
+      stream.getTracks().forEach((track) => track.stop());
+      stream = replacement;
+    }
+  } catch (_) {
+    // The facing-mode stream is still valid when a browser hides device labels or rejects device switching.
+  }
+  return stream;
+}
+
+function cameraTrackCapabilities(track) {
+  try { return track?.getCapabilities?.() || {}; } catch (_) { return {}; }
+}
+
+function cameraTorchSupported(capabilities) {
+  return capabilities?.torch === true;
+}
+
+async function applyCameraAutofocus(track, capabilities = cameraTrackCapabilities(track)) {
+  if (!track?.applyConstraints) return "";
+  const focusModes = Array.isArray(capabilities?.focusMode) ? capabilities.focusMode : [];
+  const focusMode = focusModes.includes("continuous")
+    ? "continuous"
+    : (focusModes.includes("single-shot") ? "single-shot" : "");
+  if (!focusMode) return "";
+  await track.applyConstraints({ advanced: [{ focusMode }] });
+  return focusMode;
+}
+
+async function applyCameraTorch(track, enabled, capabilities = cameraTrackCapabilities(track)) {
+  if (!track?.applyConstraints || !cameraTorchSupported(capabilities)) throw new Error("torch_unavailable");
+  const torchConstraint = isAndroidCameraDevice()
+    // Several Android browsers reject the entire request when fillLightMode is
+    // included even though torch itself is supported.
+    ? { torch: Boolean(enabled) }
+    : { fillLightMode: enabled ? "flash" : "off", torch: Boolean(enabled) };
+  await track.applyConstraints({ advanced: [torchConstraint] });
+  await applyCameraAutofocus(track, capabilities).catch(() => {});
 }
 function prepareBarcodeSuccessTone() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -2577,6 +2660,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
   }, []);
   useEffect(() => {
     let disposed = false;
+    let autofocusTimerId = 0;
     foundRef.current = false;
     scanStateRef.current = { code: "", lastDetectedAt: 0, armed: true };
     setError("");
@@ -2585,6 +2669,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
     setTorchOn(false);
 
     const stopCamera = () => {
+      if (autofocusTimerId) window.clearTimeout(autofocusTimerId);
       try { controlsRef.current?.stop?.(); } catch (_) {}
       controlsRef.current = null;
       const streams = new Set([streamRef.current, videoRef.current?.srcObject].filter(Boolean));
@@ -2614,16 +2699,16 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
         video.srcObject = stream;
         await video.play();
         const videoTrack = stream.getVideoTracks()[0];
-        let videoCapabilities = {};
-        try { videoCapabilities = videoTrack?.getCapabilities?.() || {}; } catch (_) {}
-        if (videoTrack?.applyConstraints) {
-          let focusMode = "";
-          if (Array.isArray(videoCapabilities.focusMode) && videoCapabilities.focusMode.includes("continuous")) {
-            focusMode = "continuous";
-          } else if (Array.isArray(videoCapabilities.focusMode) && videoCapabilities.focusMode.includes("single-shot")) {
-            focusMode = "single-shot";
-          }
-          if (focusMode) await videoTrack.applyConstraints({ advanced: [{ focusMode }] }).catch(() => {});
+        const videoCapabilities = cameraTrackCapabilities(videoTrack);
+        try { if (videoTrack && isAndroidCameraDevice()) videoTrack.contentHint = "detail"; } catch (_) {}
+        const focusMode = await applyCameraAutofocus(videoTrack, videoCapabilities).catch(() => "");
+        if (isAndroidCameraDevice() && focusMode === "single-shot") {
+          const maintainAutofocus = async () => {
+            if (disposed || !streamRef.current) return;
+            await applyCameraAutofocus(videoTrack, videoCapabilities).catch(() => {});
+            if (!disposed) autofocusTimerId = window.setTimeout(maintainAutofocus, 2500);
+          };
+          autofocusTimerId = window.setTimeout(maintainAutofocus, 2500);
         }
 
         const handleDecode = (result, _scanError, activeControls) => {
@@ -2699,8 +2784,8 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
               try { fallbackControls?.stop?.(); } catch (_) {}
             },
           };
-          if (videoTrack?.applyConstraints && Object.prototype.hasOwnProperty.call(videoCapabilities, "torch")) {
-            controls.switchTorch = (enabled) => videoTrack.applyConstraints({ advanced: [{ fillLightMode: enabled ? "flash" : "off", torch: enabled }] });
+          if (cameraTorchSupported(videoCapabilities)) {
+            controls.switchTorch = (enabled) => applyCameraTorch(videoTrack, enabled, videoCapabilities);
           }
           const switchToZxing = async () => {
             if (stopped || disposed || switchingToFallback || fallbackControls || foundRef.current) return;
@@ -2748,7 +2833,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           timerId = window.setTimeout(detectFrame, 40);
           fallbackTimerId = window.setTimeout(() => {
             if (nativeDetections === 0) switchToZxing();
-          }, 1800);
+          }, 1100);
           return controls;
         };
         let controls = null;
@@ -2758,8 +2843,20 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           controls.stop();
           return;
         }
+        if (isAndroidCameraDevice() && cameraTorchSupported(videoCapabilities)) {
+          const scannerControls = controls;
+          controls = {
+            stop: () => scannerControls?.stop?.(),
+            switchTorch: (enabled) => applyCameraTorch(videoTrack, enabled, videoCapabilities),
+          };
+        }
         controlsRef.current = controls;
-        if (!disposed) setTorchAvailable(typeof controls.switchTorch === "function" || Object.prototype.hasOwnProperty.call(videoCapabilities, "torch"));
+        if (!disposed) {
+          const nativeCapability = isAndroidCameraDevice()
+            ? cameraTorchSupported(videoCapabilities)
+            : Object.prototype.hasOwnProperty.call(videoCapabilities, "torch");
+          setTorchAvailable(typeof controls.switchTorch === "function" || nativeCapability);
+        }
         setStatus("Point the rear camera at the product barcode.");
       } catch (cameraError) {
         if (disposed) return;
@@ -2779,7 +2876,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
     const next = !torchOn;
     try {
       if (typeof controls?.switchTorch === "function") await controls.switchTorch(next);
-      else if (track?.applyConstraints) await track.applyConstraints({ advanced: [{ fillLightMode: next ? "flash" : "off", torch: next }] });
+      else if (track?.applyConstraints) await applyCameraTorch(track, next);
       else throw new Error("torch_unavailable");
       setTorchOn(next);
       setStatus(next ? "Flashlight on. Point the rear camera at the barcode." : "Flashlight off. Point the rear camera at the barcode.");
@@ -4119,7 +4216,7 @@ body{overscroll-behavior:none}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-business-period{grid-template-columns:auto minmax(0,1fr)}.mpesa-business-period label{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
-@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:250px}.mpesa-offset-invoice{grid-template-columns:1fr 110px}}
+@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:250px}.mpesa-offset-invoice{grid-template-columns:1fr 110px}.mpesa-offset-invoice-choice{grid-template-columns:18px minmax(0,1fr)}.mpesa-offset-invoice-choice>strong{grid-column:2;justify-self:start}.mpesa-offset-invoice-copy b{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.25}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}.mpesa-offset-transaction{grid-template-columns:1fr}.mpesa-offset-summary{grid-template-columns:1fr 1fr}.mpesa-offset-summary>span:last-child{grid-column:1/-1}.mpesa-offset-invoice{grid-template-columns:1fr}.mpesa-offset-invoice-amount{grid-template-columns:auto 1fr;align-items:center}.mpesa-offset-actions{flex-direction:column-reverse}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
