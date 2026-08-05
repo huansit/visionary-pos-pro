@@ -45,11 +45,12 @@ const BARCODE_LOG_KEY = "visionary:pos:barcode-log:v1";
 const MAINTENANCE_META_KEY = "visionary:maintenance:meta:v1";
 const MAINTENANCE_LOG_KEY = "visionary:maintenance:audit:v1";
 const ADMIN_BRANCH_KEY = "visionary:ui:admin-branch:v1";
+const DEVICE_THEME_KEY = "visionary:ui:theme:v1";
 const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visionary:tmp:", "visionary:image-cache:"];
-const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, "visionary:sync:deviceId"];
+const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
@@ -68,6 +69,14 @@ function saveDeviceAdminBranchId(branchId) {
     if (typeof window === "undefined" || !window.localStorage) return;
     if (branchId) window.localStorage.setItem(ADMIN_BRANCH_KEY, branchId);
     else window.localStorage.removeItem(ADMIN_BRANCH_KEY);
+  } catch (_) {}
+}
+function loadDeviceTheme() {
+  try { return typeof window !== "undefined" && window.localStorage?.getItem(DEVICE_THEME_KEY) === "dark" ? "dark" : "light"; } catch (_) { return "light"; }
+}
+function saveDeviceTheme(theme) {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(DEVICE_THEME_KEY, theme === "dark" ? "dark" : "light");
   } catch (_) {}
 }
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -3897,6 +3906,7 @@ body{overscroll-behavior:none}
 .mpesa-ledger-summary>div:last-child{border-right:0}
 .mpesa-ledger-summary span{display:block;color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
 .mpesa-ledger-summary b{display:block;margin-top:4px;font-family:var(--font-mono);font-size:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-ledger-summary .available{background:rgba(52,211,153,.07)}
 .mpesa-ledger-summary .available b{color:var(--ok)}
 .mpesa-branch-totals{margin:0 0 14px}
 .mpesa-branch-totals .section-title{margin:0 0 8px;font-size:12px;color:var(--muted)}
@@ -3908,6 +3918,9 @@ body{overscroll-behavior:none}
 .mpesa-reference{display:inline-flex;align-items:baseline;font-family:var(--font-mono);white-space:nowrap}
 .mpesa-reference .masked{color:var(--muted-2)}
 .mpesa-reference strong{color:var(--accent);font-weight:900}
+.mpesa-ledger-row.allocated .mpesa-reference strong,.mpesa-ledger-mobile-row.allocated .mpesa-reference strong{color:var(--danger)}
+.mpesa-ledger-table td.available-amount,.mpesa-branch-totals-table td.available-amount{color:var(--ok);font-weight:800}
+.mpesa-ledger-mobile-row .available-amount{color:var(--ok);font-weight:800}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
 .mpesa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
@@ -4154,7 +4167,7 @@ body{overscroll-behavior:none}
 .invoice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 13px}
 .invoice-section-head .section-title{font-size:16px;margin:0 0 3px}
 .invoice-section-head .muted{color:var(--muted-2);font-size:12px}
-.invoice-compact-summary{display:grid;grid-template-columns:auto auto minmax(190px,1fr) auto;align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
+.invoice-compact-summary{display:grid;grid-template-columns:auto auto minmax(190px,1fr);align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
 .invoice-compact-summary>div{display:grid;gap:2px}
 .invoice-compact-summary b{font-family:var(--font-mono);font-size:16px}
 .invoice-compact-summary b.danger{color:var(--danger)}
@@ -4163,6 +4176,11 @@ body{overscroll-behavior:none}
 .invoice-compact-summary .invoice-mpesa-total{padding-left:18px;border-left:1px solid var(--border-soft)}
 .invoice-compact-summary .invoice-mpesa-total b{color:var(--ok)}
 .invoice-compact-summary .btn{justify-self:end}
+.invoice-primary-filters{display:grid;grid-template-columns:minmax(260px,1fr) minmax(170px,230px) minmax(170px,230px);gap:8px;margin-bottom:8px}
+.invoice-primary-filters label{display:grid;gap:3px;min-width:0}
+.invoice-primary-filters label>span{color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
+.invoice-primary-filters .select{width:100%;height:38px;min-width:0}
+.invoice-primary-filters .settlesearch{min-width:0}
 .invoice-period-filter{display:grid;grid-template-columns:minmax(220px,1fr) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
 .invoice-period-filter label{display:grid;gap:4px}
 .invoice-period-filter label>span{color:var(--muted-2);font-size:10px;font-weight:700;text-transform:uppercase}
@@ -5004,6 +5022,37 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-filter-clear{width:100%;height:31px!important;min-height:31px!important;font-size:9.5px!important}
   .invoice-list-active .invoice-results-scroll{padding-right:1px;scrollbar-gutter:stable}
 }
+
+/* Mobile sales uses one scroll owner at a time: filters or invoices. */
+@media (max-width:620px){
+  .invoice-workspace.invoice-list-active>.page-h{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center!important;gap:6px;margin-bottom:5px}
+  .invoice-workspace.invoice-list-active>.page-h>div:first-child{min-width:0}
+  .invoice-workspace.invoice-list-active>.page-h .title{overflow:hidden;text-overflow:ellipsis;font-size:16px!important;line-height:1.1;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.page-h .sub{display:none}
+  .invoice-workspace.invoice-list-active>.page-h>.btn{width:auto!important;min-width:0;height:34px!important;min-height:34px!important;padding:0 8px!important;border-radius:8px;font-size:10px!important;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.page-h>.btn svg{width:13px;height:13px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{gap:4px;margin-bottom:5px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs button{min-width:0;height:36px;min-height:36px;padding:3px 5px;border-radius:7px;font-size:9.5px;white-space:nowrap}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs button svg{width:12px;height:12px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs span{min-width:15px;height:15px;padding:0 3px;font-size:7.5px}
+  .invoice-list-active .invoice-compact-summary{gap:4px;padding-bottom:5px;margin-bottom:5px}
+  .invoice-list-active .invoice-compact-summary>div{padding:6px 7px;border-radius:7px}
+  .invoice-list-active .invoice-compact-summary b{font-size:12.5px}
+  .invoice-list-active .invoice-compact-summary span{font-size:7.5px;line-height:1.2}
+  .invoice-list-active .invoice-compact-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .invoice-list-active .invoice-compact-summary .invoice-mpesa-total{grid-column:auto;padding:6px 7px;border-top:0;border-left:0}
+  .invoice-list-active .invoice-compact-summary .invoice-mpesa-total small{display:none}
+  .invoice-list-active .invoice-primary-filters{grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:5px}
+  .invoice-list-active .invoice-primary-filters .settlesearch{grid-column:1/-1}
+  .invoice-list-active .invoice-primary-filters label{gap:2px}
+  .invoice-list-active .invoice-primary-filters label>span{font-size:7.5px}
+  .invoice-list-active .invoice-primary-filters .select{height:35px;min-height:35px;padding-inline:7px;font-size:11px}
+  .invoice-list-active .invoice-mobile-filter-toggle{height:35px;min-height:35px;padding:0 8px;margin-bottom:4px;border-radius:7px;font-size:11px}
+  .invoice-list-active.mobile-filters-open .invoice-compact-summary{display:none}
+  .invoice-list-active.mobile-filters-open .invoice-filter-panel.open{display:block;flex:1 1 auto;min-height:0;max-height:none;padding:8px;margin-bottom:0;overflow-y:scroll;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+  .invoice-list-active.mobile-filters-open .invoice-results-scroll{display:none}
+  .invoice-list-active .invoice-results-scroll{overflow-y:scroll;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+}
 `;
 
 /* ================================================================== */
@@ -5050,6 +5099,7 @@ export default function VisionPOS() {
   const [data, setData] = useState(null);
   const dataRef = useRef(null);
   const [adminBranchId, setAdminBranchId] = useState(loadDeviceAdminBranchId);
+  const [deviceTheme, setDeviceTheme] = useState(loadDeviceTheme);
   const [view, setView] = useState("adminLogin");
   const [session, setSession] = useState(null);
   const [terminalLoginAvailable, setTerminalLoginAvailable] = useState(false);
@@ -5066,6 +5116,11 @@ export default function VisionPOS() {
   const selectAdminBranch = (branchId) => {
     setAdminBranchId(branchId);
     saveDeviceAdminBranchId(branchId);
+  };
+  const selectDeviceTheme = (theme) => {
+    const nextTheme = theme === "dark" ? "dark" : "light";
+    setDeviceTheme(nextTheme);
+    saveDeviceTheme(nextTheme);
   };
   useEffect(() => {
     const branches = Array.isArray(data?.branches) ? data.branches : [];
@@ -5426,7 +5481,7 @@ export default function VisionPOS() {
   const routePath = typeof window !== "undefined" ? window.location.pathname.replace(/\/$/, "") || "/" : "/";
   if (routePath === "/downloads") return <DownloadsPage />;
   const pending = countPending(data);
-  const themeCls = data.settings.theme === "dark" ? " theme-dark" : "";
+  const themeCls = deviceTheme === "dark" ? " theme-dark" : "";
   const syncError = pending > 0 ? (data?._sync?.error || "") : "";
   const syncState = !online || syncError ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
   const activeEnvironmentMode = normalizeEnvironmentMode(environmentInfo?.mode || data?.settings?.environmentMode || "test");
@@ -5475,7 +5530,7 @@ export default function VisionPOS() {
                 <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
                   <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ force: true }); }}>Sync now</button>}</div>
-                  <button className="topmenu-row" onClick={() => update((d) => ({ ...d, settings: { ...d.settings, theme: d.settings.theme === "dark" ? "light" : "dark" } }))}>{data.settings.theme === "dark" ? <Sun /> : <Moon />}<span>{data.settings.theme === "dark" ? "Light mode" : "Dark mode"}</span></button>
+                  <button className="topmenu-row" onClick={() => selectDeviceTheme(deviceTheme === "dark" ? "light" : "dark")}>{deviceTheme === "dark" ? <Sun /> : <Moon />}<span>{deviceTheme === "dark" ? "Light mode" : "Dark mode"}</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
                 </div>
@@ -5492,7 +5547,7 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -7020,7 +7075,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [debtPaymentsOpen, setDebtPaymentsOpen] = useState(false);
@@ -7123,7 +7178,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
-      case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} />;
+      case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} deviceTheme={deviceTheme} onDeviceThemeChange={onDeviceThemeChange} />;
       default: return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={openDebtPayments} />;
     }
   };
@@ -7198,7 +7253,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
-  const [bulkSettlementOpen, setBulkSettlementOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -7406,9 +7460,13 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     sortMode !== "oldest",
     hasCustomDateRange,
   ].filter(Boolean).length;
+  const secondaryInvoiceFilterCount = [
+    sortMode !== "oldest",
+    hasCustomDateRange,
+  ].filter(Boolean).length;
 
   return (
-    <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "")}>
+    <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "") + (workspaceView === "invoices" && mobileFiltersOpen ? " mobile-filters-open" : "")}>
       <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
         right={<button
           className="btn sm btn-primary"
@@ -7432,16 +7490,28 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             <span>{hasCustomDateRange ? "M-Pesa received - selected dates" : "M-Pesa received - current day"}</span>
             {!mpesaSummary.loading && !mpesaSummary.error ? <small>{mpesaSummary.transactionCount} verified transaction{mpesaSummary.transactionCount === 1 ? "" : "s"}</small> : null}
           </div>
-          <button
-            className="btn sm btn-ghost"
-            disabled={currentDayOpenInvoices.length === 0}
-            title={currentDayOpenInvoices.length === 0 ? `There are no unpaid current-day invoices for ${branch.name}.` : `Settle ${currentDayOpenInvoices.length} current-day invoice(s)`}
-            onClick={() => setBulkSettlementOpen(true)}
-          ><Check /> {currentDayOpenInvoices.length === 0 ? "Day invoices paid" : "Mark day invoices paid"}</button>
+        </div>
+
+        <div className="invoice-primary-filters" aria-label="Primary invoice filters">
+          <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search invoices" /></div>
+          <label><span>Invoice status</span><select className="select" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter invoices by status">
+            <option value="open">Open ({open.length})</option>
+            <option value="partial">Partially paid ({partialInvoices.length})</option>
+            <option value="overdue">Overdue ({overdue.length})</option>
+            <option value="debt">Debts ({debtInvoices.length})</option>
+            <option value="void_pending">Void pending ({voidPendingCount})</option>
+            <option value="paid">Paid</option>
+            <option value="voided">Voided ({voidedInvoices.length})</option>
+            <option value="all">All invoices ({displayInvoices.length})</option>
+          </select></label>
+          <label><span>Cashier</span><select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} aria-label="Filter invoices by cashier">
+            <option value="all">All cashiers</option>
+            {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select></label>
         </div>
 
         <button type="button" className="invoice-mobile-filter-toggle" aria-expanded={mobileFiltersOpen} onClick={() => setMobileFiltersOpen((value) => !value)}>
-          <span><SlidersHorizontal /> Search & filters{activeInvoiceFilterCount > 0 ? <b>{activeInvoiceFilterCount}</b> : null}</span><ChevronDown />
+          <span><SlidersHorizontal /> Dates & sort{secondaryInvoiceFilterCount > 0 ? <b>{secondaryInvoiceFilterCount}</b> : null}</span><ChevronDown />
         </button>
 
         <div className={"invoice-filter-panel" + (mobileFiltersOpen ? " open" : "")}>
@@ -7453,21 +7523,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
 
         <div className="invoice-filter-grid simple">
-          <div className="settlesearch"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
-          <select className="select" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter invoices by status">
-            <option value="open">Open ({open.length})</option>
-            <option value="partial">Partially paid ({partialInvoices.length})</option>
-            <option value="overdue">Overdue ({overdue.length})</option>
-            <option value="debt">Debts ({debtInvoices.length})</option>
-            <option value="void_pending">Void pending ({voidPendingCount})</option>
-            <option value="paid">Paid</option>
-            <option value="voided">Voided ({voidedInvoices.length})</option>
-            <option value="all">All invoices ({displayInvoices.length})</option>
-          </select>
-          <select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} aria-label="Filter invoices by cashier">
-            <option value="all">All cashiers</option>
-            {cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
           <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
         </div>
         {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
@@ -7557,17 +7612,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>}
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
-      {bulkSettlementOpen && <BulkSettleDayModal
-        invoices={currentDayOpenInvoices}
-        activeCashierNames={cashierNames}
-        initialCashier={cashierFilter}
-        branch={branch}
-        data={data}
-        update={update}
-        cur={cur}
-        user={user}
-        onClose={() => setBulkSettlementOpen(false)}
-      />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
     </div>
@@ -15375,8 +15419,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       {selectedBranchId === "all" ? <div className="mpesa-branch-totals">
         <div className="section-title">Totals by branch</div>
         <div className="tablewrap mpesa-branch-totals-table"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
-          <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
-          <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
+          <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt available-amount">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
+          <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt available-amount">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
         </table></div>
         <div className="mpesa-branch-totals-mobile">
           {[...branchTotals, { branchId: "all", transactionCount: total, amountCents: ledger.summary.amountCents || 0, allocatedCents: ledger.summary.allocatedCents || 0, remainingCents: ledger.summary.remainingCents || 0 }].map((item) => (
@@ -15397,7 +15441,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
             <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
               <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
-                <tr key={transaction.id}>
+                <tr className={`mpesa-ledger-row ${transactionStatus.key}`} key={transaction.id}>
                   <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
                   <td className="innum"><MpesaReference value={transaction.referenceMasked} /></td>
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
@@ -15405,14 +15449,14 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
                   <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
-                  <td className="amt">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
+                  <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                   <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
                 </tr>); })}</tbody>
             </table>
           </div>
           <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
-            <div className="mpesa-ledger-mobile-row" key={transaction.id}>
-              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / {fmt(transaction.remainingCents, transaction.currency || "KES")} available</small></div>
+            <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
+              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
               <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
@@ -15627,7 +15671,7 @@ function KopokopoSandboxTest({ data }) {
   );
 }
 
-function SettingsTab({ data, update, isAdmin }) {
+function SettingsTab({ data, update, isAdmin, deviceTheme, onDeviceThemeChange }) {
   const s = data.settings; const set = (patch) => update((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
   return (
     <div><PageHead title="Settings" sub="Store-wide configuration." />
@@ -15635,7 +15679,7 @@ function SettingsTab({ data, update, isAdmin }) {
         <div><label className="label">Store name</label><input className="input" value={s.store} onChange={(e) => set({ store: e.target.value })} /></div>
         <div><label className="label">Currency</label><select className="select" value={s.currency} onChange={(e) => set({ currency: e.target.value })}><option value="KES">KES — Kenyan Shilling</option><option value="$">USD — US Dollar</option></select></div></div>
         <div className="grid2" style={{ marginTop: 12 }}>
-          <div><label className="label">Theme</label><select className="select" value={s.theme || "light"} onChange={(e) => set({ theme: e.target.value })}><option value="light">Light</option><option value="dark">Dark</option></select></div>
+          <div><label className="label">Theme on this device</label><select className="select" value={deviceTheme || "light"} onChange={(e) => onDeviceThemeChange?.(e.target.value)}><option value="light">Light</option><option value="dark">Dark</option></select></div>
           <div><label className="label">Default reorder level</label><input className="input" inputMode="numeric" value={s.reorderLevel} onChange={(e) => set({ reorderLevel: parseInt(e.target.value, 10) || 0 })} /></div></div>
         <div className="field" style={{ marginTop: 12 }}><label className="label">Business timezone</label><select className="select" value={normalizeBusinessTimeZone(s.timeZone)} onChange={(e) => set({ timeZone: e.target.value })}><option value="Africa/Nairobi">Kenya - East Africa Time</option><option value="Africa/Johannesburg">South Africa Time</option><option value="UTC">UTC</option></select></div>
       </div>
