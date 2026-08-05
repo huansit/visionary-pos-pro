@@ -110,6 +110,13 @@ async function applyReversedTransaction(client, parsed) {
           AND lower(status) = 'active'`,
       [transactionId]
     );
+    await client.query(
+      `UPDATE kopokopo_offsets
+          SET status = 'reversed'
+        WHERE transaction_id = $1
+          AND lower(status) = 'active'`,
+      [transactionId]
+    );
     return;
   }
   await client.query(

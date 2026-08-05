@@ -156,6 +156,134 @@ function publicAllocation(row, invoicePayload = null) {
   };
 }
 
+function publicOffset(row, invoicePayload = null) {
+  const payload = invoicePayload || {};
+  const invoiceId = row.invoice_id ?? row.invoiceId;
+  return {
+    id: row.id,
+    invoiceId,
+    invoiceNumber: payload.number || payload.invoiceNumber || payload.receiptNo || invoiceId,
+    amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
+    reason: row.reason || "cash_to_till",
+    note: row.note || null,
+    status: row.status || "active",
+    offsetByName: row.offset_by_name ?? row.offsetByName ?? null,
+    offsetAt: row.offset_at ?? row.offsetAt ?? null,
+  };
+}
+
+async function createKopokopoCashOffset({ transactionId, invoiceId, branchId, amountCents, note, idempotencyKey, account }) {
+  return tx(async (client) => {
+    const prior = await client.query(
+      `SELECT * FROM kopokopo_offsets WHERE idempotency_key = $1 LIMIT 1`,
+      [idempotencyKey]
+    );
+    if (prior.rows[0]) {
+      const row = prior.rows[0];
+      const same = (row.transaction_id ?? row.transactionId) === transactionId
+        && (row.invoice_id ?? row.invoiceId) === invoiceId
+        && (row.branch_id ?? row.branchId) === branchId
+        && Number(row.amount_cents ?? row.amountCents) === amountCents;
+      if (!same) return { conflict: "idempotency_key_reused" };
+      const transaction = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+      return {
+        duplicate: true,
+        transaction: publicTransaction(transaction.rows[0]),
+        offset: publicOffset(row),
+      };
+    }
+
+    const locked = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
+    const transaction = locked.rows[0];
+    if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
+    if ((transaction.branch_id ?? transaction.branchId) !== branchId) return { conflict: "kopokopo_branch_mismatch" };
+    if (String(transaction.status || "").toLowerCase() !== "received" || transaction.reversed_at || transaction.reversedAt) {
+      return { conflict: "kopokopo_transaction_unavailable" };
+    }
+    if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
+    const transactionRemaining = Number(transaction.amount_cents ?? transaction.amountCents) - Number(transaction.allocated_cents ?? transaction.allocatedCents);
+    if (amountCents > transactionRemaining) {
+      return { conflict: "kopokopo_amount_exceeds_balance", remainingCents: Math.max(0, transactionRemaining) };
+    }
+
+    const invoiceResult = await client.query(
+      `SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' FOR UPDATE`,
+      [invoiceId]
+    );
+    const invoice = invoiceResult.rows[0];
+    if (!invoice) return { conflict: "kopokopo_invoice_not_found", invoiceId };
+    const invoicePayload = invoice.payload || {};
+    const invoiceBranchId = String(invoice.branch_id ?? invoice.branchId ?? invoicePayload.branchId ?? "").trim();
+    if (!invoiceBranchId || invoiceBranchId !== branchId) return { conflict: "kopokopo_invoice_branch_mismatch", invoiceId };
+
+    const relatedEvents = await client.query(
+      `SELECT id, type, payload
+         FROM events
+        WHERE type IN ('payment', 'invoiceVoidDecision')
+          AND (branch_id = $1 OR branch_id IS NULL)`,
+      [branchId]
+    );
+    let cashCapturedCents = 0;
+    let voided = String(invoicePayload.status || "").toLowerCase() === "voided";
+    for (const row of relatedEvents.rows) {
+      const payload = row.payload || {};
+      const relatedInvoiceId = String(payload.invoiceId || payload.orderId || "").trim();
+      if (relatedInvoiceId !== invoiceId) continue;
+      if (row.type === "invoiceVoidDecision") {
+        if (String(payload.decision || "").toLowerCase() === "approved") voided = true;
+        continue;
+      }
+      if (String(payload.status || "captured").toLowerCase() !== "captured") continue;
+      if (String(payload.method || "").trim().toLowerCase() !== "cash") continue;
+      cashCapturedCents += payloadCents(payload, "amountCents", "amount");
+    }
+    if (voided) return { conflict: "kopokopo_invoice_voided", invoiceId };
+    if (cashCapturedCents <= 0) return { conflict: "kopokopo_invoice_has_no_cash_payment", invoiceId, cashRemainingCents: 0 };
+
+    const priorOffsets = await client.query(
+      `SELECT COALESCE(SUM(amount_cents), 0) AS offset_cents
+         FROM kopokopo_offsets
+        WHERE invoice_id = $1
+          AND lower(status) = 'active'`,
+      [invoiceId]
+    );
+    const alreadyOffsetCents = Number(priorOffsets.rows[0]?.offset_cents ?? priorOffsets.rows[0]?.offsetCents ?? 0);
+    const cashRemainingCents = Math.max(0, cashCapturedCents - alreadyOffsetCents);
+    if (amountCents > cashRemainingCents) {
+      return { conflict: "kopokopo_offset_exceeds_cash_payment", invoiceId, cashRemainingCents };
+    }
+
+    const offsetId = `kpo_${crypto.randomUUID()}`;
+    await client.query(
+      `INSERT INTO kopokopo_offsets
+        (id, transaction_id, invoice_id, branch_id, amount_cents, reason, note, offset_by, offset_by_name, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, 'cash_to_till', $6, $7, $8, $9)`,
+      [offsetId, transactionId, invoiceId, branchId, amountCents, note || null, account?.id || null, account?.name || null, idempotencyKey]
+    );
+    await client.query(
+      `UPDATE kopokopo_transactions
+          SET allocated_cents = allocated_cents + $2, updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [transactionId, amountCents]
+    );
+    const updated = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+    return {
+      duplicate: false,
+      transaction: publicTransaction(updated.rows[0]),
+      offset: publicOffset({
+        id: offsetId,
+        invoice_id: invoiceId,
+        amount_cents: amountCents,
+        reason: "cash_to_till",
+        note: note || null,
+        offset_by_name: account?.name || null,
+        status: "active",
+        offset_at: new Date().toISOString(),
+      }, invoicePayload),
+    };
+  });
+}
+
 async function validateAllocationInvoices(client, allocations, branchId, syntheticInvoices = new Map()) {
   const invoiceIds = allocations.map((entry) => entry.invoiceId);
   const placeholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
@@ -710,6 +838,19 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
                ''
              )) LIKE ${placeholder}
         )
+        OR id IN (
+          SELECT search_offset.transaction_id
+            FROM kopokopo_offsets search_offset
+            JOIN events search_invoice
+              ON search_invoice.id = search_offset.invoice_id
+             AND search_invoice.type = 'invoice'
+           WHERE lower(COALESCE(
+               search_invoice.payload->>'number',
+               search_invoice.payload->>'invoiceNumber',
+               search_invoice.payload->>'receiptNo',
+               ''
+             )) LIKE ${placeholder}
+        )
       )`);
     }
     if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
@@ -751,17 +892,30 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     );
     const transactionRows = result.rows;
     const allocationsByTransaction = new Map();
+    const offsetsByTransaction = new Map();
     if (transactionRows.length) {
       const transactionIds = transactionRows.map((row) => row.id);
       const transactionPlaceholders = transactionIds.map((_, index) => `$${index + 1}`).join(", ");
-      const allocationResult = await q(
-        `SELECT id, transaction_id, invoice_id, amount_cents, status, allocated_by_name, allocated_at
-           FROM kopokopo_allocations
-          WHERE transaction_id IN (${transactionPlaceholders})
-          ORDER BY allocated_at, id`,
-        transactionIds
-      );
-      const invoiceIds = [...new Set(allocationResult.rows.map((row) => row.invoice_id ?? row.invoiceId).filter(Boolean))];
+      const [allocationResult, offsetResult] = await Promise.all([
+        q(
+          `SELECT id, transaction_id, invoice_id, amount_cents, status, allocated_by_name, allocated_at
+             FROM kopokopo_allocations
+            WHERE transaction_id IN (${transactionPlaceholders})
+            ORDER BY allocated_at, id`,
+          transactionIds
+        ),
+        q(
+          `SELECT id, transaction_id, invoice_id, amount_cents, reason, note, status, offset_by_name, offset_at
+             FROM kopokopo_offsets
+            WHERE transaction_id IN (${transactionPlaceholders})
+            ORDER BY offset_at, id`,
+          transactionIds
+        ),
+      ]);
+      const invoiceIds = [...new Set([
+        ...allocationResult.rows,
+        ...offsetResult.rows,
+      ].map((row) => row.invoice_id ?? row.invoiceId).filter(Boolean))];
       const invoicePayloadById = new Map();
       if (invoiceIds.length) {
         const invoicePlaceholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
@@ -781,6 +935,13 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
         current.push(publicAllocation(allocation, invoicePayloadById.get(invoiceId)));
         allocationsByTransaction.set(transactionId, current);
       }
+      for (const offsetRow of offsetResult.rows) {
+        const transactionId = offsetRow.transaction_id ?? offsetRow.transactionId;
+        const invoiceId = offsetRow.invoice_id ?? offsetRow.invoiceId;
+        const current = offsetsByTransaction.get(transactionId) || [];
+        current.push(publicOffset(offsetRow, invoicePayloadById.get(invoiceId)));
+        offsetsByTransaction.set(transactionId, current);
+      }
     }
     const totals = summary.rows[0] || {};
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
@@ -792,6 +953,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
       transactions: transactionRows.map((row) => ({
         ...publicTransaction(row),
         allocations: allocationsByTransaction.get(row.id) || [],
+        offsets: offsetsByTransaction.get(row.id) || [],
       })),
       page: {
         total: Number(totals.total_count ?? totals.totalCount ?? 0),
@@ -847,6 +1009,51 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
   } catch (error) {
     console.error("Kopo Kopo lookup failed:", error);
     return res.status(500).json({ error: "kopokopo_lookup_failed" });
+  }
+});
+
+router.post("/offsets", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    if (!kopokopoEnabled()) return res.status(409).json({ error: "kopokopo_disabled" });
+    const transactionId = identifier(req.body?.transactionId);
+    const invoiceId = identifier(req.body?.invoiceId);
+    const branchId = identifier(req.body?.branchId);
+    const idempotencyKey = identifier(req.body?.idempotencyKey);
+    const amountCents = integerCents(req.body?.amountCents);
+    const note = String(req.body?.note || "").trim();
+    if (!transactionId || !invoiceId || !branchId || !idempotencyKey || !amountCents || note.length > 500) {
+      return res.status(400).json({ error: "invalid_kopokopo_offset_request" });
+    }
+    if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const result = await createKopokopoCashOffset({
+      transactionId,
+      invoiceId,
+      branchId,
+      amountCents,
+      note,
+      idempotencyKey,
+      account: req.account,
+    });
+    if (result.conflict) {
+      return res.status(409).json({
+        error: result.conflict,
+        remainingCents: result.remainingCents,
+        invoiceId: result.invoiceId,
+        cashRemainingCents: result.cashRemainingCents,
+      });
+    }
+    if (!result.duplicate) {
+      publishRealtimeEvent("kopokopo", {
+        source: "kopokopo",
+        branchId,
+        accepted: 1,
+        types: ["kopokopoOffset"],
+      });
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("Kopo Kopo cash offset failed:", error);
+    return res.status(500).json({ error: "kopokopo_offset_failed" });
   }
 });
 

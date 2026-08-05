@@ -1235,6 +1235,9 @@ async function listKopokopoTransactions(filters = {}) {
 async function allocateKopokopoTransaction(payload) {
   return await authApi("/api/integrations/kopokopo/allocations", payload, { session: true });
 }
+async function offsetKopokopoTransaction(payload) {
+  return await authApi("/api/integrations/kopokopo/offsets", payload, { session: true });
+}
 async function requestKopokopoIncomingPayment(payload) {
   return await authApi("/api/integrations/kopokopo/incoming-payments", payload, { session: true });
 }
@@ -4059,15 +4062,47 @@ body{overscroll-behavior:none}
 .mpesa-allocation b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpesa-allocation .amount{font-family:var(--font-mono);font-weight:750;text-align:right}
 .mpesa-allocation small{grid-column:1/-1;color:var(--muted-2);font-size:10px}
+.mpesa-cash-offset{margin-top:2px;padding:7px;border-left:3px solid var(--warn);border-radius:4px;background:rgba(245,158,11,.08)}
+.mpesa-cash-offset b{color:var(--warn)}
 .mpesa-no-allocation{color:var(--muted-2);font-size:11px}
 .mpesa-ledger-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase}
 .mpesa-ledger-status.available{background:rgba(52,211,153,.14);color:var(--ok)}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
+.mpesa-ledger-status.offset,.mpesa-ledger-status.offset-partial{background:rgba(245,158,11,.14);color:var(--warn)}
 .mpesa-ledger-row.available .mpesa-state-amount,.mpesa-ledger-row.available .available-amount,.mpesa-ledger-mobile-row.available .money b,.mpesa-ledger-mobile-row.available .available-amount{color:var(--ok)}
 .mpesa-ledger-row.partial .mpesa-state-amount,.mpesa-ledger-row.partial .available-amount,.mpesa-ledger-mobile-row.partial .money b,.mpesa-ledger-mobile-row.partial .available-amount{color:#2E78C7}
 .mpesa-ledger-row.allocated .mpesa-state-amount,.mpesa-ledger-row.allocated .available-amount,.mpesa-ledger-row.reversed .mpesa-state-amount,.mpesa-ledger-row.reversed .available-amount,.mpesa-ledger-mobile-row.allocated .money b,.mpesa-ledger-mobile-row.allocated .available-amount,.mpesa-ledger-mobile-row.reversed .money b,.mpesa-ledger-mobile-row.reversed .available-amount{color:var(--danger)}
+.mpesa-ledger-row.offset .mpesa-state-amount,.mpesa-ledger-row.offset .available-amount,.mpesa-ledger-row.offset-partial .mpesa-state-amount,.mpesa-ledger-row.offset-partial .available-amount,.mpesa-ledger-mobile-row.offset .money b,.mpesa-ledger-mobile-row.offset .available-amount,.mpesa-ledger-mobile-row.offset-partial .money b,.mpesa-ledger-mobile-row.offset-partial .available-amount{color:var(--warn)}
+.mpesa-ledger-status-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mpesa-offset-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:27px;padding:4px 7px;border:1px solid rgba(245,158,11,.35);border-radius:5px;background:rgba(245,158,11,.08);color:var(--warn);font-size:9px;font-weight:800;white-space:nowrap;cursor:pointer}
+.mpesa-offset-btn:hover,.mpesa-offset-btn:focus-visible{background:rgba(245,158,11,.16);border-color:var(--warn)}
+.mpesa-offset-btn svg{width:13px;height:13px}
+.mpesa-offset-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
+.mpesa-offset-scrim{z-index:1200;padding:16px}
+.mpesa-offset-modal{width:min(660px,100%);max-height:min(760px,calc(100dvh - 32px));overflow:auto;padding:20px}
+.mpesa-offset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.mpesa-offset-head h3{margin:3px 0 0;font-size:20px}
+.mpesa-offset-head .iconbtn{flex:none}
+.mpesa-offset-transaction{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:14px;overflow:hidden;border:1px solid var(--border-soft);border-radius:6px;background:var(--border-soft)}
+.mpesa-offset-transaction>span{display:grid;gap:3px;padding:11px 12px;background:var(--surface-2)}
+.mpesa-offset-transaction small,.mpesa-offset-fields label>span,.mpesa-offset-search>span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
+.mpesa-offset-transaction b{font-family:var(--font-mono);font-size:14px}
+.mpesa-offset-help{margin:12px 0;color:var(--muted);font-size:12px;line-height:1.5}
+.mpesa-offset-search{position:relative;display:grid;gap:5px}
+.mpesa-offset-search svg{position:absolute;left:11px;bottom:12px;width:17px;height:17px;color:var(--muted-2);pointer-events:none}
+.mpesa-offset-search .input{padding-left:36px}
+.mpesa-offset-invoices{display:grid;gap:5px;max-height:220px;margin-top:8px;overflow:auto}
+.mpesa-offset-invoices>button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2);color:var(--text);text-align:left;cursor:pointer}
+.mpesa-offset-invoices>button:hover,.mpesa-offset-invoices>button.selected{border-color:var(--accent);background:var(--accent-soft)}
+.mpesa-offset-invoices>button span{display:grid;min-width:0;gap:2px}
+.mpesa-offset-invoices>button b,.mpesa-offset-invoices>button small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-offset-invoices>button small{color:var(--muted);font-size:10px}
+.mpesa-offset-invoices>button strong{flex:none;color:var(--warn);font-family:var(--font-mono);font-size:11px}
+.mpesa-offset-fields{display:grid;grid-template-columns:1fr 1.5fr;gap:10px;margin-top:12px}
+.mpesa-offset-fields label{display:grid;gap:5px}
+.mpesa-offset-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .mpesa-ledger-mobile{display:none}
 .mpesa-transaction-results{min-width:0}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
@@ -4076,7 +4111,8 @@ body{overscroll-behavior:none}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-business-period{grid-template-columns:auto minmax(0,1fr)}.mpesa-business-period label{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
-@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
+@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-fields{grid-template-columns:1fr}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:185px}}
+@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}.mpesa-offset-transaction{grid-template-columns:1fr}.mpesa-offset-actions{flex-direction:column-reverse}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
   .mpesa-ledger-page .page-header{align-items:flex-start;gap:10px}
@@ -7575,7 +7611,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "branches": return <BranchesTab data={data} update={update} />;
@@ -15633,7 +15669,12 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 /* ---- Settings ---- */
 function kopokopoLedgerStatus(transaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  const activeAllocations = (transaction.allocations || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
+  const activeOffsets = (transaction.offsets || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
+  const offsetOnly = activeOffsets.length > 0 && activeAllocations.length === 0;
+  if (Number(transaction.remainingCents || 0) <= 0 && offsetOnly) return { key: "offset", label: "Offset" };
   if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Used" };
+  if (Number(transaction.allocatedCents || 0) > 0 && offsetOnly) return { key: "offset-partial", label: "Partly offset" };
   if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
   return { key: "available", label: "Available" };
 }
@@ -15681,18 +15722,25 @@ function MpesaReference({ value, tone = "" }) {
   return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
-function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
-  if (!Array.isArray(allocations) || allocations.length === 0) {
+function MpesaAllocationList({ allocations, offsets, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
+  const invoiceAllocations = Array.isArray(allocations) ? allocations : [];
+  const cashOffsets = Array.isArray(offsets) ? offsets : [];
+  if (invoiceAllocations.length === 0 && cashOffsets.length === 0) {
     return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
   }
-  const allocatedTotal = allocations.reduce((sum, allocation) => sum + Number(allocation.amountCents || 0), 0);
+  const allocatedTotal = [...invoiceAllocations, ...cashOffsets].reduce((sum, entry) => sum + Number(entry.amountCents || 0), 0);
+  const usageLabel = cashOffsets.length > 0 && invoiceAllocations.length === 0
+    ? (cashOffsets.length === 1 ? "Cash deposit offset" : `${cashOffsets.length} cash offsets`)
+    : cashOffsets.length > 0
+      ? `${invoiceAllocations.length + cashOffsets.length} uses`
+      : `${invoiceAllocations.length} ${invoiceAllocations.length === 1 ? "invoice" : "invoices"}`;
   return <details className="mpesa-allocation-menu">
     <summary>
-      <span>{allocations.length} {allocations.length === 1 ? "invoice" : "invoices"}</span>
+      <span>{usageLabel}</span>
       <b>{fmt(allocatedTotal, currency)}</b>
       <ChevronDown aria-hidden="true" />
     </summary>
-    <div className="mpesa-allocations">{allocations.map((allocation) => {
+    <div className="mpesa-allocations">{invoiceAllocations.map((allocation) => {
       const when = allocation.allocatedAt ? formatBusinessDateTime(allocation.allocatedAt, timeZone) : "Time not supplied";
       const actor = allocation.allocatedByName || "Unknown user";
       return <div className="mpesa-allocation" key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
@@ -15700,11 +15748,98 @@ function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT
         <span className="amount">{fmt(allocation.amountCents || 0, currency)}</span>
         <small>{actor} / {when}{String(allocation.status || "active").toLowerCase() !== "active" ? ` / ${allocation.status}` : ""}</small>
       </div>;
+    })}{cashOffsets.map((entry) => {
+      const when = entry.offsetAt ? formatBusinessDateTime(entry.offsetAt, timeZone) : "Time not supplied";
+      const actor = entry.offsetByName || "Unknown user";
+      return <div className="mpesa-allocation mpesa-cash-offset" key={entry.id || `${entry.invoiceId}:${entry.amountCents}`}>
+        <b title={entry.invoiceId}>Cash deposit offset - {entry.invoiceNumber || entry.invoiceId || "Unknown invoice"}</b>
+        <span className="amount">{fmt(entry.amountCents || 0, currency)}</span>
+        <small>{actor} / {when}{entry.note ? ` / ${entry.note}` : ""}{String(entry.status || "active").toLowerCase() !== "active" ? ` / ${entry.status}` : ""}</small>
+      </div>;
     })}</div>
   </details>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
+function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved }) {
+  const [search, setSearch] = useState("");
+  const [invoiceId, setInvoiceId] = useState("");
+  const [amount, setAmount] = useState(() => (Number(transaction.remainingCents || 0) / 100).toFixed(2));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const attemptRef = useRef({ signature: "", key: "" });
+  const cashByInvoice = useMemo(() => {
+    const totals = {};
+    (data?.payments || []).forEach((payment) => {
+      if (String(payment?.status || "captured").toLowerCase() !== "captured") return;
+      if (String(payment?.method || "").trim().toLowerCase() !== "cash") return;
+      const id = paymentInvoiceId(payment);
+      if (id) totals[id] = (totals[id] || 0) + Number(payment.amountCents || 0);
+    });
+    return totals;
+  }, [data?.payments]);
+  const candidates = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (data?.invoices || [])
+      .filter((invoice) => invoice.branchId === transaction.branchId && Number(cashByInvoice[invoice.id] || 0) > 0)
+      .filter((invoice) => !needle || [invoice.number, invoice.receiptNo, invoice.customerName, invoice.id].some((value) => String(value || "").toLowerCase().includes(needle)))
+      .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0))
+      .slice(0, 12);
+  }, [cashByInvoice, data?.invoices, search, transaction.branchId]);
+  const selectedInvoice = (data?.invoices || []).find((invoice) => invoice.id === invoiceId) || null;
+  const amountCents = centsFromInput(amount);
+  const valid = Boolean(selectedInvoice && amountCents > 0 && amountCents <= Number(transaction.remainingCents || 0));
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError("");
+    const signature = `${transaction.id}:${invoiceId}:${amountCents}`;
+    if (attemptRef.current.signature !== signature) attemptRef.current = { signature, key: uid("cash_offset") };
+    try {
+      await offsetKopokopoTransaction({
+        transactionId: transaction.id,
+        invoiceId,
+        branchId: transaction.branchId,
+        amountCents,
+        note: note.trim(),
+        idempotencyKey: attemptRef.current.key,
+      });
+      onSaved();
+    } catch (requestError) {
+      const messages = {
+        kopokopo_invoice_has_no_cash_payment: "That invoice has no captured cash payment.",
+        kopokopo_offset_exceeds_cash_payment: "The amount exceeds the cash recorded on this invoice that has not already been offset.",
+        kopokopo_amount_exceeds_balance: "The amount exceeds the available balance on this M-Pesa transaction.",
+        kopokopo_invoice_voided: "A voided invoice cannot be used for a cash deposit offset.",
+        kopokopo_invoice_branch_mismatch: "The invoice and M-Pesa transaction must belong to the same branch.",
+        kopokopo_transaction_unavailable: "This M-Pesa transaction is no longer available.",
+      };
+      setError(messages[requestError.message] || "The cash deposit offset could not be recorded. Refresh and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="scrim mpesa-offset-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section className="modal mpesa-offset-modal" role="dialog" aria-modal="true" aria-labelledby="mpesa-offset-title">
+      <div className="mpesa-offset-head"><div><span className="eyebrow">Cash deposited to till</span><h3 id="mpesa-offset-title">Record cash deposit offset</h3></div><button type="button" className="iconbtn" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
+      <div className="mpesa-offset-transaction"><span><small>M-Pesa code</small><b>{transaction.referenceMasked}</b></span><span><small>Available</small><b>{fmt(transaction.remainingCents, transaction.currency || "KES")}</b></span></div>
+      <p className="mpesa-offset-help">Link the till deposit to the invoice already recorded as cash. This makes the M-Pesa amount unavailable without changing the invoice payment method.</p>
+      <label className="mpesa-offset-search"><span>Cash invoice</span><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search receipt or customer" /></label>
+      <div className="mpesa-offset-invoices">{candidates.length ? candidates.map((invoice) => {
+        const selected = invoice.id === invoiceId;
+        return <button type="button" className={selected ? "selected" : ""} key={invoice.id} onClick={() => { setInvoiceId(invoice.id); setError(""); }}>
+          <span><b>{invoice.number || invoice.receiptNo || invoice.id}</b><small>{invoice.customerName || "Walk-in customer"}</small></span><strong>{fmt(cashByInvoice[invoice.id] || 0, "KES")} cash</strong>
+        </button>;
+      }) : <div className="notice">No captured cash invoice matches this search.</div>}</div>
+      <div className="mpesa-offset-fields"><label><span>Offset amount</span><input className="input" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></label><label><span>Note (optional)</span><input className="input" value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} placeholder="Cash deposited to till" /></label></div>
+      {amountCents > Number(transaction.remainingCents || 0) ? <div className="errorbox">Amount exceeds the available M-Pesa balance.</div> : null}
+      {error ? <div className="errorbox">{error}</div> : null}
+      <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Banknote /> {busy ? "Recording..." : `Offset ${fmt(amountCents, "KES")}`}</button></div>
+    </section>
+  </div>;
+}
+
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -15718,6 +15853,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [offsetTarget, setOffsetTarget] = useState(null);
   const [ledger, setLedger] = useState({
     loading: true,
     refreshing: false,
@@ -15821,7 +15957,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     const onRealtime = (event) => {
       const detail = event.detail || {};
       const types = Array.isArray(detail.types) ? detail.types : [];
-      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation")) return;
+      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation" || type === "kopokopoOffset")) return;
       if (detail.branchId && detail.branchId !== selectedBranchId) return;
       refresh();
     };
@@ -15943,9 +16079,9 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                  <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
-                  <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
+                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn" onClick={() => setOffsetTarget(transaction)}><Banknote /> Cash deposit</button> : null}</div></td>
                 </tr>); })}</tbody>
             </table>
           </div>
@@ -15953,7 +16089,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
-              <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              {canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn mobile" onClick={() => setOffsetTarget(transaction)}><Banknote /> Record cash deposit</button> : null}
             </div>); })}</div>
         </> : null}
 
@@ -15962,6 +16099,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <div><button className="btn sm" disabled={!canPrevious} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft /> Previous</button><button className="btn sm" disabled={!canNext} onClick={() => setOffset((value) => value + pageSize)}>Next <ChevronRight /></button></div>
         </div>
       </div>
+      {offsetTarget ? <MpesaCashOffsetModal transaction={offsetTarget} data={data} timeZone={timeZone} onClose={() => setOffsetTarget(null)} onSaved={() => { setOffsetTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
     </div>
   );
 }

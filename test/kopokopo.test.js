@@ -142,12 +142,24 @@ before(async () => {
     { id: "inv-1", number: "RCP-SIP-000001", branchId: "b_sip", totalCents: 30000 },
     { id: "inv-2", number: "RCP-SIP-000002", branchId: "b_sip", totalCents: 20000 },
     { id: "inv-3", number: "RCP-SIP-000003", branchId: "b_sip", totalCents: 100000 },
+    { id: "inv-cash", number: "RCP-SIP-000004", branchId: "b_sip", totalCents: 50000 },
+    { id: "inv-cash-small", number: "RCP-SIP-000005", branchId: "b_sip", totalCents: 10000 },
     { id: "inv-cpt", number: "RCP-CPT-000001", branchId: "b_cpt", totalCents: 100000 },
   ]) {
     await pool.query(
       `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
        VALUES ($1, 'invoice', $2, NULL, 1, $3, $4::jsonb)`,
       [invoice.id, invoice.branchId, Date.now(), JSON.stringify(invoice)]
+    );
+  }
+  for (const payment of [
+    { id: "cash-payment-1", invoiceId: "inv-cash", amountCents: 50000 },
+    { id: "cash-payment-2", invoiceId: "inv-cash-small", amountCents: 10000 },
+  ]) {
+    await pool.query(
+      `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+       VALUES ($1, 'payment', 'b_sip', NULL, 1, $2, $3::jsonb)`,
+      [payment.id, Date.now(), JSON.stringify({ ...payment, branchId: "b_sip", method: "cash", status: "captured" })]
     );
   }
 });
@@ -1662,6 +1674,112 @@ test("rejects allocations for missing, cross-branch, or overpaid invoices", asyn
       assert.equal(response.body.error, "kopokopo_invoice_balance_exceeded");
       assert.equal(response.body.invoiceRemainingCents, 0);
     });
+});
+
+test("offsets cash deposited to till without turning it into another invoice payment", async () => {
+  const transactionId = "txn-cash-deposit-offset";
+  await pool.query(
+    `INSERT INTO kopokopo_transactions
+      (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time)
+     VALUES ($1, $2, $3, $4, 60000, 0, 'KES', 'Received', '3018421', 'b_sip', 'Cash Deposit', $5)`,
+    [transactionId, "evt-cash-deposit-offset", "CASHDEPOSIT0F01", "0F01", "2026-08-02T13:00:00.000Z"]
+  );
+  const firstRequest = {
+    transactionId,
+    invoiceId: "inv-cash",
+    branchId: "b_sip",
+    amountCents: 30000,
+    note: "Cash deposited after invoice payment",
+    idempotencyKey: "cash-offset-request-1",
+  };
+  try {
+    await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", cashierSessionToken)
+      .send(firstRequest)
+      .expect(403)
+      .expect({ error: "insufficient_role" });
+
+    const noCashInvoice = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...firstRequest, invoiceId: "inv-3", amountCents: 10000, idempotencyKey: "cash-offset-no-cash" })
+      .expect(409);
+    assert.equal(noCashInvoice.body.error, "kopokopo_invoice_has_no_cash_payment");
+
+    const first = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send(firstRequest)
+      .expect(200);
+    assert.equal(first.body.duplicate, false);
+    assert.equal(first.body.offset.invoiceNumber, "RCP-SIP-000004");
+    assert.equal(first.body.transaction.remainingCents, 30000);
+    assert.deepEqual(getLatestRealtimeEvent("kopokopo").types, ["kopokopoOffset"]);
+
+    const retried = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send(firstRequest)
+      .expect(200);
+    assert.equal(retried.body.duplicate, true);
+    assert.equal(retried.body.transaction.remainingCents, 30000);
+
+    const tooMuchCash = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...firstRequest, amountCents: 20001, idempotencyKey: "cash-offset-too-much" })
+      .expect(409);
+    assert.equal(tooMuchCash.body.error, "kopokopo_offset_exceeds_cash_payment");
+    assert.equal(tooMuchCash.body.cashRemainingCents, 20000);
+
+    const ledger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=0004")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    const ledgerTransaction = ledger.body.transactions.find((transaction) => transaction.id === transactionId);
+    assert.ok(ledgerTransaction);
+    assert.equal(ledgerTransaction.allocations.length, 0);
+    assert.equal(ledgerTransaction.offsets.length, 1);
+    assert.equal(ledgerTransaction.offsets[0].invoiceNumber, "RCP-SIP-000004");
+    assert.equal(ledgerTransaction.offsets[0].offsetByName, "SIP Supervisor");
+
+    await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...firstRequest, amountCents: 20000, idempotencyKey: "cash-offset-request-2" })
+      .expect(200);
+    const completed = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...firstRequest, invoiceId: "inv-cash-small", amountCents: 10000, idempotencyKey: "cash-offset-request-3" })
+      .expect(200);
+    assert.equal(completed.body.transaction.remainingCents, 0);
+
+    const lookup = await request(app)
+      .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=0F01")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(lookup.body.transactions.length, 0);
+
+    const stored = await pool.query(
+      "SELECT invoice_id, amount_cents, reason, status FROM kopokopo_offsets WHERE transaction_id = $1 ORDER BY offset_at, id",
+      [transactionId]
+    );
+    assert.deepEqual(stored.rows.map((row) => ({
+      invoiceId: row.invoice_id,
+      amountCents: Number(row.amount_cents),
+      reason: row.reason,
+      status: row.status,
+    })), [
+      { invoiceId: "inv-cash", amountCents: 30000, reason: "cash_to_till", status: "active" },
+      { invoiceId: "inv-cash", amountCents: 20000, reason: "cash_to_till", status: "active" },
+      { invoiceId: "inv-cash-small", amountCents: 10000, reason: "cash_to_till", status: "active" },
+    ]);
+  } finally {
+    await pool.query("DELETE FROM kopokopo_offsets WHERE transaction_id = $1", [transactionId]);
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+  }
 });
 
 test("a verified reversal removes the transaction from settlement lookup", async () => {
