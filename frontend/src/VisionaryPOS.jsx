@@ -3979,7 +3979,12 @@ body{overscroll-behavior:none}
 .mpesa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .mpesa-business-period{grid-column:span 2;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(145px,auto);align-items:center;gap:9px;min-height:42px;padding:7px 9px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:11px}
 .mpesa-business-period svg{width:17px;height:17px;color:var(--accent);flex:none}
-.mpesa-business-period>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-business-period-copy{display:grid;min-width:0;gap:4px}
+.mpesa-business-period-copy>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-business-range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px;color:var(--text)}
+.mpesa-business-range>span{display:grid;min-width:0;gap:1px}
+.mpesa-business-range small{color:var(--muted-2);font-size:8px;font-weight:850;text-transform:uppercase}
+.mpesa-business-range b{overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);font-size:9.5px;white-space:nowrap}
 .mpesa-business-period label,.mpesa-business-period select{width:100%;min-width:0}
 .mpesa-allocation-menu{position:relative;min-width:180px;white-space:normal}
 .mpesa-allocation-menu summary{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;align-items:center;gap:8px;min-height:34px;padding:6px 9px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface);cursor:pointer;list-style:none;color:var(--text);font-size:11px;font-weight:750}
@@ -15608,6 +15613,11 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const businessDayStartsKey = JSON.stringify(businessDayStarts);
   const closedBusinessDays = businessDayPeriodOptions(data, businessDayBranchIds, timeZone);
   const selectedClosedBusinessDay = closedBusinessDays.find((option) => option.id === businessDaySelection) || null;
+  const selectedClosedPeriods = selectedClosedBusinessDay ? Object.values(selectedClosedBusinessDay.periods || {}) : [];
+  const selectedBusinessDayRange = selectedClosedPeriods.length ? {
+    startedAt: Math.min(...selectedClosedPeriods.map((period) => Number(period.startedAt || 0)).filter((value) => value > 0)),
+    endedAt: Math.max(...selectedClosedPeriods.map((period) => Number(period.endedAt || 0)).filter((value) => value > 0)),
+  } : null;
   const selectedBranchPeriods = selectedClosedBusinessDay ? Object.fromEntries(
     Object.entries(selectedClosedBusinessDay.periods).map(([branchId, period]) => [branchId, {
       from: new Date(period.startedAt).toISOString(),
@@ -15776,7 +15786,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
         </div>
-        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span><label><span className="sr-only">Choose business day</span><select className="select" value={businessDaySelection} onChange={(event) => { setBusinessDaySelection(event.target.value); setOffset(0); }}><option value="current">Current business day</option>{closedBusinessDays.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time mpesa-time-field"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
+        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><div className="mpesa-business-period-copy"><span>{businessDayDescription}</span>{selectedBusinessDayRange?.startedAt > 0 && selectedBusinessDayRange?.endedAt > 0 ? <div className="mpesa-business-range"><span><small>From</small><b>{formatBusinessDateTime(selectedBusinessDayRange.startedAt, timeZone)}</b></span><span><small>Closed</small><b>{formatBusinessDateTime(selectedBusinessDayRange.endedAt, timeZone)}</b></span></div> : null}</div><label><span className="sr-only">Choose business day</span><select className="select" value={businessDaySelection} onChange={(event) => { setBusinessDaySelection(event.target.value); setOffset(0); }}><option value="current">Current business day</option>{closedBusinessDays.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time mpesa-time-field"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
           <label className="mpesa-time-field mpesa-time-from"><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
           <label className="mpesa-time-field mpesa-time-to"><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
