@@ -4976,9 +4976,9 @@ body{overscroll-behavior:none}
 .catalog-filter-count{display:inline-grid;min-width:18px;height:18px;place-items:center;padding:0 5px;border-radius:999px;background:var(--accent);color:#fff;font-size:9px}
 .catalog-filter-menu[open]>summary svg:last-child{transform:rotate(180deg)}
 .pricing-workspace{width:100%;min-width:0}
-.pricing-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) auto auto;gap:8px;align-items:center;margin-bottom:12px}
+.pricing-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,220px) auto;gap:8px;align-items:center;margin-bottom:12px}
 .pricing-search{width:100%;min-width:0;height:44px}
-.pricing-options-menu{justify-self:end}
+.pricing-branch-select{width:100%;min-width:0;height:44px}
 .catalog-option-note{color:var(--muted);font-size:11px;line-height:1.45}
 .pricing-scan-message{margin:-3px 0 10px}
 .mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
@@ -5001,7 +5001,7 @@ body{overscroll-behavior:none}
   .content:has(.invoice-workspace.invoice-list-active) .adminwrap{grid-template-rows:auto minmax(0,1fr)}
 }
 
-@media (max-width:720px){
+@media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .content:has(.adminwrap.products-active){overflow-y:auto;overflow-x:hidden}
   .adminwrap.products-active,.adminwrap.products-active .admincontent{height:auto;min-height:0;overflow:visible}
   .products-workspace{height:auto;overflow:visible}
@@ -5012,7 +5012,7 @@ body{overscroll-behavior:none}
   .catalog-more-menu{justify-self:end}
   .catalog-more-menu>summary{width:42px!important;padding:0!important;font-size:0!important}
   .catalog-more-menu>summary svg{margin:0}
-  .catalog-more-panel{position:fixed;top:auto;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));left:10px;width:auto;grid-template-columns:repeat(2,minmax(0,1fr));z-index:70;padding:10px}
+  .catalog-more-panel{position:absolute;top:calc(100% + 7px);right:0;bottom:auto;left:auto;width:min(300px,calc(100vw - 24px));grid-template-columns:repeat(2,minmax(0,1fr));z-index:70;padding:9px}
   .catalog-more-panel .btn{min-width:0;justify-content:center;padding-inline:7px;font-size:11px}
   .catalog-toolbar{grid-template-columns:minmax(0,1fr) auto;margin-bottom:9px}
   .catalog-toolbar .possearch{min-width:0!important;width:100%!important;height:42px!important}
@@ -5022,12 +5022,10 @@ body{overscroll-behavior:none}
   .catalog-filter-panel{right:0;left:auto;width:min(270px,calc(100vw - 24px));grid-template-columns:1fr 1fr}
   .products-workspace>.addpanel{max-height:none;overflow:visible}
   .pricing-workspace{height:auto;overflow:visible}
-  .pricing-toolbar{grid-template-columns:minmax(0,1fr) auto;gap:6px;margin-bottom:9px}
-  .pricing-search{grid-column:1/-1;height:42px}
-  .pricing-toolbar>.catalog-scan-actions{grid-column:1}
-  .pricing-options-menu{grid-column:2;grid-row:2;align-self:stretch}
-  .pricing-options-menu>summary{width:42px!important}
-  .pricing-options-menu .catalog-filter-panel{grid-template-columns:1fr}
+  .pricing-toolbar{grid-template-columns:minmax(0,1.35fr) minmax(128px,.65fr);gap:6px;margin-bottom:9px}
+  .pricing-search{grid-column:1;height:42px}
+  .pricing-branch-select{grid-column:2;height:42px}
+  .pricing-toolbar>.catalog-scan-actions{grid-column:1/-1}
   .pricing-scan-message{margin:0 0 8px;font-size:10.5px}
   .pricing-workspace .pricing-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible}
 }
@@ -12650,17 +12648,13 @@ function PricingTab({ data, update, branch }) {
       {priceErr && <div className="alert error" style={{ marginBottom: 12 }}>{priceErr}</div>}
       <div className="pricing-toolbar">
         <div className="possearch pricing-search"><Search /><input placeholder="Search product name, SKU, or barcode" value={q} onChange={(e) => { setQ(e.target.value); setScannedPricingKey(""); setScanMessage(""); }} /></div>
+        <select className="select pricing-branch-select" value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }} aria-label="Pricing branch" title="Pricing branch">
+          {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
         <div className="catalog-scan-actions">
           <button type="button" className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => { const next = !scannerOn; setScannerOn(next); setScanMessage(next ? "USB scanner ready for " + bname + "." : "Scanner off."); }} aria-pressed={scannerOn} title="Use a USB barcode scanner to select a product"><Barcode size={17} /> {scannerOn ? "USB on" : "USB scanner"}</button>
           <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera size={17} /> Camera scan</button>
         </div>
-        <details className="catalog-filter-menu pricing-options-menu">
-          <summary className="btn sm btn-ghost" aria-label="Pricing options" title="Pricing options"><SlidersHorizontal /> Options <ChevronDown /></summary>
-          <div className="catalog-filter-panel">
-            <label><span>Pricing branch</span><select className="select" value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
-            <div className="catalog-option-note">Prices save when you press Enter or leave the field.</div>
-          </div>
-        </details>
       </div>
       {scanMessage ? <div className="sub pricing-scan-message" role="status" style={{ color: scanMessage.startsWith("Selected") || scannerOn ? "var(--ok)" : "var(--muted)" }}>{scanMessage}</div> : null}
       <div className="tablewrap tblscroll pricing-scroll-region"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
