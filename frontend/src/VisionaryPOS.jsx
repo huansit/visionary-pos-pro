@@ -4409,9 +4409,9 @@ body{overscroll-behavior:none}
   .mpesa-branch-totals-table .tbl th,.mpesa-branch-totals-table .tbl td{padding-top:8px;padding-bottom:8px}
 }
 
-/* Wide screens place all invoice controls on one shallow row. */
-@media (min-width:1550px){
-  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(250px,1fr) 140px 140px 155px 128px 128px 120px auto auto;gap:6px;align-items:end;padding:7px 9px}
+/* Only very wide workspaces place all invoice controls on one shallow row. */
+@media (min-width:1800px){
+  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) 150px 160px 190px minmax(165px,1fr) minmax(165px,1fr) 135px 36px 36px;gap:7px;align-items:end;padding:7px 9px}
   .invoice-list-active .invoice-primary-filters,
   .invoice-list-active .invoice-filter-panel,
   .invoice-list-active .invoice-period-filter,
