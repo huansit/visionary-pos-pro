@@ -2484,8 +2484,8 @@ function cameraScannerError(error) {
 let barcodeAudioContext = null;
 async function openAutomaticRearCamera() {
   const baseVideo = {
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
     aspectRatio: { ideal: 16 / 9 },
     frameRate: { ideal: 30 },
   };
@@ -2593,6 +2593,21 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await video.play();
+        const videoTrack = stream.getVideoTracks()[0];
+        let videoCapabilities = {};
+        try { videoCapabilities = videoTrack?.getCapabilities?.() || {}; } catch (_) {}
+        if (videoTrack?.applyConstraints) {
+          let focusMode = "";
+          if (Array.isArray(videoCapabilities.focusMode) && videoCapabilities.focusMode.includes("continuous")) {
+            focusMode = "continuous";
+          } else if (Array.isArray(videoCapabilities.focusMode) && videoCapabilities.focusMode.includes("single-shot")) {
+            focusMode = "single-shot";
+          }
+          if (focusMode) await videoTrack.applyConstraints({ advanced: [{ focusMode }] }).catch(() => {});
+        }
 
         const handleDecode = (result, _scanError, activeControls) => {
           if (disposed) return;
@@ -2634,12 +2649,18 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           setStatus("Barcode captured: " + barcode);
           onCloseRef.current?.();
         };
+        const startZxingScanner = async () => {
+          const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
+            import("@zxing/browser"),
+            import("@zxing/library"),
+          ]);
+          const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
+          const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 50, delayBetweenScanSuccess: 200 });
+          return reader.decodeFromStream(stream, video, handleDecode);
+        };
         const startNativeAndroidScanner = async () => {
           const NativeBarcodeDetector = window.BarcodeDetector;
           if (!/Android/i.test(navigator.userAgent || "") || typeof NativeBarcodeDetector !== "function") return null;
-          const video = videoRef.current;
-          video.srcObject = stream;
-          await video.play();
           const wantedFormats = ["aztec", "codabar", "code_39", "code_93", "code_128", "data_matrix", "ean_8", "ean_13", "itf", "pdf417", "qr_code", "upc_a", "upc_e"];
           let supportedFormats = [];
           try { supportedFormats = await NativeBarcodeDetector.getSupportedFormats?.() || []; } catch (_) {}
@@ -2648,38 +2669,70 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           await detector.detect(video);
           let stopped = false;
           let timerId = 0;
+          let fallbackTimerId = 0;
+          let switchingToFallback = false;
+          let fallbackControls = null;
+          let nativeDetections = 0;
+          let nativeErrors = 0;
           const controls = {
             stop() {
               stopped = true;
               if (timerId) window.clearTimeout(timerId);
+              if (fallbackTimerId) window.clearTimeout(fallbackTimerId);
+              try { fallbackControls?.stop?.(); } catch (_) {}
             },
           };
-          const videoTrack = stream.getVideoTracks()[0];
-          let capabilities = {};
-          try { capabilities = videoTrack?.getCapabilities?.() || {}; } catch (_) {}
-          if (videoTrack?.applyConstraints && Object.prototype.hasOwnProperty.call(capabilities, "torch")) {
+          if (videoTrack?.applyConstraints && Object.prototype.hasOwnProperty.call(videoCapabilities, "torch")) {
             controls.switchTorch = (enabled) => videoTrack.applyConstraints({ advanced: [{ fillLightMode: enabled ? "flash" : "off", torch: enabled }] });
           }
+          const switchToZxing = async () => {
+            if (stopped || disposed || switchingToFallback || fallbackControls || foundRef.current) return;
+            switchingToFallback = true;
+            if (timerId) window.clearTimeout(timerId);
+            if (fallbackTimerId) window.clearTimeout(fallbackTimerId);
+            setStatus("Improving barcode detection...");
+            try {
+              const nextControls = await startZxingScanner();
+              if (stopped || disposed) {
+                nextControls?.stop?.();
+                return;
+              }
+              fallbackControls = nextControls;
+              setStatus("Point the rear camera at the product barcode.");
+            } catch (_) {
+              if (stopped || disposed) return;
+              switchingToFallback = false;
+              nativeErrors = 0;
+              setStatus("Keep the barcode steady inside the frame.");
+              timerId = window.setTimeout(detectFrame, 80);
+            }
+          };
           const detectFrame = async () => {
-            if (stopped || disposed || !videoRef.current) return;
+            if (stopped || disposed || switchingToFallback || fallbackControls || !videoRef.current) return;
             try {
               const barcodes = await detector.detect(videoRef.current);
               const rawValue = String(barcodes?.[0]?.rawValue || "").trim();
-              if (rawValue) handleDecode({ getText: () => rawValue }, null, controls);
-            } catch (_) {}
-            if (!stopped && !disposed) timerId = window.setTimeout(detectFrame, 70);
+              if (rawValue) {
+                nativeDetections += 1;
+                nativeErrors = 0;
+                handleDecode({ getText: () => rawValue }, null, controls);
+              } else {
+                handleDecode(null, null, controls);
+              }
+            } catch (_) {
+              nativeErrors += 1;
+              if (nativeErrors >= 3) {
+                switchToZxing();
+                return;
+              }
+            }
+            if (!stopped && !disposed && !switchingToFallback && !fallbackControls) timerId = window.setTimeout(detectFrame, 60);
           };
           timerId = window.setTimeout(detectFrame, 40);
+          fallbackTimerId = window.setTimeout(() => {
+            if (nativeDetections === 0) switchToZxing();
+          }, 1800);
           return controls;
-        };
-        const startZxingScanner = async () => {
-          const [{ BrowserMultiFormatOneDReader }, { DecodeHintType }] = await Promise.all([
-            import("@zxing/browser"),
-            import("@zxing/library"),
-          ]);
-          const hints = new Map([[DecodeHintType.TRY_HARDER, true]]);
-          const reader = new BrowserMultiFormatOneDReader(hints, { delayBetweenScanAttempts: 75, delayBetweenScanSuccess: 250 });
-          return reader.decodeFromStream(stream, videoRef.current, handleDecode);
         };
         let controls = null;
         try { controls = await startNativeAndroidScanner(); } catch (_) {}
@@ -2689,19 +2742,7 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
           return;
         }
         controlsRef.current = controls;
-        const videoTrack = videoRef.current?.srcObject?.getVideoTracks?.()[0] || stream.getVideoTracks()[0];
-        if (videoTrack?.applyConstraints) {
-          let capabilities = {};
-          try { capabilities = videoTrack.getCapabilities?.() || {}; } catch (_) {}
-          let focusMode = "";
-          if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("continuous")) {
-            focusMode = "continuous";
-          } else if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes("single-shot")) {
-            focusMode = "single-shot";
-          }
-          if (focusMode) await videoTrack.applyConstraints({ advanced: [{ focusMode }] }).catch(() => {});
-          if (!disposed) setTorchAvailable(typeof controls.switchTorch === "function" || Object.prototype.hasOwnProperty.call(capabilities, "torch"));
-        }
+        if (!disposed) setTorchAvailable(typeof controls.switchTorch === "function" || Object.prototype.hasOwnProperty.call(videoCapabilities, "torch"));
         setStatus("Point the rear camera at the product barcode.");
       } catch (cameraError) {
         if (disposed) return;
