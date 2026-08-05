@@ -4209,7 +4209,7 @@ body{overscroll-behavior:none}
 .mpesa-offset-btn svg{width:13px;height:13px}
 .mpesa-offset-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
 .mpesa-offset-scrim{z-index:1200;padding:16px}
-.mpesa-offset-modal{width:min(660px,100%);max-height:min(760px,calc(100dvh - 32px));overflow:auto;padding:20px}
+.mpesa-offset-modal{width:min(760px,100%);max-height:min(760px,calc(100dvh - 32px));overflow:auto;padding:20px}
 .mpesa-offset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .mpesa-offset-head h3{margin:3px 0 0;font-size:20px}
 .mpesa-offset-head .iconbtn{flex:none}
@@ -4222,15 +4222,16 @@ body{overscroll-behavior:none}
 .mpesa-offset-search svg{position:absolute;left:11px;bottom:12px;width:17px;height:17px;color:var(--muted-2);pointer-events:none}
 .mpesa-offset-search .input{padding-left:36px}
 .mpesa-offset-invoices{display:grid;gap:6px;max-height:285px;margin-top:8px;overflow:auto}
-.mpesa-offset-invoice{display:grid;grid-template-columns:minmax(0,1fr) 132px;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2)}
+.mpesa-offset-invoice{display:grid;grid-template-columns:minmax(0,1fr);align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2)}
 .mpesa-offset-invoice:hover,.mpesa-offset-invoice.selected{border-color:var(--accent);background:var(--accent-soft)}
 .mpesa-offset-invoice-choice{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;cursor:pointer}
 .mpesa-offset-invoice-choice input{width:17px;height:17px;margin:0;accent-color:var(--accent)}
 .mpesa-offset-invoice-copy{display:grid;min-width:0;gap:2px}
-.mpesa-offset-invoice-copy b,.mpesa-offset-invoice-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-offset-invoice-copy b{white-space:normal;overflow-wrap:anywhere;line-height:1.25}
+.mpesa-offset-invoice-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpesa-offset-invoice-copy small{color:var(--muted);font-size:10px}
 .mpesa-offset-invoice-choice strong{flex:none;color:var(--warn);font-family:var(--font-mono);font-size:11px}
-.mpesa-offset-invoice-amount{display:grid;gap:3px}
+.mpesa-offset-invoice-amount{display:grid;grid-template-columns:auto 132px;align-items:center;justify-content:end;gap:8px}
 .mpesa-offset-invoice-amount span,.mpesa-offset-note>span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
 .mpesa-offset-invoice-amount .input{height:36px;padding:7px 9px;font-family:var(--font-mono);text-align:right}
 .mpesa-offset-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;margin-top:12px;overflow:hidden;border:1px solid var(--border-soft);border-radius:5px;background:var(--border-soft)}
