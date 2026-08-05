@@ -3948,6 +3948,9 @@ body{overscroll-behavior:none}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
+.mpesa-ledger-row.available .mpesa-state-amount,.mpesa-ledger-row.available .available-amount,.mpesa-ledger-mobile-row.available .money b,.mpesa-ledger-mobile-row.available .available-amount{color:var(--ok)}
+.mpesa-ledger-row.partial .mpesa-state-amount,.mpesa-ledger-row.partial .available-amount,.mpesa-ledger-mobile-row.partial .money b,.mpesa-ledger-mobile-row.partial .available-amount{color:#2E78C7}
+.mpesa-ledger-row.allocated .mpesa-state-amount,.mpesa-ledger-row.allocated .available-amount,.mpesa-ledger-row.reversed .mpesa-state-amount,.mpesa-ledger-row.reversed .available-amount,.mpesa-ledger-mobile-row.allocated .money b,.mpesa-ledger-mobile-row.allocated .available-amount,.mpesa-ledger-mobile-row.reversed .money b,.mpesa-ledger-mobile-row.reversed .available-amount{color:var(--danger)}
 .mpesa-ledger-mobile{display:none}
 .mpesa-transaction-results{min-width:0}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
@@ -4192,6 +4195,8 @@ body{overscroll-behavior:none}
 .invoice-period-label b{font-size:12.5px}
 .invoice-period-label span{color:var(--muted-2);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .invoice-filter-grid{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,210px) 150px 145px;gap:10px;align-items:center;margin-bottom:10px}
+.invoice-filter-grid label{display:grid;gap:4px;min-width:0}
+.invoice-filter-grid label>span{color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
 .invoice-mobile-filter-toggle{display:none}
 .invoice-filter-clear{display:flex;margin:0 0 10px auto}
 .invoice-more-filters{border-bottom:1px solid var(--border-soft);padding:0 0 9px;margin-bottom:10px}
@@ -4285,6 +4290,47 @@ body{overscroll-behavior:none}
 @media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-compact-summary{grid-template-columns:auto auto 1fr}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr 1fr}.invoice-period-label{grid-column:1/-1}.invoice-period-filter .btn{grid-column:1/-1}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
 @media (max-width:760px){.inventory-payment-toolbar{align-items:stretch;flex-direction:column}.inventory-payment-toolbar>span{white-space:normal}.inventory-payment-cashier{width:100%}.inventory-payment-methods{grid-template-columns:1fr 1fr}.inventory-payment-entry{grid-template-columns:1fr}.inventory-payment-entry .btn{width:100%}}
 @media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
+/* Keep the desktop invoice header ordered as one compact two-row control band. */
+@media (min-width:1101px){
+  .invoice-list-active .invoice-compact-summary{grid-template-columns:145px 180px minmax(240px,1fr);gap:0;padding:0;margin-bottom:10px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface);overflow:hidden}
+  .invoice-list-active .invoice-compact-summary>div{min-height:62px;align-content:center;padding:9px 14px;border-right:1px solid var(--border-soft)}
+  .invoice-list-active .invoice-compact-summary>div:last-child{border-right:0}
+  .invoice-list-active .invoice-compact-summary .invoice-mpesa-total{padding-left:14px;border-left:0}
+  .invoice-list-active .invoice-primary-filters{grid-template-columns:minmax(360px,1fr) minmax(190px,230px) minmax(190px,230px);gap:10px;padding:10px 12px 8px;margin:0;border:1px solid var(--border-soft);border-bottom:0;border-radius:8px 8px 0 0;background:var(--surface)}
+  .invoice-list-active .invoice-primary-filters .input,
+  .invoice-list-active .invoice-primary-filters .select{height:40px;min-height:40px}
+  .invoice-list-active .invoice-filter-panel{display:grid;grid-template-columns:minmax(0,1fr) 170px auto;gap:10px;align-items:end;padding:0 12px 10px;margin-bottom:10px;border:1px solid var(--border-soft);border-top:0;border-radius:0 0 8px 8px;background:var(--surface)}
+  .invoice-list-active .invoice-period-filter{grid-column:1;grid-template-columns:minmax(190px,1fr) 165px 165px auto;gap:10px;align-items:end;padding:0;margin:0;border:0}
+  .invoice-list-active .invoice-filter-grid.simple{grid-column:2;display:block;margin:0}
+  .invoice-list-active .invoice-filter-grid.simple .select{width:100%;height:38px}
+  .invoice-list-active .invoice-filter-clear{grid-column:3;width:auto;height:38px;margin:0;white-space:nowrap}
+
+  .mpesa-ledger-page .page-h{margin-bottom:8px}
+  .mpesa-ledger-toolbar{grid-template-columns:minmax(280px,1fr) 170px 170px minmax(170px,210px) minmax(170px,210px);grid-template-rows:auto auto;gap:8px 10px;align-items:end;margin:0 0 9px;padding:10px 12px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface)}
+  .mpesa-ledger-search{grid-column:1/3;grid-row:1}
+  .mpesa-branch-filter{grid-column:3;grid-row:1}
+  .mpesa-status-filter{grid-column:4/6;grid-row:1}
+  .mpesa-time-mode{grid-column:1;grid-row:2}
+  .mpesa-exact-time,.mpesa-business-period{grid-column:2/4;grid-row:2}
+  .mpesa-time-from{grid-column:2;grid-row:2}
+  .mpesa-time-to{grid-column:3;grid-row:2}
+  .mpesa-ledger-actions{grid-column:4/6;grid-row:2;justify-content:flex-end}
+  .mpesa-ledger-actions .btn{min-width:124px}
+  .mpesa-ledger-summary{margin:0 0 8px}
+  .mpesa-ledger-summary>div{padding:9px 14px}
+  .mpesa-branch-totals{margin-bottom:8px}
+  .mpesa-branch-totals>.section-title{display:none}
+  .mpesa-branch-summary-toggle{display:flex;width:100%;height:38px;align-items:center;justify-content:space-between;gap:10px;padding:0 12px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
+  .mpesa-branch-summary-toggle>span{display:flex;align-items:center;gap:9px;min-width:0}
+  .mpesa-branch-summary-toggle b{font-size:12px}
+  .mpesa-branch-summary-toggle small{color:var(--muted-2);font-size:10px}
+  .mpesa-branch-summary-toggle svg{width:15px;height:15px;color:var(--accent);transition:transform .15s}
+  .mpesa-branch-summary-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+  .mpesa-branch-totals-table{display:none;margin-top:6px}
+  .mpesa-branch-totals-table.open{display:block}
+  .mpesa-branch-totals-table .tbl th,.mpesa-branch-totals-table .tbl td{padding-top:8px;padding-bottom:8px}
+}
+
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -4993,6 +5039,26 @@ body{overscroll-behavior:none}
   .mpesa-branch-totals-mobile article.total>div b{font-size:12px;font-weight:900}
   .mpesa-transaction-results{padding-right:2px;scrollbar-gutter:stable}
   .mpesa-ledger-mobile{padding-bottom:2px}
+}
+
+/* Mobile payments use the page as the only scroll owner and keep core filters visible. */
+@media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .content:has(.adminwrap.mpesa-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .adminwrap.mpesa-active{height:auto;min-height:100%;align-items:start;overflow:visible;grid-template-rows:auto auto}
+  .adminwrap.mpesa-active .admincontent{height:auto;min-height:0;overflow:visible}
+  .mpesa-ledger-page{height:auto;min-height:100%;overflow:visible}
+  .mpesa-transaction-results{flex:none;min-height:0;overflow:visible;padding-right:0;scrollbar-gutter:auto}
+  .mpesa-filter-toggle{display:none!important}
+  .mpesa-ledger-toolbar,
+  .mpesa-ledger-toolbar.mobile-open{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important;width:100%;min-width:0;margin:7px 0 10px;padding:9px;border:1px solid var(--border-soft);border-radius:9px;background:var(--surface);overflow:visible}
+  .mpesa-ledger-toolbar>*{grid-column:auto!important;width:100%;min-width:0}
+  .mpesa-ledger-toolbar .mpesa-ledger-search,
+  .mpesa-ledger-toolbar .mpesa-time-mode,
+  .mpesa-ledger-toolbar .mpesa-business-period,
+  .mpesa-ledger-toolbar .mpesa-time-field,
+  .mpesa-ledger-toolbar .mpesa-ledger-actions{grid-column:1/-1!important}
+  .mpesa-ledger-search{display:grid!important}
+  .mpesa-branch-filter{display:grid!important}
 }
 
 /* Keep the iPhone sales controls compact so the invoice list remains primary. */
@@ -7535,7 +7601,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
 
         <div className="invoice-filter-grid simple">
-          <select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
+          <label><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
         </div>
         {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
         </div>
@@ -15221,7 +15287,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [branchTotalsOpen, setBranchTotalsOpen] = useState(false);
   const [ledger, setLedger] = useState({
     loading: true,
@@ -15382,13 +15447,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const branchTotals = selectedBranchId === "all"
     ? (data?.branches || []).map((item) => branchSummaryMap.get(item.id) || { branchId: item.id, transactionCount: 0, amountCents: 0, allocatedCents: 0, remainingCents: 0 })
     : [];
-  const activeFilterCount = [
-    search.trim(),
-    allowAllBranches && selectedBranchId !== "all",
-    status !== "all",
-    timeFilterMode === "business" || Boolean(specificTime || dateFrom || dateTo),
-  ].filter(Boolean).length;
-
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
@@ -15397,24 +15455,20 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
 
-      <button type="button" className="mpesa-filter-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)}>
-        <span><SlidersHorizontal /> Filters{activeFilterCount > 0 ? <b>{activeFilterCount}</b> : null}</span><ChevronDown />
-      </button>
-
-      <div className={"mpesa-ledger-toolbar" + (filtersOpen ? " mobile-open" : "")}>
+      <div className="mpesa-ledger-toolbar">
         <label className="mpesa-ledger-search"><span>Payer, phone, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, phone ending, code or receipt" maxLength={80} /></label>
-        <label><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
+        <label className="mpesa-branch-filter"><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {allowAllBranches ? <option value="all">Both branches</option> : null}
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
-        <label><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
+        <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
         <div className="mpesa-time-mode" aria-label="Transaction time filter mode">
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
         </div>
-        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
-          <label><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
-          <label><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
+        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time mpesa-time-field"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
+          <label className="mpesa-time-field mpesa-time-from"><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
+          <label className="mpesa-time-field mpesa-time-to"><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
         <div className="mpesa-ledger-actions">
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
@@ -15434,7 +15488,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         <button type="button" className="mpesa-branch-summary-toggle" aria-expanded={branchTotalsOpen} onClick={() => setBranchTotalsOpen((value) => !value)}>
           <span><b>Branch totals</b><small>{total} transaction{total === 1 ? "" : "s"}</small></span><ChevronDown />
         </button>
-        <div className="tablewrap mpesa-branch-totals-table"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
+        <div className={"tablewrap mpesa-branch-totals-table" + (branchTotalsOpen ? " open" : "")}><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
           <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt available-amount">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
           <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt available-amount">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
         </table></div>
@@ -15463,7 +15517,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                   <td className="innum">{transaction.tillNumber || "-"}</td>
-                  <td className="amt">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
+                  <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
                   <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                   <td><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></td>
