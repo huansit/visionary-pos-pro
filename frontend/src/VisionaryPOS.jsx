@@ -4290,7 +4290,7 @@ body{overscroll-behavior:none}
 .invoice-section-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:4px 0 13px}
 .invoice-section-head .section-title{font-size:16px;margin:0 0 3px}
 .invoice-section-head .muted{color:var(--muted-2);font-size:12px}
-.invoice-compact-summary{display:grid;grid-template-columns:auto auto minmax(190px,1fr);align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
+.invoice-compact-summary{display:grid;grid-template-columns:auto auto auto minmax(190px,1fr);align-items:center;gap:22px;padding:0 0 12px;margin-bottom:12px;border-bottom:1px solid var(--border-soft)}
 .invoice-compact-summary>div{display:grid;gap:2px}
 .invoice-compact-summary b{font-family:var(--font-mono);font-size:16px}
 .invoice-compact-summary b.danger{color:var(--danger)}
@@ -4421,7 +4421,7 @@ body{overscroll-behavior:none}
 @media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
 /* Keep the desktop invoice header ordered as one compact control band. */
 @media (min-width:1101px){
-  .invoice-list-active .invoice-compact-summary{grid-template-columns:130px 165px minmax(240px,1fr);gap:0;padding:0;margin-bottom:7px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);overflow:hidden}
+  .invoice-list-active .invoice-compact-summary{grid-template-columns:120px 165px 185px minmax(240px,1fr);gap:0;padding:0;margin-bottom:7px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);overflow:hidden}
   .invoice-list-active .invoice-compact-summary>div{min-height:50px;align-content:center;padding:6px 12px;border-right:1px solid var(--border-soft)}
   .invoice-list-active .invoice-compact-summary>div:last-child{border-right:0}
   .invoice-list-active .invoice-compact-summary .invoice-mpesa-total{padding-left:12px;border-left:0}
@@ -5098,6 +5098,7 @@ body{overscroll-behavior:none}
 .adminwrap.mpesa-active{height:auto;min-height:100%;align-items:start;overflow:visible}
 .adminwrap.mpesa-active .admincontent{height:auto;min-height:0;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
+.content.invoice-page-active{overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
 .adminwrap.invoice-active{height:auto;min-height:100%;align-items:start;overflow:visible}
 .adminwrap.invoice-active .admincontent{height:auto;min-height:0;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto;min-height:100%;align-items:start;overflow:visible}
@@ -5407,6 +5408,14 @@ body{overscroll-behavior:none}
 
 /* Mobile sales uses the page as its only scroll owner. */
 @media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .content.invoice-page-active{overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior-y:auto;touch-action:pan-y pinch-zoom;-webkit-overflow-scrolling:touch}
+  .content.invoice-page-active .adminwrap.invoice-active{height:auto!important;min-height:0!important;grid-template-rows:auto auto;align-items:start;overflow:visible!important}
+  .content.invoice-page-active .adminwrap.invoice-active .admincontent,
+  .content.invoice-page-active .invoice-workspace.invoice-list-active,
+  .content.invoice-page-active .invoice-workspace.invoice-list-active>.invoice-workspace-view,
+  .content.invoice-page-active .invoice-results-scroll,
+  .content.invoice-page-active .invoice-mobile-list{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}
+  .content.invoice-page-active .invoice-mobile-list{display:grid!important;touch-action:pan-y pinch-zoom}
   .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior-y:auto;touch-action:pan-y pinch-zoom;-webkit-overflow-scrolling:touch}
   .adminwrap.invoice-active{height:auto!important;min-height:100%;align-items:start;grid-template-rows:auto auto;overflow:visible!important}
   .adminwrap.invoice-active .admincontent{height:auto!important;min-height:0;overflow:visible!important}
@@ -7469,6 +7478,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [debtPaymentsOpen, setDebtPaymentsOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const workspaceRootRef = useRef(null);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
@@ -7483,6 +7493,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const toggleGroup = (id) => setOpenGroups((o) => ({ ...o, [id]: !o[id] }));
   // If the active tab is not permitted (e.g. after a rights change), fall back to the dashboard.
   useEffect(() => { if (!canAccess(tab)) setTab("dashboard"); }, [tab, rights, isAdmin]); // eslint-disable-line
+  useLayoutEffect(() => {
+    const content = workspaceRootRef.current?.closest(".content");
+    if (!content) return undefined;
+    content.classList.toggle("invoice-page-active", tab === "invoices");
+    content.classList.toggle("mpesa-page-active", tab === "mpesa");
+    return () => {
+      content.classList.remove("invoice-page-active", "mpesa-page-active");
+    };
+  }, [tab]);
   const cur = data.settings.currency;
   const todayRevenue = data.payments.filter((p) => isToday(p.ts) && p.status === "captured" && !invoiceIsVoided(data, paymentInvoiceId(p))).reduce((s, p) => s + p.amountCents, 0);
   const txns = operationalInvoices(data).filter((i) => isToday(i.ts)).length;
@@ -7572,7 +7591,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "invoices" ? " invoice-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
+    <div ref={workspaceRootRef} className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "invoices" ? " invoice-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
@@ -7663,6 +7682,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const dateFromTs = dateFrom ? Date.parse(businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start")) : null;
   const dateToTs = dateTo ? Date.parse(businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end")) : null;
   const hasCustomDateRange = Boolean(dateFrom || dateTo);
+  const allInvoicePeriods = !hasCustomDateRange && businessDayFilter === "all";
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const currentBusinessDate = businessDateValue(Date.now(), timeZone);
   const currentBusinessDayStart = businessDateTimeBoundary(`${currentBusinessDate}T00:00`, timeZone, "start");
@@ -7676,6 +7696,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   }, [branch.id]);
   const periodMatchesInvoice = (invoice) => {
     const issuedTs = invoiceIssuedTs(invoice);
+    if (allInvoicePeriods) return true;
     if (hasCustomDateRange) {
       if (dateFromTs !== null && issuedTs < dateFromTs) return false;
       if (dateToTs !== null && issuedTs > dateToTs) return false;
@@ -7693,7 +7714,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   } : null;
   const mpesaFrom = hasCustomDateRange
     ? (dateFrom ? businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start") : "")
-    : (selectedBusinessPeriod ? "" : (branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart));
+    : (allInvoicePeriods ? "" : (selectedBusinessPeriod ? "" : (branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart)));
   const mpesaTo = hasCustomDateRange
     ? (dateTo ? businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end") : "")
     : "";
@@ -7765,6 +7786,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const periodOpen = periodOutstanding.filter((invoice) => !invIsDebt(invoice) && !invIsOverdue(invoice));
   const periodPartialInvoices = periodActiveInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status !== "pending"
     && Number(invoice.paidCents || 0) > 0 && invOutstanding(invoice) > 0);
+  const periodInvoiceTotal = periodActiveInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0);
   const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
   const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
     const voidStatus = invoiceVoidState(data, invoice.id).status;
@@ -7904,9 +7926,10 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-compact-summary">
           <div><b>{filtered.length}</b><span>invoices shown</span></div>
           <div><b className={filteredBalanceDue > 0 ? "danger" : ""}>{fmt(filteredBalanceDue, cur)}</b><span>balance due</span></div>
+          <div><b>{fmt(periodInvoiceTotal, cur)}</b><span>{allInvoicePeriods ? "invoice total - all dates" : hasCustomDateRange ? "invoice total - selected dates" : selectedBusinessPeriod ? `invoice total - ${selectedBusinessDay.businessDate}` : "invoice total - current business day"}</span></div>
           <div className="invoice-mpesa-total">
             <b>{mpesaSummary.loading ? "..." : mpesaSummary.error ? "Unavailable" : fmt(mpesaSummary.amountCents, "KES")}</b>
-            <span>{hasCustomDateRange ? "M-Pesa received - selected dates" : selectedBusinessPeriod ? `M-Pesa received - ${selectedBusinessDay.businessDate}` : "M-Pesa received - current business day"}</span>
+            <span>{allInvoicePeriods ? "M-Pesa received - all dates" : hasCustomDateRange ? "M-Pesa received - selected dates" : selectedBusinessPeriod ? `M-Pesa received - ${selectedBusinessDay.businessDate}` : "M-Pesa received - current business day"}</span>
             {!mpesaSummary.loading && !mpesaSummary.error ? <small>{mpesaSummary.transactionCount} verified transaction{mpesaSummary.transactionCount === 1 ? "" : "s"}</small> : null}
           </div>
         </div>
@@ -7956,7 +7979,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
               setCashierFilter("all");
             }
             setMobileFiltersOpen(false);
-          }}><option value="current">Current business day</option>{hasCustomDateRange ? <option value="custom">Custom dates</option> : null}{businessDayOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label>
+          }}><option value="current">Current business day</option><option value="all">All invoices</option>{hasCustomDateRange ? <option value="custom">Custom dates</option> : null}{businessDayOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label>
           <label className="invoice-date-filter invoice-date-from"><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
           <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); if (e.target.value) { setBusinessDayFilter("current"); if (dateFrom) setMobileFiltersOpen(false); } }} /></label>
           {(hasCustomDateRange || businessDayFilter !== "current") ? <button className="btn sm btn-ghost" type="button" onClick={() => { setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); setMobileFiltersOpen(false); }}><RefreshCw /> Current day</button> : null}
