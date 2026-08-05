@@ -4776,6 +4776,140 @@ body{overscroll-behavior:none}
   .expense-tool,.inventory-payment-workspace{padding:10px;border-radius:10px}
   .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
 }
+/* Workspaces with stable controls and independently scrolling results. */
+.content:has(.adminwrap.products-active){overflow:hidden}
+.adminwrap.products-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
+.adminwrap.products-active .admincontent{height:100%;min-height:0;overflow:hidden}
+.products-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
+.products-workspace>.addpanel{max-height:min(48dvh,420px);overflow:auto;flex:0 1 auto}
+.products-workspace .products-scroll-region{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.supplier-invoice-mobile{display:none}
+.transfer-route-grid{grid-template-columns:minmax(0,1fr) 36px minmax(0,1fr);align-items:end}
+.transfer-route-arrow{height:44px;display:grid;place-items:center;color:var(--accent)}
+.transfer-route-arrow svg{width:18px;height:18px}
+.transfer-product-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.transfer-scan-actions{display:flex;gap:8px}
+
+@media (max-width:900px){
+  .adminwrap.products-active{grid-template-rows:auto minmax(0,1fr)}
+}
+
+@media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .supplier-invoice-modal{width:100%;max-width:none!important;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);padding:12px;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+  .supplier-invoice-modal .modal-head{flex:0 0 auto;align-items:flex-start;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border-soft)}
+  .supplier-invoice-modal .modal-head .title{font-size:15px!important;line-height:1.25;flex-wrap:wrap}
+  .supplier-invoice-modal .supplier-invoice-desktop{display:none!important}
+  .supplier-invoice-mobile{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;gap:7px;margin-top:8px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .supplier-invoice-mobile article{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:10px;border:1px solid var(--border-soft);border-radius:9px;background:var(--surface-2)}
+  .supplier-invoice-product{grid-column:1/3;display:flex;min-width:0;flex-direction:column;gap:2px}
+  .supplier-invoice-product strong{overflow:hidden;text-overflow:ellipsis;font-size:13px;white-space:nowrap}
+  .supplier-invoice-product span{overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:9.5px;white-space:nowrap}
+  .supplier-invoice-line-status{grid-column:3;justify-self:end}
+  .supplier-invoice-line-status .btn{height:32px!important;min-height:32px!important;padding:0 8px!important;font-size:10px!important}
+  .supplier-invoice-mobile article>div:not(.supplier-invoice-product):not(.supplier-invoice-line-status){min-width:0;padding-top:7px;border-top:1px solid var(--border-soft)}
+  .supplier-invoice-mobile article>div>span{display:block;color:var(--muted-2);font-size:8px;font-weight:750;text-transform:uppercase}
+  .supplier-invoice-mobile article>div>b{display:block;margin-top:2px;overflow:hidden;text-overflow:ellipsis;font:750 10.5px var(--font-mono);white-space:nowrap}
+  .supplier-invoice-delete{position:absolute;right:8px;bottom:7px}
+  .supplier-invoice-modal>div:last-child{flex:0 0 auto!important;margin-top:8px!important;padding-top:8px;border-top:1px solid var(--border-soft)}
+  .supplier-invoice-modal>div:last-child .sub{font-size:10.5px}
+  .supplier-invoice-modal>div:last-child>div:last-child{width:100%;display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px!important}
+  .supplier-invoice-modal>div:last-child .btn{width:100%;min-width:0;height:36px!important;min-height:36px!important;padding:0 7px!important;font-size:10px!important}
+
+  .transfer-workspace .page-h{margin-bottom:7px}
+  .transfer-guide{padding:8px 10px;margin-bottom:8px;border-radius:9px}
+  .transfer-guide strong{font-size:11.5px}
+  .transfer-guide .sub{margin-top:2px!important;font-size:9.5px!important;line-height:1.3}
+  .transfer-guide .sub:last-child{display:none}
+  .transfer-builder{padding:10px!important;margin-bottom:8px!important;border-radius:10px!important}
+  .transfer-builder .label{margin-bottom:3px;font-size:8.5px}
+  .transfer-route-grid{grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr)!important;gap:5px!important}
+  .transfer-route-arrow{height:38px}
+  .transfer-route-arrow svg{width:14px;height:14px}
+  .transfer-builder .input,.transfer-builder .select{height:38px!important;min-height:38px!important;padding:0 10px;font-size:13px!important}
+  .transfer-product-field{margin-top:8px}
+  .transfer-product-search{grid-template-columns:minmax(0,1fr);gap:5px}
+  .transfer-scan-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+  .transfer-scan-actions .btn{width:100%;height:34px!important;min-height:34px!important;padding:0 7px!important;font-size:10px!important}
+  .transfer-quantity-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;margin-top:8px}
+  .transfer-add-line{width:100%;height:36px!important;min-height:36px!important;margin-top:7px!important;font-size:11px!important}
+  .transfer-note{margin-top:8px!important}
+  .transfer-builder>.btn-primary{width:100%;height:40px!important;min-height:40px!important;margin-top:4px!important;font-size:11px!important}
+  .transfer-builder .tablewrap{margin-top:8px!important;max-height:180px;overflow:auto}
+  .transfer-builder .tbl{font-size:10.5px}
+  .transfer-builder .tbl th,.transfer-builder .tbl td{padding:7px 6px}
+  .transfer-suggestions,.transfer-approval-queue{margin-bottom:8px;border-radius:9px}
+  .transfer-suggestions-toggle{min-height:48px;padding:8px 10px;gap:8px}
+  .transfer-suggestions-icon{width:29px;height:29px;border-radius:8px}
+  .transfer-suggestions-toggle-copy strong{font-size:11.5px}
+  .transfer-suggestions-toggle-copy>span{font-size:9px}
+  .transfer-suggestions-count{min-width:22px;height:22px;font-size:9px}
+  .transfer-workspace .document-file{margin-top:7px}
+  .transfer-workspace .document-file-head{min-height:44px;padding:7px 2px}
+  .transfer-workspace .document-file-head .nm{font-size:11.5px}
+  .transfer-workspace .document-file-head .mt2{font-size:9px}
+  .transfer-workspace .document-file-body{padding-bottom:6px}
+  .transfer-record-toolbar{gap:5px;padding-bottom:6px}
+  .transfer-date-filter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) auto;gap:5px}
+  .transfer-date-filter label{font-size:8px}
+  .transfer-date-filter .input{height:34px!important;min-height:34px!important;padding:0 6px;font-size:10px!important}
+  .transfer-record-toolbar>.btn{height:34px!important;min-height:34px!important;font-size:10px!important}
+  .transfer-workspace .document-file-body>.list{gap:5px;max-height:360px}
+  .transfer-workspace .document-file-body>.list>.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 7px;padding:8px;border-radius:8px}
+  .transfer-workspace .document-file-body>.list>.row .meta{grid-column:1/-1}
+  .transfer-workspace .document-file-body>.list>.row .nm{font-size:10.5px}
+  .transfer-workspace .document-file-body>.list>.row .mt2{font-size:8.5px;line-height:1.35}
+  .transfer-workspace .document-file-body>.list>.row .pill,.transfer-workspace .document-file-body>.list>.row .ist{min-height:25px;padding:3px 6px;font-size:8.5px}
+}
+
+/* Android can request a desktop-sized CSS viewport while still using touch input. */
+@media (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .mpesa-ledger-page{width:100%;max-width:100%;min-width:0;overflow-x:hidden}
+  .mpesa-filter-toggle{display:flex;width:100%;min-height:40px;align-items:center;justify-content:space-between;padding:0 10px;margin-bottom:7px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+  .mpesa-filter-toggle>span{display:flex;align-items:center;gap:7px;min-width:0}
+  .mpesa-filter-toggle svg{width:16px;height:16px;color:var(--accent);flex:none}
+  .mpesa-filter-toggle b{min-width:19px;height:19px;display:inline-grid;place-items:center;padding:0 5px;border-radius:999px;background:var(--accent);color:#fff;font-size:9px}
+  .mpesa-ledger-toolbar{display:none!important;width:100%;min-width:0;margin:7px 0 10px;padding:9px;border:1px solid var(--border-soft);border-radius:9px;background:var(--surface);overflow:hidden}
+  .mpesa-ledger-toolbar.mobile-open{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:7px!important}
+  .mpesa-ledger-toolbar.mobile-open>*{grid-column:1!important;width:100%;min-width:0}
+  .mpesa-ledger-toolbar label{gap:3px}
+  .mpesa-ledger-toolbar label>span{font-size:9px}
+  .mpesa-ledger-toolbar .input,.mpesa-ledger-toolbar .select,.mpesa-ledger-toolbar select{width:100%;min-width:0;height:40px}
+  .mpesa-time-mode{grid-column:1!important;width:100%;min-width:0;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;padding:3px}
+  .mpesa-time-mode button{min-width:0;min-height:34px;padding:4px 5px;font-size:10px;white-space:normal}
+  .mpesa-business-period{grid-column:1!important;min-width:0;min-height:40px;padding:7px 9px;font-size:10px}
+  .mpesa-ledger-actions{grid-column:1!important;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:100%}
+  .mpesa-ledger-actions .btn{width:100%;min-width:0;height:38px;min-height:38px;padding:0 7px;font-size:11px}
+  .mpesa-ledger-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin:8px 0 10px}
+  .mpesa-ledger-summary>div{padding:8px 9px!important;border-right:1px solid var(--border-soft)!important;border-bottom:1px solid var(--border-soft)!important;border-radius:0!important;background:transparent!important}
+  .mpesa-ledger-summary>div:nth-child(2n){border-right:0!important}
+  .mpesa-ledger-summary>div:nth-last-child(-n+2){border-bottom:0!important}
+  .mpesa-ledger-summary b{font-size:13px}
+  .mpesa-branch-totals-table,.mpesa-ledger-desktop{display:none!important}
+  .mpesa-branch-totals-mobile{display:grid!important;gap:6px}
+  .mpesa-branch-totals-mobile article{padding:9px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface)}
+  .mpesa-branch-totals-mobile article.total{border-color:var(--accent);background:rgba(14,165,181,.07)}
+  .mpesa-branch-totals-mobile header{display:flex;align-items:center;justify-content:space-between;gap:7px;padding-bottom:7px;border-bottom:1px solid var(--border-soft)}
+  .mpesa-branch-totals-mobile header b{font-size:12px}
+  .mpesa-branch-totals-mobile header span{color:var(--muted-2);font-size:9px}
+  .mpesa-branch-totals-mobile article>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding-top:7px}
+  .mpesa-branch-totals-mobile article>div span{display:grid;gap:2px;min-width:0;color:var(--muted-2);font-size:8px;font-weight:750;text-transform:uppercase}
+  .mpesa-branch-totals-mobile article>div b{overflow:hidden;text-overflow:ellipsis;color:var(--text);font-family:var(--font-mono);font-size:10px;white-space:nowrap}
+  .mpesa-branch-totals-mobile .available b{color:var(--ok)}
+  .mpesa-ledger-mobile{display:grid!important;gap:6px;border-top:0}
+  .mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) 82px;gap:6px;padding:9px;border:1px solid var(--border-soft);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface-2);box-shadow:none}
+  .mpesa-ledger-mobile-row>div{min-width:0}
+  .mpesa-ledger-mobile-row .payer{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--text);font-size:12.5px;font-weight:750;white-space:nowrap}
+  .mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:9.5px;line-height:1.35;overflow-wrap:anywhere}
+  .mpesa-ledger-mobile-row .money{min-width:0;text-align:right}
+  .mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:12px}
+  .mpesa-ledger-mobile-row .money span{display:inline-flex;margin-top:4px;font-size:9px}
+  .mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:2px}
+  .mpesa-ledger-mobile-row .mpesa-allocation-menu summary{width:100%;justify-content:space-between}
+  .mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;margin-top:6px;box-shadow:none}
+  .mpesa-ledger-pager{align-items:flex-start;flex-direction:column;gap:7px;padding-top:8px}
+  .mpesa-ledger-pager>div{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .mpesa-ledger-pager .btn{width:100%;min-width:0}
+}
 `;
 
 /* ================================================================== */
@@ -6880,7 +7014,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "")}>
+    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "products" ? " products-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
@@ -9180,7 +9314,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   };
   const onImport = (e) => { const file = e.target.files && e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = () => importText(String(r.result)); r.readAsText(file); e.target.value = ""; };
   return (
-    <div>
+    <div className="products-workspace">
       <PageHead title="Products" sub={visibleBranchProducts.length + " items · " + enabledProductCount + " enabled"}
         right={<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) window.setTimeout(() => (editId ? editBarcodeInputRef.current : barcodeInputRef.current)?.focus(), 0); return next; })}><Barcode /> USB scanner</button>
@@ -9306,7 +9440,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             && (catF === "All" || p.category === catF)
             && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
         return (
-          <div className="ptblwrap">
+          <div className="ptblwrap products-scroll-region">
             <table className="ptbl">
               <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th>Status</th><th></th></tr></thead>
               <tbody>
@@ -10970,10 +11104,20 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
         const head = items[0];
         return (
           <div className="scrim" onClick={() => setPoView(null)}>
-            <div className="modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal supplier-invoice-modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Purchase order</div><div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><ShoppingBag style={{ width: 18, height: 18 }} /> {head.batchNo || "Purchase"} · {dt(head.ts)}</div></div>
                 <button className="iconbtn" onClick={() => setPoView(null)}><X /></button></div>
-              <div className="tablewrap" style={{ marginTop: 8 }}>
+              <div className="supplier-invoice-mobile" aria-label="Purchase line items">
+                {items.map((po) => <article key={po.id}>
+                  <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
+                  <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
+                  <div><span>Quantity</span><b>{po.qty}</b></div>
+                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b></div>
+                  <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
+                  {isAdmin && <button className="smdel supplier-invoice-delete" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })} aria-label={`Delete ${po.productName}`}><Trash2 /></button>}
+                </article>)}
+              </div>
+              <div className="tablewrap supplier-invoice-desktop" style={{ marginTop: 8 }}>
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
@@ -11812,22 +11956,23 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
 
   return (
-    <div>
+    <div className="transfer-workspace">
       <PageHead title="Move Stock Between Shops" sub="Stock Borrowing / Branch Transfer" />
-      <div className="xferinfo">
+      <div className="xferinfo transfer-guide">
         <strong>This is a branch transfer, not a sale.</strong>
         <div className="sub" style={{ marginTop: 4 }}>It reduces stock at the source branch and adds it to the destination branch.</div>
         <div className="sub" style={{ marginTop: 2 }}>Add as many products as you need, then save them as one transfer.</div>
       </div>
-      <div className="addpanel">
-        <div className="grid2">
+      <div className="addpanel transfer-builder">
+        <div className="grid2 transfer-route-grid">
           <div><label className="label">From branch</label>
             <select className="select" value={fromB} onChange={(e) => { setFromB(e.target.value); setProductId(""); setQ(""); setTransferScanMessage(""); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <span className="transfer-route-arrow" aria-hidden="true"><ArrowRight /></span>
           <div><label className="label">To branch</label>
             <select className="select" value={toB} onChange={(e) => { setToB(e.target.value); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
         </div>
-        <div className="field"><label className="label">Product search</label>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="field transfer-product-field"><label className="label">Product search</label>
+          <div className="transfer-product-search">
             <input ref={transferSearchRef} className="input" placeholder="Search name, SKU, or scan barcode" value={product ? product.name + " · " + product.sku : q}
               onChange={(e) => { setProductId(""); setQ(e.target.value); setTransferScanMessage(""); setErr(""); }}
               onKeyDown={(event) => {
@@ -11837,7 +11982,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
                 event.preventDefault();
                 selectScannedTransferProduct(value);
               }} />
-            <button
+            <div className="transfer-scan-actions"><button
               type="button"
               className={"btn sm " + (transferScannerOn ? "primary" : "btn-ghost")}
               onClick={() => {
@@ -11852,6 +11997,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
               <Barcode size={17} /> {transferScannerOn ? "USB on" : "USB scanner"}
             </button>
             <button type="button" className="btn sm btn-ghost" onClick={() => setCameraOpen(true)}><Camera size={17} /> Camera scan</button>
+            </div>
           </div>
           {transferScanMessage ? <div className="sub" role="status" style={{ marginTop: 6, color: transferScannerOn ? "var(--ok)" : "var(--muted)" }}>{transferScanMessage}</div> : null}
           {!productId && matches.length > 0 && (
@@ -11863,14 +12009,14 @@ function BorrowingTab({ data, update, approver, approverRole }) {
             </div>
           )}
         </div>
-        <div className="grid2">
+        <div className="grid2 transfer-quantity-grid">
           <div><label className="label">Available stock</label>
             <input className="input" readOnly value={product ? available : ""} placeholder="—" style={{ fontFamily: "var(--font-mono)", color: product && available <= 0 ? "var(--danger)" : "var(--text)" }} /></div>
           <div><label className="label">Quantity to transfer</label>
             <input ref={transferQtyRef} className="input" inputMode="numeric" value={qty} onChange={(e) => { setQty(e.target.value.replace(/\D/g, "")); setErr(""); }} placeholder="0" /></div>
         </div>
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <button className="btn btn-ghost" style={{ marginTop: 14 }} onClick={addLine}><Plus /> Add to transfer</button>
+        <button className="btn btn-ghost transfer-add-line" style={{ marginTop: 14 }} onClick={addLine}><Plus /> Add to transfer</button>
 
         {lines.length > 0 && (
           <div className="tablewrap" style={{ marginTop: 14 }}>
@@ -11883,7 +12029,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
               </tr>))}</tbody></table>
           </div>
         )}
-        <div className="field" style={{ marginTop: 14 }}><label className="label">Transfer notes</label>
+        <div className="field transfer-note" style={{ marginTop: 14 }}><label className="label">Transfer notes</label>
           <input className="input" placeholder="Reason or reference (applies to whole transfer)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
         <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
       </div>
@@ -14039,10 +14185,19 @@ function DocumentsTab({ data }) {
         const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
         return (
           <div className="scrim" onClick={() => setPoView(null)}>
-            <div className="modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal supplier-invoice-modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Purchase order</div><div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><ShoppingBag style={{ width: 18, height: 18 }} /> {head.batchNo || "Purchase"} · {dt(head.ts)}</div></div>
                 <button className="iconbtn" onClick={() => setPoView(null)}><X /></button></div>
-              <div className="tablewrap" style={{ marginTop: 8 }}>
+              <div className="supplier-invoice-mobile" aria-label="Purchase report line items">
+                {items.map((po) => <article key={po.id}>
+                  <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {bname(po.branchId)}</span></div>
+                  <div className="supplier-invoice-line-status"><span className={"ist " + (po.status === "received" ? "paid" : "")}>{po.status === "received" ? "received" : "ordered"}</span></div>
+                  <div><span>Quantity</span><b>{po.qty}</b></div>
+                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b></div>
+                  <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
+                </article>)}
+              </div>
+              <div className="tablewrap supplier-invoice-desktop" style={{ marginTop: 8 }}>
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th></tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{bname(po.branchId)}</td>
