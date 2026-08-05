@@ -4795,6 +4795,15 @@ body{overscroll-behavior:none}
 }
 
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .transfer-workspace .document-file,
+  .purchase-workspace .document-file,
+  .documents-workspace .document-file{overflow:visible}
+  .transfer-workspace .document-file-body,
+  .purchase-workspace .document-file-body,
+  .documents-workspace .document-file-body{overflow:visible}
+  .transfer-workspace .document-file-body>.list,
+  .purchase-workspace .document-file-body>.list,
+  .documents-workspace .document-file-body>.list{max-height:none!important;overflow:visible!important;padding-right:0}
   .supplier-invoice-modal{width:100%;max-width:none!important;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);padding:12px;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
   .supplier-invoice-modal .modal-head{flex:0 0 auto;align-items:flex-start;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border-soft)}
   .supplier-invoice-modal .modal-head .title{font-size:15px!important;line-height:1.25;flex-wrap:wrap}
@@ -4853,12 +4862,19 @@ body{overscroll-behavior:none}
   .transfer-date-filter label{font-size:8px}
   .transfer-date-filter .input{height:34px!important;min-height:34px!important;padding:0 6px;font-size:10px!important}
   .transfer-record-toolbar>.btn{height:34px!important;min-height:34px!important;font-size:10px!important}
-  .transfer-workspace .document-file-body>.list{gap:5px;max-height:360px}
+  .transfer-workspace .document-file-body>.list{gap:5px}
   .transfer-workspace .document-file-body>.list>.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 7px;padding:8px;border-radius:8px}
   .transfer-workspace .document-file-body>.list>.row .meta{grid-column:1/-1}
   .transfer-workspace .document-file-body>.list>.row .nm{font-size:10.5px}
   .transfer-workspace .document-file-body>.list>.row .mt2{font-size:8.5px;line-height:1.35}
   .transfer-workspace .document-file-body>.list>.row .pill,.transfer-workspace .document-file-body>.list>.row .ist{min-height:25px;padding:3px 6px;font-size:8.5px}
+  .document-report-modal,.inventory-report-modal{width:100%;max-width:none!important;height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);padding:12px;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+  .document-report-modal .modal-head,.inventory-report-modal .modal-head{flex:0 0 auto;padding-bottom:8px;border-bottom:1px solid var(--border-soft)}
+  .document-report-modal .docvkv{flex:1 1 auto;min-height:0;margin-top:8px!important;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .document-report-modal>.expbtns{flex:0 0 auto;margin-top:8px!important;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .document-report-modal>.expbtns .btn{width:100%;min-width:0;height:36px;justify-content:center}
+  .inventory-report-modal .stats{flex:0 0 auto;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .inventory-report-modal>.tablewrap{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important}
 }
 
 /* Android can request a desktop-sized CSS viewport while still using touch input. */
@@ -10947,7 +10963,7 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
   const receiveBatch = (items) => update((d) => receivePurchases(d, items.map((po) => po.id)));
   const [poView, setPoView] = useState(null); // batch key being viewed
   return (
-    <div>
+    <div className="purchase-workspace">
       <PageHead title="Purchases" sub="Receiving a purchase order adds stock to the branch." />
       {!adding ? (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -14138,7 +14154,7 @@ function DocumentsTab({ data }) {
   };
 
   return (
-    <div>
+    <div className="documents-workspace">
       <PageHead title="Documents" sub="Reports & documents — filter, then open any file to print, download, email or WhatsApp it." />
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div><label className="label">Document type</label>
@@ -14166,7 +14182,7 @@ function DocumentsTab({ data }) {
 
       {selected && !selected.poItems && !selected.countReport && (
         <div className="scrim" onClick={() => setSelected(null)}>
-          <div className="modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal document-report-modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{title}</div><div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><FileText style={{ width: 18, height: 18 }} /> {selected.label}</div><div className="sub" style={{ marginTop: 2 }}>{selected.date}</div></div>
               <button className="iconbtn" onClick={() => setSelected(null)}><X /></button></div>
             <div className="docvkv" style={{ marginTop: 8 }}>{selected.detail.map(([k, v], i) => (<div className="kv" key={i}><span className="k">{k}</span><span className="v">{String(v)}</span></div>))}</div>
@@ -14226,7 +14242,7 @@ function DocumentsTab({ data }) {
         const r = repView.countReport;
         return (
           <div className="scrim" onClick={() => setRepView(null)}>
-            <div className="modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal inventory-report-modal" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{r.store || "VISIONPOS"} · {r.branchName}</div><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><Boxes style={{ width: 18, height: 18 }} /> Inventory Discrepancy Report</div><div className="sub" style={{ marginTop: 2 }}>{dt(r.ts)}</div></div>
                 <div className="expbtns"><button className="btn xs btn-primary" onClick={() => exportDiscrepancy(r, cur, "pdf")}><FileText /> Download PDF (read-only)</button>
                   <button className="btn xs btn-ghost" onClick={() => exportDiscrepancy(r, cur, "print")}><Printer /> Print</button>
