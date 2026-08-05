@@ -5014,11 +5014,13 @@ body{overscroll-behavior:none}
   .expense-tool,.inventory-payment-workspace{padding:10px;border-radius:10px}
   .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
 }
-/* Workspaces with stable controls and independently scrolling results. */
-.content:has(.adminwrap.mpesa-active),.content:has(.invoice-workspace.invoice-list-active){overflow:hidden}
+/* M-Pesa keeps a stable transaction viewport; invoices use the page scroll. */
+.content:has(.adminwrap.mpesa-active){overflow:hidden}
 .adminwrap.mpesa-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
 .adminwrap.mpesa-active .admincontent{height:100%;min-height:0;overflow:hidden}
-.content:has(.invoice-workspace.invoice-list-active) .adminwrap,.content:has(.invoice-workspace.invoice-list-active) .admincontent{height:100%;min-height:0;align-items:stretch;overflow:hidden}
+.content:has(.invoice-workspace.invoice-list-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
+.content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto;min-height:100%;align-items:start;overflow:visible}
+.content:has(.invoice-workspace.invoice-list-active) .admincontent{height:auto;min-height:0;overflow:visible}
 .products-workspace{display:block;width:100%;min-width:0;height:auto;min-height:0;overflow:visible}
 .products-workspace>.addpanel{max-height:none;overflow:visible}
 .products-workspace .products-scroll-region{width:100%;min-height:0;max-height:none;overflow-x:auto;overflow-y:visible;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
@@ -5048,11 +5050,11 @@ body{overscroll-behavior:none}
 .pricing-scan-message{margin:-3px 0 10px}
 .mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
 .mpesa-transaction-results{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
-.invoice-workspace.invoice-list-active{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
+.invoice-workspace.invoice-list-active{display:block;width:100%;height:auto;min-height:100%;overflow:visible}
 .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{flex:0 0 auto}
-.invoice-workspace.invoice-list-active>.invoice-workspace-view{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;overflow:hidden}
+.invoice-workspace.invoice-list-active>.invoice-workspace-view{display:block;min-height:0;overflow:visible}
 .invoice-list-active .invoice-compact-summary{flex:0 0 auto}
-.invoice-results-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.invoice-results-scroll{min-height:0;overflow:visible;overscroll-behavior:auto;-webkit-overflow-scrolling:touch}
 .invoice-results-scroll .invoice-table-wrap{max-height:none;min-height:0;overflow:visible}
 .supplier-invoice-mobile{display:none}
 .transfer-route-grid{grid-template-columns:minmax(0,1fr) 36px minmax(0,1fr);align-items:end}
