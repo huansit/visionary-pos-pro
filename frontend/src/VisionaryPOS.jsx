@@ -15589,7 +15589,7 @@ function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT
 function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
-  const [branchScope, setBranchScope] = useState(() => allowAllBranches ? "all" : branch?.id || "");
+  const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [timeFilterMode, setTimeFilterMode] = useState("specific");
@@ -15600,7 +15600,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [branchTotalsOpen, setBranchTotalsOpen] = useState(false);
   const [ledger, setLedger] = useState({
     loading: true,
     refreshing: false,
@@ -15612,17 +15611,16 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     summary: { amountCents: 0, allocatedCents: 0, remainingCents: 0, branches: [] },
   });
 
-  const selectedBranchId = allowAllBranches ? branchScope : branch?.id || "";
-  const selectedBranchName = selectedBranchId === "all"
-    ? "Both branches"
-    : data?.branches?.find((item) => item.id === selectedBranchId)?.name || branch?.name || "select a branch";
+  const availableBranchIds = (data?.branches || []).map((item) => item.id).filter(Boolean);
+  const selectedBranchId = allowAllBranches
+    ? (availableBranchIds.includes(branchScope) ? branchScope : (availableBranchIds.includes(branch?.id) ? branch.id : availableBranchIds[0] || ""))
+    : branch?.id || "";
+  const selectedBranchName = data?.branches?.find((item) => item.id === selectedBranchId)?.name || branch?.name || "select a branch";
   const todayDate = businessDateValue(Date.now(), timeZone);
   const todayFrom = `${todayDate}T00:00`;
   const todayTo = `${todayDate}T23:59`;
   const calendarBusinessDayStart = businessDateTimeBoundary(todayFrom, timeZone, "start");
-  const businessDayBranchIds = selectedBranchId === "all"
-    ? (data?.branches || []).map((item) => item.id).filter(Boolean)
-    : [selectedBranchId].filter(Boolean);
+  const businessDayBranchIds = [selectedBranchId].filter(Boolean);
   const businessDayStarts = Object.fromEntries(businessDayBranchIds.map((branchId) => {
     const lastClose = branchLastEndDay(data, branchId);
     return [branchId, lastClose > 0 ? new Date(lastClose + 1).toISOString() : calendarBusinessDayStart];
@@ -15706,7 +15704,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       const detail = event.detail || {};
       const types = Array.isArray(detail.types) ? detail.types : [];
       if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation")) return;
-      if (selectedBranchId !== "all" && detail.branchId && detail.branchId !== selectedBranchId) return;
+      if (detail.branchId && detail.branchId !== selectedBranchId) return;
       refresh();
     };
     const onVisible = () => {
@@ -15770,20 +15768,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   };
   const businessDayDescription = selectedClosedBusinessDay
     ? `Closed business day ${selectedClosedBusinessDay.businessDate}`
-    : selectedBranchId === "all"
-      ? "Each branch since its own last End of Day close"
-      : `Since ${formatBusinessDateTime(businessDayStarts[selectedBranchId], timeZone)}`;
+    : `Since ${formatBusinessDateTime(businessDayStarts[selectedBranchId], timeZone)}`;
   const total = Number(ledger.page?.total || 0);
   const pageStart = total ? offset + 1 : 0;
   const pageEnd = Math.min(total, offset + pageSize);
   const canPrevious = offset > 0 && !ledger.loading;
   const canNext = offset + pageSize < total && !ledger.loading;
   const transactionTime = (transaction) => transaction.originationTime || transaction.createdAt;
-  const branchName = (branchId) => data?.branches?.find((item) => item.id === branchId)?.name || branchId || "Unassigned";
-  const branchSummaryMap = new Map((ledger.summary.branches || []).map((item) => [item.branchId, item]));
-  const branchTotals = selectedBranchId === "all"
-    ? (data?.branches || []).map((item) => branchSummaryMap.get(item.id) || { branchId: item.id, transactionCount: 0, amountCents: 0, allocatedCents: 0, remainingCents: 0 })
-    : [];
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
@@ -15795,7 +15786,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       <div className="mpesa-ledger-toolbar">
         <label className="mpesa-ledger-search"><span>Payer, phone, code or receipt</span><Search /><input className="input" value={search} onChange={(event) => updateSearch(event.target.value)} placeholder="Name, phone ending, code or receipt" maxLength={80} /></label>
         <label className="mpesa-branch-filter"><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
-          {allowAllBranches ? <option value="all">Both branches</option> : null}
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
         <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
@@ -15813,31 +15803,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         </div>
       </div>
 
-      <div className={"mpesa-ledger-summary" + (selectedBranchId === "all" ? " combined" : "")}>
+      <div className="mpesa-ledger-summary">
         <div><span>Transactions</span><b>{total}</b></div>
         <div><span>Received</span><b>{fmt(ledger.summary.amountCents || 0, "KES")}</b></div>
         <div><span>Allocated</span><b>{fmt(ledger.summary.allocatedCents || 0, "KES")}</b></div>
         <div className="available"><span>Available</span><b>{fmt(ledger.summary.remainingCents || 0, "KES")}</b></div>
       </div>
-
-      {selectedBranchId === "all" ? <div className="mpesa-branch-totals">
-        <div className="section-title">Totals by branch</div>
-        <button type="button" className="mpesa-branch-summary-toggle" aria-expanded={branchTotalsOpen} onClick={() => setBranchTotalsOpen((value) => !value)}>
-          <span><b>Branch totals</b><small>{total} transaction{total === 1 ? "" : "s"}</small></span><ChevronDown />
-        </button>
-        <div className={"tablewrap mpesa-branch-totals-table" + (branchTotalsOpen ? " open" : "")}><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
-          <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt available-amount">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
-          <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt available-amount">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
-        </table></div>
-        <div className={"mpesa-branch-totals-mobile" + (branchTotalsOpen ? " open" : "")}>
-          {[...branchTotals, { branchId: "all", transactionCount: total, amountCents: ledger.summary.amountCents || 0, allocatedCents: ledger.summary.allocatedCents || 0, remainingCents: ledger.summary.remainingCents || 0 }].map((item) => (
-            <article className={item.branchId === "all" ? "total" : ""} key={item.branchId}>
-              <header><b>{item.branchId === "all" ? "Both branches" : branchName(item.branchId)}</b><span>{item.transactionCount} transaction{item.transactionCount === 1 ? "" : "s"}</span></header>
-              <div><span>Received<b>{fmt(item.amountCents, "KES")}</b></span><span>Allocated<b>{fmt(item.allocatedCents, "KES")}</b></span><span className="available">Available<b>{fmt(item.remainingCents, "KES")}</b></span></div>
-            </article>
-          ))}
-        </div>
-      </div> : null}
 
       <div className="mpesa-transaction-results">
         {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
@@ -15846,13 +15817,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
         {ledger.transactions.length > 0 ? <>
           <div className="tablewrap tblscroll lg mpesa-ledger-desktop">
-            <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th>{selectedBranchId === "all" ? <th>Branch</th> : null}<th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
+            <table className="tbl mpesa-ledger-table"><thead><tr><th>Transaction time</th><th>Code</th><th>Payer</th><th>Till</th><th className="amt">Amount</th><th>Allocated invoices</th><th className="amt">Available</th><th>Status</th></tr></thead>
               <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
                 <tr className={`mpesa-ledger-row ${transactionStatus.key}`} key={transaction.id}>
                   <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
                   <td className="innum"><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /></td>
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
-                  {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
                   <td><MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
@@ -15863,7 +15833,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           </div>
           <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
-              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
+              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
               <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
