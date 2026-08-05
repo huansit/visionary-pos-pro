@@ -3910,6 +3910,7 @@ body{overscroll-behavior:none}
 .mpesa-ledger-summary .available b{color:var(--ok)}
 .mpesa-branch-totals{margin:0 0 14px}
 .mpesa-branch-totals .section-title{margin:0 0 8px;font-size:12px;color:var(--muted)}
+.mpesa-branch-summary-toggle{display:none}
 .mpesa-branch-totals tfoot td{font-weight:800;border-top:2px solid var(--border)}
 .mpesa-branch-totals-mobile{display:none}
 .mpesa-ledger-table td{white-space:nowrap}
@@ -3918,7 +3919,7 @@ body{overscroll-behavior:none}
 .mpesa-reference{display:inline-flex;align-items:baseline;font-family:var(--font-mono);white-space:nowrap}
 .mpesa-reference .masked{color:var(--muted-2)}
 .mpesa-reference strong{color:var(--accent);font-weight:900}
-.mpesa-ledger-row.allocated .mpesa-reference strong,.mpesa-ledger-mobile-row.allocated .mpesa-reference strong{color:var(--danger)}
+.mpesa-reference.allocated strong,.mpesa-reference.reversed strong,.mpesa-ledger-row.allocated .mpesa-reference strong,.mpesa-ledger-mobile-row.allocated .mpesa-reference strong{color:var(--danger)!important}
 .mpesa-ledger-table td.available-amount,.mpesa-branch-totals-table td.available-amount{color:var(--ok);font-weight:800}
 .mpesa-ledger-mobile-row .available-amount{color:var(--ok);font-weight:800}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
@@ -4667,7 +4668,7 @@ body{overscroll-behavior:none}
   .mpesa-ledger-toolbar.mobile-open .mpesa-business-period,
   .mpesa-ledger-toolbar.mobile-open .mpesa-ledger-actions{grid-column:auto!important}
 }
-@media (max-width:620px){
+@media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .invoice-workspace-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:12px;border:0;overflow:visible}
   .invoice-workspace-tabs button{height:auto;min-height:58px;justify-content:center;flex-direction:column;gap:3px;padding:7px 4px;border:1px solid var(--border-soft);border-radius:10px;font-size:11px}
   .invoice-workspace-tabs button.active{border-color:var(--accent);background:rgba(14,165,181,.09)}
@@ -4970,10 +4971,21 @@ body{overscroll-behavior:none}
 }
 
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
-  .mpesa-page-actions{grid-template-columns:auto repeat(2,minmax(0,1fr))!important}
-  .mpesa-page-actions .btn:last-child{grid-column:1/-1;width:100%;font-size:11px!important}
-  .mpesa-page-actions .btn:last-child svg{margin-right:4px}
+  .mpesa-page-actions{grid-template-columns:auto repeat(2,minmax(0,1fr)) 40px!important;gap:5px!important}
+  .mpesa-page-actions .btn{min-width:0!important;height:38px!important;min-height:38px!important;padding:0 7px!important;font-size:10.5px!important}
+  .mpesa-page-actions .btn:last-child{grid-column:auto;width:40px!important;padding:0!important;font-size:0!important}
+  .mpesa-page-actions .btn:last-child svg{width:16px;height:16px;margin:0}
   .mpesa-ledger-summary.combined{display:none!important}
+  .mpesa-branch-totals{margin-bottom:6px}
+  .mpesa-branch-totals>.section-title{display:none}
+  .mpesa-branch-summary-toggle{display:flex!important;width:100%;height:38px;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
+  .mpesa-branch-summary-toggle>span{display:flex;align-items:center;gap:7px;min-width:0}
+  .mpesa-branch-summary-toggle b{font-size:11.5px}
+  .mpesa-branch-summary-toggle small{overflow:hidden;text-overflow:ellipsis;color:var(--muted-2);font-size:9px;white-space:nowrap}
+  .mpesa-branch-summary-toggle svg{width:14px;height:14px;color:var(--accent);transition:transform .15s}
+  .mpesa-branch-summary-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
+  .mpesa-branch-totals-mobile{display:none!important}
+  .mpesa-branch-totals-mobile.open{display:grid!important;margin-top:6px}
   .mpesa-branch-totals-mobile article.total{border-width:2px;box-shadow:inset 4px 0 0 var(--accent)}
   .mpesa-branch-totals-mobile article.total header b{color:var(--accent);font-size:14px;font-weight:900}
   .mpesa-branch-totals-mobile article.total header span{color:var(--text);font-family:var(--font-mono);font-size:9.5px;font-weight:800}
@@ -5024,7 +5036,7 @@ body{overscroll-behavior:none}
 }
 
 /* Mobile sales uses one scroll owner at a time: filters or invoices. */
-@media (max-width:620px){
+@media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .invoice-workspace.invoice-list-active>.page-h{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center!important;gap:6px;margin-bottom:5px}
   .invoice-workspace.invoice-list-active>.page-h>div:first-child{min-width:0}
   .invoice-workspace.invoice-list-active>.page-h .title{overflow:hidden;text-overflow:ellipsis;font-size:16px!important;line-height:1.1;white-space:nowrap}
@@ -15166,11 +15178,11 @@ function kopokopoDateBoundary(value, timeZone, edge = "start") {
   return businessDateTimeBoundary(value, timeZone, edge);
 }
 
-function MpesaReference({ value }) {
+function MpesaReference({ value, tone = "" }) {
   const reference = String(value || "-");
   const suffix = reference.length > 4 ? reference.slice(-4) : reference;
   const prefix = reference.slice(0, Math.max(0, reference.length - suffix.length));
-  return <span className="mpesa-reference" aria-label={reference}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong></span>;
+  return <span className={`mpesa-reference ${tone}`.trim()} aria-label={reference}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong></span>;
 }
 
 function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
@@ -15210,6 +15222,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [branchTotalsOpen, setBranchTotalsOpen] = useState(false);
   const [ledger, setLedger] = useState({
     loading: true,
     refreshing: false,
@@ -15418,11 +15431,14 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
 
       {selectedBranchId === "all" ? <div className="mpesa-branch-totals">
         <div className="section-title">Totals by branch</div>
+        <button type="button" className="mpesa-branch-summary-toggle" aria-expanded={branchTotalsOpen} onClick={() => setBranchTotalsOpen((value) => !value)}>
+          <span><b>Branch totals</b><small>{total} transaction{total === 1 ? "" : "s"}</small></span><ChevronDown />
+        </button>
         <div className="tablewrap mpesa-branch-totals-table"><table className="tbl"><thead><tr><th>Branch</th><th>Transactions</th><th className="amt">Received</th><th className="amt">Allocated</th><th className="amt">Available</th></tr></thead>
           <tbody>{branchTotals.map((item) => <tr key={item.branchId}><td><b>{branchName(item.branchId)}</b></td><td>{item.transactionCount}</td><td className="amt">{fmt(item.amountCents, "KES")}</td><td className="amt">{fmt(item.allocatedCents, "KES")}</td><td className="amt available-amount">{fmt(item.remainingCents, "KES")}</td></tr>)}</tbody>
           <tfoot><tr><td>Both branches</td><td>{total}</td><td className="amt">{fmt(ledger.summary.amountCents || 0, "KES")}</td><td className="amt">{fmt(ledger.summary.allocatedCents || 0, "KES")}</td><td className="amt available-amount">{fmt(ledger.summary.remainingCents || 0, "KES")}</td></tr></tfoot>
         </table></div>
-        <div className="mpesa-branch-totals-mobile">
+        <div className={"mpesa-branch-totals-mobile" + (branchTotalsOpen ? " open" : "")}>
           {[...branchTotals, { branchId: "all", transactionCount: total, amountCents: ledger.summary.amountCents || 0, allocatedCents: ledger.summary.allocatedCents || 0, remainingCents: ledger.summary.remainingCents || 0 }].map((item) => (
             <article className={item.branchId === "all" ? "total" : ""} key={item.branchId}>
               <header><b>{item.branchId === "all" ? "Both branches" : branchName(item.branchId)}</b><span>{item.transactionCount} transaction{item.transactionCount === 1 ? "" : "s"}</span></header>
@@ -15443,7 +15459,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
               <tbody>{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
                 <tr className={`mpesa-ledger-row ${transactionStatus.key}`} key={transaction.id}>
                   <td>{transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Not supplied"}</td>
-                  <td className="innum"><MpesaReference value={transaction.referenceMasked} /></td>
+                  <td className="innum"><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /></td>
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   {selectedBranchId === "all" ? <td>{branchName(transaction.branchId)}</td> : null}
                   <td className="innum">{transaction.tillNumber || "-"}</td>
@@ -15456,7 +15472,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           </div>
           <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
-              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
+              <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}{selectedBranchId === "all" ? ` / ${branchName(transaction.branchId)}` : ""}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
               <MpesaAllocationList allocations={transaction.allocations} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
