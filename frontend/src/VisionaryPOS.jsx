@@ -4443,6 +4443,22 @@ body{overscroll-behavior:none}
   .mpesa-ledger-actions .btn{min-width:104px}
 }
 
+/* A selected desktop business day needs room for both complete timestamps. */
+@media (min-width:1101px){
+  .mpesa-ledger-toolbar:has(.mpesa-business-period){grid-template-columns:minmax(220px,1fr) repeat(4,minmax(120px,170px));grid-template-rows:auto auto}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-ledger-search{grid-column:1/3;grid-row:1}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-branch-filter{grid-column:3;grid-row:1}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-status-filter{grid-column:4/6;grid-row:1}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-time-mode{grid-column:1;grid-row:2}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-business-period{grid-column:2/5;grid-row:2;grid-template-columns:auto minmax(0,1fr) minmax(145px,180px)}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-business-range{grid-template-columns:minmax(0,1fr);gap:3px}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-business-range b{overflow:visible;text-overflow:clip;white-space:normal}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-ledger-actions{grid-column:5;grid-row:2;display:flex;min-width:0}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-ledger-actions .btn{min-width:0;flex:1;padding-inline:8px}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-ledger-actions .btn-ghost{flex:0 0 36px;width:36px;padding:0;font-size:0}
+  .mpesa-ledger-toolbar:has(.mpesa-business-period) .mpesa-ledger-actions .btn-ghost svg{width:15px;height:15px;margin:0}
+}
+
 .tblscroll .tbl thead th{position:sticky;top:0;z-index:2}
 .notice{border:1px dashed var(--border);border-radius:14px;padding:22px;text-align:center;color:var(--muted);font-size:13.5px;margin-top:6px}
 
@@ -5019,10 +5035,10 @@ body{overscroll-behavior:none}
   .expense-tool,.inventory-payment-workspace{padding:10px;border-radius:10px}
   .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
 }
-/* M-Pesa keeps a stable transaction viewport; invoices use the page scroll. */
-.content:has(.adminwrap.mpesa-active){overflow:hidden}
-.adminwrap.mpesa-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
-.adminwrap.mpesa-active .admincontent{height:100%;min-height:0;overflow:hidden}
+/* M-Pesa and invoices use the main content area as their single vertical scroll owner. */
+.content:has(.adminwrap.mpesa-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
+.adminwrap.mpesa-active{height:auto;min-height:100%;align-items:start;overflow:visible}
+.adminwrap.mpesa-active .admincontent{height:auto;min-height:0;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
 .content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto;min-height:100%;align-items:start;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active) .admincontent{height:auto;min-height:0;overflow:visible}
@@ -5053,8 +5069,9 @@ body{overscroll-behavior:none}
 .pricing-workspace .pricing-scroll-region .tbl tbody tr:last-child td{border-bottom:0}
 .catalog-option-note{color:var(--muted);font-size:11px;line-height:1.45}
 .pricing-scan-message{margin:-3px 0 10px}
-.mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
-.mpesa-transaction-results{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.mpesa-ledger-page{display:block;width:100%;height:auto;min-height:100%;overflow:visible}
+.mpesa-transaction-results{min-height:0;overflow:visible;overscroll-behavior:auto;-webkit-overflow-scrolling:touch}
+.mpesa-transaction-results .mpesa-ledger-desktop{max-height:none}
 .invoice-workspace.invoice-list-active{display:block;width:100%;height:auto;min-height:100%;overflow:visible}
 .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{flex:0 0 auto}
 .invoice-workspace.invoice-list-active>.invoice-workspace-view{display:block;min-height:0;overflow:visible}
