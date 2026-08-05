@@ -67,7 +67,7 @@ import {
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import { businessDateTimeBoundary, businessDateValue, formatBusinessDate, formatBusinessDateTime, formatBusinessTime } from "./businessTime";
-import type { Account, Branch, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, BusinessDayPeriod, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
@@ -490,6 +490,7 @@ function saveCatalog(
   cashierJointDebts: CashierJointDebt[],
   stockTransferRequests: StockTransferRequest[],
   expenseCategories: ExpenseCategory[],
+  businessDays: BusinessDayPeriod[],
   dayClosedAt: number | null
 ) {
   const savedAt = Date.now();
@@ -500,6 +501,7 @@ function saveCatalog(
     cashierJointDebts,
     stockTransferRequests,
     expenseCategories,
+    businessDays,
     dayClosedAt,
     savedAt
   }));
@@ -513,12 +515,13 @@ function loadCatalog(): {
   cashierJointDebts: CashierJointDebt[];
   stockTransferRequests: StockTransferRequest[];
   expenseCategories: ExpenseCategory[];
+  businessDays: BusinessDayPeriod[];
   dayClosedAt: number | null;
   savedAt?: number;
 } {
   try {
     const raw = localStorage.getItem(LAST_CATALOG_KEY);
-    if (!raw) return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    if (!raw) return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, businessDays: [], dayClosedAt: null };
     const parsed = JSON.parse(raw);
     const products = dedupeCatalogProducts(Array.isArray(parsed.products) ? parsed.products : []);
     const parsedClose = Number(parsed.dayClosedAt || 0);
@@ -529,13 +532,14 @@ function loadCatalog(): {
       cashierJointDebts: Array.isArray(parsed.cashierJointDebts) ? parsed.cashierJointDebts : [],
       stockTransferRequests: Array.isArray(parsed.stockTransferRequests) ? parsed.stockTransferRequests : [],
       expenseCategories: Array.isArray(parsed.expenseCategories) && parsed.expenseCategories.length ? parsed.expenseCategories : DEFAULT_CASHIER_EXPENSE_CATEGORIES,
+      businessDays: Array.isArray(parsed.businessDays) ? parsed.businessDays : [],
       dayClosedAt: Number.isFinite(parsedClose) && parsedClose > 0 ? parsedClose : null,
       savedAt: parsed.savedAt
     };
     localStorage.setItem(LAST_CATALOG_KEY, JSON.stringify(repaired));
     return repaired;
   } catch {
-    return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, dayClosedAt: null };
+    return { branches: [], products: [], invoices: [], cashierJointDebts: [], stockTransferRequests: [], expenseCategories: DEFAULT_CASHIER_EXPENSE_CATEGORIES, businessDays: [], dayClosedAt: null };
   }
 }
 
@@ -706,6 +710,7 @@ export default function App() {
   const [cashierJointDebts, setCashierJointDebts] = useState<CashierJointDebt[]>([]);
   const [stockTransferRequests, setStockTransferRequests] = useState<StockTransferRequest[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
+  const [businessDays, setBusinessDays] = useState<BusinessDayPeriod[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Products");
@@ -948,6 +953,7 @@ export default function App() {
     setCashierJointDebts([]);
     setStockTransferRequests([]);
     setExpenseCategories(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
+    setBusinessDays([]);
     dayClosedAtRef.current = null;
     setDayClosedAt(null);
     resetCashierSessionUi();
@@ -965,6 +971,7 @@ export default function App() {
       setCashierJointDebts(cached.cashierJointDebts);
       setStockTransferRequests(cached.stockTransferRequests);
       setExpenseCategories(cashierManagedExpenseCategories(cached.expenseCategories));
+      setBusinessDays(cached.businessDays);
       retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
       if (stored) {
@@ -1273,6 +1280,7 @@ export default function App() {
           setInvoices(effectiveInvoices);
           setCashierJointDebts(pulled.cashierJointDebts);
           setStockTransferRequests(pulled.stockTransferRequests);
+          setBusinessDays(pulled.businessDays);
           const currentExpenseCategories = cashierManagedExpenseCategories(pulled.expenseCategories);
           setExpenseCategories(currentExpenseCategories);
           setLastSyncAt(saveCatalog(
@@ -1282,6 +1290,7 @@ export default function App() {
             pulled.cashierJointDebts,
             pulled.stockTransferRequests,
             currentExpenseCategories,
+            pulled.businessDays,
             effectiveDayClosedAt
           ));
           setStatus(`Connected. Synced ${pulled.products.length} products, ${effectiveInvoices.length} invoices and ${pulled.stockTransferRequests.length} transfer requests.`);
@@ -1967,6 +1976,7 @@ export default function App() {
             branchId={terminal.branchId}
             branchName={branch?.name || terminal.branchId}
             sessionToken={sessionToken}
+            businessDays={businessDays}
             dayClosedAt={dayClosedAt}
             onTransactionsViewed={markMpesaTransactionsViewed}
             onClose={() => { setMpesaOpen(false); focusSearch(); }}
@@ -1995,6 +2005,7 @@ export default function App() {
         <Drawer side="left" onClose={() => { setInvoiceListMode(null); focusSearch(); }} labelledBy="debts-center-title">
           <DebtsCenterView
             mode={invoiceListMode}
+            allInvoices={myInvoices}
             openInvoices={openInvoices}
             currentOpenInvoices={currentOpenInvoices}
             overdueInvoices={overdueInvoices}
@@ -2003,6 +2014,8 @@ export default function App() {
             openTotalCents={openInvoiceTotal}
             carriedTotalCents={carriedDebtTotal}
             inventoryTotalCents={inventoryDebtTotal}
+            businessDays={businessDays}
+            dayClosedAt={dayClosedAt}
             onSelect={(invoice) => {
               setInvoiceListMode(null);
               setInvoiceDetail({ invoice, side: "left" });
@@ -2088,6 +2101,7 @@ function CashierMpesaView({
   branchId,
   branchName,
   sessionToken,
+  businessDays,
   dayClosedAt,
   onTransactionsViewed,
   onClose
@@ -2095,6 +2109,7 @@ function CashierMpesaView({
   branchId: string;
   branchName: string;
   sessionToken: string;
+  businessDays: BusinessDayPeriod[];
   dayClosedAt: number | null;
   onTransactionsViewed: (transactions: MpesaTransaction[]) => void;
   onClose: () => void;
@@ -2109,7 +2124,8 @@ function CashierMpesaView({
   });
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [timeFilterMode, setTimeFilterMode] = useState<"specific" | "range">("specific");
+  const [timeFilterMode, setTimeFilterMode] = useState<"business" | "specific" | "range">("business");
+  const [businessDaySelection, setBusinessDaySelection] = useState("current");
   const [specificTime, setSpecificTime] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -2127,6 +2143,13 @@ function CashierMpesaView({
     loading: true,
     error: ""
   });
+  const closedBusinessDays = useMemo(
+    () => businessDays
+      .filter((period) => period.branchId === branchId && period.endedAt > period.startedAt)
+      .sort((a, b) => b.endedAt - a.endedAt),
+    [branchId, businessDays]
+  );
+  const selectedBusinessDay = closedBusinessDays.find((period) => period.id === businessDaySelection) || null;
 
   useEffect(() => {
     try {
@@ -2144,12 +2167,18 @@ function CashierMpesaView({
       : mpesaDateBoundary(dateFrom, "start");
     const businessDayFrom = dayClosedAt && Number.isFinite(dayClosedAt)
       ? new Date(dayClosedAt + 1).toISOString()
-      : "";
-    const from = selectedFrom || businessDayFrom;
-    const to = timeFilterMode === "specific"
+      : mpesaDateBoundary(`${businessDateValue()}T00:00`, "start");
+    const from = timeFilterMode === "business" ? "" : selectedFrom;
+    const to = timeFilterMode === "business" ? "" : timeFilterMode === "specific"
       ? mpesaDateBoundary(specificTime, "end")
       : mpesaDateBoundary(dateTo, "end");
-    const invalidTime = timeFilterMode === "specific"
+    const branchStarts = timeFilterMode === "business" && !selectedBusinessDay
+      ? { [branchId]: businessDayFrom }
+      : undefined;
+    const branchPeriods = timeFilterMode === "business" && selectedBusinessDay
+      ? { [branchId]: { from: new Date(selectedBusinessDay.startedAt).toISOString(), to: new Date(selectedBusinessDay.endedAt).toISOString() } }
+      : undefined;
+    const invalidTime = timeFilterMode === "business" ? false : timeFilterMode === "specific"
       ? Boolean(specificTime && (!from || !to))
       : Boolean((dateFrom && !from) || (dateTo && !to));
     if (invalidTime || (from && to && from > to)) {
@@ -2173,6 +2202,8 @@ function CashierMpesaView({
         status: statusFilter,
         from,
         to,
+        branchStarts,
+        branchPeriods,
         sort,
         limit: pageSize,
         offset
@@ -2200,7 +2231,7 @@ function CashierMpesaView({
       window.clearTimeout(requestTimer);
       window.clearTimeout(pollTimer);
     };
-  }, [branchId, dayClosedAt, timeFilterMode, specificTime, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
+  }, [branchId, businessDaySelection, dayClosedAt, selectedBusinessDay?.endedAt, selectedBusinessDay?.startedAt, timeFilterMode, specificTime, dateFrom, dateTo, offset, onTransactionsViewed, refreshNonce, search, sessionToken, sort, statusFilter]);
 
   useEffect(() => {
     const refreshVisible = () => {
@@ -2220,6 +2251,8 @@ function CashierMpesaView({
   const clearFilters = () => {
     setSearch("");
     setStatusFilter("all");
+    setTimeFilterMode("business");
+    setBusinessDaySelection("current");
     setSpecificTime("");
     setDateFrom("");
     setDateTo("");
@@ -2277,10 +2310,13 @@ function CashierMpesaView({
         <summary><Clock size={16} /> Date and time filter</summary>
         <div>
           <div className="cashier-mpesa-time-mode" aria-label="Transaction time filter mode">
+            <button type="button" className={timeFilterMode === "business" ? "active" : ""} onClick={() => { setTimeFilterMode("business"); setOffset(0); }}>Business day</button>
             <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
             <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
           </div>
-          {timeFilterMode === "specific" ? (
+          {timeFilterMode === "business" ? (
+            <label><span>Business day</span><select value={businessDaySelection} onChange={(event) => { setBusinessDaySelection(event.target.value); setOffset(0); }}><option value="current">Current business day</option>{closedBusinessDays.map((period) => <option key={period.id} value={period.id}>{formatBusinessDate(period.businessDate)}</option>)}</select><small>{selectedBusinessDay ? `${formatBusinessDateTime(selectedBusinessDay.startedAt)} to ${formatBusinessDateTime(selectedBusinessDay.endedAt)}` : "Since the latest End of Day close"}</small></label>
+          ) : timeFilterMode === "specific" ? (
             <label><span>Exact minute (East Africa Time)</span><input type="datetime-local" step={60} value={specificTime} onChange={(event) => { setSpecificTime(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
           ) : <>
             <label><span>From (East Africa Time)</span><input type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => { setDateFrom(event.target.value.slice(0, 16)); setOffset(0); }} /></label>
@@ -2291,7 +2327,7 @@ function CashierMpesaView({
 
       <div className="cashier-mpesa-toolbar">
         <button type="button" onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}><Clock size={16} />{sort === "desc" ? "Newest first" : "Oldest first"}</button>
-        {(search || statusFilter !== "all" || specificTime || dateFrom || dateTo) && <button type="button" onClick={clearFilters}><X size={16} />Clear filters</button>}
+        {(search || statusFilter !== "all" || timeFilterMode !== "business" || businessDaySelection !== "current" || specificTime || dateFrom || dateTo) && <button type="button" onClick={clearFilters}><X size={16} />Clear filters</button>}
         <button type="button" disabled={ledger.loading} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw size={16} />Refresh</button>
       </div>
 
@@ -2306,7 +2342,7 @@ function CashierMpesaView({
           const transactionTime = transaction.originationTime || transaction.createdAt;
           const referenceLast4 = transaction.referenceLast4 || transaction.referenceMasked?.slice(-4) || "----";
           return (
-            <article className="cashier-mpesa-row" key={transaction.id}>
+            <article className={`cashier-mpesa-row ${paymentStatus.key}`} key={transaction.id}>
               <div className="cashier-mpesa-row-main">
                 <div>
                   <div className="cashier-mpesa-payer">
@@ -2565,6 +2601,7 @@ function InvoiceDetailSlideOver({
 
 function DebtsCenterView({
   mode,
+  allInvoices,
   openInvoices,
   currentOpenInvoices,
   overdueInvoices,
@@ -2573,9 +2610,12 @@ function DebtsCenterView({
   openTotalCents,
   carriedTotalCents,
   inventoryTotalCents,
+  businessDays,
+  dayClosedAt,
   onSelect
 }: {
   mode: InvoiceListMode;
+  allInvoices: Invoice[];
   openInvoices: Invoice[];
   currentOpenInvoices: Invoice[];
   overdueInvoices: Invoice[];
@@ -2584,11 +2624,38 @@ function DebtsCenterView({
   openTotalCents: number;
   carriedTotalCents: number;
   inventoryTotalCents: number;
+  businessDays: BusinessDayPeriod[];
+  dayClosedAt: number | null;
   onSelect: (invoice: Invoice) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "open" | "overdue" | "invoice" | "inventory">("all");
+  const [filter, setFilter] = useState<"all" | "open" | "overdue" | "paid" | "invoice" | "inventory">("all");
   const [oldestFirst, setOldestFirst] = useState(mode === "debts");
+  const [businessDaySelection, setBusinessDaySelection] = useState("current");
+  const closedBusinessDays = useMemo(
+    () => businessDays.filter((period) => period.endedAt > period.startedAt).sort((a, b) => b.endedAt - a.endedAt),
+    [businessDays]
+  );
+  const selectedBusinessDay = closedBusinessDays.find((period) => period.id === businessDaySelection) || null;
+  const historicalInvoices = useMemo(() => {
+    if (!selectedBusinessDay) return [];
+    return allInvoices.filter((invoice) => {
+      const ts = Number(invoice.ts || 0);
+      return ts > selectedBusinessDay.startedAt
+        && ts <= selectedBusinessDay.endedAt
+        && invoice.voidRequestStatus !== "approved";
+    });
+  }, [allInvoices, selectedBusinessDay]);
+  const scopedInvoices = selectedBusinessDay ? historicalInvoices : openInvoices;
+  const scopedOpenInvoices = selectedBusinessDay
+    ? historicalInvoices.filter((invoice) => outstanding(invoice) > 0 && !isOverdueOpenInvoice(invoice))
+    : currentOpenInvoices;
+  const scopedOverdueInvoices = selectedBusinessDay
+    ? historicalInvoices.filter((invoice) => outstanding(invoice) > 0 && isOverdueOpenInvoice(invoice))
+    : overdueInvoices;
+  const scopedPaidInvoices = selectedBusinessDay
+    ? historicalInvoices.filter((invoice) => outstanding(invoice) <= 0)
+    : [];
   const customerDebts = useMemo(() => {
     const grouped = new Map<string, {
       key: string;
@@ -2615,33 +2682,42 @@ function DebtsCenterView({
     });
     return [...grouped.values()].sort((a, b) => b.amountCents - a.amountCents);
   }, [carriedDebts]);
-  const title = mode === "invoices" ? "Open & overdue invoices" : "Cashier debts";
+  const title = mode === "invoices" ? selectedBusinessDay ? "Business day invoices" : "Open & overdue invoices" : "Cashier debts";
   const subline = mode === "invoices"
-    ? `${currentOpenInvoices.length} open - ${overdueInvoices.length} overdue`
+    ? selectedBusinessDay
+      ? `${formatBusinessDate(selectedBusinessDay.businessDate)} - ${historicalInvoices.length} invoices`
+      : `${currentOpenInvoices.length} open - ${overdueInvoices.length} overdue`
     : `${carriedDebts.length} invoice - ${inventoryDebts.length} missing inventory`;
-  const scopeCount = mode === "invoices" ? openInvoices.length : carriedDebts.length + inventoryDebts.length;
-  const totalForMode = mode === "invoices" ? openTotalCents : carriedTotalCents + inventoryTotalCents;
+  const scopeCount = mode === "invoices" ? scopedInvoices.length : carriedDebts.length + inventoryDebts.length;
+  const totalForMode = mode === "invoices"
+    ? selectedBusinessDay
+      ? historicalInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0)
+      : openTotalCents
+    : carriedTotalCents + inventoryTotalCents;
   const searchTerm = query.trim().toLowerCase();
 
   useEffect(() => {
     setFilter("all");
     setOldestFirst(mode === "debts");
+    setBusinessDaySelection("current");
   }, [mode]);
 
   const visibleInvoices = useMemo(() => {
     const source = mode === "invoices"
       ? filter === "open"
-        ? currentOpenInvoices
+        ? scopedOpenInvoices
         : filter === "overdue"
-          ? overdueInvoices
-          : openInvoices
+          ? scopedOverdueInvoices
+          : filter === "paid"
+            ? scopedPaidInvoices
+            : scopedInvoices
       : filter === "inventory"
         ? []
         : carriedDebts;
     return source
       .filter((invoice) => !searchTerm || invoiceSearchText(invoice).includes(searchTerm))
       .sort((a, b) => oldestFirst ? Number(a.ts || 0) - Number(b.ts || 0) : Number(b.ts || 0) - Number(a.ts || 0));
-  }, [carriedDebts, currentOpenInvoices, filter, mode, oldestFirst, openInvoices, overdueInvoices, searchTerm]);
+  }, [carriedDebts, filter, mode, oldestFirst, scopedInvoices, scopedOpenInvoices, scopedOverdueInvoices, scopedPaidInvoices, searchTerm]);
   const visibleInventoryDebts = useMemo(() => {
     if (mode !== "debts" || filter === "invoice") return [];
     return inventoryDebts
@@ -2654,17 +2730,28 @@ function DebtsCenterView({
   }, [filter, inventoryDebts, mode, oldestFirst, searchTerm]);
 
   return (
-    <section className={`debts-center-panel${mode === "debts" && filter === "invoice" && customerDebts.length > 0 ? " has-customer-summary" : ""}`}>
+    <section className={`debts-center-panel${mode === "invoices" ? " has-business-day-filter" : ""}${mode === "debts" && filter === "invoice" && customerDebts.length > 0 ? " has-customer-summary" : ""}`}>
       <header className="debts-center-header">
         <div>
           <h2 id="debts-center-title">{title}</h2>
           <p>{subline}</p>
         </div>
         <div className="debts-total">
-          <span>{mode === "debts" ? "Total invoice + inventory debt" : "Outstanding"}</span>
+          <span>{mode === "debts" ? "Total invoice + inventory debt" : selectedBusinessDay ? "Business day sales" : "Outstanding"}</span>
           <b>{money(totalForMode)}</b>
         </div>
       </header>
+
+      {mode === "invoices" && (
+        <label className="debts-business-day-filter">
+          <span>Business day</span>
+          <select value={businessDaySelection} onChange={(event) => { setBusinessDaySelection(event.target.value); setFilter("all"); }}>
+            <option value="current">Current business day</option>
+            {closedBusinessDays.map((period) => <option key={period.id} value={period.id}>{formatBusinessDate(period.businessDate)}</option>)}
+          </select>
+          <small>{selectedBusinessDay ? `${formatBusinessDateTime(selectedBusinessDay.startedAt)} to ${formatBusinessDateTime(selectedBusinessDay.endedAt)}` : dayClosedAt ? `Since ${formatBusinessDateTime(dayClosedAt)}` : "No End of Day close recorded yet"}</small>
+        </label>
+      )}
 
       <label className="debts-search">
         <Search size={20} />
@@ -2686,8 +2773,9 @@ function DebtsCenterView({
           <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>All ({scopeCount})</button>
           {mode === "invoices" ? (
             <>
-              <button className={filter === "open" ? "active amber" : "amber"} type="button" onClick={() => setFilter("open")}>Open ({currentOpenInvoices.length})</button>
-              <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({overdueInvoices.length})</button>
+              <button className={filter === "open" ? "active amber" : "amber"} type="button" onClick={() => setFilter("open")}>Open ({scopedOpenInvoices.length})</button>
+              <button className={filter === "overdue" ? "active danger" : "danger"} type="button" onClick={() => setFilter("overdue")}>Overdue ({scopedOverdueInvoices.length})</button>
+              {selectedBusinessDay && <button className={filter === "paid" ? "active paid" : "paid"} type="button" onClick={() => setFilter("paid")}>Paid ({scopedPaidInvoices.length})</button>}
             </>
           ) : (
             <>
@@ -2736,6 +2824,7 @@ function DebtsCenterView({
           const displayLabel = label.trim().length > 1 ? label : invoice.number;
           const ageDays = invoiceAgeDays(invoice);
           const overdue = isOverdueOpenInvoice(invoice);
+          const paid = outstanding(invoice) <= 0;
           const ageText = ageDays <= 0 ? "Today" : `${ageDays}d`;
           return (
             <button className="debts-row" type="button" key={invoice.id} onClick={() => onSelect(invoice)}>
@@ -2744,10 +2833,10 @@ function DebtsCenterView({
                 <b>{displayLabel}</b>
                 <small title={invoice.number}>{middleReceipt(invoice.number)} &middot; {ageText}</small>
               </span>
-              <span className={"debts-age " + (mode === "debts" || overdue ? "overdue" : "recent")}>
-                {mode === "debts" ? "Invoice debt" : overdue ? "Overdue" : "Open"}
+              <span className={"debts-age " + (paid ? "paid" : mode === "debts" || overdue ? "overdue" : "recent")}>
+                {mode === "debts" ? "Invoice debt" : paid ? "Paid" : overdue ? "Overdue" : "Open"}
               </span>
-              <strong>{money(outstanding(invoice))}</strong>
+              <strong>{money(paid ? invoice.totalCents : outstanding(invoice))}</strong>
               <ChevronRight size={18} />
             </button>
           );
@@ -3113,11 +3202,23 @@ function StockTransferRequestView({
           const destination = branches.find((item) => item.id === request.toBranchId)?.name || request.toBranchId;
           const units = request.items.reduce((sum, item) => sum + item.qty, 0);
           return (
-            <div className="transfer-request-history-row" key={request.id}>
-              <span><b>{destination}</b><small>{request.items.length} products - {units} units - {new Date(request.requestedAt).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</small></span>
-              <strong className={request.status}>{request.status}</strong>
-              {request.transferNumber && <small>{request.transferNumber}</small>}
-            </div>
+            <details className="transfer-request-history-entry" key={request.id}>
+              <summary className="transfer-request-history-row">
+                <span><b>{destination}</b><small>{request.items.length} products - {units} units - {new Date(request.requestedAt).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</small></span>
+                <strong className={request.status}>{request.status}</strong>
+                {request.transferNumber && <small>{request.transferNumber}</small>}
+              </summary>
+              <div className="transfer-request-history-products">
+                {request.items.map((item) => (
+                  <div key={`${request.id}:${item.productId}`}>
+                    <span><b>{item.productName}</b>{item.sku && <small>{item.sku}</small>}</span>
+                    <strong>{item.qty} unit{item.qty === 1 ? "" : "s"}</strong>
+                  </div>
+                ))}
+                {request.note && <p><b>Note:</b> {request.note}</p>}
+                {request.decisionReason && <p><b>Decision:</b> {request.decisionReason}</p>}
+              </div>
+            </details>
           );
         })}
       </section>

@@ -120,6 +120,28 @@ function ledgerBranchStarts(value) {
   }
 }
 
+function ledgerBranchPeriods(value) {
+  if (!value) return [];
+  if (String(value).length > 8192) return null;
+  try {
+    const parsed = JSON.parse(String(value));
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") return null;
+    const entries = Object.entries(parsed);
+    if (entries.length < 1 || entries.length > 25) return null;
+    const normalized = entries.map(([branchId, period]) => {
+      const normalizedBranchId = identifier(branchId);
+      if (!period || Array.isArray(period) || typeof period !== "object") return null;
+      const from = ledgerTimestamp(period.from);
+      const to = ledgerTimestamp(period.to);
+      if (!normalizedBranchId || !from || !to || from >= to) return null;
+      return [normalizedBranchId, { from, to }];
+    });
+    return normalized.every(Boolean) ? normalized : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function publicAllocation(row, invoicePayload = null) {
   const payload = invoicePayload || {};
   const invoiceId = row.invoice_id ?? row.invoiceId;
@@ -621,15 +643,25 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const from = ledgerTimestamp(req.query.from);
     const to = ledgerTimestamp(req.query.to);
     const branchStarts = ledgerBranchStarts(req.query.branchStarts);
+    const branchPeriods = ledgerBranchPeriods(req.query.branchPeriods);
     const validStatuses = new Set(["all", "received", "available", "partial", "allocated", "reversed"]);
 
     if (!requestedBranchId || search.length > 80 || !validStatuses.has(status)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_filters" });
     }
-    if ((req.query.from && !from) || (req.query.to && !to) || branchStarts === null || (from && to && from > to) || (branchStarts.length && (from || to))) {
+    if ((req.query.from && !from)
+      || (req.query.to && !to)
+      || branchStarts === null
+      || branchPeriods === null
+      || (from && to && from > to)
+      || (branchStarts.length && (from || to || branchPeriods.length))
+      || (branchPeriods.length && (from || to))) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_dates" });
     }
     if (branchStarts.length && !allBranches && branchStarts.some(([branchId]) => branchId !== requestedBranchId)) {
+      return res.status(400).json({ error: "invalid_kopokopo_transaction_dates" });
+    }
+    if (branchPeriods.length && !allBranches && branchPeriods.some(([branchId]) => branchId !== requestedBranchId)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_dates" });
     }
     if (cashierViewer && (!accountBranchId || allBranches || requestedBranchId !== accountBranchId)) {
@@ -647,10 +679,16 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     };
     if (!allBranches) clauses.push(`branch_id = ${addValue(requestedBranchId)}`);
     if (branchStarts.length) {
-      const branchPeriods = branchStarts.map(([branchId, timestamp]) => (
+      const branchStartClauses = branchStarts.map(([branchId, timestamp]) => (
         `(branch_id = ${addValue(branchId)} AND COALESCE(origination_time, created_at) >= ${addValue(timestamp)})`
       ));
-      clauses.push(`(${branchPeriods.join(" OR ")})`);
+      clauses.push(`(${branchStartClauses.join(" OR ")})`);
+    }
+    if (branchPeriods.length) {
+      const branchPeriodClauses = branchPeriods.map(([branchId, period]) => (
+        `(branch_id = ${addValue(branchId)} AND COALESCE(origination_time, created_at) > ${addValue(period.from)} AND COALESCE(origination_time, created_at) <= ${addValue(period.to)})`
+      ));
+      clauses.push(`(${branchPeriodClauses.join(" OR ")})`);
     }
     if (search) {
       const pattern = `%${search}%`;

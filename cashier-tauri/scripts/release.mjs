@@ -240,6 +240,10 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashiers can now open transfer requests to see every transferred product, SKU, quantity, and approval detail.",
+  "Cashier and admin M-Pesa ledgers can filter the current business day or any completed End of Day period using its closing date.",
+  "Cashier and admin invoice lists can use the same exact business-day periods, from the previous close through the selected close.",
+  "M-Pesa available, partially used, fully used, and reversed funds now use matching status colors throughout the cashier ledger.",
   "End of Day now marks existing cashier M-Pesa notifications as read and clears the unread badge before the next business day.",
   "M-Pesa transactions received after the closing boundary still create a new cashier notification.",
   "M-Pesa transaction rows and summary totals now start after the branch's latest End of Day close unless a custom date or time filter is selected.",

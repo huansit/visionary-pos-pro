@@ -24,6 +24,15 @@ export type Branch = {
   location?: string;
 };
 
+export type BusinessDayPeriod = {
+  id: string;
+  branchId: string;
+  businessDate: string;
+  startedAt: number;
+  endedAt: number;
+  closedAt: number;
+};
+
 export type ExpenseCategory = {
   id: string;
   name: string;

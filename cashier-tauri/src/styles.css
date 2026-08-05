@@ -4536,6 +4536,10 @@ body {
   grid-template-rows: auto auto auto auto 1fr auto;
 }
 
+.debts-center-panel.has-business-day-filter {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+}
+
 .debts-center-header {
   display: flex;
   flex-direction: column;
@@ -4678,6 +4682,15 @@ body {
 .debts-filter-chips button.amber.active {
   border-color: #fde68a;
   background: #fef3c7;
+}
+
+.debts-filter-chips button.paid {
+  color: #047857;
+}
+
+.debts-filter-chips button.paid.active {
+  border-color: #a7f3d0;
+  background: #d1fae5;
 }
 
 .debts-sort {
@@ -4863,6 +4876,11 @@ body {
 .debts-age.recent {
   background: #fef3c7;
   color: #92400e;
+}
+
+.debts-age.paid {
+  background: #d1fae5;
+  color: #047857;
 }
 
 .debts-row strong {
@@ -8616,6 +8634,64 @@ body {
   border-bottom: 1px solid #263540;
 }
 
+.transfer-request-history-entry {
+  border-bottom: 1px solid #263540;
+}
+
+.transfer-request-history-entry[open] {
+  padding-bottom: 6px;
+}
+
+.transfer-request-history-entry > summary {
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 0;
+}
+
+.transfer-request-history-entry > summary::-webkit-details-marker {
+  display: none;
+}
+
+.transfer-request-history-products {
+  display: grid;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 6px 8px;
+  border-left: 2px solid #2f7c88;
+  background: #101b23;
+}
+
+.transfer-request-history-products > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #dbe8ef;
+  font-size: 9px;
+}
+
+.transfer-request-history-products > div > span {
+  min-width: 0;
+  display: grid;
+}
+
+.transfer-request-history-products small {
+  color: #81929d;
+  font-size: 8px;
+}
+
+.transfer-request-history-products > div > strong {
+  flex: 0 0 auto;
+  color: #67e8f9;
+}
+
+.transfer-request-history-products p {
+  margin: 2px 0 0;
+  color: #9fb0ba;
+  font-size: 8px;
+}
+
 .transfer-request-history-row > strong {
   padding: 3px 6px;
   border-radius: 999px;
@@ -8785,7 +8861,8 @@ body {
 
 .cashier-mpesa-filters input,
 .cashier-mpesa-filters select,
-.cashier-mpesa-date-filter input {
+.cashier-mpesa-date-filter input,
+.cashier-mpesa-date-filter select {
   width: 100%;
   min-width: 0;
   height: 42px;
@@ -8795,6 +8872,11 @@ body {
   background: #0b1217;
   color: #eef4f7;
   font: inherit;
+}
+
+.cashier-mpesa-date-filter label small {
+  color: #82919d;
+  font-size: 9px;
 }
 
 .cashier-mpesa-search {
@@ -8830,7 +8912,7 @@ body {
 
 .cashier-mpesa-date-filter > div {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 0 0 12px;
 }
@@ -8883,6 +8965,44 @@ body {
   background: #162936;
   color: #edf7fa;
   font-weight: 750;
+}
+
+.debts-business-day-filter {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  gap: 3px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.debts-business-day-filter > span {
+  color: #334155;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.debts-business-day-filter select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.debts-business-day-filter small {
+  grid-column: 2;
+  color: #64748b;
+  font-size: 9px;
 }
 
 .cashier-mpesa-toolbar button:disabled,
@@ -9021,6 +9141,32 @@ body {
   color: #83f1c0;
 }
 
+.cashier-mpesa-row.available .cashier-mpesa-amount > b,
+.cashier-mpesa-row.available .cashier-mpesa-balance b {
+  color: #83f1c0;
+}
+
+.cashier-mpesa-row.partial {
+  border-left-color: #38bdf8;
+}
+
+.cashier-mpesa-row.partial .cashier-mpesa-amount > b,
+.cashier-mpesa-row.partial .cashier-mpesa-balance b {
+  color: #8bd8ff;
+}
+
+.cashier-mpesa-row.allocated,
+.cashier-mpesa-row.reversed {
+  border-left-color: #fb7185;
+}
+
+.cashier-mpesa-row.allocated .cashier-mpesa-amount > b,
+.cashier-mpesa-row.allocated .cashier-mpesa-balance b,
+.cashier-mpesa-row.reversed .cashier-mpesa-amount > b,
+.cashier-mpesa-row.reversed .cashier-mpesa-balance b {
+  color: #fb7185;
+}
+
 .cashier-mpesa-allocations {
   display: grid;
   gap: 5px;
@@ -9127,7 +9273,8 @@ body {
 
 .cashier-mpesa-panel.light .cashier-mpesa-filters input,
 .cashier-mpesa-panel.light .cashier-mpesa-filters select,
-.cashier-mpesa-panel.light .cashier-mpesa-date-filter input {
+.cashier-mpesa-panel.light .cashier-mpesa-date-filter input,
+.cashier-mpesa-panel.light .cashier-mpesa-date-filter select {
   border-color: #cbd5e1;
   background: #ffffff;
   color: #0f172a;
@@ -9189,6 +9336,14 @@ body {
 .cashier-mpesa-panel.light .cashier-mpesa-payer > span { color: #047857; }
 .cashier-mpesa-panel.light .cashier-mpesa-meta-separator { color: #cbd5e1; }
 .cashier-mpesa-panel.light .cashier-mpesa-balance b { color: #047857; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.available .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.available .cashier-mpesa-balance b { color: #047857; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.partial .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.partial .cashier-mpesa-balance b { color: #0369a1; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.allocated .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.allocated .cashier-mpesa-balance b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.reversed .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.reversed .cashier-mpesa-balance b { color: #be123c; }
 
 .cashier-mpesa-panel.light .cashier-mpesa-allocations > div {
   border-color: #d5e5e8;

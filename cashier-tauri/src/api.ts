@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
 import { businessDateValue } from "./businessTime";
-import type { Account, Branch, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, BusinessDayPeriod, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -823,6 +823,8 @@ export async function listMpesaTransactions(
     status?: string;
     from?: string;
     to?: string;
+    branchStarts?: Record<string, string>;
+    branchPeriods?: Record<string, { from: string; to: string }>;
     sort?: "asc" | "desc";
     limit?: number;
     offset?: number;
@@ -838,6 +840,8 @@ export async function listMpesaTransactions(
   });
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
+  if (filters.branchStarts && Object.keys(filters.branchStarts).length) params.set("branchStarts", JSON.stringify(filters.branchStarts));
+  if (filters.branchPeriods && Object.keys(filters.branchPeriods).length) params.set("branchPeriods", JSON.stringify(filters.branchPeriods));
   return jsonFetch(`/api/integrations/kopokopo/transactions?${params.toString()}`, {
     method: "GET",
     headers: {
@@ -853,6 +857,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   cashierJointDebts: CashierJointDebt[];
   stockTransferRequests: StockTransferRequest[];
   expenseCategories: ExpenseCategory[];
+  businessDays: BusinessDayPeriod[];
   dayClosedAt: number | null;
 }> {
   let cursor = 0;
@@ -914,6 +919,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const cashierJointDebtPaidCents = new Map<string, number>();
   const stockTransferRequestRecords = new Map<string, StockTransferRequest>();
   const stockTransferDecisions = new Map<string, { decision: "approved" | "rejected"; reason: string; transferNumber?: string; decidedAt: number }>();
+  const businessDayRecords = new Map<string, BusinessDayPeriod>();
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
   let dayClosedAt: number | null = catalogDayClosedAt;
@@ -991,6 +997,20 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         );
         if (Number.isFinite(closedAt) && closedAt > 0) {
           dayClosedAt = Math.max(dayClosedAt || 0, closedAt);
+        }
+        const startedAt = Number(payload.periodStartedAt || 0);
+        if (Number.isFinite(startedAt) && startedAt > 0 && closedAt > startedAt) {
+          const id = String(item.id || `${branchId}:${startedAt}:${closedAt}`);
+          businessDayRecords.set(id, {
+            id,
+            branchId,
+            businessDate: /^\d{4}-\d{2}-\d{2}$/.test(String(payload.businessDate || ""))
+              ? String(payload.businessDate)
+              : businessDateValue(closedAt),
+            startedAt,
+            endedAt: closedAt,
+            closedAt: Number(payload.closedAt || closedAt)
+          });
         }
       }
     }
@@ -1247,7 +1267,10 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     })
     .sort((a, b) => b.requestedAt - a.requestedAt);
 
-  return { branches, invoices, products, cashierJointDebts, stockTransferRequests, expenseCategories, dayClosedAt };
+  const businessDays = Array.from(businessDayRecords.values())
+    .sort((a, b) => b.endedAt - a.endedAt);
+
+  return { branches, invoices, products, cashierJointDebts, stockTransferRequests, expenseCategories, businessDays, dayClosedAt };
 }
 
 export async function resolveBarcode(terminal: TerminalCredentials, barcode: string): Promise<Product | null> {

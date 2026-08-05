@@ -418,6 +418,47 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
     assert.equal(currentBusinessDay.body.transactions[0].id, "txn-ledger-cpt");
     assert.equal(currentBusinessDay.body.summary.amountCents, 50000);
 
+    const closedBusinessDay = await request(app)
+      .get("/api/integrations/kopokopo/transactions")
+      .query({
+        branchId: "all",
+        status: "received",
+        branchPeriods: JSON.stringify({
+          b_cpt: { from: "2026-08-02T07:30:00.000Z", to: "2026-08-02T08:00:00.000Z" },
+          b_sip: { from: "2026-08-02T07:00:00.000Z", to: "2026-08-02T09:00:00.000Z" },
+        }),
+      })
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(closedBusinessDay.body.page.total, 1);
+    assert.equal(closedBusinessDay.body.transactions[0].id, "txn-ledger-cpt");
+    assert.equal(closedBusinessDay.body.summary.amountCents, 50000);
+
+    const branchClosedBusinessDay = await request(app)
+      .get("/api/integrations/kopokopo/transactions")
+      .query({
+        branchId: "b_sip",
+        branchPeriods: JSON.stringify({
+          b_sip: { from: "2026-08-02T06:59:59.999Z", to: "2026-08-02T07:00:00.000Z" },
+        }),
+      })
+      .set("X-Session-Token", cashierSessionToken)
+      .expect(200);
+    assert.equal(branchClosedBusinessDay.body.page.total, 1);
+    assert.equal(branchClosedBusinessDay.body.transactions[0].id, "txn-1");
+
+    await request(app)
+      .get("/api/integrations/kopokopo/transactions")
+      .query({
+        branchId: "b_sip",
+        branchPeriods: JSON.stringify({
+          b_sip: { from: "2026-08-02T07:00:00.000Z", to: "2026-08-02T07:00:00.000Z" },
+        }),
+      })
+      .set("X-Session-Token", sessionToken)
+      .expect(400)
+      .expect({ error: "invalid_kopokopo_transaction_dates" });
+
     await request(app)
       .get("/api/integrations/kopokopo/transactions")
       .query({

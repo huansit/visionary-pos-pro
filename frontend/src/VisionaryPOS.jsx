@@ -1223,6 +1223,7 @@ async function listKopokopoTransactions(filters = {}) {
   if (filters.from) query.set("from", String(filters.from));
   if (filters.to) query.set("to", String(filters.to));
   if (filters.branchStarts && Object.keys(filters.branchStarts).length) query.set("branchStarts", JSON.stringify(filters.branchStarts));
+  if (filters.branchPeriods && Object.keys(filters.branchPeriods).length) query.set("branchPeriods", JSON.stringify(filters.branchPeriods));
   return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
 }
 async function allocateKopokopoTransaction(payload) {
@@ -2839,6 +2840,52 @@ function branchLastEndDay(data, branchId) {
     ), 0);
   return Math.max(mapped, recorded);
 }
+function branchBusinessDayPeriods(data, branchId, timeZone = DEFAULT_BUSINESS_TIME_ZONE) {
+  const records = (data?.endOfDays || [])
+    .filter((entry) => entry.branchId === branchId)
+    .map((entry) => {
+      const endedAt = Math.max(Number(entry.periodEndedAt || 0), Number(entry.closedAt || 0), Number(entry.ts || 0));
+      return { entry, endedAt, startedAt: Number(entry.periodStartedAt || 0) };
+    })
+    .filter((period) => period.endedAt > 0)
+    .sort((a, b) => a.endedAt - b.endedAt);
+  let previousEnd = 0;
+  return records.map((period, index) => {
+    const startedAt = period.startedAt > 0 ? period.startedAt : previousEnd;
+    previousEnd = period.endedAt;
+    const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(period.entry.businessDate || ""))
+      ? String(period.entry.businessDate)
+      : businessDateValue(period.endedAt, timeZone);
+    return {
+      id: String(period.entry.id || `${branchId}:${period.endedAt}:${index}`),
+      branchId,
+      businessDate,
+      startedAt,
+      endedAt: period.endedAt,
+      closedAt: Number(period.entry.closedAt || period.endedAt),
+      label: `${businessDate} - closed ${formatBusinessDateTime(period.endedAt, timeZone)}`,
+    };
+  }).filter((period) => period.startedAt > 0 && period.endedAt > period.startedAt).reverse();
+}
+function businessDayPeriodOptions(data, branchIds, timeZone = DEFAULT_BUSINESS_TIME_ZONE) {
+  const grouped = new Map();
+  (branchIds || []).forEach((branchId) => {
+    branchBusinessDayPeriods(data, branchId, timeZone).forEach((period) => {
+      const current = grouped.get(period.businessDate) || {};
+      const existing = current[branchId];
+      if (!existing || period.endedAt > existing.endedAt) current[branchId] = period;
+      grouped.set(period.businessDate, current);
+    });
+  });
+  return [...grouped.entries()]
+    .map(([businessDate, periods]) => ({
+      id: `closed:${businessDate}`,
+      businessDate,
+      label: businessDate,
+      periods,
+    }))
+    .sort((a, b) => b.businessDate.localeCompare(a.businessDate));
+}
 function invoiceWasCarriedOver(data, inv) {
   if (!inv) return false;
   if (invOutstanding(inv) <= 0) return false;
@@ -3925,8 +3972,10 @@ body{overscroll-behavior:none}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
 .mpesa-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(52,211,153,.12)}
 .mpesa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-.mpesa-business-period{grid-column:span 2;display:flex;align-items:center;gap:9px;min-height:42px;padding:8px 11px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:11px}
+.mpesa-business-period{grid-column:span 2;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(145px,auto);align-items:center;gap:9px;min-height:42px;padding:7px 9px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:11px}
 .mpesa-business-period svg{width:17px;height:17px;color:var(--accent);flex:none}
+.mpesa-business-period>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-business-period label,.mpesa-business-period select{width:100%;min-width:0}
 .mpesa-allocation-menu{position:relative;min-width:180px;white-space:normal}
 .mpesa-allocation-menu summary{display:grid;grid-template-columns:minmax(0,1fr) auto 16px;align-items:center;gap:8px;min-height:34px;padding:6px 9px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface);cursor:pointer;list-style:none;color:var(--text);font-size:11px;font-weight:750}
 .mpesa-allocation-menu summary::-webkit-details-marker{display:none}
@@ -3958,7 +4007,7 @@ body{overscroll-behavior:none}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
-@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
+@media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-business-period{grid-template-columns:auto minmax(0,1fr)}.mpesa-business-period label{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
 @media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
@@ -4188,7 +4237,7 @@ body{overscroll-behavior:none}
 .invoice-primary-filters label>span{color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
 .invoice-primary-filters .select{width:100%;height:38px;min-width:0}
 .invoice-primary-filters .settlesearch{min-width:0}
-.invoice-period-filter{display:grid;grid-template-columns:minmax(220px,1fr) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
+.invoice-period-filter{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,180px) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
 .invoice-period-filter label{display:grid;gap:4px}
 .invoice-period-filter label>span{color:var(--muted-2);font-size:10px;font-weight:700;text-transform:uppercase}
 .invoice-period-filter .input,.invoice-period-filter .btn{height:38px}
@@ -4304,7 +4353,7 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-primary-filters .input,
   .invoice-list-active .invoice-primary-filters .select{height:36px;min-height:36px}
   .invoice-list-active .invoice-filter-panel{display:grid;grid-template-columns:minmax(0,1fr) 145px auto;gap:7px;align-items:end;padding:0;margin:0;border:0;background:transparent}
-  .invoice-list-active .invoice-period-filter{grid-column:1;grid-template-columns:190px minmax(130px,1fr) minmax(130px,1fr) auto;gap:7px;align-items:end;padding:0;margin:0;border:0}
+  .invoice-list-active .invoice-period-filter{grid-column:1;grid-template-columns:190px minmax(145px,180px) minmax(130px,1fr) minmax(130px,1fr) auto;gap:7px;align-items:end;padding:0;margin:0;border:0}
   .invoice-list-active .invoice-period-filter .input,
   .invoice-list-active .invoice-period-filter .btn{height:36px;min-height:36px}
   .invoice-list-active .invoice-filter-grid.simple{grid-column:2;display:block;margin:0}
@@ -4343,7 +4392,7 @@ body{overscroll-behavior:none}
 
 /* Wide screens place all invoice controls on one shallow row. */
 @media (min-width:1550px){
-  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 145px 145px 168px 136px 136px 130px auto auto;gap:6px;align-items:end;padding:7px 9px}
+  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(250px,1fr) 140px 140px 155px 155px 128px 128px 120px auto auto;gap:6px;align-items:end;padding:7px 9px}
   .invoice-list-active .invoice-primary-filters,
   .invoice-list-active .invoice-filter-panel,
   .invoice-list-active .invoice-period-filter,
@@ -4355,12 +4404,13 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-period-label>svg{width:15px;height:15px}
   .invoice-list-active .invoice-period-label b{font-size:10.5px}
   .invoice-list-active .invoice-period-label span{font-size:8.5px}
-  .invoice-list-active .invoice-date-from{grid-column:5}
-  .invoice-list-active .invoice-date-to{grid-column:6}
-  .invoice-list-active .invoice-sort-filter{grid-column:7}
-  .invoice-list-active .invoice-period-filter>.btn{grid-column:8;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-business-day-filter{grid-column:5}
+  .invoice-list-active .invoice-date-from{grid-column:6}
+  .invoice-list-active .invoice-date-to{grid-column:7}
+  .invoice-list-active .invoice-sort-filter{grid-column:8}
+  .invoice-list-active .invoice-period-filter>.btn{grid-column:9;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-period-filter>.btn svg{width:15px;height:15px;margin:0}
-  .invoice-list-active .invoice-filter-clear{grid-column:9;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-filter-clear{grid-column:10;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-filter-clear svg{width:15px;height:15px;margin:0}
 }
 
@@ -7478,6 +7528,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [cashierFilter, setCashierFilter] = useState(initialCashier);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [businessDayFilter, setBusinessDayFilter] = useState("current");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
   const [receipt, setReceipt] = useState(null);
@@ -7502,9 +7553,34 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const branchSinceEndDay = branchLastEndDay(data, branch.id);
   const currentBusinessDate = businessDateValue(Date.now(), timeZone);
   const currentBusinessDayStart = businessDateTimeBoundary(`${currentBusinessDate}T00:00`, timeZone, "start");
+  const businessDayOptions = businessDayPeriodOptions(data, [branch.id], timeZone);
+  const selectedBusinessDay = businessDayOptions.find((option) => option.id === businessDayFilter) || null;
+  const selectedBusinessPeriod = selectedBusinessDay?.periods?.[branch.id] || null;
+  useEffect(() => {
+    setBusinessDayFilter("current");
+    setDateFrom("");
+    setDateTo("");
+  }, [branch.id]);
+  const periodMatchesInvoice = (invoice) => {
+    const issuedTs = invoiceIssuedTs(invoice);
+    if (hasCustomDateRange) {
+      if (dateFromTs !== null && issuedTs < dateFromTs) return false;
+      if (dateToTs !== null && issuedTs > dateToTs) return false;
+      return true;
+    }
+    if (selectedBusinessPeriod) return issuedTs > selectedBusinessPeriod.startedAt && issuedTs <= selectedBusinessPeriod.endedAt;
+    if (branchSinceEndDay > 0) return issuedTs > branchSinceEndDay;
+    return issuedTs >= Date.parse(currentBusinessDayStart);
+  };
+  const selectedBranchPeriods = selectedBusinessPeriod ? {
+    [branch.id]: {
+      from: new Date(selectedBusinessPeriod.startedAt).toISOString(),
+      to: new Date(selectedBusinessPeriod.endedAt).toISOString(),
+    },
+  } : null;
   const mpesaFrom = hasCustomDateRange
     ? (dateFrom ? businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start") : "")
-    : (branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart);
+    : (selectedBusinessPeriod ? "" : (branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart));
   const mpesaTo = hasCustomDateRange
     ? (dateTo ? businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end") : "")
     : "";
@@ -7518,6 +7594,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       status: "received",
       from: mpesaFrom,
       to: mpesaTo,
+      branchPeriods: selectedBranchPeriods,
       limit: 1,
       offset: 0,
     }).then((result) => {
@@ -7536,7 +7613,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         : { loading: false, loaded: false, error: "M-Pesa total unavailable", amountCents: 0, transactionCount: 0 });
     });
     return () => { active = false; };
-  }, [branch.id, mpesaFrom, mpesaTo, mpesaSummaryNonce]);
+  }, [branch.id, mpesaFrom, mpesaTo, selectedBusinessPeriod?.startedAt, selectedBusinessPeriod?.endedAt, mpesaSummaryNonce]);
   useEffect(() => {
     const refresh = () => setMpesaSummaryNonce((value) => value + 1);
     const onRealtime = (event) => {
@@ -7566,6 +7643,15 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const open = outstanding.filter((i) => !invIsDebt(i) && !invIsOverdue(i));
   const partialInvoices = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status !== "pending"
     && Number(invoice.paidCents || 0) > 0 && invOutstanding(invoice) > 0);
+  const periodActiveInvoices = activeInvoices.filter(periodMatchesInvoice);
+  const periodVoidedInvoices = voidedInvoices.filter(periodMatchesInvoice);
+  const periodDisplayInvoices = [...periodActiveInvoices, ...periodVoidedInvoices];
+  const periodOutstanding = periodActiveInvoices.filter((invoice) => invOutstanding(invoice) > 0);
+  const periodDebtInvoices = periodOutstanding.filter((invoice) => invIsDebt(invoice));
+  const periodOverdue = periodOutstanding.filter((invoice) => invIsOverdue(invoice));
+  const periodOpen = periodOutstanding.filter((invoice) => !invIsDebt(invoice) && !invIsOverdue(invoice));
+  const periodPartialInvoices = periodActiveInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status !== "pending"
+    && Number(invoice.paidCents || 0) > 0 && invOutstanding(invoice) > 0);
   const sinceEndDay = activeInvoices.filter((i) => i.ts > branchSinceEndDay);
   const currentDayOpenInvoices = sinceEndDay.filter((invoice) => {
     const voidStatus = invoiceVoidState(data, invoice.id).status;
@@ -7584,7 +7670,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const needle = query.trim().toLowerCase();
   const invoiceProductLines = new Map(displayInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
   const invoiceProductSummary = (invoice) => Array.from(new Set((invoiceProductLines.get(invoice.id) || []).map((line) => line.name).filter(Boolean))).join(", ");
-  const filtered = (filter === "voided" ? voidedInvoices : filter === "all" ? displayInvoices : activeInvoices)
+  const filtered = (filter === "voided" ? periodVoidedInvoices : filter === "all" ? periodDisplayInvoices : periodActiveInvoices)
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
       if (filter === "all") return true;
@@ -7598,12 +7684,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       return invOutstanding(i) <= 0;
     })
     .filter((i) => cashierFilter === "all" || invoiceCashierName(i) === cashierFilter)
-    .filter((i) => {
-      const issuedTs = invoiceIssuedTs(i);
-      if (dateFromTs !== null && issuedTs < dateFromTs) return false;
-      if (dateToTs !== null && issuedTs > dateToTs) return false;
-      return true;
-    })
     .filter((i) => {
       if (!needle) return true;
       const invoiceMatch = [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, invoiceCashierName(i)]
@@ -7678,17 +7758,17 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const closes = (data.endOfDays || []).filter((e) => e.branchId === branch.id);
   const invoiceDebtOutstanding = debtInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryDebtOutstanding = branchJointDebts.reduce((sum, debt) => sum + cashierJointDebtOutstanding(data, debt), 0);
-  const voidPendingCount = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length;
+  const voidPendingCount = periodActiveInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length;
   const activeInvoiceFilterCount = [
     query.trim(),
     filter !== "open",
     cashierFilter !== "all",
     sortMode !== "oldest",
-    hasCustomDateRange,
+    hasCustomDateRange || businessDayFilter !== "current",
   ].filter(Boolean).length;
   const secondaryInvoiceFilterCount = [
     sortMode !== "oldest",
-    hasCustomDateRange,
+    hasCustomDateRange || businessDayFilter !== "current",
   ].filter(Boolean).length;
 
   return (
@@ -7713,7 +7793,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           <div><b className={filteredBalanceDue > 0 ? "danger" : ""}>{fmt(filteredBalanceDue, cur)}</b><span>balance due</span></div>
           <div className="invoice-mpesa-total">
             <b>{mpesaSummary.loading ? "..." : mpesaSummary.error ? "Unavailable" : fmt(mpesaSummary.amountCents, "KES")}</b>
-            <span>{hasCustomDateRange ? "M-Pesa received - selected dates" : "M-Pesa received - current day"}</span>
+            <span>{hasCustomDateRange ? "M-Pesa received - selected dates" : selectedBusinessPeriod ? `M-Pesa received - ${selectedBusinessDay.businessDate}` : "M-Pesa received - current business day"}</span>
             {!mpesaSummary.loading && !mpesaSummary.error ? <small>{mpesaSummary.transactionCount} verified transaction{mpesaSummary.transactionCount === 1 ? "" : "s"}</small> : null}
           </div>
         </div>
@@ -7722,14 +7802,14 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-primary-filters" aria-label="Primary invoice filters">
           <div className="settlesearch invoice-search-filter"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search invoices" /></div>
           <label className="invoice-status-filter"><span>Invoice status</span><select className="select" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter invoices by status">
-            <option value="open">Open ({open.length})</option>
-            <option value="partial">Partially paid ({partialInvoices.length})</option>
-            <option value="overdue">Overdue ({overdue.length})</option>
-            <option value="debt">Debts ({debtInvoices.length})</option>
+            <option value="open">Open ({periodOpen.length})</option>
+            <option value="partial">Partially paid ({periodPartialInvoices.length})</option>
+            <option value="overdue">Overdue ({periodOverdue.length})</option>
+            <option value="debt">Debts ({periodDebtInvoices.length})</option>
             <option value="void_pending">Void pending ({voidPendingCount})</option>
             <option value="paid">Paid</option>
-            <option value="voided">Voided ({voidedInvoices.length})</option>
-            <option value="all">All invoices ({displayInvoices.length})</option>
+            <option value="voided">Voided ({periodVoidedInvoices.length})</option>
+            <option value="all">All invoices ({periodDisplayInvoices.length})</option>
           </select></label>
           <label className="invoice-cashier-filter"><span>Cashier</span><select className="select" value={cashierFilter} onChange={(e) => setCashierFilter(e.target.value)} aria-label="Filter invoices by cashier">
             <option value="all">All cashiers</option>
@@ -7743,16 +7823,23 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
         <div className={"invoice-filter-panel" + (mobileFiltersOpen ? " open" : "")}>
         <div className="invoice-period-filter">
-          <div className="invoice-period-label"><CalendarDays /><div><b>{hasCustomDateRange ? "Custom invoice period" : "Current business day"}</b><span>{hasCustomDateRange ? "Filters invoices and verified M-Pesa received" : "Since the last End of Day close"}</span></div></div>
-          <label className="invoice-date-filter invoice-date-from"><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} /></label>
-          <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} /></label>
-          {hasCustomDateRange ? <button className="btn sm btn-ghost" type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}><RefreshCw /> Current day</button> : null}
+          <div className="invoice-period-label"><CalendarDays /><div><b>{hasCustomDateRange ? "Custom invoice period" : selectedBusinessPeriod ? `Business day ${selectedBusinessDay.businessDate}` : "Current business day"}</b><span>{hasCustomDateRange ? "Filters invoices and verified M-Pesa received" : selectedBusinessPeriod ? `${formatBusinessDateTime(selectedBusinessPeriod.startedAt, timeZone)} to ${formatBusinessDateTime(selectedBusinessPeriod.endedAt, timeZone)}` : "Since the last End of Day close"}</span></div></div>
+          <label className="invoice-business-day-filter"><span>Business day</span><select className="select" value={hasCustomDateRange ? "custom" : businessDayFilter} onChange={(event) => {
+            const value = event.target.value;
+            if (value === "custom") return;
+            setBusinessDayFilter(value);
+            setDateFrom("");
+            setDateTo("");
+          }}><option value="current">Current business day</option>{hasCustomDateRange ? <option value="custom">Custom dates</option> : null}{businessDayOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label>
+          <label className="invoice-date-filter invoice-date-from"><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
+          <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
+          {(hasCustomDateRange || businessDayFilter !== "current") ? <button className="btn sm btn-ghost" type="button" onClick={() => { setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); }}><RefreshCw /> Current day</button> : null}
         </div>
 
         <div className="invoice-filter-grid simple">
           <label className="invoice-sort-filter"><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
         </div>
-        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
+        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); }}><X /> Clear filters</button> : null}
         </div>
         </div>
 
@@ -15446,6 +15533,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
   const [specificTime, setSpecificTime] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [businessDaySelection, setBusinessDaySelection] = useState("current");
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -15477,6 +15565,20 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     return [branchId, lastClose > 0 ? new Date(lastClose + 1).toISOString() : calendarBusinessDayStart];
   }));
   const businessDayStartsKey = JSON.stringify(businessDayStarts);
+  const closedBusinessDays = businessDayPeriodOptions(data, businessDayBranchIds, timeZone);
+  const selectedClosedBusinessDay = closedBusinessDays.find((option) => option.id === businessDaySelection) || null;
+  const selectedBranchPeriods = selectedClosedBusinessDay ? Object.fromEntries(
+    Object.entries(selectedClosedBusinessDay.periods).map(([branchId, period]) => [branchId, {
+      from: new Date(period.startedAt).toISOString(),
+      to: new Date(period.endedAt).toISOString(),
+    }])
+  ) : null;
+  const selectedBranchPeriodsKey = JSON.stringify(selectedBranchPeriods || {});
+
+  useEffect(() => {
+    setBusinessDaySelection("current");
+    setOffset(0);
+  }, [selectedBranchId]);
 
   useEffect(() => {
     let active = true;
@@ -15505,7 +15607,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
       error: "",
     }));
     const timer = setTimeout(() => {
-      listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, branchStarts: businessDayFilter ? businessDayStarts : null, sort, limit: pageSize, offset })
+      listKopokopoTransactions({ branchId: selectedBranchId, search: search.trim(), status, from, to, branchStarts: businessDayFilter && !selectedClosedBusinessDay ? businessDayStarts : null, branchPeriods: businessDayFilter ? selectedBranchPeriods : null, sort, limit: pageSize, offset })
         .then((result) => {
           if (!active) return;
           setLedger({
@@ -15528,7 +15630,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
         });
     }, search.trim() ? 280 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [selectedBranchId, search, status, timeFilterMode, specificTime, dateFrom, dateTo, timeZone, businessDayStartsKey, sort, offset, refreshNonce]);
+  }, [selectedBranchId, search, status, timeFilterMode, specificTime, dateFrom, dateTo, timeZone, businessDayStartsKey, selectedBranchPeriodsKey, sort, offset, refreshNonce]);
 
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
@@ -15568,6 +15670,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     setSpecificTime("");
     setDateFrom("");
     setDateTo("");
+    setBusinessDaySelection("current");
     setStatus("all");
     setOffset(0);
   };
@@ -15580,6 +15683,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     setSpecificTime("");
     setDateFrom(todayFrom);
     setDateTo(todayTo);
+    setBusinessDaySelection("current");
     setStatus("received");
     setOffset(0);
   };
@@ -15592,12 +15696,15 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
     setSpecificTime("");
     setDateFrom("");
     setDateTo("");
+    setBusinessDaySelection("current");
     setStatus("received");
     setOffset(0);
   };
-  const businessDayDescription = selectedBranchId === "all"
-    ? "Each branch since its own last End of Day close"
-    : `Since ${formatBusinessDateTime(businessDayStarts[selectedBranchId], timeZone)}`;
+  const businessDayDescription = selectedClosedBusinessDay
+    ? `Closed business day ${selectedClosedBusinessDay.businessDate}`
+    : selectedBranchId === "all"
+      ? "Each branch since its own last End of Day close"
+      : `Since ${formatBusinessDateTime(businessDayStarts[selectedBranchId], timeZone)}`;
   const total = Number(ledger.page?.total || 0);
   const pageStart = total ? offset + 1 : 0;
   const pageEnd = Math.min(total, offset + pageSize);
@@ -15628,13 +15735,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false }) {
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
         </div>
-        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time mpesa-time-field"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
+        {timeFilterMode === "business" ? <div className="mpesa-business-period"><Clock3 /><span>{businessDayDescription}</span><label><span className="sr-only">Choose business day</span><select className="select" value={businessDaySelection} onChange={(event) => { setBusinessDaySelection(event.target.value); setOffset(0); }}><option value="current">Current business day</option>{closedBusinessDays.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label></div> : timeFilterMode === "specific" ? <label className="mpesa-exact-time mpesa-time-field"><span>Exact minute (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={specificTime} onChange={(event) => updateSpecificTime(event.target.value.slice(0, 16))} /></label> : <>
           <label className="mpesa-time-field mpesa-time-from"><span>From (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateFrom} max={dateTo || undefined} onChange={(event) => updateFrom(event.target.value.slice(0, 16))} /></label>
           <label className="mpesa-time-field mpesa-time-to"><span>To (East Africa Time)</span><input className="input" type="datetime-local" step={60} value={dateTo} min={dateFrom || undefined} onChange={(event) => updateTo(event.target.value.slice(0, 16))} /></label>
         </>}
         <div className="mpesa-ledger-actions">
           <button className="btn" title={sort === "desc" ? "Showing newest first" : "Showing oldest first"} onClick={() => { setSort((value) => value === "desc" ? "asc" : "desc"); setOffset(0); }}>{sort === "desc" ? <ArrowDown /> : <ArrowUp />} {sort === "desc" ? "Newest" : "Oldest"}</button>
-          {(search || status !== "all" || timeFilterMode === "business" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setTimeFilterMode("specific"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setOffset(0); }}><X /> Clear</button> : null}
+          {(search || status !== "all" || timeFilterMode === "business" || specificTime || dateFrom || dateTo) ? <button className="btn btn-ghost" onClick={() => { setSearch(""); setStatus("all"); setTimeFilterMode("specific"); setSpecificTime(""); setDateFrom(""); setDateTo(""); setBusinessDaySelection("current"); setOffset(0); }}><X /> Clear</button> : null}
         </div>
       </div>
 
