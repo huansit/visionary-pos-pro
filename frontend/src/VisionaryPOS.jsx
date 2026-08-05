@@ -4091,8 +4091,9 @@ body{overscroll-behavior:none}
 .invoice-detail-item strong{font-family:var(--font-mono);font-size:12.5px}
 .invoice-detail-empty{padding:10px 0;color:var(--muted-2);font-size:12px}
 .invoice-payment-panel{margin:8px 0 0;padding:14px 0;border-width:1px 0 0;border-radius:0;background:transparent}
-.invoice-payment-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;font-size:13px}
-.invoice-payment-head span{color:var(--danger);font-family:var(--font-mono);font-size:12px;font-weight:750}
+.invoice-payment-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-bottom:8px;font-size:13px}
+.invoice-payment-head span{justify-self:end;color:var(--danger);font-family:var(--font-mono);font-size:12px;font-weight:750}
+.invoice-payment-head .btn{height:34px;min-height:34px;padding:0 10px}
 .invoice-payment-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .mpesa-receipt-grid label{display:grid;gap:4px}
 .mpesa-receipt-grid label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
@@ -4808,6 +4809,47 @@ body{overscroll-behavior:none}
   .invoice-payment-entry{position:sticky;bottom:calc(-14px - env(safe-area-inset-bottom));z-index:5;margin:12px -14px -14px;padding:11px 14px calc(11px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -12px 28px rgba(0,0,0,.16)}
   .invoice-payment-entry .btn{min-height:48px}
   .invoice-detail-footer .btn{width:100%}
+}
+@media (max-width:620px){
+  .invoice-detail-modal{width:calc(100vw - 8px);max-height:calc(100dvh - 8px - env(safe-area-inset-top) - env(safe-area-inset-bottom));padding:10px;border-radius:14px}
+  .invoice-detail-head{top:-10px;margin:-10px -10px 0;padding:10px 10px 8px}
+  .invoice-detail-heading .sub{margin-bottom:2px;font-size:10px}
+  .invoice-detail-title-row{gap:6px}
+  .invoice-detail-title-row .title{font-size:16px}
+  .invoice-detail-title-row .ist{padding:3px 7px;font-size:9px}
+  .invoice-detail-head .iconbtn{width:36px;height:36px;border-radius:9px}
+  .invoice-detail-meta{grid-template-columns:minmax(0,.8fr) minmax(0,.65fr) minmax(0,1.35fr);gap:5px 8px;margin-top:6px}
+  .invoice-detail-meta small{font-size:7.5px}
+  .invoice-detail-meta b{overflow:hidden;text-overflow:ellipsis;font-size:10.5px;white-space:nowrap}
+  .invoice-detail-meta .invoice-cleared-by{grid-column:1/-1}
+  .invoice-detail-totals{margin-bottom:0}
+  .invoice-detail-totals>div{padding:7px 6px}
+  .invoice-detail-totals span{font-size:8px}
+  .invoice-detail-totals b{margin-top:2px;font-size:12px}
+  .invoice-payment-panel{margin-top:3px;padding-top:8px}
+  .invoice-payment-head{grid-template-columns:auto minmax(0,1fr) auto;gap:6px;margin-bottom:5px;font-size:12px}
+  .invoice-payment-head span{font-size:10.5px}
+  .invoice-payment-head .btn{width:auto!important;height:30px!important;min-height:30px!important;padding:0 8px!important;font-size:9.5px!important}
+  .stk-request-disclosure{margin-top:4px}
+  .invoice-detail-disclosure summary{padding:8px 0;font-size:11px}
+  .invoice-detail-disclosure summary>span{gap:6px}
+  .invoice-split-payment{gap:5px!important;margin-top:6px}
+  .mpesa-receipt-grid label{gap:2px}
+  .mpesa-receipt-grid label>span{font-size:7.5px}
+  .invoice-split-payment .input{height:36px!important;min-height:36px!important;padding-inline:8px;font-size:12px!important}
+  .invoice-detail-modal .compact-notice{padding:8px 10px;margin-bottom:7px;font-size:10px;line-height:1.35}
+  .invoice-detail-modal .mpesa-receipt-status{margin-top:6px}
+  .invoice-detail-modal .mpesa-receipt-status>div{padding:6px 7px}
+  .invoice-detail-modal .mpesa-receipt-status span{font-size:7.5px}
+  .invoice-detail-modal .mpesa-receipt-status b{font-size:9.5px}
+  .invoice-payment-entry{grid-template-columns:minmax(88px,.45fr) minmax(0,1fr);align-items:center;gap:7px;bottom:calc(-10px - env(safe-area-inset-bottom));margin:7px -10px -10px;padding:7px 10px calc(7px + env(safe-area-inset-bottom))}
+  .settlement-inline-total span{font-size:7.5px}
+  .settlement-inline-total b{font-size:12px}
+  .settlement-inline-total small{font-size:8px}
+  .invoice-payment-entry .btn{width:100%;min-width:0;min-height:39px;padding:0 8px;font-size:10.5px}
+  .invoice-detail-items{max-height:none}
+  .invoice-detail-item{padding:7px 0}
+  .invoice-detail-footer{padding-top:8px}
 }
 @media (max-width:620px){
   .vpos{padding:6px}
@@ -9051,9 +9093,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         ) : null}
         {!voidPending && !voidApproved && out > 0 ? (
           <div className="settlement-box invoice-payment-panel">
-            <div className="invoice-payment-head"><b>Record payment</b><span>{fmt(out, cur)} due</span></div>
-            <div className="invoice-payment-toolbar">
-              <span className="muted">Enter M-Pesa manually, use a saved balance, cash, or both.</span>
+            <div className="invoice-payment-head">
+              <b>Record payment</b>
+              <span>{fmt(out, cur)} due</span>
               <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button>
             </div>
             <details className="invoice-detail-disclosure stk-request-disclosure">
