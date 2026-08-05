@@ -1744,17 +1744,67 @@ test("offsets cash deposited to till without turning it into another invoice pay
     assert.equal(ledgerTransaction.offsets[0].invoiceNumber, "RCP-SIP-000004");
     assert.equal(ledgerTransaction.offsets[0].offsetByName, "SIP Supervisor");
 
-    await request(app)
+    const failedBatch = await request(app)
       .post("/api/integrations/kopokopo/offsets")
       .set("X-Session-Token", sessionToken)
-      .send({ ...firstRequest, amountCents: 20000, idempotencyKey: "cash-offset-request-2" })
-      .expect(200);
+      .send({
+        transactionId,
+        branchId: "b_sip",
+        offsets: [
+          { invoiceId: "inv-cash", amountCents: 19000 },
+          { invoiceId: "inv-cash-small", amountCents: 11000 },
+        ],
+        idempotencyKey: "cash-offset-batch-invalid",
+      })
+      .expect(409);
+    assert.equal(failedBatch.body.error, "kopokopo_offset_exceeds_cash_payment");
+    assert.equal(failedBatch.body.invoiceId, "inv-cash-small");
+    const afterFailedBatch = await pool.query(
+      "SELECT allocated_cents FROM kopokopo_transactions WHERE id = $1",
+      [transactionId]
+    );
+    assert.equal(Number(afterFailedBatch.rows[0].allocated_cents), 30000);
+    const offsetsAfterFailedBatch = await pool.query(
+      "SELECT COUNT(*) AS count FROM kopokopo_offsets WHERE transaction_id = $1",
+      [transactionId]
+    );
+    assert.equal(Number(offsetsAfterFailedBatch.rows[0].count), 1);
+
+    const batchRequest = {
+      transactionId,
+      branchId: "b_sip",
+      offsets: [
+        { invoiceId: "inv-cash", amountCents: 20000 },
+        { invoiceId: "inv-cash-small", amountCents: 10000 },
+      ],
+      note: "One till deposit covering two cash receipts",
+      idempotencyKey: "cash-offset-request-batch",
+    };
     const completed = await request(app)
       .post("/api/integrations/kopokopo/offsets")
       .set("X-Session-Token", sessionToken)
-      .send({ ...firstRequest, invoiceId: "inv-cash-small", amountCents: 10000, idempotencyKey: "cash-offset-request-3" })
+      .send(batchRequest)
       .expect(200);
+    assert.equal(completed.body.duplicate, false);
+    assert.equal(completed.body.offsets.length, 2);
+    assert.deepEqual(completed.body.offsets.map((entry) => entry.invoiceNumber).sort(), ["RCP-SIP-000004", "RCP-SIP-000005"]);
     assert.equal(completed.body.transaction.remainingCents, 0);
+
+    const completedRetry = await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send(batchRequest)
+      .expect(200);
+    assert.equal(completedRetry.body.duplicate, true);
+    assert.equal(completedRetry.body.offsets.length, 2);
+    assert.equal(completedRetry.body.transaction.remainingCents, 0);
+
+    await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({ ...batchRequest, offsets: [{ invoiceId: "inv-cash", amountCents: 10000 }] })
+      .expect(409)
+      .expect((response) => assert.equal(response.body.error, "idempotency_key_reused"));
 
     const lookup = await request(app)
       .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=0F01")
@@ -1763,7 +1813,7 @@ test("offsets cash deposited to till without turning it into another invoice pay
     assert.equal(lookup.body.transactions.length, 0);
 
     const stored = await pool.query(
-      "SELECT invoice_id, amount_cents, reason, status FROM kopokopo_offsets WHERE transaction_id = $1 ORDER BY offset_at, id",
+      "SELECT invoice_id, amount_cents, reason, status FROM kopokopo_offsets WHERE transaction_id = $1 ORDER BY invoice_id, amount_cents DESC",
       [transactionId]
     );
     assert.deepEqual(stored.rows.map((row) => ({
@@ -1778,6 +1828,7 @@ test("offsets cash deposited to till without turning it into another invoice pay
     ]);
   } finally {
     await pool.query("DELETE FROM kopokopo_offsets WHERE transaction_id = $1", [transactionId]);
+    await pool.query("DELETE FROM kopokopo_offset_batches WHERE transaction_id = $1", [transactionId]);
     await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
   }
 });

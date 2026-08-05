@@ -348,6 +348,17 @@ CREATE INDEX IF NOT EXISTS kopokopo_allocations_transaction_idx
 CREATE INDEX IF NOT EXISTS kopokopo_allocations_invoice_idx
   ON kopokopo_allocations (invoice_id, allocated_at DESC);
 
+CREATE TABLE IF NOT EXISTS kopokopo_offset_batches (
+  idempotency_key     text PRIMARY KEY,
+  transaction_id     text NOT NULL REFERENCES kopokopo_transactions(id),
+  branch_id           text NOT NULL,
+  request_fingerprint text NOT NULL,
+  note                text,
+  offset_by           text,
+  offset_by_name      text,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS kopokopo_offsets (
   id                 text PRIMARY KEY,
   transaction_id     text NOT NULL REFERENCES kopokopo_transactions(id),

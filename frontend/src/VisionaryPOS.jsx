@@ -4093,15 +4093,23 @@ body{overscroll-behavior:none}
 .mpesa-offset-search{position:relative;display:grid;gap:5px}
 .mpesa-offset-search svg{position:absolute;left:11px;bottom:12px;width:17px;height:17px;color:var(--muted-2);pointer-events:none}
 .mpesa-offset-search .input{padding-left:36px}
-.mpesa-offset-invoices{display:grid;gap:5px;max-height:220px;margin-top:8px;overflow:auto}
-.mpesa-offset-invoices>button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2);color:var(--text);text-align:left;cursor:pointer}
-.mpesa-offset-invoices>button:hover,.mpesa-offset-invoices>button.selected{border-color:var(--accent);background:var(--accent-soft)}
-.mpesa-offset-invoices>button span{display:grid;min-width:0;gap:2px}
-.mpesa-offset-invoices>button b,.mpesa-offset-invoices>button small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mpesa-offset-invoices>button small{color:var(--muted);font-size:10px}
-.mpesa-offset-invoices>button strong{flex:none;color:var(--warn);font-family:var(--font-mono);font-size:11px}
-.mpesa-offset-fields{display:grid;grid-template-columns:1fr 1.5fr;gap:10px;margin-top:12px}
-.mpesa-offset-fields label{display:grid;gap:5px}
+.mpesa-offset-invoices{display:grid;gap:6px;max-height:285px;margin-top:8px;overflow:auto}
+.mpesa-offset-invoice{display:grid;grid-template-columns:minmax(0,1fr) 132px;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2)}
+.mpesa-offset-invoice:hover,.mpesa-offset-invoice.selected{border-color:var(--accent);background:var(--accent-soft)}
+.mpesa-offset-invoice-choice{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:9px;min-width:0;cursor:pointer}
+.mpesa-offset-invoice-choice input{width:17px;height:17px;margin:0;accent-color:var(--accent)}
+.mpesa-offset-invoice-copy{display:grid;min-width:0;gap:2px}
+.mpesa-offset-invoice-copy b,.mpesa-offset-invoice-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-offset-invoice-copy small{color:var(--muted);font-size:10px}
+.mpesa-offset-invoice-choice strong{flex:none;color:var(--warn);font-family:var(--font-mono);font-size:11px}
+.mpesa-offset-invoice-amount{display:grid;gap:3px}
+.mpesa-offset-invoice-amount span,.mpesa-offset-note>span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
+.mpesa-offset-invoice-amount .input{height:36px;padding:7px 9px;font-family:var(--font-mono);text-align:right}
+.mpesa-offset-summary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;margin-top:12px;overflow:hidden;border:1px solid var(--border-soft);border-radius:5px;background:var(--border-soft)}
+.mpesa-offset-summary>span{display:grid;gap:3px;padding:9px 10px;background:var(--surface-2)}
+.mpesa-offset-summary small{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
+.mpesa-offset-summary b{font-family:var(--font-mono);font-size:12px}
+.mpesa-offset-note{display:grid;gap:5px;margin-top:10px}
 .mpesa-offset-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .mpesa-ledger-mobile{display:none}
 .mpesa-transaction-results{min-width:0}
@@ -4111,8 +4119,8 @@ body{overscroll-behavior:none}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
 @media(max-width:720px){.mpesa-ledger-toolbar{grid-template-columns:1fr 1fr}.mpesa-ledger-search{grid-column:1/-1}.mpesa-time-mode,.mpesa-business-period{grid-column:1/-1}.mpesa-business-period{grid-template-columns:auto minmax(0,1fr)}.mpesa-business-period label{grid-column:1/-1}.mpesa-ledger-actions{grid-column:1/-1}.mpesa-ledger-actions .btn{flex:1}.mpesa-ledger-summary{grid-template-columns:1fr 1fr}.mpesa-ledger-summary>div:nth-child(2){border-right:0}.mpesa-ledger-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.mpesa-ledger-desktop{display:none}.mpesa-ledger-mobile{display:grid;border-top:1px solid var(--border-soft)}.mpesa-ledger-mobile-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:12px 2px;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-mobile-row>div{min-width:0}.mpesa-ledger-mobile-row .payer{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpesa-ledger-mobile-row small{display:block;margin-top:3px;color:var(--muted-2);font-size:10.5px}.mpesa-ledger-mobile-row .money{text-align:right}.mpesa-ledger-mobile-row .money b{display:block;font-family:var(--font-mono);font-size:13px}.mpesa-ledger-mobile-row .money span{display:block;margin-top:5px}.mpesa-ledger-mobile-row .mpesa-allocation-menu{grid-column:1/-1;min-width:0;margin-top:6px}.mpesa-ledger-mobile-row .mpesa-allocations{position:static;width:auto;min-width:0;max-width:none;box-shadow:none}.mpesa-ledger-pager{align-items:flex-start;flex-direction:column}.mpesa-ledger-pager>div{width:100%}.mpesa-ledger-pager .btn{flex:1}}
-@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-fields{grid-template-columns:1fr}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:185px}}
-@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}.mpesa-offset-transaction{grid-template-columns:1fr}.mpesa-offset-actions{flex-direction:column-reverse}}
+@media(max-width:720px){.mpesa-offset-modal{max-height:calc(100dvh - 20px);padding:15px}.mpesa-offset-actions .btn{flex:1}.mpesa-offset-invoices{max-height:250px}.mpesa-offset-invoice{grid-template-columns:1fr 110px}}
+@media(max-width:470px){.mpesa-ledger-toolbar{grid-template-columns:1fr}.mpesa-ledger-search,.mpesa-time-mode,.mpesa-ledger-actions{grid-column:auto}.mpesa-ledger-summary{grid-template-columns:1fr}.mpesa-ledger-summary>div{border-right:0;border-bottom:1px solid var(--border-soft)}.mpesa-ledger-summary>div:last-child{border-bottom:0}.mpesa-offset-transaction{grid-template-columns:1fr}.mpesa-offset-summary{grid-template-columns:1fr 1fr}.mpesa-offset-summary>span:last-child{grid-column:1/-1}.mpesa-offset-invoice{grid-template-columns:1fr}.mpesa-offset-invoice-amount{grid-template-columns:auto 1fr;align-items:center}.mpesa-offset-actions{flex-direction:column-reverse}}
 @media(max-width:720px){
   .mpesa-ledger-page{min-width:0;overflow:hidden}
   .mpesa-ledger-page .page-header{align-items:flex-start;gap:10px}
@@ -15762,8 +15770,7 @@ function MpesaAllocationList({ allocations, offsets, currency = "KES", timeZone 
 
 function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved }) {
   const [search, setSearch] = useState("");
-  const [invoiceId, setInvoiceId] = useState("");
-  const [amount, setAmount] = useState(() => (Number(transaction.remainingCents || 0) / 100).toFixed(2));
+  const [selectedAmounts, setSelectedAmounts] = useState({});
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -15784,23 +15791,42 @@ function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved })
       .filter((invoice) => invoice.branchId === transaction.branchId && Number(cashByInvoice[invoice.id] || 0) > 0)
       .filter((invoice) => !needle || [invoice.number, invoice.receiptNo, invoice.customerName, invoice.id].some((value) => String(value || "").toLowerCase().includes(needle)))
       .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0))
-      .slice(0, 12);
+      .slice(0, 40);
   }, [cashByInvoice, data?.invoices, search, transaction.branchId]);
-  const selectedInvoice = (data?.invoices || []).find((invoice) => invoice.id === invoiceId) || null;
-  const amountCents = centsFromInput(amount);
-  const valid = Boolean(selectedInvoice && amountCents > 0 && amountCents <= Number(transaction.remainingCents || 0));
+  const selectedOffsets = useMemo(() => Object.entries(selectedAmounts)
+    .map(([invoiceId, amount]) => ({ invoiceId, amountCents: centsFromInput(amount) }))
+    .filter((entry) => entry.amountCents > 0)
+    .sort((left, right) => left.invoiceId.localeCompare(right.invoiceId)), [selectedAmounts]);
+  const totalAmountCents = selectedOffsets.reduce((sum, entry) => sum + entry.amountCents, 0);
+  const transactionRemainingCents = Number(transaction.remainingCents || 0);
+  const receiptAmountExceeded = selectedOffsets.some((entry) => entry.amountCents > Number(cashByInvoice[entry.invoiceId] || 0));
+  const valid = selectedOffsets.length > 0 && selectedOffsets.length === Object.keys(selectedAmounts).length
+    && !receiptAmountExceeded && totalAmountCents <= transactionRemainingCents;
+  const toggleInvoice = (invoice) => {
+    setSelectedAmounts((current) => {
+      if (Object.prototype.hasOwnProperty.call(current, invoice.id)) {
+        const next = { ...current };
+        delete next[invoice.id];
+        return next;
+      }
+      const alreadySelectedCents = Object.values(current).reduce((sum, value) => sum + centsFromInput(value), 0);
+      const suggestedCents = Math.min(Number(cashByInvoice[invoice.id] || 0), Math.max(0, transactionRemainingCents - alreadySelectedCents));
+      if (suggestedCents <= 0) return current;
+      return { ...current, [invoice.id]: (suggestedCents / 100).toFixed(2) };
+    });
+    setError("");
+  };
   const submit = async () => {
     if (!valid || busy) return;
     setBusy(true);
     setError("");
-    const signature = `${transaction.id}:${invoiceId}:${amountCents}`;
+    const signature = `${transaction.id}:${selectedOffsets.map((entry) => `${entry.invoiceId}:${entry.amountCents}`).join("|")}`;
     if (attemptRef.current.signature !== signature) attemptRef.current = { signature, key: uid("cash_offset") };
     try {
       await offsetKopokopoTransaction({
         transactionId: transaction.id,
-        invoiceId,
+        offsets: selectedOffsets,
         branchId: transaction.branchId,
-        amountCents,
         note: note.trim(),
         idempotencyKey: attemptRef.current.key,
       });
@@ -15821,20 +15847,27 @@ function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved })
   };
   return <div className="scrim mpesa-offset-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
     <section className="modal mpesa-offset-modal" role="dialog" aria-modal="true" aria-labelledby="mpesa-offset-title">
-      <div className="mpesa-offset-head"><div><span className="eyebrow">Cash deposited to till</span><h3 id="mpesa-offset-title">Record cash deposit offset</h3></div><button type="button" className="iconbtn" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
+      <div className="mpesa-offset-head"><div><span className="eyebrow">Cash deposited to till</span><h3 id="mpesa-offset-title">Offset cash receipts</h3></div><button type="button" className="iconbtn" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
       <div className="mpesa-offset-transaction"><span><small>M-Pesa code</small><b>{transaction.referenceMasked}</b></span><span><small>Available</small><b>{fmt(transaction.remainingCents, transaction.currency || "KES")}</b></span></div>
-      <p className="mpesa-offset-help">Link the till deposit to the invoice already recorded as cash. This makes the M-Pesa amount unavailable without changing the invoice payment method.</p>
-      <label className="mpesa-offset-search"><span>Cash invoice</span><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search receipt or customer" /></label>
+      <p className="mpesa-offset-help">Select every cash receipt covered by this till deposit. They are saved together, and the invoices remain recorded as cash.</p>
+      <label className="mpesa-offset-search"><span>Cash receipts</span><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search receipt or customer" /></label>
       <div className="mpesa-offset-invoices">{candidates.length ? candidates.map((invoice) => {
-        const selected = invoice.id === invoiceId;
-        return <button type="button" className={selected ? "selected" : ""} key={invoice.id} onClick={() => { setInvoiceId(invoice.id); setError(""); }}>
-          <span><b>{invoice.number || invoice.receiptNo || invoice.id}</b><small>{invoice.customerName || "Walk-in customer"}</small></span><strong>{fmt(cashByInvoice[invoice.id] || 0, "KES")} cash</strong>
-        </button>;
+        const selected = Object.prototype.hasOwnProperty.call(selectedAmounts, invoice.id);
+        return <div className={`mpesa-offset-invoice ${selected ? "selected" : ""}`} key={invoice.id}>
+          <label className="mpesa-offset-invoice-choice">
+            <input type="checkbox" checked={selected} onChange={() => toggleInvoice(invoice)} />
+            <span className="mpesa-offset-invoice-copy"><b>{invoice.number || invoice.receiptNo || invoice.id}</b><small>{invoice.customerName || "Walk-in customer"}</small></span>
+            <strong>{fmt(cashByInvoice[invoice.id] || 0, "KES")} cash</strong>
+          </label>
+          {selected ? <label className="mpesa-offset-invoice-amount"><span>Use</span><input className="input" inputMode="decimal" min="0.01" max={(Number(cashByInvoice[invoice.id] || 0) / 100).toFixed(2)} value={selectedAmounts[invoice.id]} onChange={(event) => { const value = event.target.value; setSelectedAmounts((current) => ({ ...current, [invoice.id]: value })); setError(""); }} /></label> : null}
+        </div>;
       }) : <div className="notice">No captured cash invoice matches this search.</div>}</div>
-      <div className="mpesa-offset-fields"><label><span>Offset amount</span><input className="input" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></label><label><span>Note (optional)</span><input className="input" value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} placeholder="Cash deposited to till" /></label></div>
-      {amountCents > Number(transaction.remainingCents || 0) ? <div className="errorbox">Amount exceeds the available M-Pesa balance.</div> : null}
+      <div className="mpesa-offset-summary"><span><small>Receipts selected</small><b>{selectedOffsets.length}</b></span><span><small>Offset total</small><b>{fmt(totalAmountCents, "KES")}</b></span><span><small>Remaining after</small><b>{fmt(Math.max(0, transactionRemainingCents - totalAmountCents), "KES")}</b></span></div>
+      <label className="mpesa-offset-note"><span>Note (optional)</span><input className="input" value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} placeholder="Cash deposited to till" /></label>
+      {receiptAmountExceeded ? <div className="errorbox">A selected amount exceeds the cash recorded on that receipt.</div> : null}
+      {totalAmountCents > transactionRemainingCents ? <div className="errorbox">Selected receipt amounts exceed the available M-Pesa balance.</div> : null}
       {error ? <div className="errorbox">{error}</div> : null}
-      <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Banknote /> {busy ? "Recording..." : `Offset ${fmt(amountCents, "KES")}`}</button></div>
+      <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Banknote /> {busy ? "Recording..." : `Offset ${selectedOffsets.length} receipt${selectedOffsets.length === 1 ? "" : "s"} - ${fmt(totalAmountCents, "KES")}`}</button></div>
     </section>
   </div>;
 }
