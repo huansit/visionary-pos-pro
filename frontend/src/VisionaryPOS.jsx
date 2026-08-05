@@ -4955,13 +4955,13 @@ body{overscroll-behavior:none}
   .transfer-suggestion-row,.transfer-approval-row{padding:9px 10px}
 }
 /* Workspaces with stable controls and independently scrolling results. */
-.content:has(.adminwrap.products-active),.content:has(.adminwrap.pricing-active),.content:has(.adminwrap.mpesa-active),.content:has(.invoice-workspace.invoice-list-active){overflow:hidden}
-.adminwrap.products-active,.adminwrap.pricing-active,.adminwrap.mpesa-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
-.adminwrap.products-active .admincontent,.adminwrap.pricing-active .admincontent,.adminwrap.mpesa-active .admincontent{height:100%;min-height:0;overflow:hidden}
+.content:has(.adminwrap.mpesa-active),.content:has(.invoice-workspace.invoice-list-active){overflow:hidden}
+.adminwrap.mpesa-active{height:100%;min-height:0;align-items:stretch;overflow:hidden}
+.adminwrap.mpesa-active .admincontent{height:100%;min-height:0;overflow:hidden}
 .content:has(.invoice-workspace.invoice-list-active) .adminwrap,.content:has(.invoice-workspace.invoice-list-active) .admincontent{height:100%;min-height:0;align-items:stretch;overflow:hidden}
-.products-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
-.products-workspace>.addpanel{max-height:min(48dvh,420px);overflow:auto;flex:0 1 auto}
-.products-workspace .products-scroll-region{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.products-workspace{display:block;width:100%;min-width:0;height:auto;min-height:0;overflow:visible}
+.products-workspace>.addpanel{max-height:none;overflow:visible}
+.products-workspace .products-scroll-region{width:100%;min-height:0;max-height:none;overflow-x:auto;overflow-y:visible;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
 .catalog-head-actions,.catalog-scan-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .catalog-more-menu,.catalog-filter-menu{position:relative}
 .catalog-more-menu>summary,.catalog-filter-menu>summary{list-style:none;cursor:pointer;user-select:none}
@@ -4975,11 +4975,11 @@ body{overscroll-behavior:none}
 .catalog-filter-panel .select{width:100%;min-width:0}
 .catalog-filter-count{display:inline-grid;min-width:18px;height:18px;place-items:center;padding:0 5px;border-radius:999px;background:var(--accent);color:#fff;font-size:9px}
 .catalog-filter-menu[open]>summary svg:last-child{transform:rotate(180deg)}
-.pricing-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}
+.pricing-workspace{width:100%;min-width:0}
 .pricing-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,220px) auto;gap:8px;align-items:center;margin-bottom:12px}
 .pricing-search{width:100%;min-width:0;height:44px}
 .pricing-branch-select{width:100%;min-width:0;height:44px}
-.pricing-workspace .pricing-scroll-region{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.pricing-workspace .pricing-scroll-region{overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
 .catalog-option-note{color:var(--muted);font-size:11px;line-height:1.45}
 .pricing-scan-message{margin:-3px 0 10px}
 .mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
@@ -4998,15 +4998,13 @@ body{overscroll-behavior:none}
 .transfer-scan-actions{display:flex;gap:8px}
 
 @media (max-width:900px){
-  .adminwrap.products-active,.adminwrap.pricing-active,.adminwrap.mpesa-active{grid-template-rows:auto minmax(0,1fr)}
+  .adminwrap.mpesa-active{grid-template-rows:auto minmax(0,1fr)}
   .content:has(.invoice-workspace.invoice-list-active) .adminwrap{grid-template-rows:auto minmax(0,1fr)}
 }
 
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
-  .content:has(.adminwrap.products-active),.content:has(.adminwrap.pricing-active){overflow:hidden}
-  .adminwrap.products-active,.adminwrap.pricing-active,.adminwrap.products-active .admincontent,.adminwrap.pricing-active .admincontent{height:100%;min-height:0;overflow:hidden}
-  .products-workspace,.pricing-workspace{height:100%;min-height:0;overflow:hidden}
-  .products-workspace .products-scroll-region,.pricing-workspace .pricing-scroll-region{flex:1 1 auto;min-height:140px;max-height:none;overflow:auto;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+  .products-workspace,.pricing-workspace{height:auto;min-height:0;overflow:visible}
+  .products-workspace .products-scroll-region,.pricing-workspace .pricing-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
   .admincontent .page-h .catalog-head-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;width:100%;gap:6px}
   .catalog-scan-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   .catalog-scan-actions .btn{width:100%;min-width:0;padding-inline:7px}
@@ -5021,7 +5019,7 @@ body{overscroll-behavior:none}
   .catalog-filter-menu>summary svg{margin:0}
   .catalog-filter-menu>summary .catalog-filter-count{font-size:9px}
   .catalog-filter-panel{right:0;left:auto;width:min(270px,calc(100vw - 24px));grid-template-columns:1fr 1fr}
-  .products-workspace>.addpanel{max-height:min(44dvh,360px);overflow:auto;-webkit-overflow-scrolling:touch}
+  .products-workspace>.addpanel{max-height:none;overflow:visible}
   .pricing-toolbar{grid-template-columns:minmax(0,1.35fr) minmax(128px,.65fr);gap:6px;margin-bottom:9px}
   .pricing-search{grid-column:1;height:42px}
   .pricing-branch-select{grid-column:2;height:42px}
@@ -7407,7 +7405,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "products" ? " products-active" : "") + (tab === "pricing" ? " pricing-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
+    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
