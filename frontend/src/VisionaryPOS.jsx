@@ -4979,7 +4979,11 @@ body{overscroll-behavior:none}
 .pricing-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) minmax(160px,220px) auto;gap:8px;align-items:center;margin-bottom:12px}
 .pricing-search{width:100%;min-width:0;height:44px}
 .pricing-branch-select{width:100%;min-width:0;height:44px}
-.pricing-workspace .pricing-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible;overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.pricing-workspace .pricing-scroll-region{max-height:none;overflow-x:auto;overflow-y:visible;border-color:var(--border);overscroll-behavior-x:contain;overscroll-behavior-y:auto;touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+.pricing-workspace .pricing-scroll-region .tbl thead th+th{border-left:1px solid rgba(255,255,255,.28)}
+.pricing-workspace .pricing-scroll-region .tbl tbody td{border-bottom-color:var(--border)}
+.pricing-workspace .pricing-scroll-region .tbl tbody td+td{border-left:1px solid var(--border-soft)}
+.pricing-workspace .pricing-scroll-region .tbl tbody tr:last-child td{border-bottom:0}
 .catalog-option-note{color:var(--muted);font-size:11px;line-height:1.45}
 .pricing-scan-message{margin:-3px 0 10px}
 .mpesa-ledger-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden}
