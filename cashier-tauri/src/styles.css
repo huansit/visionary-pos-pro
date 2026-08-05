@@ -9161,6 +9161,8 @@ body {
 .cashier-mpesa-status.available { background: #123b2d; color: #86efc1; }
 .cashier-mpesa-status.partial { background: #15364c; color: #8bd8ff; }
 .cashier-mpesa-status.allocated { background: #491f2c; color: #ff8da1; }
+.cashier-mpesa-status.offset { background: #4b3411; color: #fcd34d; }
+.cashier-mpesa-status.offset-partial { background: #493b16; color: #fde68a; }
 .cashier-mpesa-status.reversed { background: #5a1f29; color: #fecdd3; }
 
 .cashier-mpesa-balance {
@@ -9199,6 +9201,18 @@ body {
 .cashier-mpesa-row.reversed .cashier-mpesa-amount > b,
 .cashier-mpesa-row.reversed .cashier-mpesa-balance b {
   color: #fb7185;
+}
+
+.cashier-mpesa-row.offset,
+.cashier-mpesa-row.offset-partial {
+  border-left-color: #f59e0b;
+}
+
+.cashier-mpesa-row.offset .cashier-mpesa-amount > b,
+.cashier-mpesa-row.offset .cashier-mpesa-balance b,
+.cashier-mpesa-row.offset-partial .cashier-mpesa-amount > b,
+.cashier-mpesa-row.offset-partial .cashier-mpesa-balance b {
+  color: #fcd34d;
 }
 
 .cashier-mpesa-allocations {
@@ -9241,6 +9255,18 @@ body {
   grid-column: 1 / -1;
   color: #a0b0b9;
   font-size: 9px;
+}
+
+.cashier-mpesa-allocations > div.cashier-mpesa-offset {
+  border-color: #59471d;
+  border-left-color: #f59e0b;
+  background: #2b2517;
+}
+
+.cashier-mpesa-allocations > div.cashier-mpesa-offset.reversed {
+  border-color: #5c2932;
+  border-left-color: #fb7185;
+  background: #2d1d22;
 }
 
 .cashier-mpesa-footer {
@@ -9378,6 +9404,10 @@ body {
 .cashier-mpesa-panel.light .cashier-mpesa-row.allocated .cashier-mpesa-balance b,
 .cashier-mpesa-panel.light .cashier-mpesa-row.reversed .cashier-mpesa-amount > b,
 .cashier-mpesa-panel.light .cashier-mpesa-row.reversed .cashier-mpesa-balance b { color: #be123c; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.offset .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.offset .cashier-mpesa-balance b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.offset-partial .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.offset-partial .cashier-mpesa-balance b { color: #b45309; }
 
 .cashier-mpesa-panel.light .cashier-mpesa-allocations > div {
   border-color: #d5e5e8;
@@ -9387,6 +9417,18 @@ body {
 
 .cashier-mpesa-panel.light .cashier-mpesa-allocations > div > b {
   color: #172033;
+}
+
+.cashier-mpesa-panel.light .cashier-mpesa-allocations > div.cashier-mpesa-offset {
+  border-color: #f4d9a5;
+  border-left-color: #d97706;
+  background: #fff8e8;
+}
+
+.cashier-mpesa-panel.light .cashier-mpesa-allocations > div.cashier-mpesa-offset.reversed {
+  border-color: #fecdd3;
+  border-left-color: #e11d48;
+  background: #fff1f2;
 }
 
 .cashier-mpesa-panel.light .cashier-mpesa-footer .cashier-mpesa-done {

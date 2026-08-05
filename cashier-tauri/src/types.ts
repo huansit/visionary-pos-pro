@@ -168,6 +168,18 @@ export type MpesaAllocation = {
   allocatedAt?: string | null;
 };
 
+export type MpesaOffset = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amountCents: number;
+  reason: string;
+  note?: string | null;
+  status: string;
+  offsetByName?: string | null;
+  offsetAt?: string | null;
+};
+
 export type MpesaTransaction = {
   id: string;
   referenceMasked: string;
@@ -186,6 +198,7 @@ export type MpesaTransaction = {
   createdAt?: string | null;
   providerVerified: boolean;
   allocations: MpesaAllocation[];
+  offsets?: MpesaOffset[];
 };
 
 export type MpesaLedger = {

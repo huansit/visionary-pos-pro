@@ -2092,7 +2092,12 @@ function mpesaDateBoundary(value: string, edge: "start" | "end" = "start") {
 
 function cashierMpesaStatus(transaction: MpesaTransaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  const activeAllocations = (transaction.allocations || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
+  const activeOffsets = (transaction.offsets || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
+  const offsetOnly = activeOffsets.length > 0 && activeAllocations.length === 0;
+  if (Number(transaction.remainingCents || 0) <= 0 && offsetOnly) return { key: "offset", label: "Offset" };
   if (Number(transaction.remainingCents || 0) <= 0) return { key: "allocated", label: "Used" };
+  if (Number(transaction.allocatedCents || 0) > 0 && offsetOnly) return { key: "offset-partial", label: "Partly offset" };
   if (Number(transaction.allocatedCents || 0) > 0) return { key: "partial", label: "Partly used" };
   return { key: "available", label: "Available" };
 }
@@ -2365,6 +2370,8 @@ function CashierMpesaView({
       <div className="cashier-mpesa-list" aria-live="polite">
         {ledger.transactions.map((transaction) => {
           const paymentStatus = cashierMpesaStatus(transaction);
+          const allocations = Array.isArray(transaction.allocations) ? transaction.allocations : [];
+          const offsets = Array.isArray(transaction.offsets) ? transaction.offsets : [];
           const transactionTime = transaction.originationTime || transaction.createdAt;
           const referenceLast4 = transaction.referenceLast4 || transaction.referenceMasked?.slice(-4) || "----";
           return (
@@ -2402,19 +2409,27 @@ function CashierMpesaView({
                 </div>
               </div>
               <div className="cashier-mpesa-balance">
-                <span>{money(transaction.allocatedCents)} used</span>
+                <span>{money(transaction.allocatedCents)} applied</span>
                 <b>{money(transaction.remainingCents)} available</b>
               </div>
               <div className="cashier-mpesa-allocations">
-                {transaction.allocations.length === 0 ? (
-                  <span>Not allocated to an invoice</span>
-                ) : transaction.allocations.map((allocation) => (
+                {allocations.length === 0 && offsets.length === 0 ? (
+                  <span>Not allocated or offset to a receipt</span>
+                ) : allocations.map((allocation) => (
                   <div key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>
                     <b>{allocation.invoiceNumber || allocation.invoiceId}</b>
                     <strong>{money(allocation.amountCents)}</strong>
-                    <small>Cleared by {allocation.allocatedByName || "supervisor"}{allocation.allocatedAt ? ` - ${formatBusinessDateTime(allocation.allocatedAt)}` : ""}</small>
+                    <small>Invoice payment by {allocation.allocatedByName || "supervisor"}{allocation.allocatedAt ? ` - ${formatBusinessDateTime(allocation.allocatedAt)}` : ""}{String(allocation.status || "active").toLowerCase() !== "active" ? ` - ${allocation.status}` : ""}</small>
                   </div>
                 ))}
+                {offsets.map((entry) => {
+                  const isActive = String(entry.status || "active").toLowerCase() === "active";
+                  return <div className={`cashier-mpesa-offset${isActive ? "" : " reversed"}`} key={entry.id || `${entry.invoiceId}:${entry.amountCents}`}>
+                    <b>Cash receipt {entry.invoiceNumber || entry.invoiceId}</b>
+                    <strong>{money(entry.amountCents)}</strong>
+                    <small>{isActive ? "Cash deposit offset" : "Reversed cash deposit offset"} by {entry.offsetByName || "supervisor"}{entry.offsetAt ? ` - ${formatBusinessDateTime(entry.offsetAt)}` : ""}{entry.note ? ` - ${entry.note}` : ""}</small>
+                  </div>;
+                })}
               </div>
             </article>
           );

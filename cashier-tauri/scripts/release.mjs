@@ -240,6 +240,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "Cashier M-Pesa transactions now show cash deposit offsets and every receipt covered by a multi-receipt till deposit.",
+  "Cash deposit offsets are clearly distinguished from invoice payments, including partial and reversed offsets.",
   "Cashiers can now open transfer requests to see every transferred product, SKU, quantity, and approval detail.",
   "Cashier and admin M-Pesa ledgers can filter the current business day or any completed End of Day period using its closing date.",
   "Cashier and admin invoice lists can use the same exact business-day periods, from the previous close through the selected close.",
