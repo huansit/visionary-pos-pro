@@ -240,6 +240,8 @@ const compatibilityJsonPath = path.join(outDir, "release.json");
 const installerUrl = `${downloadsBaseUrl.replace(/\/$/, "")}/${versionedInstallerName}`;
 const releaseNotes = [
   `VISIONPOS Cashier ${version}`,
+  "End of Day now marks existing cashier M-Pesa notifications as read and clears the unread badge before the next business day.",
+  "M-Pesa transactions received after the closing boundary still create a new cashier notification.",
   "M-Pesa transaction rows and summary totals now start after the branch's latest End of Day close unless a custom date or time filter is selected.",
   "M-Pesa transactions now show and search a payer phone ending, making customers with the same name easier to distinguish.",
   "Only the final four phone digits are retained; full payer phone numbers remain excluded from transaction storage and audit payloads.",
