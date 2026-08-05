@@ -9092,6 +9092,40 @@ body {
   font-family: "Roboto Mono", monospace;
 }
 
+.cashier-mpesa-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cashier-mpesa-copy:hover .cashier-mpesa-code-last4,
+.cashier-mpesa-copy:focus-visible .cashier-mpesa-code-last4 {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cashier-mpesa-copy:focus-visible {
+  outline: 2px solid #67e8f9;
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.cashier-mpesa-copy-state {
+  margin-left: 5px;
+  color: #83f1c0;
+  font-family: "Inter", sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .cashier-mpesa-code-last4 {
   color: #67e8f9;
   font-family: "Roboto Mono", monospace;

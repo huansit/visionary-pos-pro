@@ -38,6 +38,8 @@ const SESSION_KEY = "visionary:pos:session:v1";
 const OUTBOX_KEY = "visionary:pos:sync:outbox:v1";
 const CURSOR_KEY = "visionary:pos:sync:cursor:v1";
 const RESET_EPOCH_KEY = "visionary:pos:sync:reset-epoch:v1";
+const INVOICE_SYNC_REPAIR_KEY = "visionary:pos:sync:invoice-repair:v1";
+const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -50,7 +52,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 const REALTIME_SYNC_MS = 5000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
@@ -606,10 +608,12 @@ async function kvGet(key) {
 }
 async function kvSet(key, value) {
   try {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return false;
     if (window.storage) await window.storage.set(key, value);
     else if (window.localStorage) window.localStorage.setItem(key, value);
-  } catch (_) {}
+    else return false;
+    return true;
+  } catch (_) { return false; }
 }
 async function kvRemove(key) {
   try {
@@ -623,7 +627,7 @@ async function loadJson(key, fallback) {
   if (!raw) return fallback;
   try { return JSON.parse(raw); } catch (_) { return fallback; }
 }
-async function saveJson(key, value) { await kvSet(key, JSON.stringify(value)); }
+async function saveJson(key, value) { return await kvSet(key, JSON.stringify(value)); }
 async function loadSessionState() { return await loadJson(SESSION_KEY, null); }
 async function saveSessionState(value) { await saveJson(SESSION_KEY, value); }
 async function clearSessionState() { activeSessionToken = ""; await kvSet(SESSION_KEY, ""); }
@@ -828,10 +832,12 @@ async function loadData() {
   }
   return null;
 }
-async function saveData(data) {
+async function saveData(data, options = {}) {
   const { _sync, ...cache } = data || {};
-  await saveJson(STORE_KEY, cache);
-  await saveBarcodeCache(cache);
+  const persisted = await saveJson(STORE_KEY, cache);
+  if (!persisted && options.required) throw new Error("local_cache_write_failed");
+  if (persisted) await saveBarcodeCache(cache);
+  return persisted;
 }
 
 function normalizeBarcode(value) { return String(value || "").trim().replace(/\s+/g, ""); }
@@ -2033,7 +2039,6 @@ async function runSyncClient(currentData, options = {}) {
     const nextCursor = Number(body.cursor || cursor || 0);
     hasMore = !!body.hasMore && nextCursor > cursor;
     cursor = nextCursor;
-    await saveCursor(cursor);
   }
   const visibleRejected = rejected.filter((item) => item?.reason !== "auth_records_do_not_sync");
   const rejectedText = visibleRejected.length ? `${visibleRejected.length} queued change(s) were rejected by the server: ${visibleRejected.map((item) => item.reason || "unknown").join(", ")}` : "";
@@ -2041,7 +2046,10 @@ async function runSyncClient(currentData, options = {}) {
   const credentialText = "";
   const nextSyncError = outbox.length ? [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") : "";
   data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: nextSyncError } };
-  await saveData(data);
+  // Commit the cache before the cursor. If iOS rejects the larger cache write,
+  // the next sync must replay these events instead of skipping them forever.
+  await saveData(data, { required: true });
+  await saveCursor(cursor);
   return { data, status: data._sync };
 }
 async function syncStreamUrl(branchId = null) {
@@ -2058,14 +2066,20 @@ async function cloudBootstrapData(localData, options = {}) {
   try {
     const localHasBranches = Array.isArray(base.branches) && base.branches.length > 0;
     const localHasProducts = Array.isArray(base.products) && base.products.length > 0;
-    const needsFullBootstrap = Boolean(options.forceFullPull || !localHasBranches || !localHasProducts);
+    const invoiceRepairPending = await kvGet(INVOICE_SYNC_REPAIR_KEY) !== INVOICE_SYNC_REPAIR_VERSION;
+    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || !localHasBranches || !localHasProducts);
     if (needsFullBootstrap) await saveCursor(0);
     const first = (await runSyncClient(base, { ...options, forceFullPull: needsFullBootstrap })).data;
     if (!Array.isArray(first.branches) || first.branches.length === 0 || !Array.isArray(first.products) || first.products.length === 0) {
       await saveCursor(0);
       const retryBase = { ...first, _sync: { ...(first._sync || {}), cursor: 0 } };
-      return (await runSyncClient(retryBase, { ...options, forceFullPull: true })).data;
+      const retried = (await runSyncClient(retryBase, { ...options, forceFullPull: true })).data;
+      if (Array.isArray(retried.branches) && retried.branches.length > 0 && Array.isArray(retried.products) && retried.products.length > 0) {
+        await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
+      }
+      return retried;
     }
+    if (invoiceRepairPending) await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
     return first;
   } catch (error) {
     return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };
@@ -4009,10 +4023,13 @@ body{overscroll-behavior:none}
 .mpesa-ledger-table td{white-space:nowrap}
 .mpesa-ledger-table .payer{white-space:normal;min-width:150px;font-weight:650}
 .mpesa-payer-phone{display:block;margin-top:3px;color:var(--muted-2);font-family:var(--font-mono);font-size:10px;font-weight:650}
-.mpesa-reference{display:inline-flex;align-items:baseline;font-family:var(--font-mono);white-space:nowrap}
+.mpesa-reference{display:inline-flex;align-items:baseline;gap:0;padding:0;border:0;background:transparent;color:inherit;font:inherit;font-family:var(--font-mono);white-space:nowrap;cursor:pointer;touch-action:manipulation}
 .mpesa-reference .masked{color:var(--muted-2)}
 .mpesa-reference strong{color:var(--accent);font-weight:900}
 .mpesa-reference.allocated strong,.mpesa-reference.reversed strong,.mpesa-ledger-row.allocated .mpesa-reference strong,.mpesa-ledger-mobile-row.allocated .mpesa-reference strong{color:var(--danger)!important}
+.mpesa-reference:hover strong,.mpesa-reference:focus-visible strong{text-decoration:underline;text-underline-offset:2px}
+.mpesa-reference:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.mpesa-reference .copy-state{margin-left:5px;color:var(--ok);font-family:var(--font);font-size:9px;font-weight:800;text-transform:uppercase}
 .mpesa-ledger-table td.available-amount,.mpesa-branch-totals-table td.available-amount{color:var(--ok);font-weight:800}
 .mpesa-ledger-mobile-row .available-amount{color:var(--ok);font-weight:800}
 .mpesa-live{display:inline-flex;align-items:center;gap:6px;color:var(--ok);font-size:11px;font-weight:800;text-transform:uppercase}
@@ -5081,6 +5098,8 @@ body{overscroll-behavior:none}
 .adminwrap.mpesa-active{height:auto;min-height:100%;align-items:start;overflow:visible}
 .adminwrap.mpesa-active .admincontent{height:auto;min-height:0;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:auto;-webkit-overflow-scrolling:touch}
+.adminwrap.invoice-active{height:auto;min-height:100%;align-items:start;overflow:visible}
+.adminwrap.invoice-active .admincontent{height:auto;min-height:0;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto;min-height:100%;align-items:start;overflow:visible}
 .content:has(.invoice-workspace.invoice-list-active) .admincontent{height:auto;min-height:0;overflow:visible}
 .products-workspace{display:block;width:100%;min-width:0;height:auto;min-height:0;overflow:visible}
@@ -5128,6 +5147,7 @@ body{overscroll-behavior:none}
 
 @media (max-width:900px){
   .adminwrap.mpesa-active{grid-template-rows:auto minmax(0,1fr)}
+  .adminwrap.invoice-active{grid-template-rows:auto minmax(0,1fr)}
   .content:has(.invoice-workspace.invoice-list-active) .adminwrap{grid-template-rows:auto minmax(0,1fr)}
 }
 
@@ -5388,6 +5408,8 @@ body{overscroll-behavior:none}
 /* Mobile sales uses the page as its only scroll owner. */
 @media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .content:has(.invoice-workspace.invoice-list-active){overflow-y:auto!important;overflow-x:hidden!important;overscroll-behavior-y:auto;touch-action:pan-y pinch-zoom;-webkit-overflow-scrolling:touch}
+  .adminwrap.invoice-active{height:auto!important;min-height:100%;align-items:start;grid-template-rows:auto auto;overflow:visible!important}
+  .adminwrap.invoice-active .admincontent{height:auto!important;min-height:0;overflow:visible!important}
   .content:has(.invoice-workspace.invoice-list-active) .adminwrap{height:auto!important;min-height:100%;align-items:start;grid-template-rows:auto auto;overflow:visible!important}
   .content:has(.invoice-workspace.invoice-list-active) .admincontent{height:auto!important;min-height:0;overflow:visible!important}
   .invoice-workspace.invoice-list-active{height:auto;min-height:100%;overflow:visible}
@@ -7550,7 +7572,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
+    <div className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "invoices" ? " invoice-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
@@ -8583,7 +8605,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
 
         {normalizedMpesaCode.length === 4 && existingReceipt ? (
           <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
-            <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
+            <div><span>M-Pesa code</span><b>Ending <MpesaReference value={existingReceipt.codeLast4} /></b></div>
             <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
             <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
             <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
@@ -9431,7 +9453,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             {normalizedMpesaCode.length === 4 && !providerLookup.loading && !verifiedReceipt && !providerLookup.error && providerLookup.providerRequired === false ? <div className="notice compact-notice">Manual M-Pesa entry. VISIONPOS will save this receipt once and track its remaining balance.</div> : null}
             {normalizedMpesaCode.length === 4 && existingReceipt ? (
               <div className={"mpesa-receipt-status " + (existingReceipt.remainingCents <= 0 ? "blocked" : "available")}>
-                <div><span>M-Pesa code</span><b>Ending {existingReceipt.codeLast4}</b></div>
+                <div><span>M-Pesa code</span><b>Ending <MpesaReference value={existingReceipt.codeLast4} /></b></div>
                 <div><span>Original payment</span><b>{fmt(existingReceipt.totalCents, cur)}</b></div>
                 <div><span>Already allocated</span><b>{fmt(existingReceipt.allocatedCents, cur)}</b></div>
                 <div><span>Available</span><b>{fmt(existingReceipt.remainingCents, cur)}</b></div>
@@ -15601,7 +15623,39 @@ function MpesaReference({ value, tone = "" }) {
   const reference = String(value || "-");
   const suffix = reference.length > 4 ? reference.slice(-4) : reference;
   const prefix = reference.slice(0, Math.max(0, reference.length - suffix.length));
-  return <span className={`mpesa-reference ${tone}`.trim()} aria-label={reference}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong></span>;
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const copySuffix = async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    let succeeded = false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(suffix);
+        succeeded = true;
+      }
+    } catch (_) {}
+    if (!succeeded) {
+      try {
+        const input = document.createElement("textarea");
+        input.value = suffix;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        succeeded = document.execCommand("copy");
+        input.remove();
+      } catch (_) {}
+    }
+    if (succeeded) setCopied(true);
+  };
+  const label = `Copy M-Pesa code ending ${suffix}`;
+  return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
 function MpesaAllocationList({ allocations, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
@@ -16067,7 +16121,7 @@ function KopokopoSandboxTest({ data }) {
               <div><span>Status</span><b>{allocationTest?.verified ? "Allocation verified" : transaction ? "Payment verified" : paymentRequest.providerStatus || paymentRequest.status}</b></div>
               <div><span>Amount</span><b>{fmt(paymentRequest.amountCents, "KES")}</b></div>
               <div><span>Branch</span><b>{branchName}</b></div>
-              {transaction ? <div><span>M-Pesa reference</span><b>{transaction.referenceMasked}</b></div> : null}
+              {transaction ? <div><span>M-Pesa reference</span><b><MpesaReference value={transaction.referenceMasked} /></b></div> : null}
               {transaction ? <div><span>Payer</span><b>{transaction.payerName || "Sandbox customer"}</b></div> : null}
               {transaction?.payerPhoneLast4 ? <div><span>Phone</span><b>Ending {transaction.payerPhoneLast4}</b></div> : null}
               {transaction ? <div><span>Provider result</span><b>{paymentRequest.providerStatus || "Verified"}</b></div> : null}

@@ -2097,6 +2097,31 @@ function cashierMpesaStatus(transaction: MpesaTransaction) {
   return { key: "available", label: "Available" };
 }
 
+async function copyCashierText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall through to the WebView-compatible copy path.
+  }
+  try {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
 function CashierMpesaView({
   branchId,
   branchName,
@@ -2132,6 +2157,7 @@ function CashierMpesaView({
   const [sort, setSort] = useState<"asc" | "desc">("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [copiedReference, setCopiedReference] = useState("");
   const [liveState, setLiveState] = useState<"connected" | "reconnecting">("reconnecting");
   const [ledger, setLedger] = useState<MpesaLedger & { loading: boolean; error: string }>({
     enabled: true,
@@ -2350,8 +2376,22 @@ function CashierMpesaView({
                     {transaction.payerPhoneLast4 && <span>Phone ending {transaction.payerPhoneLast4}</span>}
                   </div>
                   <div className="cashier-mpesa-meta">
-                    <span className="cashier-mpesa-code-prefix">****</span>
-                    <strong className="cashier-mpesa-code-last4">{referenceLast4}</strong>
+                    <button
+                      type="button"
+                      className="cashier-mpesa-copy"
+                      title={copiedReference === transaction.id ? "Copied" : `Copy M-Pesa code ending ${referenceLast4}`}
+                      aria-label={copiedReference === transaction.id ? `Copied ${referenceLast4}` : `Copy M-Pesa code ending ${referenceLast4}`}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        if (!await copyCashierText(referenceLast4)) return;
+                        setCopiedReference(transaction.id);
+                        window.setTimeout(() => setCopiedReference((current) => current === transaction.id ? "" : current), 1400);
+                      }}
+                    >
+                      <span className="cashier-mpesa-code-prefix">****</span>
+                      <strong className="cashier-mpesa-code-last4">{referenceLast4}</strong>
+                      {copiedReference === transaction.id && <span className="cashier-mpesa-copy-state" aria-live="polite">Copied</span>}
+                    </button>
                     <span className="cashier-mpesa-meta-separator">/</span>
                     <time dateTime={transactionTime || undefined}>{transactionTime ? formatBusinessDateTime(transactionTime) : "Time not supplied"}</time>
                   </div>
