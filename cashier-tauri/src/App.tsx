@@ -105,6 +105,7 @@ type CashierJointDebtEntry = {
 type MpesaViewedMarker = {
   at: number;
   ids: string[];
+  readThrough?: boolean;
 };
 
 function mpesaViewedKey(terminal: TerminalCredentials) {
@@ -131,7 +132,11 @@ function readMpesaViewedMarker(key: string): MpesaViewedMarker | null {
     const parsed = JSON.parse(localStorage.getItem(key) || "null");
     const at = Number(parsed?.at || 0);
     if (!Number.isFinite(at) || at <= 0) return null;
-    return { at, ids: Array.isArray(parsed?.ids) ? parsed.ids.map(String) : [] };
+    return {
+      at,
+      ids: Array.isArray(parsed?.ids) ? parsed.ids.map(String) : [],
+      readThrough: parsed?.readThrough === true
+    };
   } catch {
     return null;
   }
@@ -149,8 +154,20 @@ function countUnreadMpesaTransactions(transactions: MpesaTransaction[], marker: 
   const idsAtBoundary = new Set(marker.ids);
   return transactions.filter((transaction) => {
     const at = mpesaTransactionTime(transaction);
-    return at > marker.at || (at === marker.at && !idsAtBoundary.has(transaction.id));
+    return at > marker.at || (at === marker.at && !marker.readThrough && !idsAtBoundary.has(transaction.id));
   }).length;
+}
+
+function markMpesaViewedThrough(terminal: TerminalCredentials, viewedThrough: number) {
+  if (!Number.isFinite(viewedThrough) || viewedThrough <= 0) return;
+  const key = mpesaViewedKey(terminal);
+  const current = readMpesaViewedMarker(key);
+  if (current && current.at > viewedThrough) return;
+  writeMpesaViewedMarker(key, {
+    at: viewedThrough,
+    ids: current?.at === viewedThrough ? current.ids : [],
+    readThrough: true
+  });
 }
 
 function money(cents: number) {
@@ -951,6 +968,8 @@ export default function App() {
       retainLatestDayClose(cached.dayClosedAt);
       setLastSyncAt(cached.savedAt);
       if (stored) {
+        markMpesaViewedThrough(stored, Number(cached.dayClosedAt || 0));
+        setMpesaUnreadCount(0);
         setTerminal(stored);
         setStatus("Terminal registered.");
         refreshCatalog(stored);
@@ -1235,6 +1254,8 @@ export default function App() {
           const effectiveDayClosedAt = replaceDayClose(pulled.dayClosedAt);
           if (effectiveDayClosedAt && effectiveDayClosedAt > previousDayClosedAt) {
             setDayCloseNoticeAt(effectiveDayClosedAt);
+            markMpesaViewedThrough(nextTerminal, effectiveDayClosedAt);
+            setMpesaUnreadCount(0);
           }
           const effectiveInvoices = pulled.invoices.map((invoice) => {
             const invoiceTs = Number(invoice.ts || 0);
