@@ -2832,26 +2832,31 @@ function branchLastEndDay(data, branchId) {
   const mapped = Number(data?.settings?.lastEndDayByBranch?.[branchId] || 0);
   const recorded = (data?.endOfDays || [])
     .filter((entry) => entry.branchId === branchId)
-    .reduce((latest, entry) => Math.max(
-      latest,
-      Number(entry.periodEndedAt || 0),
-      Number(entry.closedAt || 0),
-      Number(entry.ts || 0)
-    ), 0);
+    .reduce((latest, entry) => Math.max(latest, Number(entry.periodEndedAt || entry.closedAt || entry.ts || 0)), 0);
   return Math.max(mapped, recorded);
 }
 function branchBusinessDayPeriods(data, branchId, timeZone = DEFAULT_BUSINESS_TIME_ZONE) {
   const records = (data?.endOfDays || [])
     .filter((entry) => entry.branchId === branchId)
     .map((entry) => {
-      const endedAt = Math.max(Number(entry.periodEndedAt || 0), Number(entry.closedAt || 0), Number(entry.ts || 0));
-      return { entry, endedAt, startedAt: Number(entry.periodStartedAt || 0) };
+      const endedAt = Number(entry.periodEndedAt || entry.closedAt || entry.ts || 0);
+      const invoiceStartedAt = (entry.invoiceSnapshots || []).reduce((earliest, invoice) => {
+        const timestamp = invoiceIssuedTimestamp(invoice);
+        return timestamp > 0 && (!earliest || timestamp < earliest) ? timestamp : earliest;
+      }, 0);
+      return { entry, endedAt, startedAt: Number(entry.periodStartedAt || 0), invoiceStartedAt };
     })
     .filter((period) => period.endedAt > 0)
     .sort((a, b) => a.endedAt - b.endedAt);
   let previousEnd = 0;
   return records.map((period, index) => {
-    const startedAt = period.startedAt > 0 ? period.startedAt : previousEnd;
+    const startedAt = period.startedAt > 0
+      ? period.startedAt
+      : previousEnd > 0
+        ? previousEnd
+        : period.invoiceStartedAt > 0
+          ? period.invoiceStartedAt - 1
+          : 0;
     previousEnd = period.endedAt;
     const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(period.entry.businessDate || ""))
       ? String(period.entry.businessDate)
@@ -4231,13 +4236,22 @@ body{overscroll-behavior:none}
 .invoice-compact-summary .invoice-mpesa-total{padding-left:18px;border-left:1px solid var(--border-soft)}
 .invoice-compact-summary .invoice-mpesa-total b{color:var(--ok)}
 .invoice-compact-summary .btn{justify-self:end}
+.invoice-active-period{display:grid;grid-template-columns:auto minmax(180px,auto) minmax(0,1fr);align-items:center;gap:10px;padding:8px 10px;margin:0 0 8px;border:1px solid rgba(14,165,181,.28);border-left:3px solid var(--accent);border-radius:7px;background:rgba(14,165,181,.06)}
+.invoice-active-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
+.invoice-active-period-title{display:grid;gap:1px;min-width:0}
+.invoice-active-period-title b{font-size:12px}
+.invoice-active-period-title span{color:var(--muted-2);font-size:9.5px}
+.invoice-active-period-range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0}
+.invoice-active-period-range>span{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:baseline;gap:6px;min-width:0;padding:5px 8px;border-left:1px solid var(--border-soft)}
+.invoice-active-period-range small{color:var(--muted-2);font-size:8.5px;font-weight:800;text-transform:uppercase}
+.invoice-active-period-range b{overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);font-size:10.5px;white-space:nowrap}
 .invoice-filter-toolbar{display:contents}
 .invoice-primary-filters{display:grid;grid-template-columns:minmax(260px,1fr) minmax(170px,230px) minmax(170px,230px);gap:8px;margin-bottom:8px}
 .invoice-primary-filters label{display:grid;gap:3px;min-width:0}
 .invoice-primary-filters label>span{color:var(--muted-2);font-size:9px;font-weight:750;text-transform:uppercase}
 .invoice-primary-filters .select{width:100%;height:38px;min-width:0}
 .invoice-primary-filters .settlesearch{min-width:0}
-.invoice-period-filter{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,180px) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
+.invoice-period-filter{display:grid;grid-template-columns:minmax(180px,230px) 155px 155px auto;gap:8px;align-items:end;padding:10px 0;margin-bottom:10px;border-bottom:1px solid var(--border-soft)}
 .invoice-period-filter label{display:grid;gap:4px}
 .invoice-period-filter label>span{color:var(--muted-2);font-size:10px;font-weight:700;text-transform:uppercase}
 .invoice-period-filter .input,.invoice-period-filter .btn{height:38px}
@@ -4392,7 +4406,7 @@ body{overscroll-behavior:none}
 
 /* Wide screens place all invoice controls on one shallow row. */
 @media (min-width:1550px){
-  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(250px,1fr) 140px 140px 155px 155px 128px 128px 120px auto auto;gap:6px;align-items:end;padding:7px 9px}
+  .invoice-list-active .invoice-filter-toolbar{display:grid;grid-template-columns:minmax(250px,1fr) 140px 140px 155px 128px 128px 120px auto auto;gap:6px;align-items:end;padding:7px 9px}
   .invoice-list-active .invoice-primary-filters,
   .invoice-list-active .invoice-filter-panel,
   .invoice-list-active .invoice-period-filter,
@@ -4400,17 +4414,13 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-search-filter{grid-column:1}
   .invoice-list-active .invoice-status-filter{grid-column:2}
   .invoice-list-active .invoice-cashier-filter{grid-column:3}
-  .invoice-list-active .invoice-period-label{grid-column:4;height:36px;padding:0 7px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2)}
-  .invoice-list-active .invoice-period-label>svg{width:15px;height:15px}
-  .invoice-list-active .invoice-period-label b{font-size:10.5px}
-  .invoice-list-active .invoice-period-label span{font-size:8.5px}
-  .invoice-list-active .invoice-business-day-filter{grid-column:5}
-  .invoice-list-active .invoice-date-from{grid-column:6}
-  .invoice-list-active .invoice-date-to{grid-column:7}
-  .invoice-list-active .invoice-sort-filter{grid-column:8}
-  .invoice-list-active .invoice-period-filter>.btn{grid-column:9;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-business-day-filter{grid-column:4}
+  .invoice-list-active .invoice-date-from{grid-column:5}
+  .invoice-list-active .invoice-date-to{grid-column:6}
+  .invoice-list-active .invoice-sort-filter{grid-column:7}
+  .invoice-list-active .invoice-period-filter>.btn{grid-column:8;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-period-filter>.btn svg{width:15px;height:15px;margin:0}
-  .invoice-list-active .invoice-filter-clear{grid-column:10;width:36px;padding:0;font-size:0}
+  .invoice-list-active .invoice-filter-clear{grid-column:9;width:36px;padding:0;font-size:0}
   .invoice-list-active .invoice-filter-clear svg{width:15px;height:15px;margin:0}
 }
 
@@ -5260,6 +5270,17 @@ body{overscroll-behavior:none}
 }
 
 /* Keep the iPhone sales controls compact so the invoice list remains primary. */
+@media (max-width:620px), (hover:none) and (pointer:coarse) and (max-width:1100px){
+  .invoice-list-active .invoice-active-period{grid-template-columns:auto minmax(0,1fr);gap:5px 7px;padding:7px 8px;margin-bottom:5px}
+  .invoice-list-active .invoice-active-period>svg{width:15px;height:15px}
+  .invoice-list-active .invoice-active-period-title b{font-size:10.5px}
+  .invoice-list-active .invoice-active-period-title span{font-size:8px}
+  .invoice-list-active .invoice-active-period-range{grid-column:1/-1;gap:4px}
+  .invoice-list-active .invoice-active-period-range>span{display:grid;grid-template-columns:1fr;gap:1px;padding:4px 6px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface)}
+  .invoice-list-active .invoice-active-period-range small{font-size:7px}
+  .invoice-list-active .invoice-active-period-range b{font-size:8.5px;white-space:normal}
+}
+
 @media (max-width:430px){
   .invoice-workspace.invoice-list-active>.page-h{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;margin-bottom:5px}
   .invoice-workspace.invoice-list-active>.page-h>div:first-child{min-width:0}
@@ -7798,6 +7819,15 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           </div>
         </div>
 
+        {selectedBusinessPeriod ? <div className="invoice-active-period" role="status" aria-label={`Selected business day ${selectedBusinessDay.businessDate}`}>
+          <CalendarDays />
+          <div className="invoice-active-period-title"><b>Business day {selectedBusinessDay.businessDate}</b><span>Closed reporting period</span></div>
+          <div className="invoice-active-period-range">
+            <span><small>From</small><b>{formatBusinessDateTime(selectedBusinessPeriod.startedAt, timeZone)}</b></span>
+            <span><small>Closed</small><b>{formatBusinessDateTime(selectedBusinessPeriod.endedAt, timeZone)}</b></span>
+          </div>
+        </div> : null}
+
         <div className="invoice-filter-toolbar">
         <div className="invoice-primary-filters" aria-label="Primary invoice filters">
           <div className="settlesearch invoice-search-filter"><Search /><input className="input" placeholder="Search customer, product, barcode, phone, or receipt" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search invoices" /></div>
@@ -7823,13 +7853,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
         <div className={"invoice-filter-panel" + (mobileFiltersOpen ? " open" : "")}>
         <div className="invoice-period-filter">
-          <div className="invoice-period-label"><CalendarDays /><div><b>{hasCustomDateRange ? "Custom invoice period" : selectedBusinessPeriod ? `Business day ${selectedBusinessDay.businessDate}` : "Current business day"}</b><span>{hasCustomDateRange ? "Filters invoices and verified M-Pesa received" : selectedBusinessPeriod ? `${formatBusinessDateTime(selectedBusinessPeriod.startedAt, timeZone)} to ${formatBusinessDateTime(selectedBusinessPeriod.endedAt, timeZone)}` : "Since the last End of Day close"}</span></div></div>
           <label className="invoice-business-day-filter"><span>Business day</span><select className="select" value={hasCustomDateRange ? "custom" : businessDayFilter} onChange={(event) => {
             const value = event.target.value;
             if (value === "custom") return;
             setBusinessDayFilter(value);
             setDateFrom("");
             setDateTo("");
+            if (value !== "current") {
+              setFilter("all");
+              setCashierFilter("all");
+            }
           }}><option value="current">Current business day</option>{hasCustomDateRange ? <option value="custom">Custom dates</option> : null}{businessDayOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}</select></label>
           <label className="invoice-date-filter invoice-date-from"><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => { setDateFrom(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>
           <label className="invoice-date-filter invoice-date-to"><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => { setDateTo(e.target.value); if (e.target.value) setBusinessDayFilter("current"); }} /></label>

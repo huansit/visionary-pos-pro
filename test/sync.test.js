@@ -1436,6 +1436,7 @@ test("6daa. disabled products disappear from cashier catalog and barcode lookup 
 test("6da. cashier catalog carries the latest branch End of Day boundary", async () => {
   const terminal = await activateTestTerminal("End of Day Catalog Till", "b_sip");
   const closedAt = Date.now() - 250;
+  const periodStartedAt = closedAt - 5000;
   const closedInvoice = {
     id: `invoice-before-eod-${closedAt}`,
     type: "invoice",
@@ -1459,6 +1460,8 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     payload: {
       branchId: "b_sip",
       eventType: "day_closed",
+      businessDate: "2026-08-05",
+      periodStartedAt,
       periodEndedAt: closedAt,
       closedAt,
       ts: closedAt,
@@ -1477,6 +1480,14 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.dayClosedAt, closedAt);
+      assert.deepEqual(res.body.businessDays, [{
+        id: closeEvent.id,
+        branchId: "b_sip",
+        businessDate: "2026-08-05",
+        startedAt: periodStartedAt,
+        endedAt: closedAt,
+        closedAt,
+      }]);
       assert.ok(res.body.carriedOverInvoiceIds.includes(closedInvoice.id));
     });
 

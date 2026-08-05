@@ -864,12 +864,14 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   let hasMore = true;
   const events: Array<any> = [];
   let serverCatalogProducts: Product[] | null = null;
+  let serverBusinessDays: BusinessDayPeriod[] = [];
   let catalogDayClosedAt: number | null = null;
   let carriedOverInvoiceIds = new Set<string>();
 
   try {
     const catalog = await jsonFetch<{
       products?: Product[];
+      businessDays?: BusinessDayPeriod[];
       dayClosedAt?: number | null;
       carriedOverInvoiceIds?: string[];
       resetEpoch?: string;
@@ -889,6 +891,18 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       serverCatalogProducts = dedupeCatalogProducts(
         catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
       );
+    }
+    if (Array.isArray(catalog.businessDays)) {
+      serverBusinessDays = catalog.businessDays
+        .map((period) => ({
+          id: String(period.id || ""),
+          branchId: String(period.branchId || terminal.branchId),
+          businessDate: String(period.businessDate || ""),
+          startedAt: Number(period.startedAt || 0),
+          endedAt: Number(period.endedAt || 0),
+          closedAt: Number(period.closedAt || period.endedAt || 0)
+        }))
+        .filter((period) => period.branchId === terminal.branchId && period.startedAt > 0 && period.endedAt > period.startedAt);
     }
   } catch (error) {
     console.warn("[visionpos] normalized catalog unavailable; using sync stream fallback", error);
@@ -920,6 +934,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const stockTransferRequestRecords = new Map<string, StockTransferRequest>();
   const stockTransferDecisions = new Map<string, { decision: "approved" | "rejected"; reason: string; transferNumber?: string; decidedAt: number }>();
   const businessDayRecords = new Map<string, BusinessDayPeriod>();
+  serverBusinessDays.forEach((period) => businessDayRecords.set(period.id, period));
   const paidByInvoice = new Map<string, number>();
   const stockByProduct = new Map<string, number>();
   let dayClosedAt: number | null = catalogDayClosedAt;

@@ -601,18 +601,18 @@ router.get("/catalog", requireDevice, async (req, res) => {
     // client cursor or a delayed realtime message omits the endOfDay event.
     const closeRows = await q(
       isMySql
-        ? `SELECT client_ts AS clientTs, server_ts AS serverTs, payload
+        ? `SELECT id, client_ts AS clientTs, server_ts AS serverTs, payload
              FROM events
             WHERE type IN ('endOfDay', 'day_closed', 'end_of_day', 'endofday')
               AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1)
             ORDER BY server_ts DESC
-            LIMIT 20`
-        : `SELECT client_ts AS "clientTs", server_ts AS "serverTs", payload
+            LIMIT 120`
+        : `SELECT id, client_ts AS "clientTs", server_ts AS "serverTs", payload
              FROM events
             WHERE type IN ('endOfDay', 'day_closed', 'end_of_day', 'endofday')
               AND (branch_id = $1 OR payload->>'branchId' = $1)
             ORDER BY server_ts DESC
-            LIMIT 20`,
+            LIMIT 120`,
       [branchId]
     );
     const settingsRows = await q(
@@ -632,6 +632,47 @@ router.get("/catalog", requireDevice, async (req, res) => {
       const payload = parsePayload(row.payload);
       return Number(payload.periodEndedAt || payload.closedAt || payload.ts || row.clientTs || row.serverTs || 0);
     });
+    const closePeriods = (closeRows.rows || [])
+      .map((row) => {
+        const payload = parsePayload(row.payload);
+        return {
+          id: String(row.id || ""),
+          branchId,
+          businessDate: String(payload.businessDate || payload.date || ""),
+          startedAt: Number(payload.periodStartedAt || 0),
+          endedAt: Number(payload.periodEndedAt || payload.closedAt || payload.ts || row.clientTs || row.serverTs || 0),
+          closedAt: Number(payload.closedAt || payload.periodEndedAt || payload.ts || row.clientTs || row.serverTs || 0),
+          invoiceStartedAt: Array.isArray(payload.invoiceSnapshots)
+            ? payload.invoiceSnapshots.reduce((earliest, invoice) => {
+              const timestamp = Number(invoice?.ts || invoice?.issuedAt || 0);
+              return timestamp > 0 && (!earliest || timestamp < earliest) ? timestamp : earliest;
+            }, 0)
+            : 0,
+        };
+      })
+      .filter((period) => Number.isFinite(period.endedAt) && period.endedAt > 0)
+      .sort((a, b) => a.endedAt - b.endedAt);
+    let previousClose = 0;
+    const businessDays = closePeriods.reduce((periods, period) => {
+      const startedAt = period.startedAt > 0
+        ? period.startedAt
+        : previousClose > 0
+          ? previousClose
+          : period.invoiceStartedAt > 0
+            ? period.invoiceStartedAt - 1
+            : 0;
+      previousClose = Math.max(previousClose, period.endedAt);
+      if (!(startedAt > 0 && period.endedAt > startedAt)) return periods;
+      periods.push({
+        id: period.id || `${branchId}:${startedAt}:${period.endedAt}`,
+        branchId,
+        businessDate: /^\d{4}-\d{2}-\d{2}$/.test(period.businessDate) ? period.businessDate : "",
+        startedAt,
+        endedAt: period.endedAt,
+        closedAt: period.closedAt || period.endedAt,
+      });
+      return periods;
+    }, []).reverse();
     for (const row of settingsRows.rows || []) {
       const payload = parsePayload(row.payload);
       closeCandidates.push(Number(payload.lastEndDayByBranch?.[branchId] || 0));
@@ -673,6 +714,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
       products,
       total: products.length,
       dayClosedAt,
+      businessDays,
       carriedOverInvoiceIds,
       resetEpoch: await operationalResetEpoch(),
     });
