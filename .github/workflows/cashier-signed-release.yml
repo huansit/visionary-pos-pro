@@ -1,0 +1,164 @@
+name: Cashier signed release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cashier-signed-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            cashier-tauri/package-lock.json
+
+      - name: Install locked dependencies
+        shell: pwsh
+        run: |
+          npm.cmd ci
+          npm.cmd --prefix frontend ci
+          npm.cmd --prefix cashier-tauri ci
+
+      - name: Audit locked dependencies
+        shell: pwsh
+        run: |
+          npm.cmd audit --audit-level=high
+          npm.cmd --prefix frontend audit --audit-level=high
+          npm.cmd --prefix cashier-tauri audit --audit-level=high
+
+      - name: Test application and build web clients
+        shell: pwsh
+        run: |
+          npm.cmd test
+          npm.cmd --prefix frontend run build
+          npm.cmd --prefix cashier-tauri run typecheck
+
+      - name: Restore signing material
+        shell: pwsh
+        env:
+          CODE_SIGNING_PFX_BASE64: ${{ secrets.VISIONPOS_CODE_SIGNING_PFX_BASE64 }}
+          CODE_SIGNING_PFX_PASSWORD: ${{ secrets.VISIONPOS_CODE_SIGNING_PFX_PASSWORD }}
+          TAURI_UPDATER_PRIVATE_KEY: ${{ secrets.VISIONPOS_TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expectedThumbprint = '49FE31D8D08CF9FEDC12454E64CC96FCF0BA2BFE'
+
+          foreach ($name in 'CODE_SIGNING_PFX_BASE64', 'CODE_SIGNING_PFX_PASSWORD', 'TAURI_UPDATER_PRIVATE_KEY') {
+            if ([string]::IsNullOrWhiteSpace((Get-Item -LiteralPath "Env:$name").Value)) {
+              throw "Required GitHub secret is missing: $name"
+            }
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'visionpos-code-signing.pfx'
+          [IO.File]::WriteAllBytes(
+            $pfxPath,
+            [Convert]::FromBase64String($env:CODE_SIGNING_PFX_BASE64)
+          )
+
+          $password = ConvertTo-SecureString $env:CODE_SIGNING_PFX_PASSWORD -AsPlainText -Force
+          Import-PfxCertificate `
+            -FilePath $pfxPath `
+            -CertStoreLocation 'Cert:\CurrentUser\My' `
+            -Password $password | Out-Null
+
+          Import-Certificate `
+            -FilePath 'cashier-tauri\signing\visionpos-internal-code-signing.cer' `
+            -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+
+          $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$expectedThumbprint" -ErrorAction Stop
+          if (-not $certificate.HasPrivateKey) {
+            throw 'Imported VISIONPOS signing certificate has no private key.'
+          }
+
+          $keyPath = 'cashier-tauri\src-tauri\gen\visionpos-updater.key'
+          New-Item -ItemType Directory -Force -Path (Split-Path $keyPath) | Out-Null
+          $utf8NoBom = [Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText($keyPath, $env:TAURI_UPDATER_PRIVATE_KEY, $utf8NoBom)
+
+          Remove-Item Env:CODE_SIGNING_PFX_BASE64, Env:CODE_SIGNING_PFX_PASSWORD, Env:TAURI_UPDATER_PRIVATE_KEY
+
+      - name: Build and sign cashier release
+        shell: pwsh
+        run: npm.cmd --prefix cashier-tauri run release:signed
+
+      - name: Verify signed release
+        id: verify
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expectedThumbprint = '49FE31D8D08CF9FEDC12454E64CC96FCF0BA2BFE'
+          $packageVersion = (Get-Content 'cashier-tauri\package.json' -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content 'cashier-tauri\src-tauri\tauri.conf.json' -Raw | ConvertFrom-Json).version
+          $latestVersion = (Get-Content 'cashier-tauri\release-out\latest.json' -Raw | ConvertFrom-Json).version
+
+          if ($packageVersion -ne $tauriVersion -or $packageVersion -ne $latestVersion) {
+            throw "Release versions differ: package=$packageVersion tauri=$tauriVersion latest=$latestVersion"
+          }
+
+          $versionedInstaller = "cashier-tauri\release-out\VISIONPOS-Cashier_${packageVersion}_x64-setup.exe"
+          $stableInstaller = 'cashier-tauri\release-out\VISIONPOS-Cashier-Setup.exe'
+          foreach ($installer in $versionedInstaller, $stableInstaller) {
+            if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+              throw "Missing release file: $installer"
+            }
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature on ${installer}: $($signature.StatusMessage)"
+            }
+            if ($signature.SignerCertificate.Thumbprint -ne $expectedThumbprint) {
+              throw "Unexpected signer on ${installer}: $($signature.SignerCertificate.Thumbprint)"
+            }
+            if (-not $signature.TimeStamperCertificate) {
+              throw "Missing trusted timestamp on $installer"
+            }
+          }
+
+          Get-FileHash -Algorithm SHA256 -LiteralPath @($versionedInstaller, $stableInstaller) |
+            ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } |
+            Set-Content 'cashier-tauri\release-out\SHA256SUMS.txt' -Encoding ascii
+
+          "version=$packageVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Verified signed VISIONPOS Cashier $packageVersion"
+
+      - name: Upload verified release
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: VISIONPOS-Cashier-${{ steps.verify.outputs.version }}
+          path: |
+            cashier-tauri/release-out/VISIONPOS-Cashier_*_x64-setup.exe
+            cashier-tauri/release-out/VISIONPOS-Cashier-Setup.exe
+            cashier-tauri/release-out/latest.json
+            cashier-tauri/release-out/release.json
+            cashier-tauri/release-out/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: |
+          $thumbprint = '49FE31D8D08CF9FEDC12454E64CC96FCF0BA2BFE'
+          Remove-Item -LiteralPath 'cashier-tauri\src-tauri\gen\visionpos-updater.key' -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'visionpos-code-signing.pfx') -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath "Cert:\CurrentUser\Root\$thumbprint" -Force -ErrorAction SilentlyContinue
