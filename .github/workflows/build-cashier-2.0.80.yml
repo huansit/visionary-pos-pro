@@ -1,0 +1,49 @@
+name: Build VISIONPOS Cashier executable
+
+on:
+  push:
+    branches:
+      - build-cashier-2.0.80
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cashier-tauri/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cashier dependencies
+        working-directory: cashier-tauri
+        run: npm ci
+
+      - name: Type-check cashier
+        working-directory: cashier-tauri
+        run: npm run typecheck
+
+      - name: Build unsigned cashier executable
+        working-directory: cashier-tauri
+        run: npm exec tauri -- build --no-bundle --no-sign --ci
+
+      - name: Upload cashier executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: visionpos-cashier-2.0.80-executable
+          path: cashier-tauri/src-tauri/target/release/visionpos_cashier.exe
+          if-no-files-found: error
+          retention-days: 1
