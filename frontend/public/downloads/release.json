@@ -1,11 +1,13 @@
 {
-  "version": "2.0.79",
+  "version": "2.0.80",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.79_x64-setup.exe",
-  "size": 3251128,
-  "sha512": "CCCCA6E63BF38ABA235EBB75E4439599B7F775FE70C0BB57F901C00B4626C292B0A1C35581FA314BFFF73113DDA84A6E3869E91F41C17655BA38728DD5B8BD48",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.80_x64-setup.exe",
+  "size": 3226576,
+  "sha512": "8DC49BE3249A8CC6A98710CC39FE2983DC0E9D55973370D6A61D47851224F88901BCAF6E3E62851A7D32DDB9C6ADF519EEABFD5D59985582E9E710C588B01344",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.79",
+    "VISIONPOS Cashier 2.0.80",
+    "Cashier M-Pesa transactions now show cash deposit offsets and every receipt covered by a multi-receipt till deposit.",
+    "Cash deposit offsets are clearly distinguished from invoice payments, including partial and reversed offsets.",
     "Cashiers can now open transfer requests to see every transferred product, SKU, quantity, and approval detail.",
     "Cashier and admin M-Pesa ledgers can filter the current business day or any completed End of Day period using its closing date.",
     "Cashier and admin invoice lists can use the same exact business-day periods, from the previous close through the selected close.",
