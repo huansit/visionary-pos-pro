@@ -51,6 +51,7 @@ import {
   type SyncVersionChange,
   loginCashier,
   loginCashierWithFingerprint,
+  listInvoiceCashDepositOffsets,
   listMpesaTransactions,
   logout,
   patchInvoiceNote,
@@ -67,7 +68,7 @@ import {
 } from "./api";
 import { clearTerminalCredentials, loadTerminalCredentials, saveTerminalCredentials } from "./secureStore";
 import { businessDateTimeBoundary, businessDateValue, formatBusinessDate, formatBusinessDateTime, formatBusinessTime } from "./businessTime";
-import type { Account, Branch, BusinessDayPeriod, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, BusinessDayPeriod, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaOffset, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
@@ -277,14 +278,40 @@ function categoryAccentClass(category: string) {
   return "";
 }
 
+function normalizedReceiptCashOffsets(receipt: Receipt) {
+  return (Array.isArray(receipt.cashDepositOffsets) ? receipt.cashDepositOffsets : [])
+    .map((offset) => ({
+      ...offset,
+      amountCents: Math.max(0, Math.round(Number(offset.amountCents || 0))),
+      status: String(offset.status || "active").trim().toLowerCase()
+    }))
+    .filter((offset) => offset.amountCents > 0);
+}
+
+function activeReceiptCashOffsetTotal(receipt: Receipt) {
+  return normalizedReceiptCashOffsets(receipt)
+    .filter((offset) => offset.status !== "reversed" && !offset.reversedAt)
+    .reduce((sum, offset) => sum + offset.amountCents, 0);
+}
+
 function receiptPageHeightMm(receipt: Receipt) {
   const itemLines = receipt.items.reduce((total, item) => total + Math.max(2, Math.ceil(item.name.length / 30)), 0);
   const noteLines = receipt.note ? Math.max(1, Math.ceil(receipt.note.length / 34)) : 0;
-  return Math.max(120, Math.min(1000, 78 + itemLines * 7 + noteLines * 6));
+  const offsetLines = normalizedReceiptCashOffsets(receipt).length * 4;
+  return Math.max(120, Math.min(1000, 78 + itemLines * 7 + noteLines * 6 + offsetLines * 5));
 }
 
 function receiptPrintHtml(receipt: Receipt) {
   const pageHeightMm = receiptPageHeightMm(receipt);
+  const cashOffsets = normalizedReceiptCashOffsets(receipt);
+  const cashOffsetRows = cashOffsets.map((offset) => {
+    const reversed = offset.status === "reversed" || Boolean(offset.reversedAt);
+    const recordedAt = offset.offsetAt || offset.transactionTime;
+    return `<div class="audit-row${reversed ? " reversed" : ""}">
+      <div><b>${escapeHtml(offset.referenceMasked || "M-Pesa code unavailable")}${offset.tillNumber ? ` / Till ${escapeHtml(offset.tillNumber)}` : ""}</b><small>${recordedAt ? escapeHtml(formatBusinessDateTime(recordedAt)) : "Time unavailable"}<br/>Recorded by ${escapeHtml(offset.offsetByName || "Unknown operator")}${offset.note ? ` / ${escapeHtml(offset.note)}` : ""}</small></div>
+      <strong>${reversed ? "REVERSED " : ""}${escapeHtml(money(offset.amountCents))}</strong>
+    </div>`;
+  }).join("");
   const lines = receipt.items.map((item) => `
     <div class="line">
       <strong>${escapeHtml(item.name)}</strong>
@@ -337,6 +364,14 @@ function receiptPrintHtml(receipt: Receipt) {
     .line-detail span { min-width: 0; }
     .line-detail b, .total b { white-space: nowrap; text-align: right; }
     .total { margin-top: 2px; font-size: 18px; line-height: 1.2; font-weight: 900; }
+    .cash-audit { margin-top: 8px; padding-top: 7px; border-top: 1px dashed #000; }
+    .audit-total, .audit-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3mm; align-items: start; }
+    .audit-total { font-weight: 900; margin-bottom: 4px; }
+    .audit-row { padding: 3px 0; border-top: 1px dotted #777; }
+    .audit-row b, .audit-row small { display: block; }
+    .audit-row small { margin-top: 1px; font-size: 9px; }
+    .audit-row strong { white-space: nowrap; text-align: right; }
+    .audit-row.reversed { text-decoration: line-through; opacity: .7; }
     @media print {
       html, body { width: 80mm; }
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -356,6 +391,7 @@ function receiptPrintHtml(receipt: Receipt) {
   <hr />
   <div class="total"><span>Total</span><b>${escapeHtml(money(receipt.totalCents))}</b></div>
   <p>Open invoice - not paid at checkout.</p>
+  ${cashOffsetRows ? `<section class="cash-audit"><div class="audit-total"><span>Cash deposited to till</span><b>${escapeHtml(money(activeReceiptCashOffsetTotal(receipt)))}</b></div>${cashOffsetRows}</section>` : ""}
   <p>Thank you.</p>
   </main>
 </body>
@@ -410,8 +446,19 @@ function thermalItemLines(item: Receipt["items"][number]) {
   ];
 }
 
+function thermalCashOffsetLines(offset: MpesaOffset) {
+  const reversed = String(offset.status || "active").toLowerCase() === "reversed" || Boolean(offset.reversedAt);
+  const recordedAt = offset.offsetAt || offset.transactionTime;
+  return [
+    thermalLine(reversed ? "REVERSED DEPOSIT" : "Cash deposited to till", money(offset.amountCents)),
+    ...thermalWrap(`${offset.referenceMasked || "M-Pesa code unavailable"}${offset.tillNumber ? ` / Till ${offset.tillNumber}` : ""}`),
+    ...thermalWrap(`${recordedAt ? formatBusinessDateTime(recordedAt) : "Time unavailable"} / Recorded by ${offset.offsetByName || "Unknown operator"}${offset.note ? ` / ${offset.note}` : ""}`)
+  ];
+}
+
 function receiptPrintText(receipt: Receipt) {
   const separator = "-".repeat(THERMAL_RECEIPT_COLUMNS);
+  const cashOffsets = normalizedReceiptCashOffsets(receipt);
   return [
     thermalCenter(receipt.branchName),
     thermalCenter(formatBusinessDateTime(receipt.ts)),
@@ -426,6 +473,12 @@ function receiptPrintText(receipt: Receipt) {
     thermalLine("TOTAL", money(receipt.totalCents)),
     "",
     thermalCenter("OPEN INVOICE - NOT PAID"),
+    ...(cashOffsets.length ? [
+      separator,
+      thermalCenter("CASH DEPOSIT AUDIT"),
+      thermalLine("Active deposit total", money(activeReceiptCashOffsetTotal(receipt))),
+      ...cashOffsets.flatMap(thermalCashOffsetLines)
+    ] : []),
     thermalCenter("Thank you"),
   ].join("\n");
 }
@@ -2027,9 +2080,10 @@ export default function App() {
         <InvoiceDetailSlideOver
           invoice={invoiceDetail.invoice}
           side={invoiceDetail.side}
+          sessionToken={sessionToken}
           cashierName={account.name}
           branchName={branch?.name || terminal.branchId}
-          onReprint={(invoice) => {
+          onReprint={(invoice, cashDepositOffsets) => {
             const nextReceipt: Receipt = {
               number: invoice.number,
               branchName: branch?.name || terminal.branchId,
@@ -2043,7 +2097,8 @@ export default function App() {
                 qty: item.qty,
                 priceCents: item.priceCents
               })),
-              ts: invoice.ts || Date.now()
+              ts: invoice.ts || Date.now(),
+              cashDepositOffsets
             };
             setInvoiceDetail(null);
             setReceipt(nextReceipt);
@@ -2487,6 +2542,7 @@ function Drawer({
 function InvoiceDetailSlideOver({
   invoice,
   side,
+  sessionToken,
   cashierName,
   branchName,
   onReprint,
@@ -2496,9 +2552,10 @@ function InvoiceDetailSlideOver({
 }: {
   invoice: Invoice;
   side: DrawerSide;
+  sessionToken: string;
   cashierName: string;
   branchName: string;
-  onReprint: (invoice: Invoice) => void;
+  onReprint: (invoice: Invoice, cashDepositOffsets: MpesaOffset[]) => void;
   onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
   onRequestVoid: (invoice: Invoice, reason: string) => Promise<void>;
   onClose: () => void;
@@ -2512,6 +2569,16 @@ function InvoiceDetailSlideOver({
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [voidReason, setVoidReason] = useState("");
   const [voidStatus, setVoidStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [auditNonce, setAuditNonce] = useState(0);
+  const [cashOffsetAudit, setCashOffsetAudit] = useState<{
+    loading: boolean;
+    loaded: boolean;
+    error: string;
+    offsets: MpesaOffset[];
+  }>({ loading: true, loaded: false, error: "", offsets: [] });
+  const activeCashOffsetTotal = cashOffsetAudit.offsets
+    .filter((offset) => String(offset.status || "active").toLowerCase() !== "reversed" && !offset.reversedAt)
+    .reduce((sum, offset) => sum + Math.max(0, Number(offset.amountCents || 0)), 0);
 
   useEffect(() => {
     setOpenNote(invoice.note || "");
@@ -2519,6 +2586,19 @@ function InvoiceDetailSlideOver({
     setVoidReason("");
     setVoidStatus("idle");
   }, [invoice.id, invoice.note]);
+
+  useEffect(() => {
+    let active = true;
+    setCashOffsetAudit({ loading: true, loaded: false, error: "", offsets: [] });
+    listInvoiceCashDepositOffsets(sessionToken, [invoice.id]).then((offsetsByInvoiceId) => {
+      if (!active) return;
+      setCashOffsetAudit({ loading: false, loaded: true, error: "", offsets: offsetsByInvoiceId[invoice.id] || [] });
+    }).catch(() => {
+      if (!active) return;
+      setCashOffsetAudit({ loading: false, loaded: false, error: "Cash deposit audit could not be loaded.", offsets: [] });
+    });
+    return () => { active = false; };
+  }, [auditNonce, invoice.id, sessionToken]);
 
   async function submitVoidRequest() {
     const reason = voidReason.trim();
@@ -2581,6 +2661,36 @@ function InvoiceDetailSlideOver({
           <div><span>Paid so far</span><b>{money(paidCents)}</b></div>
           <div className="balance-due"><span>Balance due</span><b>{money(balanceCents)}</b></div>
         </div>
+
+        <section className="invoice-cash-offset-audit" aria-label="Cash deposit audit">
+          <div className="invoice-cash-offset-head">
+            <div><ShieldCheck size={17} /><span>Cash deposit audit</span></div>
+            <b>{money(activeCashOffsetTotal)}</b>
+          </div>
+          {cashOffsetAudit.loading ? (
+            <div className="invoice-cash-offset-state">Loading linked till deposits...</div>
+          ) : cashOffsetAudit.error ? (
+            <div className="invoice-cash-offset-state error">
+              <span>{cashOffsetAudit.error}</span>
+              <button type="button" onClick={() => setAuditNonce((value) => value + 1)}><RefreshCw size={14} />Retry</button>
+            </div>
+          ) : cashOffsetAudit.offsets.length === 0 ? (
+            <div className="invoice-cash-offset-state">No cash deposit has been linked to this invoice.</div>
+          ) : cashOffsetAudit.offsets.map((offset) => {
+            const reversed = String(offset.status || "active").toLowerCase() === "reversed" || Boolean(offset.reversedAt);
+            const recordedAt = offset.offsetAt || offset.transactionTime;
+            return (
+              <div className={`invoice-cash-offset-row${reversed ? " reversed" : ""}`} key={offset.id}>
+                <div>
+                  <b>{offset.referenceMasked || "M-Pesa code unavailable"}</b>
+                  <span>{offset.tillNumber ? `Till ${offset.tillNumber}` : "Till unavailable"}{recordedAt ? ` · ${formatBusinessDateTime(recordedAt)}` : ""}</span>
+                  <span>Recorded by {offset.offsetByName || "Unknown operator"}{offset.note ? ` · ${offset.note}` : ""}</span>
+                </div>
+                <strong>{reversed ? "Reversed " : ""}{money(offset.amountCents)}</strong>
+              </div>
+            );
+          })}
+        </section>
 
         <div className="invoice-lock-notice">
           <ShieldCheck size={20} />
@@ -2647,7 +2757,7 @@ function InvoiceDetailSlideOver({
         </div>
 
         <footer className="invoice-slide-actions">
-          <button type="button" onClick={() => onReprint(invoice)}><FileText size={18} />Reprint</button>
+          <button type="button" disabled={!cashOffsetAudit.loaded} onClick={() => onReprint(invoice, cashOffsetAudit.offsets)}><FileText size={18} />{cashOffsetAudit.loading ? "Loading audit..." : "Reprint"}</button>
         </footer>
       </section>
     </Drawer>

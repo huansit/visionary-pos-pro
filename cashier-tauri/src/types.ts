@@ -156,6 +156,7 @@ export type Receipt = {
   totalCents: number;
   items: Array<{ productId: string; name: string; qty: number; priceCents: number; unitCostCents?: number }>;
   ts: number;
+  cashDepositOffsets?: MpesaOffset[];
 };
 
 export type MpesaAllocation = {
@@ -178,6 +179,13 @@ export type MpesaOffset = {
   status: string;
   offsetByName?: string | null;
   offsetAt?: string | null;
+  transactionId?: string | null;
+  referenceLast4?: string | null;
+  referenceMasked?: string | null;
+  tillNumber?: string | null;
+  currency?: string | null;
+  transactionTime?: string | null;
+  reversedAt?: string | null;
 };
 
 export type MpesaTransaction = {

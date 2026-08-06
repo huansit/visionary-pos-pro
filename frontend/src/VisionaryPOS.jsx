@@ -1232,6 +1232,17 @@ async function listKopokopoTransactions(filters = {}) {
   if (filters.branchPeriods && Object.keys(filters.branchPeriods).length) query.set("branchPeriods", JSON.stringify(filters.branchPeriods));
   return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
 }
+async function listKopokopoInvoiceOffsets(invoiceIds = []) {
+  const ids = [...new Set(invoiceIds.map((invoiceId) => String(invoiceId || "").trim()).filter(Boolean))];
+  const offsetsByInvoiceId = Object.fromEntries(ids.map((invoiceId) => [invoiceId, []]));
+  for (let index = 0; index < ids.length; index += 40) {
+    const batch = ids.slice(index, index + 40);
+    const query = new URLSearchParams({ invoiceIds: batch.join(",") });
+    const result = await authGet(`/api/integrations/kopokopo/invoice-offsets?${query}`, { session: true });
+    for (const invoiceId of batch) offsetsByInvoiceId[invoiceId] = result.offsetsByInvoiceId?.[invoiceId] || [];
+  }
+  return offsetsByInvoiceId;
+}
 async function allocateKopokopoTransaction(payload) {
   return await authApi("/api/integrations/kopokopo/allocations", payload, { session: true });
 }
@@ -4435,6 +4446,19 @@ body{overscroll-behavior:none}
 .invoice-detail-history-row b{text-transform:capitalize;font-size:12px}
 .invoice-detail-history-row span{color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .invoice-detail-history-row>strong{font-family:var(--font-mono);font-size:12px}
+.cash-offset-audit{display:grid;gap:0;margin:8px 0;padding:8px 0;border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);text-align:left}
+.cash-offset-audit-head,.cash-offset-audit-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}
+.cash-offset-audit-head{padding:0 0 7px;color:var(--text);font-weight:800}
+.cash-offset-audit-head b,.cash-offset-audit-row>strong{font-family:var(--font-mono);white-space:nowrap}
+.cash-offset-audit-row{padding:7px 0;border-top:1px solid var(--border-soft)}
+.cash-offset-audit-row>div{display:grid;gap:2px;min-width:0}
+.cash-offset-audit-row>div>b{color:var(--accent);font-family:var(--font-mono)}
+.cash-offset-audit-row span{color:var(--muted-2);font-size:11px;overflow-wrap:anywhere}
+.cash-offset-audit-row.reversed{opacity:.72;text-decoration:line-through}
+.cash-offset-audit-row.reversed>strong{color:var(--danger)}
+.cash-offset-audit-empty{padding:6px 0;color:var(--muted-2);font-size:11px}
+.cash-offset-audit-state{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;padding:9px 10px;border:1px dashed var(--border);border-radius:6px;color:var(--muted-2);font-size:11px}
+.cash-offset-audit-state.error{color:var(--danger)}
 .invoice-detail-note-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;padding-bottom:12px}
 .invoice-detail-note-form textarea{min-height:58px;padding-top:10px;resize:vertical}
 .invoice-detail-footer{display:flex;justify-content:flex-end;padding-top:12px;border-top:1px solid var(--border-soft)}
@@ -7411,17 +7435,88 @@ function invoiceReceiptStatus(inv, cur) {
   if (Number(inv?.paidCents || 0) > 0) return `Part paid - balance ${fmt(outstanding, cur)}.`;
   return "Open invoice - not paid at checkout.";
 }
+function normalizedInvoiceCashOffsets(inv) {
+  return (Array.isArray(inv?.cashDepositOffsets) ? inv.cashDepositOffsets : []).map((offset) => ({
+    ...offset,
+    amountCents: Math.max(0, Math.round(Number(offset?.amountCents || 0))),
+    status: String(offset?.status || "active").trim().toLowerCase(),
+  })).filter((offset) => offset.amountCents > 0);
+}
+function activeInvoiceCashOffsetTotal(inv) {
+  return normalizedInvoiceCashOffsets(inv)
+    .filter((offset) => offset.status !== "reversed" && !offset.reversedAt)
+    .reduce((sum, offset) => sum + offset.amountCents, 0);
+}
+function useInvoiceCashDepositAudit(inv) {
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [audit, setAudit] = useState({ loading: true, loaded: false, error: "", offsets: [] });
+  useEffect(() => {
+    let active = true;
+    const attachedOffsets = normalizedInvoiceCashOffsets(inv);
+    if (!inv?.id || inv.cashDepositAuditLoaded || inv.synced === false) {
+      setAudit({ loading: false, loaded: true, error: "", offsets: attachedOffsets });
+      return () => { active = false; };
+    }
+    setAudit({ loading: true, loaded: false, error: "", offsets: [] });
+    listKopokopoInvoiceOffsets([inv.id]).then((offsetsByInvoiceId) => {
+      if (!active) return;
+      setAudit({ loading: false, loaded: true, error: "", offsets: offsetsByInvoiceId[inv.id] || [] });
+    }).catch(() => {
+      if (!active) return;
+      setAudit({ loading: false, loaded: false, error: "Cash deposit audit could not be loaded.", offsets: [] });
+    });
+    return () => { active = false; };
+  }, [inv?.id, inv?.cashDepositAuditLoaded, inv?.synced, retryNonce]);
+  return { ...audit, retry: () => setRetryNonce((value) => value + 1) };
+}
+function CashDepositAudit({ audit, cur, showEmpty = false }) {
+  if (audit.loading) return <div className="cash-offset-audit-state">Loading cash deposit audit...</div>;
+  if (audit.error) return <div className="cash-offset-audit-state error"><span>{audit.error}</span><button type="button" className="btn sm btn-ghost" onClick={audit.retry}><RefreshCw /> Retry</button></div>;
+  const offsets = (audit.offsets || []).map((offset) => ({ ...offset, status: String(offset.status || "active").toLowerCase() }));
+  if (!offsets.length && !showEmpty) return null;
+  const activeTotal = offsets.filter((offset) => offset.status !== "reversed" && !offset.reversedAt)
+    .reduce((sum, offset) => sum + Number(offset.amountCents || 0), 0);
+  return (
+    <div className="cash-offset-audit">
+      <div className="cash-offset-audit-head"><span>Cash deposited to till</span><b>{fmt(activeTotal, cur)}</b></div>
+      {offsets.length ? offsets.map((offset) => {
+        const reversed = offset.status === "reversed" || Boolean(offset.reversedAt);
+        return <div className={"cash-offset-audit-row" + (reversed ? " reversed" : "")} key={offset.id}>
+          <div><b>{offset.referenceMasked || "M-Pesa code unavailable"}</b><span>{offset.tillNumber ? `Till ${offset.tillNumber}` : "Till unavailable"} · {formatBusinessDateTime(offset.offsetAt)}</span><span>Recorded by {offset.offsetByName || "Unknown operator"}{offset.note ? ` · ${offset.note}` : ""}</span></div>
+          <strong>{reversed ? "Reversed " : ""}{fmt(offset.amountCents, offset.currency || cur)}</strong>
+        </div>;
+      }) : <div className="cash-offset-audit-empty">No cash deposit has been linked to this invoice.</div>}
+    </div>
+  );
+}
+function cashDepositAuditPrintHtml(inv, cur) {
+  const offsets = normalizedInvoiceCashOffsets(inv);
+  if (!offsets.length) return "";
+  const total = activeInvoiceCashOffsetTotal(inv);
+  const rows = offsets.map((offset) => {
+    const reversed = offset.status === "reversed" || Boolean(offset.reversedAt);
+    const detail = [
+      offset.referenceMasked || "M-Pesa code unavailable",
+      offset.tillNumber ? `Till ${offset.tillNumber}` : "Till unavailable",
+      formatBusinessDateTime(offset.offsetAt),
+    ].join(" · ");
+    const operator = `Recorded by ${offset.offsetByName || "Unknown operator"}${offset.note ? ` · ${offset.note}` : ""}`;
+    return `<div class="audit-row${reversed ? " reversed" : ""}"><div><b>${escapeReceiptHtml(detail)}</b><small>${escapeReceiptHtml(operator)}</small></div><strong>${escapeReceiptHtml(reversed ? `REVERSED ${fmt(offset.amountCents, offset.currency || cur)}` : fmt(offset.amountCents, offset.currency || cur))}</strong></div>`;
+  }).join("");
+  return `<section class="cash-audit"><div class="audit-total"><span>Cash deposited to till</span><b>${escapeReceiptHtml(fmt(total, cur))}</b></div>${rows}</section>`;
+}
 function invoiceReceiptPrintHtml(receipts, cur) {
   const sections = receipts.map(({ inv, store }, index) => {
     const items = normalizedReceiptItems(inv);
     const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.qty)} x ${escapeReceiptHtml(fmt(item.priceCents, cur))}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
-    return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(formatBusinessDateTime(inv.ts))}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p><p>Thank you.</p></main>`;
+    return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(formatBusinessDateTime(inv.ts))}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p>${cashDepositAuditPrintHtml(inv, cur)}<p>Thank you.</p></main>`;
   }).join("");
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style id="receipt-page-rules"></style><style>
 *{box-sizing:border-box}html,body{margin:0;width:80mm;background:#fff;color:#000}body{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.35;overflow-wrap:anywhere;writing-mode:horizontal-tb}
 .receipt{width:80mm;min-height:1px;padding:3mm 4mm;break-after:page;page-break-after:always}.receipt:last-child{break-after:auto;page-break-after:auto}
 ${receipts.map((_, index) => `.receipt-${index}{page:receipt-${index}}`).join("")}
-h1{margin:0 0 6px;text-align:center;font-size:20px;line-height:1.15;font-weight:900}p{margin:2px 0;text-align:center}hr{border:0;border-top:1px dashed #000;margin:7px 0}.line{display:block;padding:3px 0;break-inside:avoid;page-break-inside:avoid}.line strong{display:block;font-weight:700}.line-detail,.total{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:3mm}.line-detail{margin-top:1px}.line-detail span{min-width:0}.line-detail b,.total b{white-space:nowrap;text-align:right}.total{margin-top:2px;font-size:18px;line-height:1.2;font-weight:900}@media print{html,body{width:80mm}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+h1{margin:0 0 6px;text-align:center;font-size:20px;line-height:1.15;font-weight:900}p{margin:2px 0;text-align:center}hr{border:0;border-top:1px dashed #000;margin:7px 0}.line{display:block;padding:3px 0;break-inside:avoid;page-break-inside:avoid}.line strong{display:block;font-weight:700}.line-detail,.total{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:3mm}.line-detail{margin-top:1px}.line-detail span{min-width:0}.line-detail b,.total b{white-space:nowrap;text-align:right}.total{margin-top:2px;font-size:18px;line-height:1.2;font-weight:900}
+.cash-audit{margin:8px 0;padding:6px 0;border-top:1px dashed #000;border-bottom:1px dashed #000}.audit-total,.audit-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3mm;align-items:start}.audit-total{font-weight:900;margin-bottom:4px}.audit-row{padding:3px 0;border-top:1px dotted #777}.audit-row>div{display:grid;gap:1px}.audit-row small{font-size:9px}.audit-row strong{white-space:nowrap}.audit-row.reversed{text-decoration:line-through}@media print{html,body{width:80mm}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>${sections}</body></html>`;
 }
 function printInvoiceReceipts(receipts, cur) {
@@ -7458,7 +7553,9 @@ function printInvoiceReceipts(receipts, cur) {
 }
 function InvoiceReceipt({ inv, cur, store, onClose }) {
   const items = normalizedReceiptItems(inv);
-  const printReceipt = () => printInvoiceReceipts([{ inv, store }], cur);
+  const audit = useInvoiceCashDepositAudit(inv);
+  const receiptInvoice = { ...inv, cashDepositOffsets: audit.offsets, cashDepositAuditLoaded: audit.loaded };
+  const printReceipt = () => printInvoiceReceipts([{ inv: receiptInvoice, store }], cur);
   return (
     <div className="scrim" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -7481,10 +7578,11 @@ function InvoiceReceipt({ inv, cur, store, onClose }) {
           </div>
           <div className="rrow t" style={{ fontSize: 16, borderTop: "none", paddingBottom: 8 }}><span>Total</span><span>{fmt(inv.totalCents, cur)}</span></div>
           <div className="rc-s">{invoiceReceiptStatus(inv, cur)}</div>
+          <CashDepositAudit audit={audit} cur={cur} />
           <div className="rc-s">Thank you.</div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button className="btn btn-ghost" onClick={printReceipt}><Printer /> Print</button>
+          <button className="btn btn-ghost" disabled={!audit.loaded} onClick={printReceipt}><Printer /> {audit.loading ? "Loading audit..." : "Print"}</button>
           <button className="btn btn-primary" onClick={onClose}><Check /> Close</button>
         </div>
       </div>
@@ -7839,6 +7937,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [receipt, setReceipt] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
+  const [printingInvoices, setPrintingInvoices] = useState(false);
+  const [printAuditError, setPrintAuditError] = useState("");
   const invoices = operationalInvoices(data);
   const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
   const voidedInvoices = (data.invoices || [])
@@ -8025,15 +8125,31 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       return next;
     });
   };
-  const printSelectedInvoices = () => {
-    const receipts = selectedInvoices.map((invoice) => {
-      const invoiceBranch = branchForInvoice(invoice);
-      return {
-        inv: { ...invoice, items: invoiceSoldLines(data, invoice, invoiceBranch.id) },
-        store: invoiceBranch.name,
-      };
-    });
-    printInvoiceReceipts(receipts, cur);
+  const printSelectedInvoices = async () => {
+    if (!selectedInvoices.length || printingInvoices) return;
+    setPrintingInvoices(true);
+    setPrintAuditError("");
+    try {
+      const syncedInvoiceIds = selectedInvoices.filter((invoice) => invoice.synced !== false).map((invoice) => invoice.id);
+      const offsetsByInvoiceId = await listKopokopoInvoiceOffsets(syncedInvoiceIds);
+      const receipts = selectedInvoices.map((invoice) => {
+        const invoiceBranch = branchForInvoice(invoice);
+        return {
+          inv: {
+            ...invoice,
+            items: invoiceSoldLines(data, invoice, invoiceBranch.id),
+            cashDepositOffsets: offsetsByInvoiceId[invoice.id] || [],
+            cashDepositAuditLoaded: true,
+          },
+          store: invoiceBranch.name,
+        };
+      });
+      printInvoiceReceipts(receipts, cur);
+    } catch (_) {
+      setPrintAuditError("Printing was stopped because the cash deposit audit could not be loaded. Retry when connected.");
+    } finally {
+      setPrintingInvoices(false);
+    }
   };
 
   // Cashier debt combines End-of-Day carry-overs with audited inventory-count shortages.
@@ -8169,9 +8285,10 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
           <div>
             <button type="button" className="btn sm btn-ghost" onClick={() => setSelectedInvoiceIds(new Set())}>Clear selection</button>
-            <button type="button" className="btn sm btn-primary" onClick={printSelectedInvoices}><Printer /> Print selected</button>
+            <button type="button" className="btn sm btn-primary" disabled={printingInvoices} onClick={printSelectedInvoices}><Printer /> {printingInvoices ? "Loading audit..." : "Print selected"}</button>
           </div>
         </div>}
+        {printAuditError ? <div className="formerr">{printAuditError}</div> : null}
 
         <div className="invoice-results-scroll">
           {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
@@ -9221,6 +9338,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
 
 function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }) {
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
+  const cashDepositAudit = useInvoiceCashDepositAudit(live);
   const [tnote, setTnote] = useState(live.trackingNote || "");
   const [saved, setSaved] = useState(false);
   const voidInfo = invoiceVoidState(data, live.id);
@@ -9697,6 +9815,13 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           </details>
         ) : null}
 
+        {(cashDepositAudit.loading || cashDepositAudit.error || cashDepositAudit.offsets.length > 0) ? (
+          <details className="invoice-detail-disclosure" open>
+            <summary><span>Cash deposit audit <b>{cashDepositAudit.offsets.length}</b></span><ChevronDown /></summary>
+            <CashDepositAudit audit={cashDepositAudit} cur={cur} />
+          </details>
+        ) : null}
+
         <details className="invoice-detail-disclosure">
           <summary><span>{tnote.trim() ? "Edit employee note" : "Add employee note"}{tnote.trim() ? <b>Added</b> : null}</span><ChevronDown /></summary>
           <div className="invoice-detail-note-form">
@@ -9707,7 +9832,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         </details>
 
         <div className="invoice-detail-footer">
-          <button className="btn btn-ghost" onClick={() => onReprint({ ...live, items })}><Printer /> Reprint receipt</button>
+          <button className="btn btn-ghost" disabled={!cashDepositAudit.loaded} onClick={() => onReprint({
+            ...live,
+            items,
+            cashDepositOffsets: cashDepositAudit.offsets,
+            cashDepositAuditLoaded: true,
+          })}><Printer /> {cashDepositAudit.loading ? "Loading audit..." : "Reprint receipt"}</button>
         </div>
       </div>
     </div>

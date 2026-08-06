@@ -172,6 +172,22 @@ function publicOffset(row, invoicePayload = null) {
   };
 }
 
+function publicInvoiceOffset(row, invoicePayload = null) {
+  const referenceLast4 = String(row.reference_last4 ?? row.referenceLast4 ?? "").trim().toUpperCase();
+  const reversedAt = row.reversed_at ?? row.reversedAt ?? null;
+  return {
+    ...publicOffset(row, invoicePayload),
+    transactionId: row.transaction_id ?? row.transactionId,
+    referenceLast4,
+    referenceMasked: referenceLast4 ? `****${referenceLast4}` : null,
+    tillNumber: row.till_number ?? row.tillNumber ?? null,
+    currency: row.currency || "KES",
+    transactionTime: row.origination_time ?? row.originationTime ?? null,
+    reversedAt,
+    status: reversedAt ? "reversed" : (row.status || "active"),
+  };
+}
+
 function offsetRequestFingerprint({ transactionId, branchId, offsets }) {
   return crypto.createHash("sha256").update(JSON.stringify({ transactionId, branchId, offsets })).digest("hex");
 }
@@ -1060,6 +1076,59 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
   } catch (error) {
     console.error("Kopo Kopo transaction ledger failed:", error);
     return res.status(500).json({ error: "kopokopo_transaction_ledger_failed" });
+  }
+});
+
+router.get("/invoice-offsets", requireKopokopoViewer, async (req, res) => {
+  try {
+    const rawInvoiceIds = String(req.query.invoiceIds || "");
+    if (!rawInvoiceIds || rawInvoiceIds.length > 8000) {
+      return res.status(400).json({ error: "invalid_kopokopo_invoice_ids" });
+    }
+    const parsedInvoiceIds = rawInvoiceIds.split(",").map(identifier);
+    const invoiceIds = [...new Set(parsedInvoiceIds)];
+    if (invoiceIds.length < 1 || invoiceIds.length > 50 || parsedInvoiceIds.some((invoiceId) => !invoiceId)) {
+      return res.status(400).json({ error: "invalid_kopokopo_invoice_ids" });
+    }
+
+    const invoicePlaceholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
+    const invoiceResult = await q(
+      `SELECT id, branch_id, payload
+         FROM events
+        WHERE type = 'invoice'
+          AND id IN (${invoicePlaceholders})`,
+      invoiceIds
+    );
+    if (invoiceResult.rows.some((invoice) => !accountCanAccessBranch(req.account, invoice.branch_id ?? invoice.branchId))) {
+      return res.status(403).json({ error: "branch_not_authorized" });
+    }
+
+    const accessibleInvoiceIds = invoiceResult.rows.map((invoice) => invoice.id);
+    const offsetsByInvoiceId = Object.fromEntries(invoiceIds.map((invoiceId) => [invoiceId, []]));
+    if (!accessibleInvoiceIds.length) return res.json({ offsetsByInvoiceId });
+
+    const accessiblePlaceholders = accessibleInvoiceIds.map((_, index) => `$${index + 1}`).join(", ");
+    const offsetResult = await q(
+      `SELECT offset_row.id, offset_row.transaction_id, offset_row.invoice_id,
+              offset_row.amount_cents, offset_row.reason, offset_row.note, offset_row.status,
+              offset_row.offset_by_name, offset_row.offset_at,
+              transaction_row.reference_last4, transaction_row.till_number, transaction_row.currency,
+              transaction_row.origination_time, transaction_row.reversed_at
+         FROM kopokopo_offsets offset_row
+         JOIN kopokopo_transactions transaction_row ON transaction_row.id = offset_row.transaction_id
+        WHERE offset_row.invoice_id IN (${accessiblePlaceholders})
+        ORDER BY offset_row.offset_at, offset_row.id`,
+      accessibleInvoiceIds
+    );
+    const payloadByInvoiceId = new Map(invoiceResult.rows.map((invoice) => [invoice.id, invoice.payload || {}]));
+    for (const offsetRow of offsetResult.rows) {
+      const invoiceId = offsetRow.invoice_id ?? offsetRow.invoiceId;
+      offsetsByInvoiceId[invoiceId].push(publicInvoiceOffset(offsetRow, payloadByInvoiceId.get(invoiceId)));
+    }
+    return res.json({ offsetsByInvoiceId });
+  } catch (error) {
+    console.error("Kopo Kopo invoice offset audit failed:", error);
+    return res.status(500).json({ error: "kopokopo_invoice_offset_audit_failed" });
   }
 });
 

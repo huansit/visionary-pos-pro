@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
 import { businessDateValue } from "./businessTime";
-import type { Account, Branch, BusinessDayPeriod, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, BusinessDayPeriod, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaOffset, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -848,6 +848,26 @@ export async function listMpesaTransactions(
       "X-Session-Token": sessionToken
     }
   });
+}
+
+export async function listInvoiceCashDepositOffsets(
+  sessionToken: string,
+  invoiceIds: string[]
+): Promise<Record<string, MpesaOffset[]>> {
+  const ids = [...new Set(invoiceIds.map((invoiceId) => String(invoiceId || "").trim()).filter(Boolean))];
+  const offsetsByInvoiceId: Record<string, MpesaOffset[]> = Object.fromEntries(ids.map((invoiceId) => [invoiceId, []]));
+  for (let index = 0; index < ids.length; index += 40) {
+    const batch = ids.slice(index, index + 40);
+    const params = new URLSearchParams({ invoiceIds: batch.join(",") });
+    const result = await jsonFetch<{ offsetsByInvoiceId?: Record<string, MpesaOffset[]> }>(
+      `/api/integrations/kopokopo/invoice-offsets?${params.toString()}`,
+      { method: "GET", headers: { "X-Session-Token": sessionToken } }
+    );
+    batch.forEach((invoiceId) => {
+      offsetsByInvoiceId[invoiceId] = result.offsetsByInvoiceId?.[invoiceId] || [];
+    });
+  }
+  return offsetsByInvoiceId;
 }
 
 export async function pullCatalog(terminal: TerminalCredentials): Promise<{

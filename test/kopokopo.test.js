@@ -1744,6 +1744,28 @@ test("offsets cash deposited to till without turning it into another invoice pay
     assert.equal(ledgerTransaction.offsets[0].invoiceNumber, "RCP-SIP-000004");
     assert.equal(ledgerTransaction.offsets[0].offsetByName, "SIP Supervisor");
 
+    const invoiceAudit = await request(app)
+      .get("/api/integrations/kopokopo/invoice-offsets?invoiceIds=inv-cash,inv-cash-small")
+      .set("X-Session-Token", cashierSessionToken)
+      .expect(200);
+    assert.equal(invoiceAudit.body.offsetsByInvoiceId["inv-cash"].length, 1);
+    assert.equal(invoiceAudit.body.offsetsByInvoiceId["inv-cash-small"].length, 0);
+    const auditEntry = invoiceAudit.body.offsetsByInvoiceId["inv-cash"][0];
+    assert.equal(auditEntry.referenceMasked, "****0F01");
+    assert.equal(auditEntry.referenceLast4, "0F01");
+    assert.equal(auditEntry.tillNumber, "3018421");
+    assert.equal(auditEntry.amountCents, 30000);
+    assert.equal(auditEntry.offsetByName, "SIP Supervisor");
+    assert.equal(auditEntry.note, "Cash deposited after invoice payment");
+    assert.equal("reference" in auditEntry, false);
+    assert.equal(JSON.stringify(auditEntry).includes("CASHDEPOSIT0F01"), false);
+
+    await request(app)
+      .get("/api/integrations/kopokopo/invoice-offsets?invoiceIds=inv-cpt")
+      .set("X-Session-Token", branchSessionToken)
+      .expect(403)
+      .expect({ error: "branch_not_authorized" });
+
     const failedBatch = await request(app)
       .post("/api/integrations/kopokopo/offsets")
       .set("X-Session-Token", sessionToken)
