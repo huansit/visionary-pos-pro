@@ -28,8 +28,9 @@ const permanentRecoveryErrors = new Set([
 const sandboxRetrievalTestKeyPrefix = "sandbox-test:";
 const sandboxAllocationTestKeyPrefix = "sandbox-allocation-test:";
 const payerIdentityPendingMarker = "kopokopo_payer_identity_pending";
-const payerIdentityRetryMs = 5_000;
-const payerIdentityGraceMs = 90_000;
+const payerIdentityUnavailableMarker = "kopokopo_payer_identity_unavailable";
+const payerIdentityGraceMs = 30 * 60 * 1000;
+const payerIdentityBackfillMs = 7 * 24 * 60 * 60 * 1000;
 let intervalTimer = null;
 let startupTimer = null;
 let activeRun = null;
@@ -62,7 +63,15 @@ function publicRequest(row) {
 }
 
 async function findRequestById(id) {
-  const result = await q("SELECT * FROM kopokopo_incoming_payment_requests WHERE id = $1 LIMIT 1", [id]);
+  const result = await q(
+    `SELECT payment_request.*, provider_transaction.payer_name AS provider_payer_name
+       FROM kopokopo_incoming_payment_requests payment_request
+       LEFT JOIN kopokopo_transactions provider_transaction
+         ON provider_transaction.id = payment_request.provider_transaction_id
+      WHERE payment_request.id = $1
+      LIMIT 1`,
+    [id]
+  );
   return result.rows[0] || null;
 }
 
@@ -336,6 +345,13 @@ function retryDelayMs(attempts) {
   return Math.min(60_000, 2_000 * (2 ** Math.min(Math.max(0, attempts), 5)));
 }
 
+function payerIdentityRetryDelayMs(completedAt) {
+  const ageMs = Math.max(0, Date.now() - completedAt);
+  if (ageMs < 2 * 60 * 1000) return 5_000;
+  if (ageMs < 10 * 60 * 1000) return 15_000;
+  return 30_000;
+}
+
 export function pendingCheckDelayMs(attempts) {
   if (attempts <= 10) return 2_000;
   if (attempts <= 30) return 5_000;
@@ -347,13 +363,35 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
   if (!request) throw new Error("kopokopo_incoming_payment_not_found");
   const providerConfig = config || kopokopoConfigForBranch(rowValue(request, "branch_id", "branchId"));
   if (!providerConfig?.enabled) throw new Error("kopokopo_disabled_for_branch");
-  const identityEnrichment = text(rowValue(request, "last_error", "lastError")) === payerIdentityPendingMarker
-    && Boolean(text(rowValue(request, "provider_transaction_id", "providerTransactionId")));
+  const requestStatus = text(request.status).toLowerCase();
+  const lastError = text(rowValue(request, "last_error", "lastError"));
+  const providerTransactionId = text(rowValue(request, "provider_transaction_id", "providerTransactionId"));
+  const missingPayerName = Boolean(providerTransactionId)
+    && !text(rowValue(request, "provider_payer_name", "providerPayerName"));
+  const identityBackfill = requestStatus === "completed" && !lastError && missingPayerName;
+  const identityEnrichment = missingPayerName
+    && (lastError === payerIdentityPendingMarker || identityBackfill);
   if (terminalStatuses.has(text(request.status).toLowerCase()) && !identityEnrichment) return publicRequest(request);
   const nextCheckAt = new Date(rowValue(request, "next_check_at", "nextCheckAt") || 0).getTime();
   if (Number.isFinite(nextCheckAt) && nextCheckAt > Date.now()) return publicRequest(request);
+  const parsedCompletedAt = new Date(rowValue(request, "completed_at", "completedAt") || 0).getTime();
+  const firstCompletedAt = Number.isFinite(parsedCompletedAt) && parsedCompletedAt > 0
+    ? parsedCompletedAt
+    : Number.NaN;
+  const withinIdentityGrace = Number.isFinite(firstCompletedAt)
+    && (Date.now() - firstCompletedAt) < payerIdentityGraceMs;
+  if (identityEnrichment && !identityBackfill && !withinIdentityGrace) {
+    await q(
+      `UPDATE kopokopo_incoming_payment_requests
+          SET status = 'completed', next_check_at = NULL, last_error = $2,
+              updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [id, payerIdentityUnavailableMarker]
+    );
+    return publicRequest(await findRequestById(id));
+  }
   const expiresAt = new Date(rowValue(request, "expires_at", "expiresAt") || 0).getTime();
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+  if (!identityEnrichment && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
     await q(
       `UPDATE kopokopo_incoming_payment_requests
           SET status = 'expired', next_check_at = NULL, updated_at = ${isMySql ? "NOW()" : "now()"}
@@ -373,10 +411,10 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
       if (identityEnrichment) {
         await q(
           `UPDATE kopokopo_incoming_payment_requests
-              SET status = 'completed', next_check_at = NULL, last_error = NULL,
+              SET status = 'completed', next_check_at = NULL, last_error = $2,
                   updated_at = ${isMySql ? "NOW()" : "now()"}
             WHERE id = $1`,
-          [id]
+          [id, payerIdentityUnavailableMarker]
         );
         return publicRequest(await findRequestById(id));
       }
@@ -396,10 +434,9 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
       sandboxTest: isSandboxTestRequest(request),
     }, providerConfig);
     if (!recovered.pending) {
-      const firstCompletedAt = new Date(rowValue(request, "completed_at", "completedAt") || Date.now()).getTime();
-      const withinIdentityGrace = Number.isFinite(firstCompletedAt)
-        && (Date.now() - firstCompletedAt) < payerIdentityGraceMs;
-      const retryIdentity = !recovered.payerNameFound && withinIdentityGrace;
+      const completedAt = Number.isFinite(firstCompletedAt) ? firstCompletedAt : Date.now();
+      const retryIdentity = !recovered.payerNameFound
+        && (identityBackfill || (Date.now() - completedAt) < payerIdentityGraceMs);
       await q(
         `UPDATE kopokopo_incoming_payment_requests
             SET status = $2, provider_status = $3, provider_transaction_id = $4,
@@ -413,8 +450,29 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
           recovered.providerStatus,
           recovered.transactionId,
           attempts,
-          retryIdentity ? new Date(Date.now() + payerIdentityRetryMs) : null,
-          retryIdentity ? payerIdentityPendingMarker : null,
+          retryIdentity ? new Date(Date.now() + payerIdentityRetryDelayMs(completedAt)) : null,
+          retryIdentity
+            ? payerIdentityPendingMarker
+            : recovered.payerNameFound ? null : payerIdentityUnavailableMarker,
+        ]
+      );
+      return publicRequest(await findRequestById(id));
+    }
+    if (identityEnrichment) {
+      const completedAt = Number.isFinite(firstCompletedAt) ? firstCompletedAt : Date.now();
+      const retryIdentity = identityBackfill || (Date.now() - completedAt) < payerIdentityGraceMs;
+      await q(
+        `UPDATE kopokopo_incoming_payment_requests
+            SET status = $2, provider_status = $3, attempts = $4, next_check_at = $5,
+                last_error = $6, updated_at = ${isMySql ? "NOW()" : "now()"}
+          WHERE id = $1`,
+        [
+          id,
+          retryIdentity ? "pending" : "completed",
+          providerStatus,
+          attempts,
+          retryIdentity ? new Date(Date.now() + payerIdentityRetryDelayMs(completedAt)) : null,
+          retryIdentity ? payerIdentityPendingMarker : payerIdentityUnavailableMarker,
         ]
       );
       return publicRequest(await findRequestById(id));
@@ -428,9 +486,8 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
     );
   } catch (error) {
     if (identityEnrichment) {
-      const firstCompletedAt = new Date(rowValue(request, "completed_at", "completedAt") || 0).getTime();
-      const retryIdentity = Number.isFinite(firstCompletedAt)
-        && (Date.now() - firstCompletedAt) < payerIdentityGraceMs;
+      const completedAt = Number.isFinite(firstCompletedAt) ? firstCompletedAt : Date.now();
+      const retryIdentity = identityBackfill || (Date.now() - completedAt) < payerIdentityGraceMs;
       await q(
         `UPDATE kopokopo_incoming_payment_requests
             SET status = $2, attempts = $3, next_check_at = $4, last_error = $5,
@@ -440,8 +497,8 @@ async function reconcileKopokopoIncomingPaymentRequestNow(id, config = null, sup
           id,
           retryIdentity ? "pending" : "completed",
           attempts,
-          retryIdentity ? new Date(Date.now() + payerIdentityRetryMs) : null,
-          retryIdentity ? payerIdentityPendingMarker : null,
+          retryIdentity ? new Date(Date.now() + payerIdentityRetryDelayMs(completedAt)) : null,
+          retryIdentity ? payerIdentityPendingMarker : payerIdentityUnavailableMarker,
         ]
       );
       return publicRequest(await findRequestById(id));
@@ -477,20 +534,42 @@ export async function reconcileKopokopoIncomingPaymentRequest(id, config = null,
 }
 
 async function dueRequestIds(limit = 10) {
+  const backfillCutoff = new Date(Date.now() - payerIdentityBackfillMs);
   const result = await q(
-    `SELECT id
-       FROM kopokopo_incoming_payment_requests
+    `SELECT payment_request.id
+       FROM kopokopo_incoming_payment_requests payment_request
+       LEFT JOIN kopokopo_transactions provider_transaction
+         ON provider_transaction.id = payment_request.provider_transaction_id
       WHERE (
-          lower(status) IN ('pending', 'retrying')
-          OR (lower(status) = 'completed' AND last_error = '${payerIdentityPendingMarker}')
+          (
+            lower(payment_request.status) IN ('pending', 'retrying')
+            AND payment_request.next_check_at IS NOT NULL
+            AND payment_request.next_check_at <= ${isMySql ? "NOW()" : "now()"}
+            AND (
+              payment_request.expires_at > ${isMySql ? "NOW()" : "now()"}
+              OR payment_request.last_error = '${payerIdentityPendingMarker}'
+            )
+          )
+          OR (
+            lower(payment_request.status) = 'completed'
+            AND payment_request.provider_transaction_id IS NOT NULL
+            AND payment_request.completed_at >= $1
+            AND (
+              (
+                payment_request.last_error = '${payerIdentityPendingMarker}'
+                AND payment_request.next_check_at IS NOT NULL
+                AND payment_request.next_check_at <= ${isMySql ? "NOW()" : "now()"}
+              )
+              OR (payment_request.last_error IS NULL AND payment_request.next_check_at IS NULL)
+            )
+            AND (provider_transaction.payer_name IS NULL OR provider_transaction.payer_name = '')
+          )
         )
-        AND idempotency_key NOT LIKE 'sandbox-test:%'
-        AND idempotency_key NOT LIKE 'sandbox-allocation-test:%'
-        AND next_check_at IS NOT NULL
-        AND next_check_at <= ${isMySql ? "NOW()" : "now()"}
-        AND expires_at > ${isMySql ? "NOW()" : "now()"}
-      ORDER BY next_check_at
-      LIMIT ${Math.max(1, Math.min(Number(limit) || 10, 25))}`
+        AND payment_request.idempotency_key NOT LIKE 'sandbox-test:%'
+        AND payment_request.idempotency_key NOT LIKE 'sandbox-allocation-test:%'
+      ORDER BY COALESCE(payment_request.next_check_at, payment_request.completed_at)
+      LIMIT ${Math.max(1, Math.min(Number(limit) || 10, 25))}`,
+    [backfillCutoff]
   );
   return result.rows.map((row) => row.id);
 }

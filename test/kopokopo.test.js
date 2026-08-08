@@ -37,6 +37,7 @@ const {
 const {
   ingestKopokopoIncomingPaymentStatus,
   pendingCheckDelayMs,
+  reconcilePendingKopokopoIncomingPayments,
 } = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
 const { getLatestRealtimeEvent, publishRealtimeEvent } = await import("../src/realtime.js");
@@ -792,7 +793,7 @@ test("keeps a successful STK request pending until Kopo Kopo supplies the verifi
     }
     assert.equal(String(url), providerLocation);
     statusReads += 1;
-    const resource = statusReads > 1
+    const resource = statusReads > 2
       ? { ...providerResource, sender_first_name: "Verified", sender_last_name: "Holder" }
       : providerResource;
     return new Response(JSON.stringify({
@@ -838,6 +839,19 @@ test("keeps a successful STK request pending until Kopo Kopo supplies the verifi
     assert.equal(firstStored.rows[0].payer_name, null);
 
     await pool.query(
+      `UPDATE kopokopo_incoming_payment_requests
+          SET completed_at = $2, next_check_at = $3
+        WHERE id = $1`,
+      [requestId, new Date(Date.now() - 2 * 60 * 1000), new Date(Date.now() - 1000)]
+    );
+    const stillWaitingForVerifiedName = await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${requestId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(stillWaitingForVerifiedName.body.request.status, "pending");
+    assert.equal(stillWaitingForVerifiedName.body.transaction, null);
+
+    await pool.query(
       "UPDATE kopokopo_incoming_payment_requests SET next_check_at = $2 WHERE id = $1",
       [requestId, new Date(Date.now() - 1000)]
     );
@@ -849,6 +863,90 @@ test("keeps a successful STK request pending until Kopo Kopo supplies the verifi
     assert.equal(completed.body.transaction.payerName, "Verified Holder");
     assert.notEqual(completed.body.transaction.payerName, "Typed Customer");
     assert.equal(completed.body.transaction.amountCents, 7500);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (requestId) await pool.query("DELETE FROM kopokopo_incoming_payment_requests WHERE id = $1", [requestId]);
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [providerResource.id]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE resource_id = $1", [providerResource.id]);
+  }
+});
+
+test("backfills a recent completed STK payment whose verified payer name was missed", async () => {
+  const originalFetch = globalThis.fetch;
+  const providerLocation = "https://sandbox.kopokopo.com/api/v2/incoming_payments/backfill-name-request";
+  const providerResource = {
+    id: "backfill-name-status-transaction",
+    amount: "40.00",
+    status: "Received",
+    currency: "KES",
+    reference: "BACKFILLNAME6P3R",
+    till_number: "000000",
+    sender_phone_number: "+254733333333",
+    origination_time: "2026-08-07T10:15:00+03:00",
+  };
+  let statusReads = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith("/oauth/token")) {
+      return new Response(JSON.stringify({ access_token: "backfill-name-token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (String(url).endsWith("/api/v2/incoming_payments") && options.method === "POST") {
+      return new Response("", { status: 201, headers: { Location: providerLocation } });
+    }
+    assert.equal(String(url), providerLocation);
+    statusReads += 1;
+    const resource = statusReads > 1
+      ? { ...providerResource, sender_first_name: "Late", sender_last_name: "Payer" }
+      : providerResource;
+    return new Response(JSON.stringify({
+      data: {
+        type: "incoming_payment",
+        attributes: {
+          status: "Received",
+          event: { type: "Incoming Payment Request", resource },
+        },
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+
+  let requestId = "";
+  try {
+    const created = await request(app)
+      .post("/api/integrations/kopokopo/incoming-payments")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        idempotencyKey: "invoice-settlement-backfill-name",
+        branchId: "b_sip",
+        amountCents: 4000,
+        phoneNumber: "+254733333333",
+        firstName: "Unverified",
+        lastName: "Prompt Name",
+        reference: "INV-BACKFILL-NAME",
+      })
+      .expect(202);
+    requestId = created.body.request.id;
+
+    await request(app)
+      .get(`/api/integrations/kopokopo/incoming-payments/${requestId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    await pool.query(
+      `UPDATE kopokopo_incoming_payment_requests
+          SET status = 'completed', completed_at = $2, next_check_at = NULL, last_error = NULL
+        WHERE id = $1`,
+      [requestId, new Date(Date.now() - 2 * 60 * 1000)]
+    );
+
+    const recovered = await reconcilePendingKopokopoIncomingPayments(kopokopoConfig());
+    assert.equal(recovered.checked, 1);
+    const transaction = await pool.query(
+      "SELECT payer_name FROM kopokopo_transactions WHERE id = $1",
+      [providerResource.id]
+    );
+    assert.equal(transaction.rows[0].payer_name, "Late Payer");
+    assert.notEqual(transaction.rows[0].payer_name, "Unverified Prompt Name");
   } finally {
     globalThis.fetch = originalFetch;
     if (requestId) await pool.query("DELETE FROM kopokopo_incoming_payment_requests WHERE id = $1", [requestId]);
@@ -1856,6 +1954,19 @@ test("offsets cash deposited to till without turning it into another invoice pay
 });
 
 test("a verified reversal removes the transaction from settlement lookup", async () => {
+  const ledgerBeforeReversal = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=all")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  const transactionBeforeReversal = ledgerBeforeReversal.body.transactions.find((transaction) => transaction.id === "txn-1");
+  assert.ok(transactionBeforeReversal);
+  const invoiceEventsBeforeReversal = await pool.query(
+    `SELECT id, type, payload
+       FROM events
+      WHERE id IN ('inv-1', 'inv-2', 'pay-1', 'pay-2')
+      ORDER BY id`
+  );
+
   await signedWebhook(webhookPayload({
     topic: "buygoods_transaction_reversed",
     eventId: "evt-reversed-1",
@@ -1874,5 +1985,33 @@ test("a verified reversal removes the transaction from settlement lookup", async
   );
   assert.ok(allocations.rows.length > 0);
   assert.ok(allocations.rows.every((allocation) => allocation.status === "reversed"));
+
+  const ledger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=all")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  const reversedTransaction = ledger.body.transactions.find((transaction) => transaction.id === "txn-1");
+  assert.ok(reversedTransaction);
+  assert.equal(reversedTransaction.remainingCents, 0);
+  assert.equal(
+    ledger.body.summary.amountCents,
+    ledgerBeforeReversal.body.summary.amountCents - transactionBeforeReversal.amountCents
+  );
+  assert.equal(
+    ledger.body.summary.allocatedCents,
+    ledgerBeforeReversal.body.summary.allocatedCents - transactionBeforeReversal.allocatedCents
+  );
+  assert.equal(
+    ledger.body.summary.remainingCents,
+    ledgerBeforeReversal.body.summary.remainingCents - transactionBeforeReversal.remainingCents
+  );
+
+  const invoiceEventsAfterReversal = await pool.query(
+    `SELECT id, type, payload
+       FROM events
+      WHERE id IN ('inv-1', 'inv-2', 'pay-1', 'pay-2')
+      ORDER BY id`
+  );
+  assert.deepEqual(invoiceEventsAfterReversal.rows, invoiceEventsBeforeReversal.rows);
 });
 

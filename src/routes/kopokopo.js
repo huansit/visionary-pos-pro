@@ -69,13 +69,15 @@ function publicTransaction(row) {
   const amountCents = Number(row.amount_cents ?? row.amountCents ?? 0);
   const allocatedCents = Number(row.allocated_cents ?? row.allocatedCents ?? 0);
   const referenceLast4 = row.reference_last4 ?? row.referenceLast4;
+  const reversedAt = row.reversed_at ?? row.reversedAt ?? null;
+  const reversed = Boolean(reversedAt) || String(row.status || "").toLowerCase() === "reversed";
   return {
     id: row.id,
     referenceMasked: `****${referenceLast4}`,
     referenceLast4,
     amountCents,
     allocatedCents,
-    remainingCents: Math.max(0, amountCents - allocatedCents),
+    remainingCents: reversed ? 0 : Math.max(0, amountCents - allocatedCents),
     currency: row.currency,
     status: row.status,
     tillNumber: row.till_number ?? row.tillNumber ?? null,
@@ -83,7 +85,7 @@ function publicTransaction(row) {
     payerName: row.payer_name ?? row.payerName ?? null,
     payerPhoneLast4: row.payer_phone_last4 ?? row.payerPhoneLast4 ?? null,
     originationTime: row.origination_time ?? row.originationTime ?? null,
-    reversedAt: row.reversed_at ?? row.reversedAt ?? null,
+    reversedAt,
     createdAt: row.created_at ?? row.createdAt ?? null,
     providerVerified: true,
   };
@@ -960,16 +962,16 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
 
     const summary = await q(
       `SELECT COUNT(*) AS total_count,
-              COALESCE(SUM(amount_cents), 0) AS total_amount_cents,
-              COALESCE(SUM(allocated_cents), 0) AS total_allocated_cents
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN amount_cents ELSE 0 END), 0) AS total_amount_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS total_allocated_cents
          FROM kopokopo_transactions
         WHERE ${where}`,
       values
     );
     const branchSummary = await q(
       `SELECT branch_id, COUNT(*) AS transaction_count,
-              COALESCE(SUM(amount_cents), 0) AS amount_cents,
-              COALESCE(SUM(allocated_cents), 0) AS allocated_cents
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN amount_cents ELSE 0 END), 0) AS amount_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS allocated_cents
          FROM kopokopo_transactions
         WHERE ${where}
         GROUP BY branch_id
