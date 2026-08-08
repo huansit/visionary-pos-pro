@@ -11,6 +11,7 @@ import {
   normalizeMpesaCodeLast4,
   receiptForSettlement,
 } from "./admin/mpesaReceiptLedger.js";
+import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
 import {
   DEFAULT_BUSINESS_TIME_ZONE,
   businessDateTimeBoundary,
@@ -4422,6 +4423,10 @@ body{overscroll-behavior:none}
 .invoice-method svg{width:15px;height:15px}
 .invoice-method:hover{color:var(--text)}
 .invoice-method.on{border-color:var(--border);background:var(--surface);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.invoice-payroll-entry{display:grid;grid-template-columns:minmax(160px,.7fr) minmax(0,1.3fr);gap:10px;align-items:end;margin-top:10px}
+.invoice-payroll-entry label{display:grid;gap:4px}
+.invoice-payroll-entry label>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
+.invoice-payroll-entry .notice{margin:0}
 .invoice-payment-entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;margin-top:10px}
 .invoice-payment-amount{display:grid;gap:4px}
 .invoice-payment-amount>span{color:var(--muted-2);font-size:10px;font-weight:750;text-transform:uppercase}
@@ -4615,7 +4620,7 @@ body{overscroll-behavior:none}
 @media (max-width:820px){.invsummary{grid-template-columns:1fr}}
 @media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-compact-summary{grid-template-columns:auto auto 1fr}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr 1fr}.invoice-period-label{grid-column:1/-1}.invoice-period-filter .btn{grid-column:1/-1}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
 @media (max-width:760px){.inventory-payment-toolbar{align-items:stretch;flex-direction:column}.inventory-payment-toolbar>span{white-space:normal}.inventory-payment-cashier{width:100%}.inventory-payment-methods{grid-template-columns:1fr 1fr}.inventory-payment-entry{grid-template-columns:1fr}.inventory-payment-entry .btn{width:100%}}
-@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
+@media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.invoice-payroll-entry{grid-template-columns:1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
 /* Keep the desktop invoice header ordered as one compact control band. */
 @media (min-width:1101px){
   .invoice-list-active .invoice-compact-summary{grid-template-columns:120px 165px 185px minmax(240px,1fr);gap:0;padding:0;margin-bottom:7px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);overflow:hidden}
@@ -9350,6 +9355,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
   const [mpesaAmount, setMpesaAmount] = useState("");
   const [cashAmount, setCashAmount] = useState("0");
+  const [settlementMethod, setSettlementMethod] = useState("standard");
+  const [payrollAmount, setPayrollAmount] = useState("");
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [providerTransactionId, setProviderTransactionId] = useState("");
@@ -9369,6 +9376,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setMpesaReceiptAmount("");
     setMpesaAmount("");
     setCashAmount("0");
+    setSettlementMethod("standard");
+    setPayrollAmount("");
     setPaymentError("");
     setProviderTransactionId("");
     setStkPhone("");
@@ -9441,14 +9450,16 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
       if (timer) window.clearTimeout(timer);
     };
   }, [stkRequest?.id, out]);
-  const mpesaCents = clampPaymentCents(mpesaAmount, out);
-  const cashCents = clampPaymentCents(cashAmount, out);
+  const payrollEligible = out > 0 && invoiceWasCarriedOver(data, live);
+  const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
+  const cashCents = settlementMethod === "standard" ? clampPaymentCents(cashAmount, out) : 0;
+  const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
   useEffect(() => {
     if (normalizedMpesaCode.length !== 4 || receiptAvailableCents <= 0) return;
     const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, Math.max(0, out - cashCents)));
     if (nextMpesaAmount !== mpesaAmount) setMpesaAmount(nextMpesaAmount);
   }, [normalizedMpesaCode, receiptAvailableCents, cashCents, out, mpesaAmount]);
-  const paymentCents = mpesaCents + cashCents;
+  const paymentCents = mpesaCents + cashCents + payrollCents;
   const providerSelectionError = mpesaProviderSelectionError({
     amountCents: mpesaCents,
     loading: providerLookup.loading,
@@ -9456,7 +9467,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     selectedTransaction: providerTransaction,
   });
   let paymentValidationError = "";
-  if (paymentCents <= 0) paymentValidationError = "Enter an M-Pesa or cash amount.";
+  if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only for carried-over debt invoices.";
+  else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : "Enter an M-Pesa or cash amount.";
   else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) paymentValidationError = providerSelectionError;
@@ -9558,6 +9570,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
       paymentRecords.push({
         id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
         method: "cash", amountCents: cashCents, status: "captured", recordedBy: user,
+        recordedByName: actorName, settledBy: user, settledByName: actorName,
+        cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
+      });
+    }
+    if (payrollCents > 0) {
+      methods.push("Payroll");
+      paymentRecords.push({
+        id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
+        method: "payroll", amountCents: payrollCents, status: "captured", recordedBy: user,
         recordedByName: actorName, settledBy: user, settledByName: actorName,
         cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
       });
@@ -9689,8 +9710,32 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <div className="invoice-payment-head">
               <b>Record payment</b>
               <span>{fmt(out, cur)} due</span>
-              <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button>
+              {settlementMethod === "standard" ? <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button> : null}
             </div>
+            {payrollEligible ? (
+              <div className="inventory-payment-methods" role="radiogroup" aria-label="Cashier debt settlement method">
+                <button type="button" role="radio" aria-checked={settlementMethod === "standard"}
+                  className={"invoice-method" + (settlementMethod === "standard" ? " on" : "")}
+                  onClick={() => { setSettlementMethod("standard"); setPayrollAmount(""); setPaymentError(""); }}>
+                  <Smartphone /> M-Pesa / Cash
+                </button>
+                <button type="button" role="radio" aria-checked={settlementMethod === "payroll"}
+                  className={"invoice-method" + (settlementMethod === "payroll" ? " on" : "")}
+                  onClick={() => {
+                    setSettlementMethod("payroll");
+                    setMpesaCode("");
+                    setMpesaReceiptAmount("");
+                    setMpesaAmount("");
+                    setCashAmount("0");
+                    setProviderTransactionId("");
+                    setPayrollAmount(moneyInputValue(out));
+                    setPaymentError("");
+                  }}>
+                  <Wallet /> Payroll
+                </button>
+              </div>
+            ) : null}
+            {settlementMethod === "standard" ? <>
             <details className="invoice-detail-disclosure stk-request-disclosure">
               <summary><span><Smartphone /> Send M-Pesa prompt</span><ChevronDown /></summary>
               <div className="stk-request-form">
@@ -9776,6 +9821,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                 {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
               </div>
             ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Save its full M-Pesa amount once, then reuse this code until the balance is depleted.</div> : null}
+            </> : (
+              <div className="invoice-payroll-entry">
+                <label><span>Payroll deduction</span>
+                  <input className="input" inputMode="decimal" value={payrollAmount}
+                    onChange={(event) => { setPayrollAmount(event.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
+                </label>
+                <div className="notice compact-notice">Records this cashier debt as recovered through payroll. Partial deductions are allowed and remain in the payment audit history.</div>
+              </div>
+            )}
             <div className="invoice-payment-entry">
               <div className="settlement-inline-total"><span>Apply now</span><b>{fmt(paymentCents, cur)}</b><small>{fmt(Math.max(0, out - paymentCents), cur)} remains after payment</small></div>
               <button className="btn btn-primary" disabled={!canRecordPayment} onClick={recordPayment}>
@@ -14336,15 +14390,16 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   });
   const expByCat = {}; periodExp.forEach((e) => { expByCat[e.category] = (expByCat[e.category] || 0) + e.amountCents; });
 
-  // Credit recovery contains only invoices explicitly carried over by End of Day.
-  const carried = activeInvoices.filter((i) => i.carriedOver && inBranch(i.branchId));
-  const recoveredList = carried.filter((i) => invOutstanding(i) <= 0);
+  // Recovery history must survive settlement clearing the invoice's current carried-over flag.
+  const carried = activeInvoices.filter((i) => invoiceWasEverCarriedOver(data, i) && inBranch(i.branchId));
+  const recoveredList = carried
+    .filter((i) => invOutstanding(i) <= 0)
+    .sort((a, b) => invoiceRecoveryTimestamp(data, b) - invoiceRecoveryTimestamp(data, a));
   const pendingList = carried.filter((i) => invIsDebt(i));
   const partialCount = carried.filter((i) => i.paidCents > 0 && invIsDebt(i)).length;
   const pendingTotal = pendingList.reduce((s, i) => s + invOutstanding(i), 0);
   const recoveredTotal = recoveredList.reduce((s, i) => s + i.totalCents, 0);
-  const carriedIds = new Set(carried.map((i) => i.id));
-  const clearedTodayCount = new Set(data.payments.filter((p) => p.status === "captured" && isToday(p.ts) && carriedIds.has(p.orderId)).map((p) => p.orderId)).size;
+  const clearedTodayCount = recoveredList.filter((invoice) => isToday(invoiceRecoveryTimestamp(data, invoice))).length;
 
   // export builder for the active sub-report
   const buildExport = () => {
@@ -14384,7 +14439,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         return [invoice.number || invoice.receiptNo, invoiceCashierName(invoice), invoice.customerName, invoice.date, m(invoice.totalCents), voidInfo.decision?.reason || voidInfo.request?.reason || "", voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"];
       }),
     };
-    if (sub === "credit") return { name: "debt-recovery", headers: ["Invoice", "Cashier", "Customer", "Date", "Total", "Outstanding", "State"], rows: carried.map((i) => [i.number, invoiceCashierName(i), i.customerName, i.date, m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt")]) };
+    if (sub === "credit") return { name: "debt-recovery", headers: ["Invoice", "Cashier", "Customer", "Issued", "Recovered", "Total", "Outstanding", "State"], rows: carried.map((i) => {
+      const recoveredAt = invoiceRecoveryTimestamp(data, i);
+      return [i.number, invoiceCashierName(i), i.customerName, dt(i.ts), invOutstanding(i) <= 0 && recoveredAt > 0 ? dt(recoveredAt) : "-", m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt")];
+    }) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
     return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all non-void invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
@@ -14878,9 +14936,9 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
               <div className="sub" style={{ marginBottom: 2 }}>Recovery</div>
               <div className="section-title" style={{ marginTop: 0 }}>Credit Recovery History</div>
               {recoveredList.length === 0 ? <div className="notice">No cleared cashier credit records yet.</div> : (
-                <div className="list">{recoveredList.map((i) => (<div className="row" key={i.id}>
-                  <div className="meta"><div className="nm innum">{i.number.slice(-12)}</div><div className="mt2">{i.cashier} · {i.customerName} · {dt(i.ts)}</div></div>
-                  <span className="ist paid">recovered</span><span className="pill plain">{fmt(i.totalCents, cur)}</span></div>))}</div>)}
+                <div className="list">{recoveredList.map((i) => { const recoveredAt = invoiceRecoveryTimestamp(data, i); return (<div className="row" key={i.id}>
+                  <div className="meta"><div className="nm innum">{i.number.slice(-12)}</div><div className="mt2">{invoiceCashierName(i)} · {i.customerName} · {recoveredAt > 0 ? `recovered ${dt(recoveredAt)}` : "recovery time unavailable"}</div></div>
+                  <span className="ist paid">recovered</span><span className="pill plain">{fmt(i.totalCents, cur)}</span></div>); })}</div>)}
             </div>
             <div className="panel">
               <div className="sub" style={{ marginBottom: 2 }}>Recovery</div>
