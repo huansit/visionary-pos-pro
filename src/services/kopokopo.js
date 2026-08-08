@@ -118,6 +118,22 @@ export function amountToCents(value) {
   return Number.isFinite(amount) && amount >= 0 ? Math.round((amount + Number.EPSILON) * 100) : -1;
 }
 
+export function kopokopoTransactionKind(topic) {
+  return text(topic).toLowerCase().startsWith("b2b_transaction_")
+    ? "funding_transfer"
+    : "customer_payment";
+}
+
+function pollingTransactionKind(type) {
+  const normalized = text(type).toLowerCase().replace(/\s+/g, " ");
+  if (normalized === "buygoods transaction") return "customer_payment";
+  if (normalized.includes("till to bank")) return null;
+  if (normalized.includes("till to till") || normalized.includes("bank to till") || normalized.includes("b2b")) {
+    return "funding_transfer";
+  }
+  return null;
+}
+
 export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
   const topic = text(body?.topic).toLowerCase();
   if (!RECEIVED_TOPICS.has(topic) && !REVERSED_TOPICS.has(topic)) {
@@ -132,11 +148,18 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
     return { supported: true, valid: false, topic };
   }
   const reversed = REVERSED_TOPICS.has(topic);
-  const payerName = [resource?.sender_first_name, resource?.sender_middle_name, resource?.sender_last_name]
+  const transactionKind = kopokopoTransactionKind(topic);
+  const senderName = [resource?.sender_first_name, resource?.sender_middle_name, resource?.sender_last_name]
     .map(text)
     .filter(Boolean)
     .join(" ")
     .slice(0, 255);
+  const fundingSource = text(
+    resource?.sending_till
+      || resource?.sender_name
+      || resource?.bank_name
+      || resource?.sender_account_name
+  ).slice(0, 255);
   return {
     supported: true,
     valid: true,
@@ -147,14 +170,16 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
     reference,
     referenceLast4: reference.slice(-4),
     amountCents,
-    status: reversed ? "Reversed" : text(resource?.status || "Received"),
+    status: reversed ? "Reversed" : "Received",
     currency: text(resource?.currency || "KES").toUpperCase(),
     tillNumber: text(resource?.till_number),
     branchId: branchForTill(resource?.till_number, config),
-    payerName: payerName || null,
+    payerName: senderName || fundingSource || null,
     payerPhoneLast4: kopokopoPhoneLast4(resource?.sender_phone_number),
     originationTime: text(resource?.origination_time || body?.created_at) || null,
     eventTime: text(body?.created_at) || null,
+    transactionKind,
+    allocatable: transactionKind === "customer_payment",
   };
 }
 
@@ -165,17 +190,19 @@ export function kopokopoTransactionEvent(transaction, {
   eventTime = new Date().toISOString(),
 } = {}) {
   const resource = transaction?.resource;
-  if (text(transaction?.type).toLowerCase() !== "buygoods transaction" || !text(resource?.id)) {
-    return null;
-  }
+  const transactionKind = pollingTransactionKind(transaction?.type);
+  if (!transactionKind || !text(resource?.id)) return null;
   const status = text(resource?.status).toLowerCase();
-  if (status !== "received" && status !== "reversed") return null;
+  const reversed = status === "reversed";
+  const received = ["received", "complete", "completed", "success"].includes(status);
+  if (!received && !reversed) return null;
+  const topicPrefix = transactionKind === "funding_transfer" ? "b2b" : "buygoods";
   return {
-    topic: status === "reversed" ? "buygoods_transaction_reversed" : "buygoods_transaction_received",
-    id: `${eventIdPrefix}:${text(resource.id)}:${status}`,
+    topic: `${topicPrefix}_transaction_${reversed ? "reversed" : "received"}`,
+    id: `${eventIdPrefix}:${text(resource.id)}:${reversed ? "reversed" : "received"}`,
     created_at: text(resource.origination_time) || eventTime,
     event: {
-      type: "Buygoods Transaction",
+      type: text(transaction?.type),
       resource,
     },
     _links: { source, index },
@@ -442,11 +469,14 @@ export async function readKopokopoIncomingPayment(location, config = kopokopoCon
   return payload?.data?.attributes || {};
 }
 
-export async function createKopokopoSubscriptions(config = kopokopoConfig()) {
+export async function createKopokopoSubscriptions(config = kopokopoConfig(), options = {}) {
   if (!config.webhookUrl.startsWith("https://")) throw new Error("kopokopo_https_webhook_required");
   if (config.scope === "till" && !config.scopeReference) throw new Error("kopokopo_scope_reference_required");
   const accessToken = await requestKopokopoAccessToken(config);
-  const eventTypes = ["buygoods_transaction_received", "buygoods_transaction_reversed"];
+  const eventTypes = Array.isArray(options.eventTypes) && options.eventTypes.length
+    ? [...new Set(options.eventTypes.map((value) => text(value).toLowerCase()).filter((value) => RECEIVED_TOPICS.has(value) || REVERSED_TOPICS.has(value)))]
+    : ["buygoods_transaction_received", "buygoods_transaction_reversed", "b2b_transaction_received"];
+  if (!eventTypes.length) throw new Error("kopokopo_subscription_event_types_required");
   const subscriptions = [];
   for (const eventType of eventTypes) {
     const requestBody = {

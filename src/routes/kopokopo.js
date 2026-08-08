@@ -9,6 +9,7 @@ import {
   kopokopoConfigForBranch,
   kopokopoConfigs,
   kopokopoEnabled,
+  kopokopoTransactionKind,
   normalizeKopokopoCallback,
   parseKopokopoWebhook,
   validKopokopoSignature,
@@ -26,6 +27,11 @@ import {
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
 const requireKopokopoViewer = requireRoles(new Set(["owner", "admin", "manager", "supervisor", "cashier"]));
+const fundingEventExistsSql = `webhook_event_id IN (
+  SELECT funding_event.event_id
+    FROM kopokopo_webhook_events funding_event
+   WHERE lower(funding_event.topic) LIKE 'b2b_transaction_%'
+)`;
 
 function integerCents(value) {
   const cents = Number(value);
@@ -71,13 +77,16 @@ function publicTransaction(row) {
   const referenceLast4 = row.reference_last4 ?? row.referenceLast4;
   const reversedAt = row.reversed_at ?? row.reversedAt ?? null;
   const reversed = Boolean(reversedAt) || String(row.status || "").toLowerCase() === "reversed";
+  const providerTopic = row.provider_topic ?? row.providerTopic ?? null;
+  const transactionKind = kopokopoTransactionKind(providerTopic);
+  const allocatable = transactionKind === "customer_payment";
   return {
     id: row.id,
     referenceMasked: `****${referenceLast4}`,
     referenceLast4,
     amountCents,
     allocatedCents,
-    remainingCents: reversed ? 0 : Math.max(0, amountCents - allocatedCents),
+    remainingCents: reversed || !allocatable ? 0 : Math.max(0, amountCents - allocatedCents),
     currency: row.currency,
     status: row.status,
     tillNumber: row.till_number ?? row.tillNumber ?? null,
@@ -88,7 +97,24 @@ function publicTransaction(row) {
     reversedAt,
     createdAt: row.created_at ?? row.createdAt ?? null,
     providerVerified: true,
+    transactionKind,
+    allocatable,
   };
+}
+
+async function attachProviderTopic(client, transaction) {
+  const eventId = transaction?.webhook_event_id ?? transaction?.webhookEventId;
+  if (!eventId) return transaction;
+  const result = await client.query(
+    "SELECT topic FROM kopokopo_webhook_events WHERE event_id = $1 LIMIT 1",
+    [eventId]
+  );
+  transaction.provider_topic = result.rows[0]?.topic || null;
+  return transaction;
+}
+
+function transactionCanAllocate(transaction) {
+  return kopokopoTransactionKind(transaction?.provider_topic ?? transaction?.providerTopic) === "customer_payment";
 }
 
 function ledgerInteger(value, fallback, maximum) {
@@ -221,6 +247,8 @@ async function createKopokopoCashOffsets({ transactionId, offsets, branchId, not
     const locked = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
     const transaction = locked.rows[0];
     if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
+    await attachProviderTopic(client, transaction);
+    if (!transactionCanAllocate(transaction)) return { conflict: "kopokopo_transaction_not_allocatable" };
 
     const priorBatch = await client.query(
       "SELECT * FROM kopokopo_offset_batches WHERE idempotency_key = $1 LIMIT 1",
@@ -508,6 +536,8 @@ async function allocateKopokopoPayment({
     const locked = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
     const transaction = locked.rows[0];
     if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
+    await attachProviderTopic(client, transaction);
+    if (!transactionCanAllocate(transaction)) return { conflict: "kopokopo_transaction_not_allocatable" };
     if ((transaction.branch_id ?? transaction.branchId) !== branchId) return { conflict: "kopokopo_branch_mismatch" };
     if (!acceptedStatuses.has(String(transaction.status).toLowerCase()) || transaction.reversed_at) {
       return { conflict: "kopokopo_transaction_unavailable" };
@@ -870,7 +900,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const to = ledgerTimestamp(req.query.to);
     const branchStarts = ledgerBranchStarts(req.query.branchStarts);
     const branchPeriods = ledgerBranchPeriods(req.query.branchPeriods);
-    const validStatuses = new Set(["all", "received", "available", "partial", "allocated", "reversed"]);
+    const validStatuses = new Set(["all", "received", "available", "partial", "allocated", "funding", "reversed"]);
 
     if (!requestedBranchId || search.length > 80 || !validStatuses.has(status)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_filters" });
@@ -954,16 +984,18 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
     if (to) clauses.push(`COALESCE(origination_time, created_at) <= ${addValue(to)}`);
     if (status === "received") clauses.push("lower(status) = 'received' AND reversed_at IS NULL");
-    if (status === "available") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents < amount_cents");
-    if (status === "partial") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents > 0 AND allocated_cents < amount_cents");
-    if (status === "allocated") clauses.push("reversed_at IS NULL AND allocated_cents >= amount_cents");
+    if (status === "available") clauses.push(`lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents < amount_cents AND NOT ${fundingEventExistsSql}`);
+    if (status === "partial") clauses.push(`lower(status) = 'received' AND reversed_at IS NULL AND allocated_cents > 0 AND allocated_cents < amount_cents AND NOT ${fundingEventExistsSql}`);
+    if (status === "allocated") clauses.push(`reversed_at IS NULL AND allocated_cents >= amount_cents AND NOT ${fundingEventExistsSql}`);
+    if (status === "funding") clauses.push(fundingEventExistsSql);
     if (status === "reversed") clauses.push("reversed_at IS NOT NULL");
     const where = clauses.length ? clauses.join(" AND ") : "1 = 1";
 
     const summary = await q(
       `SELECT COUNT(*) AS total_count,
               COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN amount_cents ELSE 0 END), 0) AS total_amount_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS total_allocated_cents
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS total_allocated_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND NOT ${fundingEventExistsSql} THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS total_available_cents
          FROM kopokopo_transactions
         WHERE ${where}`,
       values
@@ -971,7 +1003,8 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const branchSummary = await q(
       `SELECT branch_id, COUNT(*) AS transaction_count,
               COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN amount_cents ELSE 0 END), 0) AS amount_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS allocated_cents
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' THEN allocated_cents ELSE 0 END), 0) AS allocated_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND NOT ${fundingEventExistsSql} THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS available_cents
          FROM kopokopo_transactions
         WHERE ${where}
         GROUP BY branch_id
@@ -980,7 +1013,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     );
     const pageValues = [...values, limit, offset];
     const result = await q(
-      `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number,
+      `SELECT id, webhook_event_id, reference_last4, amount_cents, allocated_cents, currency, status, till_number,
               branch_id, payer_name, payer_phone_last4, origination_time, reversed_at, created_at
          FROM kopokopo_transactions
         WHERE ${where}
@@ -989,6 +1022,28 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
       pageValues
     );
     const transactionRows = result.rows;
+    if (transactionRows.length) {
+      const eventIds = [...new Set(transactionRows
+        .map((row) => row.webhook_event_id ?? row.webhookEventId)
+        .filter(Boolean))];
+      if (eventIds.length) {
+        const eventPlaceholders = eventIds.map((_, index) => `$${index + 1}`).join(", ");
+        const eventResult = await q(
+          `SELECT event_id, topic
+             FROM kopokopo_webhook_events
+            WHERE event_id IN (${eventPlaceholders})`,
+          eventIds
+        );
+        const topicsByEventId = new Map(eventResult.rows.map((row) => [
+          row.event_id ?? row.eventId,
+          row.topic,
+        ]));
+        for (const row of transactionRows) {
+          const eventId = row.webhook_event_id ?? row.webhookEventId;
+          row.provider_topic = topicsByEventId.get(eventId) || null;
+        }
+      }
+    }
     const allocationsByTransaction = new Map();
     const offsetsByTransaction = new Map();
     if (transactionRows.length) {
@@ -1044,6 +1099,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const totals = summary.rows[0] || {};
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
     const allocatedCents = Number(totals.total_allocated_cents ?? totals.totalAllocatedCents ?? 0);
+    const availableCents = Number(totals.total_available_cents ?? totals.totalAvailableCents ?? 0);
     return res.json({
       enabled,
       branchId: allBranches ? "all" : requestedBranchId,
@@ -1061,16 +1117,17 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
       summary: {
         amountCents,
         allocatedCents,
-        remainingCents: Math.max(0, amountCents - allocatedCents),
+        remainingCents: Math.max(0, availableCents),
         branches: branchSummary.rows.map((row) => {
           const branchAmountCents = Number(row.amount_cents ?? row.amountCents ?? 0);
           const branchAllocatedCents = Number(row.allocated_cents ?? row.allocatedCents ?? 0);
+          const branchAvailableCents = Number(row.available_cents ?? row.availableCents ?? 0);
           return {
             branchId: row.branch_id ?? row.branchId ?? null,
             transactionCount: Number(row.transaction_count ?? row.transactionCount ?? 0),
             amountCents: branchAmountCents,
             allocatedCents: branchAllocatedCents,
-            remainingCents: Math.max(0, branchAmountCents - branchAllocatedCents),
+            remainingCents: Math.max(0, branchAvailableCents),
           };
         }),
       },
@@ -1152,6 +1209,7 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
           AND lower(status) = 'received'
           AND reversed_at IS NULL
           AND allocated_cents < amount_cents
+          AND NOT ${fundingEventExistsSql}
         ORDER BY origination_time DESC, created_at DESC
         LIMIT 20`,
       [branchId, last4]

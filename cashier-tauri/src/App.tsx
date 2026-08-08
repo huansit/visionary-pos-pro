@@ -2147,6 +2147,7 @@ function mpesaDateBoundary(value: string, edge: "start" | "end" = "start") {
 
 function cashierMpesaStatus(transaction: MpesaTransaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  if (transaction.allocatable === false || transaction.transactionKind === "funding_transfer") return { key: "funding", label: "Funding" };
   const activeAllocations = (transaction.allocations || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const activeOffsets = (transaction.offsets || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const offsetOnly = activeOffsets.length > 0 && activeAllocations.length === 0;
@@ -2468,7 +2469,9 @@ function CashierMpesaView({
                 <b>{money(transaction.remainingCents)} available</b>
               </div>
               <div className="cashier-mpesa-allocations">
-                {allocations.length === 0 && offsets.length === 0 ? (
+                {transaction.allocatable === false ? (
+                  <span>Internal funding movement</span>
+                ) : allocations.length === 0 && offsets.length === 0 ? (
                   <span>Not allocated or offset to a receipt</span>
                 ) : allocations.map((allocation) => (
                   <div key={allocation.id || `${allocation.invoiceId}:${allocation.amountCents}`}>

@@ -4210,7 +4210,9 @@ body{overscroll-behavior:none}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
+.mpesa-ledger-status.funding{background:rgba(14,165,233,.14);color:#0284c7}
 .mpesa-ledger-status.offset,.mpesa-ledger-status.offset-partial{background:rgba(245,158,11,.14);color:var(--warn)}
+.mpesa-ledger-row.funding .available-amount,.mpesa-ledger-mobile-row.funding .available-amount{color:#0284c7}
 .mpesa-ledger-row.available .mpesa-state-amount,.mpesa-ledger-row.available .available-amount,.mpesa-ledger-mobile-row.available .money b,.mpesa-ledger-mobile-row.available .available-amount{color:var(--ok)}
 .mpesa-ledger-row.partial .mpesa-state-amount,.mpesa-ledger-row.partial .available-amount,.mpesa-ledger-mobile-row.partial .money b,.mpesa-ledger-mobile-row.partial .available-amount{color:#2E78C7}
 .mpesa-ledger-row.allocated .mpesa-state-amount,.mpesa-ledger-row.allocated .available-amount,.mpesa-ledger-row.reversed .mpesa-state-amount,.mpesa-ledger-row.reversed .available-amount,.mpesa-ledger-mobile-row.allocated .money b,.mpesa-ledger-mobile-row.allocated .available-amount,.mpesa-ledger-mobile-row.reversed .money b,.mpesa-ledger-mobile-row.reversed .available-amount{color:var(--danger)}
@@ -15994,6 +15996,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 /* ---- Settings ---- */
 function kopokopoLedgerStatus(transaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  if (transaction.allocatable === false || transaction.transactionKind === "funding_transfer") return { key: "funding", label: "Funding" };
   const activeAllocations = (transaction.allocations || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const activeOffsets = (transaction.offsets || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const offsetOnly = activeOffsets.length > 0 && activeAllocations.length === 0;
@@ -16047,9 +16050,10 @@ function MpesaReference({ value, tone = "" }) {
   return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
-function MpesaAllocationList({ allocations, offsets, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
+function MpesaAllocationList({ allocations, offsets, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   const invoiceAllocations = Array.isArray(allocations) ? allocations : [];
   const cashOffsets = Array.isArray(offsets) ? offsets : [];
+  if (funding) return <span className="mpesa-no-allocation">Internal funding movement</span>;
   if (invoiceAllocations.length === 0 && cashOffsets.length === 0) {
     return <span className="mpesa-no-allocation">Not allocated to an invoice</span>;
   }
@@ -16392,7 +16396,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
         <label className="mpesa-branch-filter"><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
-        <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
+        <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="funding">Funding</option><option value="reversed">Reversed</option></select></label>
         <div className="mpesa-time-mode" aria-label="Transaction time filter mode">
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
@@ -16429,7 +16433,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} funding={transaction.allocatable === false} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                   <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn" onClick={() => setOffsetTarget(transaction)}><Banknote /> Cash deposit</button> : null}</div></td>
                 </tr>); })}</tbody>
@@ -16439,7 +16443,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
-              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} funding={transaction.allocatable === false} currency={transaction.currency || "KES"} timeZone={timeZone} />
               {canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn mobile" onClick={() => setOffsetTarget(transaction)}><Banknote /> Record cash deposit</button> : null}
             </div>); })}</div>
         </> : null}
