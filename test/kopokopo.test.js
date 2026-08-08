@@ -691,6 +691,69 @@ test("stores incoming till and bank payments as allocatable customer transfers",
   assert.equal(updatedLedger.body.transactions[0].remainingCents, 89900);
 });
 
+test("recognizes a verified B2B code when an older row has a stale branch and provider success status", async () => {
+  const payload = {
+    topic: "b2b_transaction_received",
+    id: "evt-b2b-stale-branch",
+    created_at: "2026-08-02T11:20:01+03:00",
+    event: {
+      type: "B2B Transaction",
+      resource: {
+        id: "b2b-stale-branch-transaction",
+        amount: "901.00",
+        status: "Complete",
+        system: "M-PESA",
+        currency: "KES",
+        reference: "B2BSTAL7531",
+        till_number: "000000",
+        sending_till: "Customer Till 123456",
+        origination_time: "2026-08-02T11:20:00+03:00",
+      },
+    },
+  };
+
+  await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
+  await pool.query(
+    "UPDATE kopokopo_transactions SET branch_id = $2, status = 'Complete' WHERE id = $1",
+    ["b2b-stale-branch-transaction", "b_cpt"]
+  );
+
+  const wrongBranch = await request(app)
+    .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_cpt&last4=7531")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(wrongBranch.body.transactions.length, 0);
+
+  const lookup = await request(app)
+    .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=7531")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(lookup.body.transactions.length, 1);
+  assert.equal(lookup.body.transactions[0].id, "b2b-stale-branch-transaction");
+  assert.equal(lookup.body.transactions[0].transactionKind, "customer_transfer");
+
+  const allocated = await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", sessionToken)
+    .send({
+      transactionId: "b2b-stale-branch-transaction",
+      branchId: "b_sip",
+      idempotencyKey: "stale-customer-transfer-allocation",
+      allocations: [{ invoiceId: "inv-3", amountCents: 100, localPaymentId: "stale-customer-transfer-payment" }],
+    })
+    .expect(200);
+  assert.equal(allocated.body.duplicate, false);
+  assert.equal(allocated.body.transaction.branchId, "b_sip");
+
+  const repaired = await pool.query(
+    "SELECT branch_id, status, allocated_cents FROM kopokopo_transactions WHERE id = $1",
+    ["b2b-stale-branch-transaction"]
+  );
+  assert.equal(repaired.rows[0].branch_id, "b_sip");
+  assert.equal(repaired.rows[0].status, "Complete");
+  assert.equal(Number(repaired.rows[0].allocated_cents), 100);
+});
+
 test("stores signed incoming-payment callbacks through the shared ledger", async () => {
   const payload = {
     data: {

@@ -4,6 +4,7 @@ import { requireAdminOrSupervisor, requireOwnerOrAdmin, requireRoles } from "../
 import { isMySql, q, tx } from "../db.js";
 import { publishRealtimeEvent } from "../realtime.js";
 import {
+  branchForTill,
   createKopokopoSubscriptions,
   kopokopoConfig,
   kopokopoConfigForBranch,
@@ -109,9 +110,49 @@ async function attachProviderTopic(client, transaction) {
 }
 
 function transactionCanAllocate(transaction) {
-  return ["customer_payment", "customer_transfer"].includes(
-    kopokopoTransactionKind(transaction?.provider_topic ?? transaction?.providerTopic)
-  );
+  const topic = String(transaction?.provider_topic ?? transaction?.providerTopic ?? "").trim().toLowerCase();
+  if (!topic) return true; // Legacy verified rows predate persisted webhook topics.
+  return ["buygoods_transaction_received", "b2b_transaction_received"].includes(topic);
+}
+
+function configuredTransactionBranch(transaction) {
+  const tillNumber = String(transaction?.till_number ?? transaction?.tillNumber ?? "").trim();
+  if (!tillNumber) return null;
+  const matches = [...new Set(kopokopoConfigs()
+    .map((config) => branchForTill(tillNumber, config))
+    .filter(Boolean))];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function transactionBelongsToBranch(transaction, branchId) {
+  const configuredBranchId = configuredTransactionBranch(transaction);
+  if (configuredBranchId) return configuredBranchId === branchId;
+  return (transaction?.branch_id ?? transaction?.branchId) === branchId;
+}
+
+async function repairTransactionBranch(client, transaction, branchId) {
+  if (!transactionBelongsToBranch(transaction, branchId)) return false;
+  const storedBranchId = transaction?.branch_id ?? transaction?.branchId;
+  if (storedBranchId !== branchId && configuredTransactionBranch(transaction) === branchId) {
+    await client.query(
+      `UPDATE kopokopo_transactions
+          SET branch_id = $2, updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [transaction.id, branchId]
+    );
+    transaction.branch_id = branchId;
+    transaction.branchId = branchId;
+  }
+  return true;
+}
+
+function transactionStatusAvailable(transaction, acceptedStatuses = ["received"]) {
+  const status = String(transaction?.status || "").trim().toLowerCase();
+  const accepted = new Set(acceptedStatuses.map((value) => String(value).trim().toLowerCase()));
+  if (accepted.has("received")) {
+    ["complete", "completed", "success"].forEach((value) => accepted.add(value));
+  }
+  return accepted.has(status) && !transaction?.reversed_at && !transaction?.reversedAt;
 }
 
 function ledgerInteger(value, fallback, maximum) {
@@ -294,8 +335,8 @@ async function createKopokopoCashOffsets({ transactionId, offsets, branchId, not
       };
     }
 
-    if ((transaction.branch_id ?? transaction.branchId) !== branchId) return { conflict: "kopokopo_branch_mismatch" };
-    if (String(transaction.status || "").toLowerCase() !== "received" || transaction.reversed_at || transaction.reversedAt) {
+    if (!await repairTransactionBranch(client, transaction, branchId)) return { conflict: "kopokopo_branch_mismatch" };
+    if (!transactionStatusAvailable(transaction)) {
       return { conflict: "kopokopo_transaction_unavailable" };
     }
     if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
@@ -524,7 +565,7 @@ async function allocateKopokopoPayment({
       });
       if (!same) return { conflict: "idempotency_key_reused" };
       const transaction = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
-      if (!transaction.rows[0] || (transaction.rows[0].branch_id ?? transaction.rows[0].branchId) !== branchId) {
+      if (!transaction.rows[0] || !transactionBelongsToBranch(transaction.rows[0], branchId)) {
         return { conflict: "idempotency_key_reused" };
       }
       return { duplicate: true, transaction: publicTransaction(transaction.rows[0]), allocations: prior.rows };
@@ -535,8 +576,8 @@ async function allocateKopokopoPayment({
     if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
     await attachProviderTopic(client, transaction);
     if (!transactionCanAllocate(transaction)) return { conflict: "kopokopo_transaction_not_allocatable" };
-    if ((transaction.branch_id ?? transaction.branchId) !== branchId) return { conflict: "kopokopo_branch_mismatch" };
-    if (!acceptedStatuses.has(String(transaction.status).toLowerCase()) || transaction.reversed_at) {
+    if (!await repairTransactionBranch(client, transaction, branchId)) return { conflict: "kopokopo_branch_mismatch" };
+    if (!transactionStatusAvailable(transaction, [...acceptedStatuses])) {
       return { conflict: "kopokopo_transaction_unavailable" };
     }
     if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
@@ -1198,18 +1239,27 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
     const enabled = kopokopoEnabled();
     if (!enabled || !last4) return res.json({ enabled, providerRequired, transactions: [] });
     const result = await q(
-      `SELECT id, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, payer_phone_last4, origination_time
-         FROM kopokopo_transactions
-        WHERE branch_id = $1
-          AND reference_last4 = $2
-          AND lower(status) = 'received'
-          AND reversed_at IS NULL
-          AND allocated_cents < amount_cents
-        ORDER BY origination_time DESC, created_at DESC
-        LIMIT 20`,
-      [branchId, last4]
+      `SELECT transaction_row.id, transaction_row.webhook_event_id, transaction_row.reference_last4,
+              transaction_row.amount_cents, transaction_row.allocated_cents, transaction_row.currency,
+              transaction_row.status, transaction_row.till_number, transaction_row.branch_id,
+              transaction_row.payer_name, transaction_row.payer_phone_last4, transaction_row.origination_time,
+              transaction_row.reversed_at, event_row.topic AS provider_topic
+         FROM kopokopo_transactions transaction_row
+         LEFT JOIN kopokopo_webhook_events event_row ON event_row.event_id = transaction_row.webhook_event_id
+        WHERE transaction_row.reference_last4 = $1
+          AND lower(transaction_row.status) IN ('received', 'complete', 'completed', 'success')
+          AND transaction_row.reversed_at IS NULL
+          AND transaction_row.allocated_cents < transaction_row.amount_cents
+        ORDER BY transaction_row.origination_time DESC, transaction_row.created_at DESC
+        LIMIT 100`,
+      [last4]
     );
-    return res.json({ enabled: true, providerRequired, transactions: result.rows.map(publicTransaction) });
+    const transactions = result.rows
+      .filter((transaction) => transactionBelongsToBranch(transaction, branchId))
+      .filter(transactionCanAllocate)
+      .slice(0, 20)
+      .map(publicTransaction);
+    return res.json({ enabled: true, providerRequired, transactions });
   } catch (error) {
     console.error("Kopo Kopo lookup failed:", error);
     return res.status(500).json({ error: "kopokopo_lookup_failed" });
