@@ -2,7 +2,7 @@ import { createKopokopoSubscriptions, kopokopoConfig, kopokopoConfigForBranch } 
 
 async function main() {
   const args = process.argv.slice(2);
-  const fundingOnly = args.includes("--funding-only");
+  const transfersOnly = args.includes("--transfers-only") || args.includes("--funding-only");
   const branchId = String(args.find((value) => !value.startsWith("--")) || "").trim();
   const config = branchId ? kopokopoConfigForBranch(branchId) : kopokopoConfig();
   if (!config?.enabled) throw new Error(branchId
@@ -11,7 +11,7 @@ async function main() {
   console.log(`Creating ${config.mode} Kopo Kopo subscriptions for account ${config.accountId} at ${config.webhookUrl}`);
   const subscriptions = await createKopokopoSubscriptions(
     config,
-    fundingOnly ? { eventTypes: ["b2b_transaction_received"] } : undefined
+    transfersOnly ? { eventTypes: ["b2b_transaction_received"] } : undefined
   );
   for (const subscription of subscriptions) {
     console.log(`${subscription.eventType}: ${subscription.location || "created"}`);

@@ -205,7 +205,7 @@ export type MpesaTransaction = {
   reversedAt?: string | null;
   createdAt?: string | null;
   providerVerified: boolean;
-  transactionKind?: "customer_payment" | "funding_transfer";
+  transactionKind?: "customer_payment" | "customer_transfer";
   allocatable?: boolean;
   allocations: MpesaAllocation[];
   offsets?: MpesaOffset[];

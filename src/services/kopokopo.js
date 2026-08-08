@@ -120,7 +120,7 @@ export function amountToCents(value) {
 
 export function kopokopoTransactionKind(topic) {
   return text(topic).toLowerCase().startsWith("b2b_transaction_")
-    ? "funding_transfer"
+    ? "customer_transfer"
     : "customer_payment";
 }
 
@@ -129,7 +129,7 @@ function pollingTransactionKind(type) {
   if (normalized === "buygoods transaction") return "customer_payment";
   if (normalized.includes("till to bank")) return null;
   if (normalized.includes("till to till") || normalized.includes("bank to till") || normalized.includes("b2b")) {
-    return "funding_transfer";
+    return "customer_transfer";
   }
   return null;
 }
@@ -154,7 +154,7 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
     .filter(Boolean)
     .join(" ")
     .slice(0, 255);
-  const fundingSource = text(
+  const transferPayer = text(
     resource?.sending_till
       || resource?.sender_name
       || resource?.bank_name
@@ -174,12 +174,12 @@ export function parseKopokopoWebhook(body, config = kopokopoConfig()) {
     currency: text(resource?.currency || "KES").toUpperCase(),
     tillNumber: text(resource?.till_number),
     branchId: branchForTill(resource?.till_number, config),
-    payerName: senderName || fundingSource || null,
+    payerName: senderName || transferPayer || null,
     payerPhoneLast4: kopokopoPhoneLast4(resource?.sender_phone_number),
     originationTime: text(resource?.origination_time || body?.created_at) || null,
     eventTime: text(body?.created_at) || null,
     transactionKind,
-    allocatable: transactionKind === "customer_payment",
+    allocatable: true,
   };
 }
 
@@ -196,7 +196,7 @@ export function kopokopoTransactionEvent(transaction, {
   const reversed = status === "reversed";
   const received = ["received", "complete", "completed", "success"].includes(status);
   if (!received && !reversed) return null;
-  const topicPrefix = transactionKind === "funding_transfer" ? "b2b" : "buygoods";
+  const topicPrefix = transactionKind === "customer_transfer" ? "b2b" : "buygoods";
   return {
     topic: `${topicPrefix}_transaction_${reversed ? "reversed" : "received"}`,
     id: `${eventIdPrefix}:${text(resource.id)}:${reversed ? "reversed" : "received"}`,

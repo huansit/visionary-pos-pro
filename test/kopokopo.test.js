@@ -539,7 +539,7 @@ test("streams branch-scoped M-Pesa changes to an authenticated cashier", async (
   }
 });
 
-test("stores signed Buygoods and funding polling callbacks", async () => {
+test("stores signed Buygoods and customer-transfer polling callbacks", async () => {
   const payload = {
     data: {
       id: "polling-result-1",
@@ -571,7 +571,7 @@ test("stores signed Buygoods and funding polling callbacks", async () => {
             currency: "KES",
             reference: "B2BCALL2468",
             till_number: "000000",
-            sending_till: "Funding Till 3432381",
+            sending_till: "Customer Till 3432381",
             origination_time: "2026-08-02T11:00:30+03:00",
           },
         }],
@@ -603,20 +603,20 @@ test("stores signed Buygoods and funding polling callbacks", async () => {
   assert.equal(stored.rows[0].payer_name, "Callback Customer");
   assert.equal(stored.rows[0].payer_phone_last4, "1111");
 
-  const funding = await pool.query(
+  const customerTransfer = await pool.query(
     "SELECT reference_last4, amount_cents, payer_name, status FROM kopokopo_transactions WHERE id = $1",
     ["callback-poll-b2b"]
   );
-  assert.equal(funding.rows[0].reference_last4, "2468");
-  assert.equal(Number(funding.rows[0].amount_cents), 60000);
-  assert.equal(funding.rows[0].payer_name, "Funding Till 3432381");
-  assert.equal(funding.rows[0].status, "Received");
+  assert.equal(customerTransfer.rows[0].reference_last4, "2468");
+  assert.equal(Number(customerTransfer.rows[0].amount_cents), 60000);
+  assert.equal(customerTransfer.rows[0].payer_name, "Customer Till 3432381");
+  assert.equal(customerTransfer.rows[0].status, "Received");
 
-  const fundingAudit = await pool.query(
+  const customerTransferAudit = await pool.query(
     "SELECT topic FROM kopokopo_webhook_events WHERE event_id = $1",
     ["poll:callback-poll-b2b:received"]
   );
-  assert.equal(fundingAudit.rows[0].topic, "b2b_transaction_received");
+  assert.equal(customerTransferAudit.rows[0].topic, "b2b_transaction_received");
 
   const audit = await pool.query(
     "SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1",
@@ -626,7 +626,7 @@ test("stores signed Buygoods and funding polling callbacks", async () => {
   assert.equal(audit.rows[0].payload.event.resource.sender_first_name, undefined);
 });
 
-test("stores B2B funding webhooks for audit without making them allocatable", async () => {
+test("stores incoming till and bank payments as allocatable customer transfers", async () => {
   const payload = {
     topic: "b2b_transaction_received",
     id: "evt-b2b-funding-1",
@@ -650,35 +650,45 @@ test("stores B2B funding webhooks for audit without making them allocatable", as
   await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
 
   const ledger = await request(app)
-    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=funding&search=1357")
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=available&search=1357")
     .set("X-Session-Token", sessionToken)
     .expect(200);
   assert.equal(ledger.body.transactions.length, 1);
   assert.equal(ledger.body.transactions[0].id, "b2b-funding-transaction");
-  assert.equal(ledger.body.transactions[0].transactionKind, "funding_transfer");
-  assert.equal(ledger.body.transactions[0].allocatable, false);
-  assert.equal(ledger.body.transactions[0].remainingCents, 0);
+  assert.equal(ledger.body.transactions[0].transactionKind, "customer_transfer");
+  assert.equal(ledger.body.transactions[0].allocatable, true);
+  assert.equal(ledger.body.transactions[0].remainingCents, 90000);
   assert.equal(ledger.body.transactions[0].payerName, "Bank settlement");
   assert.equal(ledger.body.summary.amountCents, 90000);
-  assert.equal(ledger.body.summary.remainingCents, 0);
+  assert.equal(ledger.body.summary.remainingCents, 90000);
 
-  await request(app)
+  const lookup = await request(app)
     .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=1357")
     .set("X-Session-Token", sessionToken)
-    .expect(200)
-    .expect((response) => assert.equal(response.body.transactions.length, 0));
+    .expect(200);
+  assert.equal(lookup.body.transactions.length, 1);
+  assert.equal(lookup.body.transactions[0].id, "b2b-funding-transaction");
 
-  await request(app)
+  const allocated = await request(app)
     .post("/api/integrations/kopokopo/allocations")
     .set("X-Session-Token", sessionToken)
     .send({
       transactionId: "b2b-funding-transaction",
       branchId: "b_sip",
-      idempotencyKey: "reject-funding-allocation",
-      allocations: [{ invoiceId: "inv-3", amountCents: 100, localPaymentId: "funding-payment" }],
+      idempotencyKey: "customer-transfer-allocation",
+      allocations: [{ invoiceId: "inv-3", amountCents: 100, localPaymentId: "customer-transfer-payment" }],
     })
-    .expect(409)
-    .expect({ error: "kopokopo_transaction_not_allocatable" });
+    .expect(200);
+  assert.equal(allocated.body.duplicate, false);
+  assert.equal(allocated.body.transaction.remainingCents, 89900);
+
+  const updatedLedger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=partial&search=1357")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(updatedLedger.body.transactions.length, 1);
+  assert.equal(updatedLedger.body.transactions[0].allocatedCents, 100);
+  assert.equal(updatedLedger.body.transactions[0].remainingCents, 89900);
 });
 
 test("stores signed incoming-payment callbacks through the shared ledger", async () => {
@@ -1352,7 +1362,7 @@ test("uses separate official production OAuth and API hosts", async () => {
   }
 });
 
-test("subscribes to B2B funding receipts with the existing Buygoods events", async () => {
+test("subscribes to B2B customer receipts with the existing Buygoods events", async () => {
   const originalFetch = globalThis.fetch;
   const bodies = [];
   const liveConfig = {
@@ -1712,7 +1722,7 @@ test("rejects a polling resource location outside the configured provider", asyn
   }
 });
 
-test("polling recovery stores missing Buygoods and funding transactions once", async () => {
+test("polling recovery stores missing Buygoods and customer-transfer transactions once", async () => {
   const transactions = [
     {
       type: "Buygoods Transaction",
@@ -1775,25 +1785,25 @@ test("polling recovery stores missing Buygoods and funding transactions once", a
   assert.equal(stored.rows[0].payer_phone_last4, "1111");
   assert.equal(stored.rows[0].status, "Received");
 
-  const funding = await pool.query(
+  const tillTransfer = await pool.query(
     "SELECT reference_last4, amount_cents, branch_id, payer_name, status FROM kopokopo_transactions WHERE id = $1",
     ["poll-recovery-b2b"]
   );
-  assert.equal(funding.rows[0].reference_last4, "8642");
-  assert.equal(Number(funding.rows[0].amount_cents), 45000);
-  assert.equal(funding.rows[0].branch_id, "b_sip");
-  assert.equal(funding.rows[0].payer_name, "Bank settlement");
-  assert.equal(funding.rows[0].status, "Received");
+  assert.equal(tillTransfer.rows[0].reference_last4, "8642");
+  assert.equal(Number(tillTransfer.rows[0].amount_cents), 45000);
+  assert.equal(tillTransfer.rows[0].branch_id, "b_sip");
+  assert.equal(tillTransfer.rows[0].payer_name, "Bank settlement");
+  assert.equal(tillTransfer.rows[0].status, "Received");
 
-  const bankFunding = await pool.query(
+  const bankTransfer = await pool.query(
     "SELECT reference_last4, amount_cents, branch_id, payer_name, status FROM kopokopo_transactions WHERE id = $1",
     ["poll-recovery-bank-to-till"]
   );
-  assert.equal(bankFunding.rows[0].reference_last4, "9753");
-  assert.equal(Number(bankFunding.rows[0].amount_cents), 70000);
-  assert.equal(bankFunding.rows[0].branch_id, "b_sip");
-  assert.equal(bankFunding.rows[0].payer_name, "Settlement bank");
-  assert.equal(bankFunding.rows[0].status, "Received");
+  assert.equal(bankTransfer.rows[0].reference_last4, "9753");
+  assert.equal(Number(bankTransfer.rows[0].amount_cents), 70000);
+  assert.equal(bankTransfer.rows[0].branch_id, "b_sip");
+  assert.equal(bankTransfer.rows[0].payer_name, "Settlement bank");
+  assert.equal(bankTransfer.rows[0].status, "Received");
 
   const audit = await pool.query(
     "SELECT payload FROM kopokopo_webhook_events WHERE event_id = $1",

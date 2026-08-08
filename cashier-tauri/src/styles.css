@@ -9267,11 +9267,9 @@ body {
 .cashier-mpesa-status.available { background: #123b2d; color: #86efc1; }
 .cashier-mpesa-status.partial { background: #15364c; color: #8bd8ff; }
 .cashier-mpesa-status.allocated { background: #491f2c; color: #ff8da1; }
-.cashier-mpesa-status.funding { background: #12354a; color: #7dd3fc; }
 .cashier-mpesa-status.offset { background: #4b3411; color: #fcd34d; }
 .cashier-mpesa-status.offset-partial { background: #493b16; color: #fde68a; }
 .cashier-mpesa-status.reversed { background: #5a1f29; color: #fecdd3; }
-.cashier-mpesa-row.funding .cashier-mpesa-balance b { color: #7dd3fc; }
 
 .cashier-mpesa-balance {
   display: flex;
