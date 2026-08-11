@@ -13,6 +13,11 @@ import {
 } from "./admin/mpesaReceiptLedger.js";
 import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
 import {
+  correctReceivedPurchaseCost,
+  recoverableDeletedPurchaseLines,
+  restoreDeletedPurchaseLine,
+} from "./admin/purchaseCostRepair.js";
+import {
   DEFAULT_BUSINESS_TIME_ZONE,
   businessDateTimeBoundary,
   businessDateValue,
@@ -7848,7 +7853,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
@@ -11703,10 +11708,12 @@ function StockTabLegacy({ data, update, branch }) {
     </div>
   );
 }
-function PurchasesTab({ data, update, branch, isAdmin }) {
+function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
   const [receiptCorrection, setReceiptCorrection] = useState(null);
+  const [costRepair, setCostRepair] = useState(null);
+  const [costRepairError, setCostRepairError] = useState("");
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
@@ -11918,8 +11925,81 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
     }));
     setReceiptCorrection(null);
   };
-  const remove = (id) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
-  const removeBatch = (key) => update((d) => ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
+  const remove = (id) => update((d) => d.purchases.some((purchase) => purchase.id === id && purchase.status === "received")
+    ? d
+    : ({ ...d, purchases: d.purchases.filter((p) => p.id !== id) }));
+  const removeBatch = (key) => update((d) => d.purchases.some((purchase) => (purchase.batchId || purchase.id) === key && purchase.status === "received")
+    ? d
+    : ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
+  const openCostCorrection = (purchase) => {
+    setCostRepairError("");
+    setCostRepair({
+      mode: "correct",
+      purchaseId: purchase.id,
+      productName: purchase.productName,
+      branchName: data.branches.find((entry) => entry.id === purchase.branchId)?.name || "the branch",
+      quantity: Number(purchase.qty || 0),
+      previousUnitCostCents: purchaseUnitCostCents(purchase),
+      unitCost: decimalText(purchaseUnitCostCents(purchase) / 100),
+      reason: "",
+    });
+  };
+  const openDeletedLineRecovery = (candidate, purchaseHead) => {
+    setCostRepairError("");
+    setCostRepair({
+      mode: "restore",
+      candidate,
+      batchNo: purchaseHead.batchNo || null,
+      productName: candidate.productName,
+      branchName: candidate.branchName || "the branch",
+      quantity: Number(candidate.quantity || 0),
+      previousUnitCostCents: candidate.originalUnitCostCents,
+      unitCost: decimalText(candidate.originalUnitCostCents / 100),
+      reason: "",
+    });
+  };
+  const submitCostRepair = () => {
+    const correctedUnitCostCents = (Number.parseFloat(costRepair?.unitCost) || 0) * 100;
+    const reason = String(costRepair?.reason || "").trim();
+    if (!(correctedUnitCostCents > 0)) { setCostRepairError("Enter a valid purchase unit cost."); return; }
+    if (reason.length < 3) { setCostRepairError("Enter a clear correction reason."); return; }
+    const options = {
+      correctedUnitCostCents,
+      reason,
+      actor,
+      idFactory: uid,
+      ...(costRepair.mode === "restore"
+        ? { candidate: costRepair.candidate, batchNo: costRepair.batchNo }
+        : { purchaseId: costRepair.purchaseId }),
+    };
+    const runRepair = (source) => costRepair.mode === "restore"
+      ? restoreDeletedPurchaseLine(source, options)
+      : correctReceivedPurchaseCost(source, options);
+    try {
+      runRepair(data);
+      update((current) => {
+        try {
+          const result = runRepair(current);
+          const product = result.data.products.find((entry) => entry.id === result.purchase.productId);
+          return {
+            ...result.data,
+            products: withBranchProductCostForKey(
+              result.data.products,
+              product,
+              result.purchase.branchId,
+              result.branchCostCents
+            ),
+          };
+        } catch (_) {
+          return current;
+        }
+      });
+      setCostRepair(null);
+      setCostRepairError("");
+    } catch (error) {
+      setCostRepairError(error?.message || "The purchase cost could not be repaired.");
+    }
+  };
   const [plan, setPlan] = useState(null);
   const [planBranch, setPlanBranch] = useState(branch.id);
   const [planNote, setPlanNote] = useState("");
@@ -12099,36 +12179,56 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
         const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
         const anyOrdered = items.some((i) => i.status !== "received");
         const head = items[0];
+        const recoverableLines = isAdmin ? recoverableDeletedPurchaseLines(data, poView) : [];
+        const canDeleteFile = items.every((item) => item.status !== "received");
         return (
           <div className="scrim" onClick={() => setPoView(null)}>
             <div className="modal supplier-invoice-modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Purchase order</div><div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><ShoppingBag style={{ width: 18, height: 18 }} /> {head.batchNo || "Purchase"} · {dt(head.ts)}</div></div>
                 <button className="iconbtn" onClick={() => setPoView(null)}><X /></button></div>
+              {recoverableLines.length > 0 && (
+                <div className="notice" style={{ margin: "8px 0 12px", borderColor: "var(--warn)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                    <div>
+                      <b>{recoverableLines.length} deleted received line{recoverableLines.length === 1 ? "" : "s"} found</b>
+                      <div className="mt2">The original stock receipt still exists. Restoring a line will not add stock again.</div>
+                    </div>
+                    {recoverableLines.map((candidate) => (
+                      <button key={candidate.purchaseId} className="btn xs btn-primary" onClick={() => openDeletedLineRecovery(candidate, head)}>
+                        <Wrench /> Restore {candidate.productName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="supplier-invoice-mobile" aria-label="Purchase line items">
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
                   <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
                   <div><span>Quantity</span><b>{po.qty}</b></div>
-                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b></div>
+                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
-                  {isAdmin && <button className="smdel supplier-invoice-delete" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })} aria-label={`Delete ${po.productName}`}><Trash2 /></button>}
+                  {isAdmin && po.status === "received" && <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>}
+                  {isAdmin && po.status !== "received" && <button className="smdel supplier-invoice-delete" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })} aria-label={`Delete ${po.productName}`}><Trash2 /></button>}
                 </article>)}
               </div>
               <div className="tablewrap supplier-invoice-desktop" style={{ marginTop: 8 }}>
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
-                    {isAdmin && <td><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + "× " + po.productName })}><Trash2 /></button></td>}
+                    {isAdmin && <td>{po.status === "received"
+                      ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
+                      : <button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button>}</td>}
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
-                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only · only an admin can delete a purchase record.</span>}</div>
+                <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only purchase record.</span>}</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => setReceiptCorrection({ ids: items.filter((po) => po.status !== "received").map((po) => po.id), label: head.batchNo || "this purchase" })}><Wrench /> Fix stale status</button>}
                   {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive stock</button>}
-                  {isAdmin && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
+                  {isAdmin && canDeleteFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
                 </div>
               </div>
             </div>
@@ -12157,13 +12257,56 @@ function PurchasesTab({ data, update, branch, isAdmin }) {
           </div>
         </div>
       )}
+      {costRepair && (() => {
+        const enteredUnitCostCents = (Number.parseFloat(costRepair.unitCost) || 0) * 100;
+        const correctedLineTotalCents = Math.round(costRepair.quantity * enteredUnitCostCents);
+        const restoring = costRepair.mode === "restore";
+        return (
+          <div className="scrim" onClick={() => setCostRepair(null)}>
+            <div className="modal" style={{ maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <div>
+                  <div className="sub" style={{ margin: 0 }}>{restoring ? "Purchase recovery" : "Purchase cost correction"}</div>
+                  <div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18 }} /> {restoring ? "Restore deleted line" : "Correct received cost"}</div>
+                </div>
+                <button className="iconbtn" onClick={() => setCostRepair(null)}><X /></button>
+              </div>
+              <div className="notice" style={{ marginTop: 8 }}>
+                <b>{costRepair.productName}</b> · {costRepair.quantity} unit{costRepair.quantity === 1 ? "" : "s"}<br />
+                Stock quantity and historical invoice profits will not be changed. The current {costRepair.branchName} inventory cost will be recalculated.
+              </div>
+              {restoring && <div className="notice" style={{ marginTop: 8, borderColor: "var(--warn)" }}>The stock receipt already exists, so this restores only the missing PO-0043 document line.</div>}
+              <div className="grid2" style={{ marginTop: 14 }}>
+                <div>
+                  <label className="label">Previous unit cost</label>
+                  <div className="input" style={{ display: "flex", alignItems: "center" }}>{fmtExact(costRepair.previousUnitCostCents, cur, 6)}</div>
+                </div>
+                <div>
+                  <label className="label">Correct unit cost (KES)</label>
+                  <input className="input" inputMode="decimal" value={costRepair.unitCost} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, unitCost: cleanDecimalInput(e.target.value) })); }} />
+                </div>
+              </div>
+              <div className="notice" style={{ marginTop: 10 }}>Corrected line total: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
+              <div className="field" style={{ marginTop: 12 }}>
+                <label className="label">Reason (required)</label>
+                <textarea className="input" style={{ minHeight: 78, resize: "vertical" }} value={costRepair.reason} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, reason: e.target.value })); }} placeholder="Example: supplier invoice cost was entered incorrectly" />
+              </div>
+              {costRepairError && <div className="notice" style={{ marginTop: 10, color: "var(--danger)", borderColor: "var(--danger)" }}>{costRepairError}</div>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+                <button className="btn btn-ghost" onClick={() => setCostRepair(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={submitCostRepair}><Check /> {restoring ? "Restore & correct" : "Save correction"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {delConfirm && (
         <div className="scrim" onClick={() => setDelConfirm(null)}>
           <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-head"><div className="title" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}><AlertCircle style={{ width: 18, height: 18, color: "var(--danger)" }} /> Delete purchase record?</div>
               <button className="iconbtn" onClick={() => setDelConfirm(null)}><X /></button></div>
             <div className="sub" style={{ margin: "4px 0 4px" }}>You're about to permanently delete <b>{delConfirm.label}</b>{delConfirm.mode === "file" ? " and all its line items" : ""}.</div>
-            <div className="notice" style={{ marginTop: 8 }}>This removes the purchase record only. Stock already received from it is not reversed. This can't be undone.</div>
+            <div className="notice" style={{ marginTop: 8 }}>Only outstanding purchase records can be deleted. Received purchases must use cost correction so stock and audit history stay linked.</div>
             <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
               <button className="btn btn-ghost" onClick={() => setDelConfirm(null)}>Cancel</button>
               <button className="btn btn-primary" style={{ background: "var(--danger)" }} onClick={() => { if (delConfirm.mode === "file") { removeBatch(delConfirm.key); setPoView(null); } else { remove(delConfirm.po.id); } setDelConfirm(null); }}><Trash2 /> Delete</button>
