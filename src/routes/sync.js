@@ -854,7 +854,7 @@ async function validateStockCountSessionWrite(client, ev) {
   const branchId = ev.branchId || payload.branchId;
   const status = String(payload.status || "").toLowerCase();
   if (!branchId) return { ok: false, reason: "stock_count_branch_required" };
-  if (!["open", "paused", "committed", "cancelled"].includes(status)) {
+  if (!["draft", "open", "paused", "committed", "cancelled"].includes(status)) {
     return { ok: false, reason: "stock_count_status_invalid" };
   }
   if (["open", "paused"].includes(status) && !ev.deleted) {
@@ -1075,7 +1075,11 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
   if (!requestId) throw syncEventError("transfer_request_id_required");
   if (!["approved", "rejected"].includes(decision)) throw syncEventError("transfer_decision_invalid");
   const requestResult = await client.query(
-    "SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'stockTransferRequest' LIMIT 1",
+    `SELECT id, branch_id, payload
+       FROM events
+      WHERE id = $1
+        AND type = 'stockTransferRequest'
+      LIMIT 1${isPgMem ? "" : " FOR UPDATE"}`,
     [requestId]
   );
   const request = requestResult.rows[0];
@@ -1103,6 +1107,26 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
   };
   const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
   return { id: decisionEvent.id, ts: acceptedTs };
+}
+
+async function validateApprovedStockTransferEvent(client, ev, type) {
+  const payload = ev.payload || {};
+  const requestId = String(payload.cashierRequestId || payload.transferRequestId || "").trim();
+  if (!requestId) return;
+
+  const decisionsResult = await client.query(
+    "SELECT id, payload FROM events WHERE type = 'stockTransferDecision' ORDER BY server_ts, id"
+  );
+  const decision = decisionsResult.rows.find((row) => row.payload?.requestId === requestId);
+  if (!decision || String(decision.payload?.decision || "").toLowerCase() !== "approved") {
+    throw syncEventError("transfer_request_not_approved");
+  }
+
+  const approvedTransferId = String(decision.payload?.transferId || "").trim();
+  const eventTransferId = String(type === "borrowing" ? ev.id : payload.transferId || "").trim();
+  if (!approvedTransferId || !eventTransferId || approvedTransferId !== eventTransferId) {
+    throw syncEventError("transfer_request_transfer_conflict");
+  }
 }
 
 router.post("/push", requireSyncWrite, async (req, res) => {
@@ -1211,6 +1235,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
+          if (type === "borrowing" || type === "stockMovement") {
+            await validateApprovedStockTransferEvent(client, eventToStore, type);
+          }
           if (type === "invoice") {
             const numberedInvoice = await assignInvoiceNumber(client, eventToStore);
             eventToStore = numberedInvoice.event;

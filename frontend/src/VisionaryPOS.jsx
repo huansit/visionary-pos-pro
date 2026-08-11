@@ -13,6 +13,12 @@ import {
 } from "./admin/mpesaReceiptLedger.js";
 import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
 import {
+  activeQuickInventoryDraft,
+  createQuickInventoryDraft,
+  quickInventoryDraftCounts,
+  updateQuickInventoryDraftCount,
+} from "./admin/quickInventoryDraft.js";
+import {
   correctReceivedPurchaseCost,
   recoverableDeletedPurchaseLines,
   restoreDeletedPurchaseLine,
@@ -1914,6 +1920,20 @@ function markAcceptedSynced(data, acceptedIds) {
   for (const collection of SYNC_ARRAYS) next[collection] = mark(next[collection]);
   return next;
 }
+function removeRejectedTransferChanges(data, rejected = []) {
+  const rejectedIds = new Set(rejected
+    .filter((item) => ["stockTransferDecision", "borrowing", "stockMovement"].includes(item?.type)
+      && /^(?:transfer_request_|transfer_approval_)/.test(String(item?.reason || "")))
+    .map((item) => item.id)
+    .filter(Boolean));
+  if (!rejectedIds.size) return data;
+  return {
+    ...data,
+    stockTransferDecisions: (data.stockTransferDecisions || []).filter((entry) => !rejectedIds.has(entry.id)),
+    borrowings: (data.borrowings || []).filter((entry) => !rejectedIds.has(entry.id)),
+    stockMovements: (data.stockMovements || []).filter((entry) => !rejectedIds.has(entry.id)),
+  };
+}
 async function loadOutbox() { return await loadJson(OUTBOX_KEY, []); }
 async function saveOutbox(outbox) { await saveJson(OUTBOX_KEY, outbox || []); }
 function hasCredentialLikePayload(ev) {
@@ -2033,6 +2053,7 @@ async function runSyncClient(currentData, options = {}) {
       const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
       outbox = outbox.filter((ev) => !done.has(ev.id));
       await saveOutbox(outbox);
+      data = removeRejectedTransferChanges(data, rejected);
       data = markAcceptedSynced(data, body.accepted || []);
     } catch (error) {
       pushErrorText = error?.message || "push_failed";
@@ -2364,10 +2385,10 @@ function stockCountSessions(data) {
   return data?.stockCountSessions || [];
 }
 function activeStockCountSession(data, branchId) {
-  return stockCountSessions(data).find((s) => s.branchId === branchId && ["open", "paused"].includes(s.status)) || null;
+  return stockCountSessions(data).find((s) => s.kind !== "quick" && s.branchId === branchId && ["open", "paused"].includes(s.status)) || null;
 }
 function nextStockCountCode(data) {
-  const max = stockCountSessions(data).reduce((m, s) => {
+  const max = stockCountSessions(data).filter((s) => s.kind !== "quick").reduce((m, s) => {
     const n = parseInt(String(s.code || "").replace(/\D/g, ""), 10);
     return Number.isFinite(n) ? Math.max(m, n) : m;
   }, 0);
@@ -3231,7 +3252,7 @@ function countPending(data) {
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
     + u(data.invoiceVoidRequests) + u(data.invoiceVoidDecisions) + u(data.cashMovements) + u(data.borrowings)
-    + u(data.branches) + u(data.endOfDays) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
+    + u(data.branches) + u(data.endOfDays) + u(data.stockCountSessions) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
@@ -3240,7 +3261,7 @@ function markSynced(data) {
     invoiceVoidRequests: m(data.invoiceVoidRequests), invoiceVoidDecisions: m(data.invoiceVoidDecisions), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
-    countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
+    stockCountSessions: m(data.stockCountSessions), countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
 }
 
 /* ================================================================== */
@@ -11169,13 +11190,14 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const applyingRef = useRef(false);
   const [bId, setBId] = useState(initialBranchId || branch.id);
   const [q, setQ] = useState("");
-  const [counts, setCounts] = useState({});
   const [scannerOn, setScannerOn] = useState(true);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [report, setReport] = useState(null);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const lockedSession = activeStockCountSession(data, bId);
+  const draft = activeQuickInventoryDraft(data.stockCountSessions, bId);
+  const counts = quickInventoryDraftCounts(draft);
   const products = sortProductsAZ(branchProductsUnique(data, bId));
   const term = q.trim().toLowerCase();
   const matches = term ? products.filter((p) => (
@@ -11198,24 +11220,38 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const varianceUnits = selectedRows.reduce((sum, row) => sum + row.variance, 0);
   const adjustmentCount = selectedRows.filter((row) => row.variance !== 0).length;
 
+  const persistDraftCount = (productId, countedQty) => update((d) => {
+    const sessions = d.stockCountSessions || [];
+    const existing = activeQuickInventoryDraft(sessions, bId);
+    const base = existing || createQuickInventoryDraft({ id: uid("qid"), branchId: bId, operator, timestamp: now() });
+    const next = updateQuickInventoryDraftCount(base, productId, countedQty, operator, now());
+    return {
+      ...d,
+      stockCountSessions: existing
+        ? sessions.map((session) => session.id === existing.id ? next : session)
+        : [...sessions, next],
+    };
+  });
   const setCount = (productId, raw) => {
     if (lockedSession) return;
     const cleaned = String(raw ?? "").replace(/\D/g, "");
-    setCounts((existing) => {
-      const next = { ...existing };
-      if (cleaned === "") delete next[productId];
-      else next[productId] = String(Math.max(0, parseInt(cleaned, 10) || 0));
-      return next;
-    });
+    persistDraftCount(productId, cleaned === "" ? null : Math.max(0, parseInt(cleaned, 10) || 0));
   };
-  const clearSelection = (productId) => setCounts((existing) => {
-    const next = { ...existing };
-    delete next[productId];
-    return next;
-  });
+  const clearSelection = (productId) => persistDraftCount(productId, null);
+  const discardDraft = () => {
+    if (!draft) return;
+    const ts = now();
+    update((d) => ({
+      ...d,
+      stockCountSessions: (d.stockCountSessions || []).map((session) => session.id === draft.id
+        ? { ...session, status: "cancelled", cancelledBy: operator, cancelledAt: ts, synced: false, updatedAt: ts }
+        : session),
+    }));
+    setQ("");
+    setMessage("Saved Quick inventory session discarded.");
+  };
   const changeBranch = (nextBranchId) => {
     setBId(nextBranchId);
-    setCounts({});
     setQ("");
     setMessage("");
     setReport(null);
@@ -11237,7 +11273,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       appendBarcodeScanLog({ barcode, status: hit?.unavailable ? "quick_inventory:branch_unavailable" : "quick_inventory:not_found" });
       return false;
     }
-    setCounts((existing) => ({ ...existing, [hit.product.id]: String((parseInt(existing[hit.product.id], 10) || 0) + 1) }));
+    persistDraftCount(hit.product.id, (parseInt(counts[hit.product.id], 10) || 0) + 1);
     setMessage("Counted " + hit.name + ". Scan again to increase its physical count.");
     appendBarcodeScanLog({ barcode, status: "quick_inventory:counted", productId: hit.product.id });
     return true;
@@ -11287,7 +11323,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
     applyingRef.current = true;
     try {
       const ts = now();
-      const quickInventoryId = uid("qi");
+      const quickInventoryId = draft?.id || uid("qi");
       const quickInventoryBatch = {
         id: quickInventoryId,
         code: nextQuickInventoryNumber(data),
@@ -11333,15 +11369,25 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === quickInventoryId)
           ? [...existingJointDebts, jointDebt]
           : existingJointDebts;
+        const stockCountSessions = (d.stockCountSessions || []).map((session) => session.id === quickInventoryId ? {
+          ...session,
+          code: quickInventoryBatch.code,
+          status: "committed",
+          committedBy: operator,
+          committedAt: ts,
+          summary: { products: selectedRows.length, adjustments: adjustments.length },
+          synced: false,
+          updatedAt: ts,
+        } : session);
         return {
           ...d,
+          stockCountSessions,
           stockMovements: [...(d.stockMovements || []), ...adjustments],
           countLog: [...(d.countLog || []), ...logs],
           cashierJointDebts,
         };
       });
       setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
-      setCounts({});
       setQ("");
       const debtMessage = jointDebt
         ? jointDebt.cashierCount > 0
@@ -11373,7 +11419,10 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       {lockedSession ? (
         <div className="alert" style={{ marginBottom: 14 }}><AlertTriangle /> <div><b>Quick inventory is locked.</b><div>{lockedSession.code} is already {lockedSession.status} for {bname}. Finish or cancel that formal count first.</div></div></div>
       ) : (
-        <div className="notice" style={{ marginBottom: 14 }}>Only products with a counted quantity will be adjusted. Missing stock creates joint cashier inventory credit; positive corrections and blank products do not.</div>
+        <div className="notice" style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span>{draft ? "Session saved automatically - " + selectedRows.length + " product(s). You can leave and resume later." : "Counts are saved automatically after you enter the first product."}</span>
+          {draft && <button className="btn sm btn-ghost" onClick={discardDraft}><Trash2 /> Discard session</button>}
+        </div>
       )}
       {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
@@ -12717,6 +12766,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const [transferDateTo, setTransferDateTo] = useState("");
   const transferSearchRef = useRef(null);
   const transferQtyRef = useRef(null);
+  const transferSaveLockRef = useRef(false);
   const [repairTransfer, setRepairTransfer] = useState(null);
   const [lines, setLines] = useState([]); // [{productId, productName, sku, qty, costCents}]
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
@@ -12969,8 +13019,10 @@ function BorrowingTab({ data, update, approver, approverRole }) {
 
   const saveAll = () => {
     setErr("");
+    if (transferSaveLockRef.current) return;
     if (fromB === toB) return setErr("Source and destination branches must be different.");
     if (lines.length === 0) return setErr("Add at least one product to the transfer.");
+    transferSaveLockRef.current = true;
     const ts = now();
     update((d) => {
       const number = nextTransferNumber(d.borrowings);
@@ -13006,6 +13058,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
       return { ...d, products, borrowings: [tr, ...d.borrowings], stockMovements: [...d.stockMovements, ...movements] };
     });
     setLines([]); setQty(""); setNote(""); setProductId(""); setQ("");
+    window.setTimeout(() => { transferSaveLockRef.current = false; }, 750);
   };
 
   const reviewCashierTransferRequest = (request, decision) => {

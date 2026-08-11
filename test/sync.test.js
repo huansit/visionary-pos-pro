@@ -763,6 +763,7 @@ test("4b. cashier stock transfer requests require management approval", async ()
     payload: {
       requestId: transferRequest.id,
       decision: "approved",
+      transferId: "approved-transfer-001",
     },
   };
 
@@ -794,6 +795,87 @@ test("4b. cashier stock transfer requests require management approval", async ()
       assert.equal(res.body.rejected.length, 0);
     });
 
+  const approvedTransferEvents = [
+    {
+      id: "approved-transfer-001",
+      type: "borrowing",
+      branchId: "b_sip",
+      clientTs: 1410,
+      payload: {
+        cashierRequestId: transferRequest.id,
+        fromBranchId: "b_sip",
+        toBranchId: "b_cpt",
+        items: transferRequest.payload.items,
+      },
+    },
+    {
+      id: "approved-transfer-source-movement-001",
+      type: "stockMovement",
+      branchId: "b_sip",
+      clientTs: 1411,
+      payload: { transferRequestId: transferRequest.id, transferId: "approved-transfer-001", productId: "prod-two-device-001", qty: -2 },
+    },
+    {
+      id: "approved-transfer-destination-movement-001",
+      type: "stockMovement",
+      branchId: "b_cpt",
+      clientTs: 1412,
+      payload: { transferRequestId: transferRequest.id, transferId: "approved-transfer-001", productId: "prod-two-device-001", qty: 2 },
+    },
+  ];
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: approvedTransferEvents })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, approvedTransferEvents.map((event) => event.id));
+      assert.equal(res.body.rejected.length, 0);
+    });
+
+  const duplicateApprovalEvents = [
+    {
+      id: "transfer-decision-duplicate-001",
+      type: "stockTransferDecision",
+      branchId: "b_sip",
+      clientTs: 1420,
+      payload: { requestId: transferRequest.id, decision: "approved", transferId: "duplicate-transfer-001" },
+    },
+    {
+      id: "duplicate-transfer-001",
+      type: "borrowing",
+      branchId: "b_sip",
+      clientTs: 1421,
+      payload: { cashierRequestId: transferRequest.id, fromBranchId: "b_sip", toBranchId: "b_cpt", items: transferRequest.payload.items },
+    },
+    {
+      id: "duplicate-transfer-source-movement-001",
+      type: "stockMovement",
+      branchId: "b_sip",
+      clientTs: 1422,
+      payload: { transferRequestId: transferRequest.id, transferId: "duplicate-transfer-001", productId: "prod-two-device-001", qty: -2 },
+    },
+    {
+      id: "duplicate-transfer-destination-movement-001",
+      type: "stockMovement",
+      branchId: "b_cpt",
+      clientTs: 1423,
+      payload: { transferRequestId: transferRequest.id, transferId: "duplicate-transfer-001", productId: "prod-two-device-001", qty: 2 },
+    },
+  ];
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: duplicateApprovalEvents })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.accepted.length, 0);
+      assert.deepEqual(res.body.rejected.map((entry) => entry.reason), [
+        "transfer_request_already_decided",
+        "transfer_request_transfer_conflict",
+        "transfer_request_transfer_conflict",
+        "transfer_request_transfer_conflict",
+      ]);
+    });
+
   await request(app)
     .get("/api/sync/pull?since=0")
     .set("Authorization", `Bearer ${state.tokenB}`)
@@ -808,6 +890,8 @@ test("4b. cashier stock transfer requests require management approval", async ()
       assert.equal(decisionEvent?.payload?.decision, "approved");
       assert.equal(decisionEvent?.payload?.requestId, transferRequest.id);
       assert.equal(decisionEvent?.payload?.decidedBy, "admin-owner");
+      assert.equal(res.body.events.filter((event) => event.type === "borrowing" && event.payload?.cashierRequestId === transferRequest.id).length, 1);
+      assert.equal(res.body.events.filter((event) => event.type === "stockMovement" && event.payload?.transferRequestId === transferRequest.id).length, 2);
     });
 });
 
@@ -1985,6 +2069,45 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
 
   const stored = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [sessionId]);
   assert.equal(stored.rows[0].payload.items[0].countedQty, 6);
+
+  const quickDraftId = "qid-test-resume-a";
+  const quickDraft = {
+    id: quickDraftId,
+    type: "stockCountSession",
+    branchId: "b_sip",
+    clientTs: startedAt + 2,
+    updatedAt: startedAt + 2,
+    payload: {
+      kind: "quick",
+      branchId: "b_sip",
+      status: "draft",
+      startedBy: "Admin",
+      startedAt: startedAt + 2,
+      items: [{ productId: "prod-stock-count-1", countedQty: 4 }],
+    },
+  };
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [quickDraft] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(quickDraftId));
+    });
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [{
+      ...quickDraft,
+      clientTs: startedAt + 3,
+      updatedAt: startedAt + 3,
+      payload: { ...quickDraft.payload, items: [{ productId: "prod-stock-count-1", countedQty: 8 }] },
+    }] })
+    .expect(200);
+  const storedQuickDraft = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [quickDraftId]);
+  assert.equal(storedQuickDraft.rows[0].payload.status, "draft");
+  assert.equal(storedQuickDraft.rows[0].payload.items[0].countedQty, 8);
 
   const stockCountTerminal = await activateTestTerminal("Stock Count Lock Till");
 

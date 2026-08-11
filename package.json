@@ -21,6 +21,7 @@
                     "seed:device":  "node db/make-device.js",
                     "seed:staff-logins":  "node db/provision-staff-logins.js",
                     "repair:branches":  "node db/repair-cloud-branches.js",
+                    "audit:transfers":  "node db/audit-transfer-duplicates.js",
                     "hash":  "node db/hash-credential.js",
                     "test":  "node --test test/*.test.js",
                     "test:sync":  "node --test test/sync.test.js",
