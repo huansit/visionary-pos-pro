@@ -4248,15 +4248,15 @@ body{overscroll-behavior:none}
 .mpesa-ledger-row.offset .mpesa-state-amount,.mpesa-ledger-row.offset .available-amount,.mpesa-ledger-row.offset-partial .mpesa-state-amount,.mpesa-ledger-row.offset-partial .available-amount,.mpesa-ledger-mobile-row.offset .money b,.mpesa-ledger-mobile-row.offset .available-amount,.mpesa-ledger-mobile-row.offset-partial .money b,.mpesa-ledger-mobile-row.offset-partial .available-amount{color:var(--warn)}
 .mpesa-ledger-row.funding .mpesa-state-amount,.mpesa-ledger-row.funding .available-amount,.mpesa-ledger-mobile-row.funding .money b,.mpesa-ledger-mobile-row.funding .available-amount,.mpesa-no-allocation.funding{color:var(--warn)}
 .mpesa-ledger-status-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.mpesa-offset-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:27px;padding:4px 7px;border:1px solid rgba(245,158,11,.35);border-radius:5px;background:rgba(245,158,11,.08);color:var(--warn);font-size:9px;font-weight:800;white-space:nowrap;cursor:pointer}
-.mpesa-offset-btn:hover,.mpesa-offset-btn:focus-visible{background:rgba(245,158,11,.16);border-color:var(--warn)}
-.mpesa-offset-btn svg{width:13px;height:13px}
-.mpesa-offset-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
-.mpesa-purpose-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:27px;padding:4px 7px;border:1px solid rgba(245,158,11,.35);border-radius:5px;background:transparent;color:var(--warn);font-size:9px;font-weight:800;white-space:nowrap;cursor:pointer}
-.mpesa-purpose-btn:hover,.mpesa-purpose-btn:focus-visible{background:rgba(245,158,11,.12);border-color:var(--warn)}
-.mpesa-purpose-btn:disabled{cursor:wait;opacity:.55}
-.mpesa-purpose-btn svg{width:13px;height:13px}
-.mpesa-purpose-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
+.mpesa-transaction-actions{position:relative;display:inline-flex;align-items:center;min-height:28px;border:1px solid var(--border);border-radius:6px;background:var(--surface-2);color:var(--text);overflow:hidden}
+.mpesa-transaction-actions:hover,.mpesa-transaction-actions:focus-within{border-color:var(--accent);background:var(--surface-3)}
+.mpesa-transaction-actions>svg:first-child{position:absolute;left:6px;width:13px;height:13px;color:var(--muted);pointer-events:none}
+.mpesa-transaction-actions>svg:last-child{position:absolute;right:5px;width:12px;height:12px;color:var(--muted);pointer-events:none}
+.mpesa-transaction-actions select{min-height:27px;max-width:150px;padding:4px 20px 4px 23px;border:0;outline:0;appearance:none;background:transparent;color:var(--text);font:800 9px var(--font-ui);cursor:pointer}
+.mpesa-transaction-actions select:disabled{cursor:wait;opacity:.55}
+.mpesa-transaction-actions option{background:var(--surface);color:var(--text);font:600 12px var(--font-ui)}
+.mpesa-transaction-actions.mobile{width:82px;margin-top:5px}
+.mpesa-transaction-actions.mobile select{width:100%;padding-inline:20px;font-size:8.5px}
 .mpesa-offset-scrim{z-index:1200;padding:16px}
 .mpesa-offset-modal{width:min(760px,100%);max-height:min(760px,calc(100dvh - 32px));overflow:auto;padding:20px}
 .mpesa-offset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
@@ -16782,6 +16782,35 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       setPurposeBusyId("");
     }
   };
+  const transactionActionMenu = (transaction, mobile = false) => {
+    const cashDepositAvailable = canOffset
+      && transaction.allocatable !== false
+      && !transaction.reversedAt
+      && Number(transaction.remainingCents || 0) > 0;
+    const purposeChangeAvailable = canClassifyFunding
+      && !transaction.reversedAt
+      && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0);
+    if (!cashDepositAvailable && !purposeChangeAvailable) return null;
+    const busy = purposeBusyId === transaction.id;
+    return <label className={`mpesa-transaction-actions${mobile ? " mobile" : ""}`}>
+      <MoreVertical aria-hidden="true" />
+      <select
+        aria-label={`Actions for M-Pesa transaction ${transaction.referenceMasked || transaction.id}`}
+        value=""
+        disabled={busy}
+        onChange={(event) => {
+          const action = event.target.value;
+          if (action === "cash_deposit") setOffsetTarget(transaction);
+          if (action === "stock_funding") void changeTransactionPurpose(transaction);
+        }}
+      >
+        <option value="" disabled>{busy ? "Saving..." : "Actions"}</option>
+        {cashDepositAvailable ? <option value="cash_deposit">Cash deposit</option> : null}
+        {purposeChangeAvailable ? <option value="stock_funding">{transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark stock funding"}</option> : null}
+      </select>
+      <ChevronDown aria-hidden="true" />
+    </label>;
+  };
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
@@ -16835,17 +16864,15 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
                   <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
-                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{canOffset && transaction.allocatable !== false && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn" onClick={() => setOffsetTarget(transaction)}><Banknote /> Cash deposit</button> : null}{canClassifyFunding && !transaction.reversedAt && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0) ? <button type="button" className="mpesa-purpose-btn" disabled={purposeBusyId === transaction.id} onClick={() => changeTransactionPurpose(transaction)}><Package />{purposeBusyId === transaction.id ? "Saving..." : transaction.purpose === "stock_funding" ? "Restore payment" : "Mark stock funding"}</button> : null}</div></td>
+                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transactionActionMenu(transaction)}</div></td>
                 </tr>); })}</tbody>
             </table>
           </div>
           <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
-              <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
+              <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transactionActionMenu(transaction, true)}</div>
               <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
-              {canOffset && transaction.allocatable !== false && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn mobile" onClick={() => setOffsetTarget(transaction)}><Banknote /> Record cash deposit</button> : null}
-              {canClassifyFunding && !transaction.reversedAt && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0) ? <button type="button" className="mpesa-purpose-btn mobile" disabled={purposeBusyId === transaction.id} onClick={() => changeTransactionPurpose(transaction)}><Package />{purposeBusyId === transaction.id ? "Saving..." : transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark as stock funding"}</button> : null}
             </div>); })}</div>
         </> : null}
 
