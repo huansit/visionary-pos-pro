@@ -4897,6 +4897,7 @@ body{overscroll-behavior:none}
 .movement-badge.medium{background:rgba(245,158,11,.14);color:var(--warn)}
 .guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
 .guidance-action svg{width:14px;height:14px;flex:0 0 auto}
+.guidance-action small{color:var(--muted);font-size:10.5px;font-weight:600}
 .guidance-action.transfer{color:var(--accent)}
 .guidance-action.reorder{color:var(--warn)}
 .guidance-action.incoming{color:var(--ok)}
@@ -11161,7 +11162,7 @@ function StockTab({ data, update, branch }) {
               <div className="stock-guidance-velocity"><span className={`movement-badge ${entry.tier}`}>{entry.tier}</span><b>{Math.round(entry.weeklyDemand)}/week</b><small>{Math.round(entry.soldUnits)} sold in {analysisDays} days</small></div>
               <div className="stock-guidance-level"><b>{entry.onHand} on hand</b><span>{entry.daysCover === null ? "No recent demand" : `${Math.round(entry.daysCover)} days cover`} - target {entry.targetStock}</span>{entry.purchaseIncomingQty > 0 && <small>{entry.purchaseIncomingQty} on open purchase orders</small>}{entry.pendingTransferIncomingQty > 0 && <small>{entry.pendingTransferIncomingQty} awaiting transfer approval</small>}</div>
               <div className="stock-guidance-actions">
-                {entry.transfers.map((transfer) => <span className="guidance-action transfer" key={transfer.sourceBranchId}><ArrowLeftRight /> Move <b>{transfer.qty}</b> from {transfer.sourceBranchName}</span>)}
+                {entry.transfers.map((transfer) => <span className="guidance-action transfer" key={transfer.sourceBranchId} title={`${transfer.sourceBranchName}: ${transfer.sourceOnHand} on hand, ${transfer.sourceReserve} protected${transfer.sourceReservedOutgoingQty > 0 ? `, ${transfer.sourceReservedOutgoingQty} already reserved` : ""}, ${transfer.sourceAvailableBeforeTransfer} available before this suggestion`}><ArrowLeftRight /> Move <b>{transfer.qty}</b> from {transfer.sourceBranchName} <small>({transfer.sourceOnHand} on hand - {transfer.sourceReserve} kept - {transfer.sourceAvailableAfterTransfer} left transferable)</small></span>)}
                 {entry.reorderQty > 0 && <span className="guidance-action reorder"><ShoppingCart /> Reorder <b>{entry.reorderQty}</b>{entry.reorderCostCents > 0 ? ` - about ${fmt(entry.reorderCostCents, cur)}` : ""}</span>}
                 {entry.incomingApplied > 0 && entry.reorderQty === 0 && <span className="guidance-action incoming"><Truck /> Existing order covers <b>{entry.incomingApplied}</b></span>}
               </div>

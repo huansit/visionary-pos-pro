@@ -93,7 +93,6 @@ export function analyzeStockMovements(rows = [], options = {}) {
     const transfers = prepared
       .filter((source) => source.productKey === destination.productKey
         && source.branchId !== destination.branchId
-        && source.costCents > 0
         && (remainingSurplus.get(source.id) || 0) > 0)
       .sort((a, b) => (remainingSurplus.get(b.id) || 0) - (remainingSurplus.get(a.id) || 0))
       .map((source) => {
@@ -109,6 +108,9 @@ export function analyzeStockMovements(rows = [], options = {}) {
           qty,
           sourceOnHand: source.onHand,
           sourceReserve: source.targetStock,
+          sourceReservedOutgoingQty: source.reservedOutgoingQty,
+          sourceAvailableBeforeTransfer: available,
+          sourceAvailableAfterTransfer: available - qty,
           sourceWeeklyDemand: source.weeklyDemand,
           costCents: source.costCents,
         };

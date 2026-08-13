@@ -29,6 +29,21 @@ test("moves genuine surplus to a fast-moving branch before recommending a reorde
   assert.equal(recommendation.transferQty, 13);
   assert.equal(recommendation.reorderQty, 0);
   assert.equal(recommendation.transfers[0].sourceReserve, 4);
+  assert.equal(recommendation.transfers[0].sourceOnHand, 30);
+  assert.equal(recommendation.transfers[0].sourceAvailableBeforeTransfer, 26);
+  assert.equal(recommendation.transfers[0].sourceAvailableAfterTransfer, 13);
+});
+
+test("uses available stock from another branch even when its cost is not recorded", () => {
+  const result = analyzeStockMovements([
+    row({ onHand: 1, soldUnits: 28 }),
+    row({ id: "juice:sip", productId: "juice-sip", branchId: "sip", branchName: "SIPCITY", onHand: 20, soldUnits: 0, costCents: 0 }),
+  ], { lookbackDays: 28 });
+  const recommendation = result.recommendations.find((entry) => entry.branchId === "cpt");
+  assert.equal(recommendation.transferQty, 13);
+  assert.equal(recommendation.reorderQty, 0);
+  assert.equal(recommendation.transfers[0].sourceOnHand, 20);
+  assert.equal(recommendation.transfers[0].sourceReserve, 4);
 });
 
 test("never allocates the same source surplus twice", () => {
@@ -71,6 +86,9 @@ test("does not offer stock already reserved by a pending transfer request", () =
   const recommendation = result.recommendations.find((entry) => entry.branchId === "a");
   assert.equal(recommendation.transferQty, 6);
   assert.equal(recommendation.reorderQty, 8);
+  assert.equal(recommendation.transfers[0].sourceReservedOutgoingQty, 10);
+  assert.equal(recommendation.transfers[0].sourceAvailableBeforeTransfer, 6);
+  assert.equal(recommendation.transfers[0].sourceAvailableAfterTransfer, 0);
 });
 
 test("does not recommend transfers or reorders for slow-moving products", () => {
