@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import VisionPOS from "./VisionaryPOS.jsx";
+import { isPublishedBundleNewer } from "./appBundleUpdate.js";
 
 class VisionPOSErrorBoundary extends React.Component {
   constructor(props) {
@@ -81,10 +82,34 @@ createRoot(document.getElementById("root")).render(
   </React.StrictMode>
 );
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
+window.addEventListener("load", () => {
+  let refreshing = false;
+  const refreshForPublishedBundle = async () => {
+    if (refreshing) return;
+    try {
+      const updateAvailable = await isPublishedBundleNewer({
+        documentRef: document,
+        fetchImpl: window.fetch.bind(window),
+      });
+      if (!updateAvailable) return;
+      refreshing = true;
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("visionpos_updated", Date.now().toString());
+      window.location.replace(nextUrl.toString());
+    } catch {
+      // Connectivity failures must never interrupt POS use.
+    }
+  };
+
+  const bundleTimer = window.setInterval(refreshForPublishedBundle, 15 * 60 * 1000);
+  refreshForPublishedBundle();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshForPublishedBundle();
+  });
+  window.addEventListener("pagehide", () => window.clearInterval(bundleTimer), { once: true });
+
+  if ("serviceWorker" in navigator) {
     const hadController = Boolean(navigator.serviceWorker.controller);
-    let refreshing = false;
 
     navigator.serviceWorker.addEventListener("message", (event) => {
       if (event.data?.type !== "VISIONPOS_APP_UPDATED" || refreshing) return;
@@ -98,7 +123,7 @@ if ("serviceWorker" in navigator) {
       window.location.reload();
     });
 
-    navigator.serviceWorker.register("/sw.js?v=5", { updateViaCache: "none" })
+    navigator.serviceWorker.register("/sw.js?v=6", { updateViaCache: "none" })
       .then((registration) => {
         const activateWaitingWorker = () => {
           if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });
@@ -120,5 +145,5 @@ if ("serviceWorker" in navigator) {
         window.addEventListener("pagehide", () => window.clearInterval(updateTimer), { once: true });
       })
       .catch(() => {});
-  });
-}
+  }
+});
