@@ -23,6 +23,7 @@ import {
   recoverableDeletedPurchaseLines,
   restoreDeletedPurchaseLine,
 } from "./admin/purchaseCostRepair.js";
+import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
   DEFAULT_BUSINESS_TIME_ZONE,
   businessDateTimeBoundary,
@@ -4845,6 +4846,57 @@ body{overscroll-behavior:none}
 .transfer-suggestion-action>span{font-family:var(--font-mono)}
 .transfer-suggestion-empty{padding:18px;color:var(--muted);font-size:13px}
 .transfer-suggestions-footer{display:flex;justify-content:center;padding:9px 14px;border-top:1px solid var(--border-soft)}
+.stock-analyzer{border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);margin:0 0 16px;background:var(--surface)}
+.stock-analyzer-toggle{width:100%;min-height:62px;border:0;background:transparent;color:var(--text);padding:11px 4px;display:flex;align-items:center;gap:12px;text-align:left;cursor:pointer;font-family:var(--font-ui)}
+.stock-analyzer-toggle:hover{background:var(--surface-2)}
+.stock-analyzer-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:8px;background:rgba(14,165,181,.12);color:var(--accent);flex:0 0 auto}
+.stock-analyzer-icon svg{width:18px;height:18px}
+.stock-analyzer-heading{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.stock-analyzer-heading strong{font-size:14px}
+.stock-analyzer-heading span{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stock-analyzer-count{min-width:27px;height:25px;padding:0 7px;border-radius:999px;display:grid;place-items:center;background:rgba(230,67,104,.12);color:var(--danger);font:750 11px var(--font-mono)}
+.stock-analyzer-toggle>svg{width:17px;height:17px;color:var(--muted);transition:transform .15s}
+.stock-analyzer-toggle>svg.open{transform:rotate(180deg)}
+.stock-analyzer-body{border-top:1px solid var(--border-soft)}
+.stock-analyzer-controls{display:flex;align-items:flex-end;gap:10px;padding:10px 4px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap}
+.stock-analyzer-controls label{display:flex;flex-direction:column;gap:4px}
+.stock-analyzer-controls label>span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
+.stock-analyzer-controls .select{height:36px;min-width:132px;padding-top:0;padding-bottom:0}
+.stock-analyzer-controls label:nth-child(2) .select{min-width:190px}
+.stock-analyzer-live{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);padding-bottom:9px}
+.stock-analyzer-live svg{width:9px;height:9px;fill:var(--ok);color:var(--ok)}
+.stock-analyzer-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--border-soft)}
+.stock-analyzer-summary>div{padding:10px 14px;border-right:1px solid var(--border-soft)}
+.stock-analyzer-summary>div:last-child{border-right:0}
+.stock-analyzer-summary span{display:block;font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
+.stock-analyzer-summary b{display:block;margin-top:2px;font:750 17px var(--font-mono)}
+.stock-analyzer-summary .transfer b{color:var(--accent)}
+.stock-analyzer-summary .reorder b{color:var(--warn)}
+.stock-analyzer-list{display:flex;flex-direction:column}
+.stock-guidance{position:relative;display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(125px,.75fr) minmax(150px,.9fr) minmax(230px,1.4fr) auto;align-items:center;gap:14px;padding:11px 4px 11px 12px;border-bottom:1px solid var(--border-soft);border-left:3px solid var(--muted-2)}
+.stock-guidance:last-child{border-bottom:0}
+.stock-guidance.critical{border-left-color:var(--danger)}
+.stock-guidance.high{border-left-color:var(--warn)}
+.stock-guidance.watch{border-left-color:var(--accent)}
+.stock-guidance-product,.stock-guidance-velocity,.stock-guidance-level,.stock-guidance-actions{display:flex;flex-direction:column;gap:3px;min-width:0}
+.stock-guidance-product strong{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stock-guidance-product span,.stock-guidance-level span,.stock-guidance-level small,.stock-guidance-velocity small{font-size:11px;color:var(--muted)}
+.stock-guidance-velocity b,.stock-guidance-level b{font:700 12px var(--font-mono)}
+.movement-badge,.stock-urgency{width:max-content;border-radius:999px;padding:3px 7px;font-size:9.5px;font-weight:800;text-transform:uppercase}
+.movement-badge.fast{background:rgba(230,67,104,.12);color:var(--danger)}
+.movement-badge.medium{background:rgba(245,158,11,.14);color:var(--warn)}
+.guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
+.guidance-action svg{width:14px;height:14px;flex:0 0 auto}
+.guidance-action.transfer{color:var(--accent)}
+.guidance-action.reorder{color:var(--warn)}
+.guidance-action.incoming{color:var(--ok)}
+.stock-urgency.critical{background:rgba(230,67,104,.12);color:var(--danger)}
+.stock-urgency.high{background:rgba(245,158,11,.14);color:var(--warn)}
+.stock-urgency.watch{background:rgba(14,165,181,.12);color:var(--accent)}
+.stock-analyzer-empty{padding:18px 4px;color:var(--muted);font-size:13px}
+.stock-analyzer-footer{display:flex;justify-content:center;padding:8px 4px;border-top:1px solid var(--border-soft)}
+@media(max-width:980px){.stock-guidance{grid-template-columns:minmax(160px,1fr) minmax(110px,.7fr) minmax(140px,.8fr) minmax(210px,1.2fr)}.stock-urgency{display:none}}
+@media(max-width:720px){.stock-analyzer-controls{display:grid;grid-template-columns:1fr 1fr;padding:10px}.stock-analyzer-controls label:first-child{grid-column:auto}.stock-analyzer-controls label:nth-child(3){grid-column:1/-1}.stock-analyzer-controls .select,.stock-analyzer-controls label:nth-child(2) .select{width:100%;min-width:0}.stock-analyzer-live{grid-column:1/-1;margin:0;padding:2px 0}.stock-analyzer-summary{grid-template-columns:1fr 1fr}.stock-analyzer-summary>div:nth-child(2){border-right:0}.stock-analyzer-summary>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.stock-guidance{grid-template-columns:1fr auto;gap:8px 12px;padding:12px 10px}.stock-guidance-product{grid-column:1}.stock-guidance-velocity{grid-column:2;grid-row:1;align-items:flex-end}.stock-guidance-level{grid-column:1/-1}.stock-guidance-actions{grid-column:1/-1;padding-top:6px;border-top:1px solid var(--border-soft)}.stock-analyzer-heading span{white-space:normal}.stock-analyzer-count{margin-left:auto}.stock-urgency{display:none}}
 .searchres{margin-top:8px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--border-soft);border-radius:12px;padding:6px;background:var(--surface);box-shadow:0 12px 30px -18px rgba(20,30,70,.3)}
 .sres{display:flex;align-items:center;justify-content:space-between;gap:10px;text-align:left;background:transparent;border:none;padding:9px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--text);font-family:var(--font-ui)}
 .sres:hover{background:var(--surface-2)}
@@ -10539,6 +10591,11 @@ function StockTab({ data, update, branch }) {
   const [templateSelectedIds, setTemplateSelectedIds] = useState([]);
   const [templateDateFrom, setTemplateDateFrom] = useState(() => mondayDateValue());
   const [templateDateTo, setTemplateDateTo] = useState(() => dateValuePlusDays(mondayDateValue(), 6));
+  const [analysisDays, setAnalysisDays] = useState(28);
+  const [analysisScope, setAnalysisScope] = useState("branch");
+  const [analysisFilter, setAnalysisFilter] = useState("all");
+  const [analysisOpen, setAnalysisOpen] = useState(true);
+  const [showAllAnalysis, setShowAllAnalysis] = useState(false);
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const [cf, setCf] = useState({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
@@ -10594,6 +10651,81 @@ function StockTab({ data, update, branch }) {
   const correctionList = (data.stockMovements || []).filter((movement) => movement.branchId === bId
     && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  const stockAnalysis = useMemo(() => {
+    const activeBranches = (data.branches || []).filter((entry) => entry.active !== false);
+    const cutoff = now() - analysisDays * 86400000;
+    const productById = new Map((data.products || []).map((entry) => [entry.id, entry]));
+    const soldByKey = new Map();
+    const pendingIncomingByKey = new Map();
+    const reservedOutgoingByKey = new Map();
+    const decidedTransferRequestIds = new Set((data.stockTransferDecisions || []).map((decision) => String(decision.requestId || "")).filter(Boolean));
+    (data.stockMovements || []).forEach((movement) => {
+      if (Number(movement.ts || 0) < cutoff || Number(movement.qty || 0) >= 0 || !saleMoveOperational(data, movement)) return;
+      const product = productById.get(movement.productId);
+      if (!product) return;
+      const key = `${productDedupeKey(product)}:${movement.branchId}`;
+      soldByKey.set(key, (soldByKey.get(key) || 0) + Math.abs(Number(movement.qty || 0)));
+    });
+    (data.stockTransferRequests || []).forEach((request) => {
+      if (decidedTransferRequestIds.has(String(request.id || "")) || String(request.status || "pending").toLowerCase() !== "pending") return;
+      (request.items || []).forEach((item) => {
+        const product = productById.get(item.productId);
+        if (!product) return;
+        const productKey = productDedupeKey(product);
+        const qty = Math.max(0, Math.floor(Number(item.qty || 0)));
+        const outgoingKey = `${productKey}:${request.fromBranchId}`;
+        const incomingKey = `${productKey}:${request.toBranchId}`;
+        reservedOutgoingByKey.set(outgoingKey, (reservedOutgoingByKey.get(outgoingKey) || 0) + qty);
+        pendingIncomingByKey.set(incomingKey, (pendingIncomingByKey.get(incomingKey) || 0) + qty);
+      });
+    });
+    const observations = [];
+    activeBranches.forEach((entryBranch) => {
+      branchProductsUnique(data, entryBranch.id).filter(productIsEnabled).forEach((product) => {
+        const productIds = new Set(duplicateProductIds(data, product, entryBranch.id));
+        const purchaseIncomingQty = (data.purchases || []).reduce((sum, purchase) => (
+          purchase.branchId === entryBranch.id
+          && productIds.has(purchase.productId)
+          && String(purchase.status || "").toLowerCase() !== "received"
+            ? sum + Math.max(0, Number(purchase.qty || 0))
+            : sum
+        ), 0);
+        const productKey = productDedupeKey(product);
+        observations.push({
+          id: `${productKey}:${entryBranch.id}`,
+          productKey,
+          productId: product.id,
+          productName: product.name,
+          sku: product.sku,
+          branchId: entryBranch.id,
+          branchName: entryBranch.name,
+          onHand: productOnHand(data, product, entryBranch.id),
+          soldUnits: soldByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+          purchaseIncomingQty,
+          pendingTransferIncomingQty: pendingIncomingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+          reservedOutgoingQty: reservedOutgoingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+          reorderLevel: product.reorderLevel ?? data.settings.reorderLevel,
+          costCents: branchInventoryCostCents(data, product, entryBranch.id),
+        });
+      });
+    });
+    return analyzeStockMovements(observations, { lookbackDays: analysisDays });
+  }, [data, analysisDays]);
+  const scopedStockRecommendations = stockAnalysis.recommendations.filter((entry) => analysisScope === "network" || entry.branchId === bId);
+  const filteredStockRecommendations = scopedStockRecommendations.filter((entry) => {
+    if (analysisFilter === "transfer") return entry.transferQty > 0;
+    if (analysisFilter === "reorder") return entry.reorderQty > 0;
+    if (analysisFilter === "fast" || analysisFilter === "medium") return entry.tier === analysisFilter;
+    return true;
+  });
+  const visibleStockRecommendations = (showAllAnalysis ? filteredStockRecommendations : filteredStockRecommendations.slice(0, 8));
+  const scopedAnalysisRows = stockAnalysis.rows.filter((entry) => analysisScope === "network" || entry.branchId === bId);
+  const scopedAnalysisSummary = {
+    fast: scopedAnalysisRows.filter((entry) => entry.tier === "fast").length,
+    medium: scopedAnalysisRows.filter((entry) => entry.tier === "medium").length,
+    transfer: scopedStockRecommendations.reduce((sum, entry) => sum + entry.transferQty, 0),
+    reorder: scopedStockRecommendations.reduce((sum, entry) => sum + entry.reorderQty, 0),
+  };
 
   const upsertSession = (nextSession) => update((d) => {
     const existing = d.stockCountSessions || [];
@@ -10990,6 +11122,45 @@ function StockTab({ data, update, branch }) {
         <div className="ctile"><div className="ic"><Wallet /></div><div><div className="cl">Stock value</div><div className="cv">{fmt(stockValue, cur)}</div></div></div>
         <div className={"ctile" + (lossValue > 0 ? " warn" : "")}><div className="ic"><TrendingDown /></div><div><div className="cl">Loss &amp; damage</div><div className="cv">{fmt(lossValue, cur)}</div><div className="cs">{lossList.length} write-off{lossList.length === 1 ? "" : "s"}</div></div></div>
       </div>
+
+      <section className="stock-analyzer" aria-labelledby="stock-analyzer-title">
+        <button type="button" className="stock-analyzer-toggle" onClick={() => setAnalysisOpen((current) => !current)} aria-expanded={analysisOpen}>
+          <span className="stock-analyzer-icon"><BarChart3 /></span>
+          <span className="stock-analyzer-heading"><strong id="stock-analyzer-title">Active stock movement analyser</strong><span>Protect branch reserves, transfer genuine surplus, then reorder any remaining shortage.</span></span>
+          <span className="stock-analyzer-count">{scopedStockRecommendations.length}</span>
+          <ChevronDown className={analysisOpen ? "open" : ""} />
+        </button>
+        {analysisOpen && <div className="stock-analyzer-body">
+          <div className="stock-analyzer-controls">
+            <label><span>Sales history</span><select className="select" value={analysisDays} onChange={(event) => { setAnalysisDays(Number(event.target.value)); setShowAllAnalysis(false); }}>
+              {[7, 14, 28, 56, 90].map((days) => <option key={days} value={days}>{days === 7 ? "1 week" : `${days} days`}</option>)}
+            </select></label>
+            <label><span>Scope</span><select className="select" value={analysisScope} onChange={(event) => { setAnalysisScope(event.target.value); setShowAllAnalysis(false); }}><option value="branch">Needs at {bname}</option><option value="network">All branches</option></select></label>
+            <label><span>Show</span><select className="select" value={analysisFilter} onChange={(event) => { setAnalysisFilter(event.target.value); setShowAllAnalysis(false); }}><option value="all">All guidance</option><option value="transfer">Transfers</option><option value="reorder">Reorders</option><option value="fast">Fast movers</option><option value="medium">Medium movers</option></select></label>
+            <span className="stock-analyzer-live"><Circle /> Uses synced sales, open orders, pending transfers and live stock</span>
+          </div>
+          <div className="stock-analyzer-summary">
+            <div><span>Fast movers</span><b>{scopedAnalysisSummary.fast}</b></div>
+            <div><span>Medium movers</span><b>{scopedAnalysisSummary.medium}</b></div>
+            <div className="transfer"><span>Transfer units</span><b>{scopedAnalysisSummary.transfer}</b></div>
+            <div className="reorder"><span>Reorder units</span><b>{scopedAnalysisSummary.reorder}</b></div>
+          </div>
+          {visibleStockRecommendations.length > 0 ? <div className="stock-analyzer-list">
+            {visibleStockRecommendations.map((entry) => <article className={`stock-guidance ${entry.urgency}`} key={entry.id}>
+              <div className="stock-guidance-product"><strong>{entry.productName}</strong><span>{entry.sku || "No SKU"} - {entry.branchName}</span></div>
+              <div className="stock-guidance-velocity"><span className={`movement-badge ${entry.tier}`}>{entry.tier}</span><b>{entry.weeklyDemand.toFixed(1)}/week</b><small>{entry.soldUnits} sold in {analysisDays} days</small></div>
+              <div className="stock-guidance-level"><b>{entry.onHand} on hand</b><span>{entry.daysCover === null ? "No recent demand" : `${entry.daysCover.toFixed(1)} days cover`} - target {entry.targetStock}</span>{entry.purchaseIncomingQty > 0 && <small>{entry.purchaseIncomingQty} on open purchase orders</small>}{entry.pendingTransferIncomingQty > 0 && <small>{entry.pendingTransferIncomingQty} awaiting transfer approval</small>}</div>
+              <div className="stock-guidance-actions">
+                {entry.transfers.map((transfer) => <span className="guidance-action transfer" key={transfer.sourceBranchId}><ArrowLeftRight /> Move <b>{transfer.qty}</b> from {transfer.sourceBranchName}</span>)}
+                {entry.reorderQty > 0 && <span className="guidance-action reorder"><ShoppingCart /> Reorder <b>{entry.reorderQty}</b>{entry.reorderCostCents > 0 ? ` - about ${fmt(entry.reorderCostCents, cur)}` : ""}</span>}
+                {entry.incomingApplied > 0 && entry.reorderQty === 0 && <span className="guidance-action incoming"><Truck /> Existing order covers <b>{entry.incomingApplied}</b></span>}
+              </div>
+              <span className={`stock-urgency ${entry.urgency}`}>{entry.urgency}</span>
+            </article>)}
+          </div> : <div className="stock-analyzer-empty">No fast or medium-moving products need action for this scope and sales period.</div>}
+          {filteredStockRecommendations.length > 8 && <div className="stock-analyzer-footer"><button type="button" className="btn sm btn-ghost" onClick={() => setShowAllAnalysis((current) => !current)}>{showAllAnalysis ? "Show fewer" : `Show ${filteredStockRecommendations.length - 8} more`}</button></div>}
+        </div>}
+      </section>
 
       {!session ? (
         <div className="panel fade" style={{ padding: 22 }}>
