@@ -152,7 +152,10 @@ async function applyMySqlSchema() {
     try {
       await pool.query(statement);
     } catch (error) {
-      if (error?.code === "ER_BAD_FIELD_ERROR" && statement.includes("kopokopo_transactions_phone_lookup_idx")) continue;
+      if (error?.code === "ER_BAD_FIELD_ERROR" && (
+        statement.includes("kopokopo_transactions_phone_lookup_idx")
+        || statement.includes("kopokopo_transactions_purpose_idx")
+      )) continue;
       if (error?.code !== "ER_DUP_KEYNAME") throw error;
     }
   }
@@ -161,8 +164,26 @@ async function applyMySqlSchema() {
   } catch (error) {
     if (error?.code !== "ER_DUP_FIELDNAME") throw error;
   }
+  for (const definition of [
+    "purpose varchar(40) NOT NULL DEFAULT 'customer_payment'",
+    "purpose_changed_at datetime",
+    "purpose_changed_by varchar(191)",
+    "purpose_changed_by_name varchar(255)",
+    "purpose_note varchar(500)",
+  ]) {
+    try {
+      await pool.query(`ALTER TABLE kopokopo_transactions ADD COLUMN ${definition}`);
+    } catch (error) {
+      if (error?.code !== "ER_DUP_FIELDNAME") throw error;
+    }
+  }
   try {
     await pool.query("CREATE INDEX kopokopo_transactions_phone_lookup_idx ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time)");
+  } catch (error) {
+    if (error?.code !== "ER_DUP_KEYNAME") throw error;
+  }
+  try {
+    await pool.query("CREATE INDEX kopokopo_transactions_purpose_idx ON kopokopo_transactions (branch_id, purpose, origination_time)");
   } catch (error) {
     if (error?.code !== "ER_DUP_KEYNAME") throw error;
   }

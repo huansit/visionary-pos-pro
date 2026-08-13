@@ -201,6 +201,10 @@ export type MpesaTransaction = {
   branchId: string;
   payerName?: string | null;
   payerPhoneLast4?: string | null;
+  purpose?: "customer_payment" | "stock_funding";
+  purposeChangedAt?: string | null;
+  purposeChangedByName?: string | null;
+  purposeNote?: string | null;
   originationTime?: string | null;
   reversedAt?: string | null;
   createdAt?: string | null;
@@ -218,6 +222,7 @@ export type MpesaLedger = {
   transactions: MpesaTransaction[];
   page: { total: number; limit: number; offset: number };
   summary: {
+    transactionCount?: number;
     amountCents: number;
     allocatedCents: number;
     remainingCents: number;

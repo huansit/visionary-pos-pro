@@ -9269,6 +9269,7 @@ body {
 .cashier-mpesa-status.allocated { background: #491f2c; color: #ff8da1; }
 .cashier-mpesa-status.offset { background: #4b3411; color: #fcd34d; }
 .cashier-mpesa-status.offset-partial { background: #493b16; color: #fde68a; }
+.cashier-mpesa-status.funding { background: #493513; color: #fcd34d; }
 .cashier-mpesa-status.reversed { background: #5a1f29; color: #fecdd3; }
 
 .cashier-mpesa-balance {
@@ -9318,6 +9319,15 @@ body {
 .cashier-mpesa-row.offset .cashier-mpesa-balance b,
 .cashier-mpesa-row.offset-partial .cashier-mpesa-amount > b,
 .cashier-mpesa-row.offset-partial .cashier-mpesa-balance b {
+  color: #fcd34d;
+}
+
+.cashier-mpesa-row.funding {
+  border-left-color: #f59e0b;
+}
+
+.cashier-mpesa-row.funding .cashier-mpesa-amount > b,
+.cashier-mpesa-row.funding .cashier-mpesa-balance b {
   color: #fcd34d;
 }
 
@@ -9514,6 +9524,9 @@ body {
 .cashier-mpesa-panel.light .cashier-mpesa-row.offset .cashier-mpesa-balance b,
 .cashier-mpesa-panel.light .cashier-mpesa-row.offset-partial .cashier-mpesa-amount > b,
 .cashier-mpesa-panel.light .cashier-mpesa-row.offset-partial .cashier-mpesa-balance b { color: #b45309; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.funding { border-left-color: #d97706; }
+.cashier-mpesa-panel.light .cashier-mpesa-row.funding .cashier-mpesa-amount > b,
+.cashier-mpesa-panel.light .cashier-mpesa-row.funding .cashier-mpesa-balance b { color: #b45309; }
 
 .cashier-mpesa-panel.light .cashier-mpesa-allocations > div {
   border-color: #d5e5e8;

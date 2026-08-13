@@ -337,6 +337,7 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
   assert.equal("reference" in ledger.body.transactions[0], false);
   assert.deepEqual(ledger.body.page, { total: 1, limit: 1, offset: 0 });
   assert.deepEqual(ledger.body.summary, {
+    transactionCount: 1,
     amountCents: 100000,
     allocatedCents: 0,
     remainingCents: 100000,
@@ -407,6 +408,7 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
     assert.equal(allBranches.body.branchId, "all");
     assert.equal(allBranches.body.page.total, 2);
     assert.deepEqual(allBranches.body.summary, {
+      transactionCount: 2,
       amountCents: 150000,
       allocatedCents: 10000,
       remainingCents: 140000,
@@ -689,6 +691,126 @@ test("stores incoming till and bank payments as allocatable customer transfers",
   assert.equal(updatedLedger.body.transactions.length, 1);
   assert.equal(updatedLedger.body.transactions[0].allocatedCents, 100);
   assert.equal(updatedLedger.body.transactions[0].remainingCents, 89900);
+});
+
+test("keeps owner stock funding visible but out of sales totals and invoice settlement", async () => {
+  const transactionId = "stock-funding-classification";
+  const payload = {
+    topic: "b2b_transaction_received",
+    id: "evt-stock-funding-classification",
+    created_at: "2026-08-02T11:18:01+03:00",
+    event: {
+      type: "B2B Transaction",
+      resource: {
+        id: transactionId,
+        amount: "500.00",
+        status: "Complete",
+        system: "M-PESA",
+        currency: "KES",
+        reference: "OWNERFUND2468",
+        till_number: "000000",
+        sending_till: "Owner stock funding",
+        origination_time: "2026-08-02T11:18:00+03:00",
+      },
+    },
+  };
+
+  try {
+    await signedWebhook(payload).expect(200).expect({ ok: true, duplicate: false });
+
+    await request(app)
+      .post(`/api/integrations/kopokopo/transactions/${transactionId}/purpose`)
+      .set("X-Session-Token", supervisorSessionToken)
+      .send({ purpose: "stock_funding" })
+      .expect(403);
+
+    const classified = await request(app)
+      .post(`/api/integrations/kopokopo/transactions/${transactionId}/purpose`)
+      .set("X-Session-Token", sessionToken)
+      .send({ purpose: "stock_funding", note: "Till float deposited to buy supplier stock" })
+      .expect(200);
+    assert.equal(classified.body.transaction.purpose, "stock_funding");
+    assert.equal(classified.body.transaction.allocatable, false);
+    assert.equal(classified.body.transaction.remainingCents, 0);
+
+    const visibleLedger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=all&search=owner%20stock%20funding")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(visibleLedger.body.page.total, 1);
+    assert.equal(visibleLedger.body.transactions[0].purpose, "stock_funding");
+    assert.equal(visibleLedger.body.summary.transactionCount, 0);
+    assert.equal(visibleLedger.body.summary.amountCents, 0);
+    assert.equal(visibleLedger.body.summary.allocatedCents, 0);
+    assert.equal(visibleLedger.body.summary.remainingCents, 0);
+
+    const fundingLedger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=funding&search=owner%20stock%20funding")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(fundingLedger.body.page.total, 1);
+    assert.equal(fundingLedger.body.transactions.length, 1);
+
+    const availableLedger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=available&search=owner%20stock%20funding")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(availableLedger.body.page.total, 0);
+    assert.equal(availableLedger.body.transactions.length, 0);
+
+    const lookup = await request(app)
+      .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=2468")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(lookup.body.transactions.some((transaction) => transaction.id === transactionId), false);
+
+    await request(app)
+      .post("/api/integrations/kopokopo/allocations")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        transactionId,
+        branchId: "b_sip",
+        idempotencyKey: "stock-funding-allocation-block",
+        allocations: [{ invoiceId: "inv-3", amountCents: 100, localPaymentId: "stock-funding-payment" }],
+      })
+      .expect(409)
+      .expect({ error: "kopokopo_transaction_is_stock_funding" });
+
+    await request(app)
+      .post("/api/integrations/kopokopo/offsets")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        transactionId,
+        invoiceId: "inv-cash-small",
+        branchId: "b_sip",
+        amountCents: 10000,
+        idempotencyKey: "stock-funding-offset-block",
+      })
+      .expect(409)
+      .expect({ error: "kopokopo_transaction_is_stock_funding" });
+
+    const restored = await request(app)
+      .post(`/api/integrations/kopokopo/transactions/${transactionId}/purpose`)
+      .set("X-Session-Token", sessionToken)
+      .send({ purpose: "customer_payment", note: "Classification corrected" })
+      .expect(200);
+    assert.equal(restored.body.transaction.purpose, "customer_payment");
+    assert.equal(restored.body.transaction.allocatable, true);
+    assert.equal(restored.body.transaction.remainingCents, 50000);
+
+    const audit = await pool.query(
+      "SELECT from_purpose, to_purpose FROM kopokopo_transaction_purpose_events WHERE transaction_id = $1 ORDER BY changed_at, id",
+      [transactionId]
+    );
+    assert.deepEqual(audit.rows.map((row) => [row.from_purpose, row.to_purpose]), [
+      ["customer_payment", "stock_funding"],
+      ["stock_funding", "customer_payment"],
+    ]);
+  } finally {
+    await pool.query("DELETE FROM kopokopo_transaction_purpose_events WHERE transaction_id = $1", [transactionId]);
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", [payload.id]);
+  }
 });
 
 test("recognizes a verified B2B code when an older row has a stale branch and provider success status", async () => {

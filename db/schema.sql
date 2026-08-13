@@ -284,6 +284,11 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
   branch_id         text,
   payer_name        text,
   payer_phone_last4 text,
+  purpose           text NOT NULL DEFAULT 'customer_payment' CHECK (purpose IN ('customer_payment', 'stock_funding')),
+  purpose_changed_at timestamptz,
+  purpose_changed_by text,
+  purpose_changed_by_name text,
+  purpose_note      text,
   origination_time  timestamptz,
   reversed_at       timestamptz,
   created_at        timestamptz NOT NULL DEFAULT now(),
@@ -297,6 +302,23 @@ CREATE INDEX IF NOT EXISTS kopokopo_transactions_lookup_idx
 
 CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx
   ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time DESC);
+
+CREATE INDEX IF NOT EXISTS kopokopo_transactions_purpose_idx
+  ON kopokopo_transactions (branch_id, purpose, origination_time DESC);
+
+CREATE TABLE IF NOT EXISTS kopokopo_transaction_purpose_events (
+  id                 text PRIMARY KEY,
+  transaction_id     text NOT NULL REFERENCES kopokopo_transactions(id),
+  from_purpose       text NOT NULL,
+  to_purpose         text NOT NULL,
+  note               text,
+  changed_by         text,
+  changed_by_name    text,
+  changed_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS kopokopo_transaction_purpose_events_transaction_idx
+  ON kopokopo_transaction_purpose_events (transaction_id, changed_at DESC);
 
 CREATE TABLE IF NOT EXISTS kopokopo_incoming_payment_requests (
   id                       text PRIMARY KEY,

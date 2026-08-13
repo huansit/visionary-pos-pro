@@ -1245,6 +1245,9 @@ async function listKopokopoTransactions(filters = {}) {
   if (filters.branchPeriods && Object.keys(filters.branchPeriods).length) query.set("branchPeriods", JSON.stringify(filters.branchPeriods));
   return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
 }
+async function setKopokopoTransactionPurpose(transactionId, purpose) {
+  return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/purpose`, { purpose }, { session: true });
+}
 async function listKopokopoInvoiceOffsets(invoiceIds = []) {
   const ids = [...new Set(invoiceIds.map((invoiceId) => String(invoiceId || "").trim()).filter(Boolean))];
   const offsetsByInvoiceId = Object.fromEntries(ids.map((invoiceId) => [invoiceId, []]));
@@ -4237,16 +4240,23 @@ body{overscroll-behavior:none}
 .mpesa-ledger-status.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .mpesa-ledger-status.allocated{background:rgba(230,67,104,.14);color:var(--danger)}
 .mpesa-ledger-status.reversed{background:rgba(230,67,104,.14);color:var(--danger)}
+.mpesa-ledger-status.funding{background:rgba(245,158,11,.16);color:var(--warn)}
 .mpesa-ledger-status.offset,.mpesa-ledger-status.offset-partial{background:rgba(245,158,11,.14);color:var(--warn)}
 .mpesa-ledger-row.available .mpesa-state-amount,.mpesa-ledger-row.available .available-amount,.mpesa-ledger-mobile-row.available .money b,.mpesa-ledger-mobile-row.available .available-amount{color:var(--ok)}
 .mpesa-ledger-row.partial .mpesa-state-amount,.mpesa-ledger-row.partial .available-amount,.mpesa-ledger-mobile-row.partial .money b,.mpesa-ledger-mobile-row.partial .available-amount{color:#2E78C7}
 .mpesa-ledger-row.allocated .mpesa-state-amount,.mpesa-ledger-row.allocated .available-amount,.mpesa-ledger-row.reversed .mpesa-state-amount,.mpesa-ledger-row.reversed .available-amount,.mpesa-ledger-mobile-row.allocated .money b,.mpesa-ledger-mobile-row.allocated .available-amount,.mpesa-ledger-mobile-row.reversed .money b,.mpesa-ledger-mobile-row.reversed .available-amount{color:var(--danger)}
 .mpesa-ledger-row.offset .mpesa-state-amount,.mpesa-ledger-row.offset .available-amount,.mpesa-ledger-row.offset-partial .mpesa-state-amount,.mpesa-ledger-row.offset-partial .available-amount,.mpesa-ledger-mobile-row.offset .money b,.mpesa-ledger-mobile-row.offset .available-amount,.mpesa-ledger-mobile-row.offset-partial .money b,.mpesa-ledger-mobile-row.offset-partial .available-amount{color:var(--warn)}
+.mpesa-ledger-row.funding .mpesa-state-amount,.mpesa-ledger-row.funding .available-amount,.mpesa-ledger-mobile-row.funding .money b,.mpesa-ledger-mobile-row.funding .available-amount,.mpesa-no-allocation.funding{color:var(--warn)}
 .mpesa-ledger-status-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .mpesa-offset-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:27px;padding:4px 7px;border:1px solid rgba(245,158,11,.35);border-radius:5px;background:rgba(245,158,11,.08);color:var(--warn);font-size:9px;font-weight:800;white-space:nowrap;cursor:pointer}
 .mpesa-offset-btn:hover,.mpesa-offset-btn:focus-visible{background:rgba(245,158,11,.16);border-color:var(--warn)}
 .mpesa-offset-btn svg{width:13px;height:13px}
 .mpesa-offset-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
+.mpesa-purpose-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:27px;padding:4px 7px;border:1px solid rgba(245,158,11,.35);border-radius:5px;background:transparent;color:var(--warn);font-size:9px;font-weight:800;white-space:nowrap;cursor:pointer}
+.mpesa-purpose-btn:hover,.mpesa-purpose-btn:focus-visible{background:rgba(245,158,11,.12);border-color:var(--warn)}
+.mpesa-purpose-btn:disabled{cursor:wait;opacity:.55}
+.mpesa-purpose-btn svg{width:13px;height:13px}
+.mpesa-purpose-btn.mobile{grid-column:1/-1;width:100%;margin-top:1px}
 .mpesa-offset-scrim{z-index:1200;padding:16px}
 .mpesa-offset-modal{width:min(760px,100%);max-height:min(760px,calc(100dvh - 32px));overflow:auto;padding:20px}
 .mpesa-offset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
@@ -7929,7 +7939,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "branches": return <BranchesTab data={data} update={update} />;
@@ -16361,6 +16371,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
 /* ---- Settings ---- */
 function kopokopoLedgerStatus(transaction) {
   if (transaction.reversedAt) return { key: "reversed", label: "Reversed" };
+  if (transaction.purpose === "stock_funding") return { key: "funding", label: "Stock funding" };
   const activeAllocations = (transaction.allocations || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const activeOffsets = (transaction.offsets || []).filter((entry) => String(entry.status || "active").toLowerCase() === "active");
   const offsetOnly = activeOffsets.length > 0 && activeAllocations.length === 0;
@@ -16414,9 +16425,10 @@ function MpesaReference({ value, tone = "" }) {
   return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
-function MpesaAllocationList({ allocations, offsets, customerTransfer = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
+function MpesaAllocationList({ allocations, offsets, customerTransfer = false, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   const invoiceAllocations = Array.isArray(allocations) ? allocations : [];
   const cashOffsets = Array.isArray(offsets) ? offsets : [];
+  if (funding) return <span className="mpesa-no-allocation funding">Excluded from sales and invoice settlement</span>;
   if (invoiceAllocations.length === 0 && cashOffsets.length === 0) {
     return <span className="mpesa-no-allocation">{customerTransfer ? "Till/Bank payment - not allocated to an invoice" : "Not allocated to an invoice"}</span>;
   }
@@ -16556,7 +16568,7 @@ function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved })
   </div>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false }) {
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -16571,6 +16583,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [offsetTarget, setOffsetTarget] = useState(null);
+  const [purposeBusyId, setPurposeBusyId] = useState("");
+  const [purposeError, setPurposeError] = useState("");
   const [ledger, setLedger] = useState({
     loading: true,
     refreshing: false,
@@ -16746,6 +16760,28 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
   const canPrevious = offset > 0 && !ledger.loading;
   const canNext = offset + pageSize < total && !ledger.loading;
   const transactionTime = (transaction) => transaction.originationTime || transaction.createdAt;
+  const changeTransactionPurpose = async (transaction) => {
+    if (purposeBusyId) return;
+    const funding = transaction.purpose === "stock_funding";
+    const message = funding
+      ? "Restore this as a customer payment? It will count in M-Pesa totals and become available for invoice settlement."
+      : "Mark this transaction as stock funding? It will remain in the ledger but be excluded from M-Pesa sales totals and invoice settlement.";
+    if (!window.confirm(message)) return;
+    setPurposeBusyId(transaction.id);
+    setPurposeError("");
+    try {
+      await setKopokopoTransactionPurpose(transaction.id, funding ? "customer_payment" : "stock_funding");
+      setRefreshNonce((value) => value + 1);
+    } catch (error) {
+      const messages = {
+        kopokopo_transaction_has_allocations: "This transaction has already been used or offset and cannot be reclassified.",
+        branch_not_authorized: "Your account cannot change transactions for this branch.",
+      };
+      setPurposeError(messages[error.message] || "The transaction classification could not be changed. Refresh and try again.");
+    } finally {
+      setPurposeBusyId("");
+    }
+  };
   return (
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
@@ -16759,7 +16795,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
         <label className="mpesa-branch-filter"><span>Branch</span><select className="select" value={selectedBranchId} disabled={!allowAllBranches} onChange={(event) => { setBranchScope(event.target.value); setOffset(0); }}>
           {(data?.branches || []).filter((item) => allowAllBranches || item.id === branch?.id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select></label>
-        <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="reversed">Reversed</option></select></label>
+        <label className="mpesa-status-filter"><span>Status</span><select className="select" value={status} onChange={(event) => updateStatus(event.target.value)}><option value="all">All</option><option value="received">Received</option><option value="available">Available</option><option value="partial">Partly used</option><option value="allocated">Used</option><option value="funding">Stock funding</option><option value="reversed">Reversed</option></select></label>
         <div className="mpesa-time-mode" aria-label="Transaction time filter mode">
           <button type="button" className={timeFilterMode === "specific" ? "active" : ""} onClick={() => { setTimeFilterMode("specific"); setOffset(0); }}>Specific minute</button>
           <button type="button" className={timeFilterMode === "range" ? "active" : ""} onClick={() => { setTimeFilterMode("range"); setOffset(0); }}>Time range</button>
@@ -16775,7 +16811,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       </div>
 
       <div className="mpesa-ledger-summary">
-        <div><span>Transactions</span><b>{total}</b></div>
+        <div><span>Transactions</span><b>{Number(ledger.summary.transactionCount ?? total)}</b></div>
         <div><span>Received</span><b>{fmt(ledger.summary.amountCents || 0, "KES")}</b></div>
         <div><span>Allocated</span><b>{fmt(ledger.summary.allocatedCents || 0, "KES")}</b></div>
         <div className="available"><span>Available</span><b>{fmt(ledger.summary.remainingCents || 0, "KES")}</b></div>
@@ -16783,6 +16819,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
 
       <div className="mpesa-transaction-results">
         {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
+        {purposeError ? <div className="errorbox">{purposeError}</div> : null}
         {!ledger.error && ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading M-Pesa transactions...</div> : null}
         {!ledger.error && !ledger.loading && ledger.transactions.length === 0 ? <div className="notice">No M-Pesa transactions match these filters.</div> : null}
 
@@ -16796,9 +16833,9 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
-                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn" onClick={() => setOffsetTarget(transaction)}><Banknote /> Cash deposit</button> : null}</div></td>
+                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{canOffset && transaction.allocatable !== false && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn" onClick={() => setOffsetTarget(transaction)}><Banknote /> Cash deposit</button> : null}{canClassifyFunding && !transaction.reversedAt && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0) ? <button type="button" className="mpesa-purpose-btn" disabled={purposeBusyId === transaction.id} onClick={() => changeTransactionPurpose(transaction)}><Package />{purposeBusyId === transaction.id ? "Saving..." : transaction.purpose === "stock_funding" ? "Restore payment" : "Mark stock funding"}</button> : null}</div></td>
                 </tr>); })}</tbody>
             </table>
           </div>
@@ -16806,8 +16843,9 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span></div>
-              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} currency={transaction.currency || "KES"} timeZone={timeZone} />
-              {canOffset && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn mobile" onClick={() => setOffsetTarget(transaction)}><Banknote /> Record cash deposit</button> : null}
+              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              {canOffset && transaction.allocatable !== false && !transaction.reversedAt && Number(transaction.remainingCents || 0) > 0 ? <button type="button" className="mpesa-offset-btn mobile" onClick={() => setOffsetTarget(transaction)}><Banknote /> Record cash deposit</button> : null}
+              {canClassifyFunding && !transaction.reversedAt && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0) ? <button type="button" className="mpesa-purpose-btn mobile" disabled={purposeBusyId === transaction.id} onClick={() => changeTransactionPurpose(transaction)}><Package />{purposeBusyId === transaction.id ? "Saving..." : transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark as stock funding"}</button> : null}
             </div>); })}</div>
         </> : null}
 

@@ -248,6 +248,11 @@ CREATE TABLE IF NOT EXISTS kopokopo_transactions (
   branch_id         varchar(191),
   payer_name        varchar(255),
   payer_phone_last4 varchar(4),
+  purpose           varchar(40) NOT NULL DEFAULT 'customer_payment',
+  purpose_changed_at datetime,
+  purpose_changed_by varchar(191),
+  purpose_changed_by_name varchar(255),
+  purpose_note      varchar(500),
   origination_time  datetime,
   reversed_at       datetime,
   created_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -260,6 +265,24 @@ CREATE INDEX kopokopo_transactions_lookup_idx
 
 CREATE INDEX kopokopo_transactions_phone_lookup_idx
   ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time);
+
+CREATE INDEX kopokopo_transactions_purpose_idx
+  ON kopokopo_transactions (branch_id, purpose, origination_time);
+
+CREATE TABLE IF NOT EXISTS kopokopo_transaction_purpose_events (
+  id                 varchar(191) PRIMARY KEY,
+  transaction_id     varchar(191) NOT NULL,
+  from_purpose       varchar(40) NOT NULL,
+  to_purpose         varchar(40) NOT NULL,
+  note               varchar(500),
+  changed_by         varchar(191),
+  changed_by_name    varchar(255),
+  changed_at         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT kopokopo_transaction_purpose_events_transaction_fk FOREIGN KEY (transaction_id) REFERENCES kopokopo_transactions(id)
+);
+
+CREATE INDEX kopokopo_transaction_purpose_events_transaction_idx
+  ON kopokopo_transaction_purpose_events (transaction_id, changed_at);
 
 CREATE TABLE IF NOT EXISTS kopokopo_incoming_payment_requests (
   id                       varchar(191) PRIMARY KEY,

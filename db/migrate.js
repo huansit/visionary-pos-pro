@@ -107,9 +107,24 @@ async function ensureKopokopoTransactionColumns() {
   if (!(await hasColumn("kopokopo_transactions", "payer_phone_last4"))) {
     await pool.query("ALTER TABLE kopokopo_transactions ADD COLUMN payer_phone_last4 text");
   }
+  for (const [column, definition] of [
+    ["purpose", "text NOT NULL DEFAULT 'customer_payment'"],
+    ["purpose_changed_at", "timestamptz"],
+    ["purpose_changed_by", "text"],
+    ["purpose_changed_by_name", "text"],
+    ["purpose_note", "text"],
+  ]) {
+    if (!(await hasColumn("kopokopo_transactions", column))) {
+      await pool.query(`ALTER TABLE kopokopo_transactions ADD COLUMN ${column} ${definition}`);
+    }
+  }
   await pool.query(`
     CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx
     ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kopokopo_transactions_purpose_idx
+    ON kopokopo_transactions (branch_id, purpose, origination_time DESC)
   `);
 }
 
