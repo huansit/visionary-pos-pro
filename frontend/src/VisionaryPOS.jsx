@@ -4402,13 +4402,14 @@ body{overscroll-behavior:none}
 .audit-period>div{display:grid;gap:2px;min-width:0}
 .audit-period strong{font-size:12px}
 .audit-period span{color:var(--muted);font-family:var(--font-mono);font-size:10px;overflow-wrap:anywhere}
-.audit-summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
+.audit-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
 .audit-summary>div{display:grid;gap:3px;padding:12px;background:var(--surface)}
 .audit-summary span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
 .audit-summary b{font:850 17px var(--font-mono)}
 .audit-summary small{color:var(--muted);font-size:9.5px}
 .audit-summary .offset b{color:var(--warn)}
 .audit-summary .available b,.audit-summary .clear b{color:var(--ok)}
+.audit-summary .debt b{color:var(--danger)}
 .audit-summary .flagged b{color:var(--danger)}
 .audit-comment{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border:1px solid rgba(52,211,153,.22);border-left:3px solid var(--ok);border-radius:6px;background:rgba(52,211,153,.06)}
 .audit-comment.warn{border-color:rgba(245,158,11,.28);border-left-color:var(--warn);background:rgba(245,158,11,.07)}
@@ -4468,10 +4469,11 @@ body{overscroll-behavior:none}
 .invoice-state{display:inline-flex;padding:3px 7px;border-radius:999px;font-size:8.5px;font-weight:850;text-transform:uppercase}
 .invoice-state.paid{background:rgba(52,211,153,.13);color:var(--ok)}
 .invoice-state.open{background:rgba(46,120,199,.13);color:#2e78c7}
+.invoice-state.debt{background:rgba(230,67,104,.13);color:var(--danger)}
 .invoice-state.voided{background:rgba(230,67,104,.13);color:var(--danger)}
 @media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary{grid-template-columns:repeat(3,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
-@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-summary>div:last-child{grid-column:1/-1}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(3,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
-@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary{grid-template-columns:1fr}.audit-summary>div:last-child{grid-column:auto}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
+@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(4,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary{grid-template-columns:1fr}.audit-view-tabs{grid-template-columns:1fr 1fr}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
@@ -17426,7 +17428,9 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   const [view, setView] = useState("issues");
   const [severity, setSeverity] = useState("all");
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [auditNow, setAuditNow] = useState(() => Date.now());
   const [ledger, setLedger] = useState({ loading: true, refreshing: false, error: "", transactions: [], truncated: false, integrationStarts: null });
+  const ledgerScopeRef = useRef("");
 
   useEffect(() => {
     if (branchScope && branchScope !== "all" && branches.some((entry) => entry.id === branchScope)) return;
@@ -17440,7 +17444,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     ? null
     : periodOptions.find((option) => option.id === businessDaySelection) || null;
   const selectedClosedPeriod = selectedClosedDay?.periods?.[branchScope] || null;
-  const todayBusinessDate = businessDateValue(Date.now(), timeZone);
+  const todayBusinessDate = businessDateValue(auditNow, timeZone);
   const currentPeriodStart = branchScope && branchScope !== "all"
     ? branchLastEndDay(data, branchScope) + 1
     : 0;
@@ -17449,7 +17453,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     ? selectedClosedPeriod || {
       businessDate: todayBusinessDate,
       startedAt: currentPeriodStart > 1 ? currentPeriodStart : fallbackCurrentStart,
-      endedAt: Date.now(),
+      endedAt: auditNow,
       current: true,
     }
     : null;
@@ -17466,6 +17470,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   const rangeValid = dateMode === "all" || (rangeFrom > 0 && rangeTo > 0 && rangeTo >= rangeFrom);
   const apiFrom = rangeFrom > 0 ? new Date(rangeFrom).toISOString() : "";
   const apiTo = rangeTo > 0 ? new Date(rangeTo).toISOString() : "";
+  const auditScopeKey = [branchScope, dateMode, businessDaySelection, dateFrom, dateTo].join("|");
 
   useEffect(() => {
     let active = true;
@@ -17480,7 +17485,11 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       });
       return () => { active = false; };
     }
-    setLedger({ loading: true, refreshing: false, error: "", transactions: [], truncated: false, integrationStarts: null });
+    const sameScope = ledgerScopeRef.current === auditScopeKey;
+    ledgerScopeRef.current = auditScopeKey;
+    setLedger((current) => sameScope && (current.integrationStarts || current.transactions.length > 0)
+      ? { ...current, loading: false, refreshing: true, error: "" }
+      : { loading: true, refreshing: false, error: "", transactions: [], truncated: false, integrationStarts: null });
     const load = async () => {
       const scopedBranchIds = branchScope === "all"
         ? branches.map((entry) => entry.id).filter(Boolean)
@@ -17523,10 +17532,13 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       setLedger((current) => ({ ...current, loading: false, refreshing: false, error: message }));
     });
     return () => { active = false; };
-  }, [branchScope, branches, rangeValid, apiFrom, apiTo, refreshNonce]);
+  }, [branchScope, branches, rangeValid, apiFrom, apiTo, refreshNonce, auditScopeKey]);
 
   useEffect(() => {
-    const refresh = () => setRefreshNonce((value) => value + 1);
+    const refresh = () => {
+      setAuditNow(Date.now());
+      setRefreshNonce((value) => value + 1);
+    };
     const onRealtime = (event) => {
       const types = Array.isArray(event.detail?.types) ? event.detail.types : [];
       if (types.some((type) => ["kopokopoTransaction", "kopokopoAllocation", "kopokopoOffset", "invoice", "payment"].includes(type))) refresh();
@@ -17571,6 +17583,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     JSON.stringify(entry.items || entry.lines || []),
     ...(entry.activeAllocations || []).map((allocation) => allocation.transactionReference),
   ]));
+  const visibleDebts = visibleInvoices.filter((entry) => entry.debt);
   const switchDateMode = (mode) => {
     if (mode === "business" && branchScope === "all") setBranchScope(defaultBranchId);
     setDateMode(mode);
@@ -17594,6 +17607,14 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     entry.cashCents > 0 ? `Cash ${fmt(entry.cashCents, "KES")}` : "",
     entry.payrollCents > 0 ? `Payroll ${fmt(entry.payrollCents, "KES")}` : "",
   ].filter(Boolean).join(" / ") || "No captured payments";
+  const renderInvoiceAuditTrace = (entry) => {
+    const stateKey = entry.voided ? "voided" : entry.debt ? "debt" : entry.balanceCents > 0 ? "open" : "paid";
+    const stateLabel = entry.voided ? "Voided" : entry.debt ? "Debt" : entry.balanceCents > 0 ? "Open" : "Paid";
+    return <details className={`audit-trace invoice ${entry.debt ? "debt" : ""} ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}>
+      <summary><div className="audit-trace-title"><strong>{entry.reference}</strong><span>{entry.customerName || "Walk-in"} / {entry.cashier || "Cashier not supplied"}</span></div><div className="audit-trace-values"><b>{fmt(entry.totalCents, "KES")}</b><span className={`invoice-state ${stateKey}`}>{stateLabel}</span><ChevronDown /></div></summary>
+      <div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Paid</small><b>{fmt(entry.storedPaidCents, "KES")}</b></span><span><small>{entry.debt ? "Debt balance" : "Balance"}</small><b>{fmt(entry.balanceCents, "KES")}</b></span><span><small>M-Pesa allocated</small><b>{fmt(entry.allocationCents, "KES")}</b></span><span><small>Issued</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><div className="audit-payment-methods"><strong>Captured payments</strong><span>{methodsForInvoice(entry)}</span></div>{entry.activeAllocations.length || entry.activeOffsets.length ? <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} currency="KES" timeZone={timeZone} /> : null}{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div>
+    </details>;
+  };
 
   return <div className="mpesa-audit-page">
     <PageHead title="M-Pesa & Invoice Audit" sub="Trace verified money from receipt through invoice settlement, cash offset, funding, or reversal."
@@ -17614,7 +17635,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
         {periodOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}
       </select></label> : null}
       {dateMode === "range" ? <div className="audit-range-fields"><label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label><label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label></div> : null}
-      <button type="button" className="btn audit-refresh" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button>
+      <button type="button" className="btn audit-refresh" disabled={ledger.loading || ledger.refreshing} onClick={() => { setAuditNow(Date.now()); setRefreshNonce((value) => value + 1); }}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button>
       <div className="audit-period"><CalendarDays /><div><strong>{periodHeading}</strong><span>{dateMode === "all" ? integrationStartText : rangeValid ? `${formatBusinessDateTime(rangeFrom, timeZone)} to ${formatBusinessDateTime(rangeTo, timeZone)}` : "Choose both dates to run the audit"}</span></div></div>
     </section>
 
@@ -17627,6 +17648,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       <div><span>Invoice allocations</span><b>{fmt(audit.summary.invoiceAllocatedCents, "KES")}</b><small>Paid directly to invoices</small></div>
       <div className="offset"><span>Cash offsets</span><b>{fmt(audit.summary.offsetCents, "KES")}</b><small>Cash later deposited to till</small></div>
       <div className="available"><span>Available</span><b>{fmt(audit.summary.availableCents, "KES")}</b><small>Not allocated or offset</small></div>
+      <div className="debt"><span>Invoice debts</span><b>{fmt(audit.summary.debtOutstandingCents, "KES")}</b><small>{audit.summary.debtCount} carried-over invoices</small></div>
       <div className={audit.summary.criticalCount > 0 ? "flagged" : "clear"}><span>Audit flags</span><b>{audit.summary.flaggedCount}</b><small>{audit.summary.criticalCount} critical / {audit.summary.warningCount} warning</small></div>
     </section>
     <div className={`audit-comment ${audit.summary.staleAvailableCents > 0 ? "warn" : ""}`}><Wallet /><div><strong>Available-money comment</strong><span>{audit.availableComment}{audit.summary.staleAvailableCents > 0 ? ` ${fmt(audit.summary.staleAvailableCents, "KES")} is stale.` : ""}</span></div></div>
@@ -17636,6 +17658,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
         <button type="button" className={view === "issues" ? "active" : ""} onClick={() => setView("issues")}>Flags <span>{audit.summary.flaggedCount}</span></button>
         <button type="button" className={view === "transactions" ? "active" : ""} onClick={() => setView("transactions")}>M-Pesa <span>{audit.transactions.length}</span></button>
         <button type="button" className={view === "invoices" ? "active" : ""} onClick={() => setView("invoices")}>Invoices <span>{audit.invoices.length}</span></button>
+        <button type="button" className={view === "debts" ? "active" : ""} onClick={() => setView("debts")}>Debts <span>{audit.summary.debtCount}</span></button>
       </div>
       <label className="audit-search"><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, receipt, payer, customer, or cashier" /></label>
       {view === "issues" ? <label className="audit-severity"><span className="sr-only">Flag severity</span><select className="select" value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All flags</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Information</option></select></label> : null}
@@ -17649,7 +17672,9 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       return <details className={`audit-trace transaction ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}><summary><div className="audit-trace-title"><MpesaReference value={entry.reference} tone={status.key} /><span>{entry.payerName || "Payer not supplied"} / {entry.branchName}</span></div><div className="audit-trace-values"><b>{fmt(entry.amountCents, entry.currency || "KES")}</b><span className={`mpesa-ledger-status ${status.key}`}>{status.label}</span><ChevronDown /></div></summary><div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Invoice allocated</small><b>{fmt(entry.invoiceAllocatedCents, "KES")}</b></span><span><small>Cash offset</small><b>{fmt(entry.offsetCents, "KES")}</b></span><span className="available"><small>Available</small><b>{fmt(entry.availableCents, "KES")}</b></span><span><small>Received</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div></details>;
     }) : <div className="audit-empty"><Receipt /><strong>No M-Pesa records match</strong><span>Change the search or audit period.</span></div>}</div> : null}
 
-    {!ledger.loading && view === "invoices" ? <div className="audit-traces">{visibleInvoices.length ? visibleInvoices.slice(0, 300).map((entry) => <details className={`audit-trace invoice ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}><summary><div className="audit-trace-title"><strong>{entry.reference}</strong><span>{entry.customerName || "Walk-in"} / {entry.cashier || "Cashier not supplied"}</span></div><div className="audit-trace-values"><b>{fmt(entry.totalCents, "KES")}</b><span className={`invoice-state ${entry.voided ? "voided" : entry.balanceCents > 0 ? "open" : "paid"}`}>{entry.voided ? "Voided" : entry.balanceCents > 0 ? "Open" : "Paid"}</span><ChevronDown /></div></summary><div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Paid</small><b>{fmt(entry.storedPaidCents, "KES")}</b></span><span><small>Balance</small><b>{fmt(entry.balanceCents, "KES")}</b></span><span><small>M-Pesa allocated</small><b>{fmt(entry.allocationCents, "KES")}</b></span><span><small>Issued</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><div className="audit-payment-methods"><strong>Captured payments</strong><span>{methodsForInvoice(entry)}</span></div>{entry.activeAllocations.length || entry.activeOffsets.length ? <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} currency="KES" timeZone={timeZone} /> : null}{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div></details>) : <div className="audit-empty"><FileText /><strong>No invoices match</strong><span>Change the search or audit period.</span></div>}</div> : null}
+    {!ledger.loading && view === "invoices" ? <div className="audit-traces">{visibleInvoices.length ? visibleInvoices.slice(0, 300).map(renderInvoiceAuditTrace) : <div className="audit-empty"><FileText /><strong>No invoices match</strong><span>Change the search or audit period.</span></div>}</div> : null}
+
+    {!ledger.loading && view === "debts" ? <div className="audit-traces">{visibleDebts.length ? visibleDebts.slice(0, 300).map(renderInvoiceAuditTrace) : <div className="audit-empty"><Wallet /><strong>No invoice debts match</strong><span>Only carried-over invoice balances created after M-Pesa integration appear here.</span></div>}</div> : null}
   </div>;
 }
 

@@ -132,6 +132,41 @@ test("invoice paid amount must agree with captured payments", () => {
   assert.ok(audit.issues.some((entry) => entry.code === "paid_invoice_has_balance"));
 });
 
+test("audit messages display KES instead of internal cents", () => {
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [invoice({ number: "RCP-SIP-000262", totalCents: 50000, paidCents: 50000 })],
+    payments: [providerPayment({ amountCents: 50000 })],
+    branches,
+    now: 5000,
+  });
+  const mismatch = audit.issues.find((entry) => entry.code === "provider_payment_allocation_mismatch");
+
+  assert.ok(mismatch);
+  assert.match(mismatch.message, /KES 500/);
+  assert.doesNotMatch(mismatch.message, /\bcents\b/i);
+});
+
+test("carried-over invoice debts are exposed separately in the audit", () => {
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [
+      invoice({ id: "debt_1", status: "open", carriedOver: true, totalCents: 15000, paidCents: 5000 }),
+      invoice({ id: "open_1", number: "RCP-CPT-000002", status: "open", totalCents: 7000, paidCents: 0 }),
+      invoice({ id: "recovered_1", number: "RCP-CPT-000003", status: "paid", carriedOver: true, totalCents: 9000, paidCents: 9000 }),
+    ],
+    payments: [],
+    branches,
+    now: 5000,
+  });
+
+  assert.equal(audit.invoices.find((entry) => entry.id === "debt_1").debt, true);
+  assert.equal(audit.invoices.find((entry) => entry.id === "open_1").debt, false);
+  assert.equal(audit.invoices.find((entry) => entry.id === "recovered_1").debt, false);
+  assert.equal(audit.summary.debtCount, 1);
+  assert.equal(audit.summary.debtOutstandingCents, 10000);
+});
+
 test("audit excludes transactions and invoices created before each branch integration", () => {
   const transactions = [
     transaction({ id: "tx_cpt_before", branchId: "b_cpt", originationTime: new Date(1500).toISOString() }),

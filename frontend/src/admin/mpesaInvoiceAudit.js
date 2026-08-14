@@ -6,6 +6,14 @@ function cents(value) {
   return Number.isFinite(number) ? Math.round(number) : 0;
 }
 
+function kes(value) {
+  const amount = cents(value) / 100;
+  return `KES ${amount.toLocaleString("en-KE", {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 function text(value) {
   return String(value || "").trim();
 }
@@ -73,6 +81,14 @@ function isPaidStatus(invoice) {
 
 function isOpenStatus(invoice) {
   return ["open", "pending", "debt", "overdue", "partial", "partially_paid"].includes(invoiceStatus(invoice));
+}
+
+function isInvoiceDebt(invoice, balanceCents) {
+  if (balanceCents <= 0 || isVoided(invoice)) return false;
+  return invoice?.carriedOver === true
+    || Number(invoice?.carriedOverAt || 0) > 0
+    || Boolean(invoice?.closedDayId)
+    || invoiceStatus(invoice) === "debt";
 }
 
 function uniqueById(entries) {
@@ -160,7 +176,7 @@ export function buildMpesaInvoiceAudit({
     });
 
     if (allocatable && storedAllocatedCents !== linkedConsumedCents) {
-      addIssue(issue({ code: "ledger_link_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Used amount does not match its audit trail", message: `${reference} stores ${storedAllocatedCents} cents as used, but active invoice allocations and cash offsets total ${linkedConsumedCents} cents.` }));
+      addIssue(issue({ code: "ledger_link_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Used amount does not match its audit trail", message: `${reference} records ${kes(storedAllocatedCents)} as used, but active invoice allocations and cash offsets total ${kes(linkedConsumedCents)}.` }));
     }
     if (allocatable && (storedAllocatedCents > amountCents || linkedConsumedCents > amountCents)) {
       addIssue(issue({ code: "transaction_overallocated", severity: "critical", entityType: "transaction", entityId: id, title: "Transaction is over-allocated", message: `${reference} has more money consumed than the verified amount received.` }));
@@ -235,9 +251,10 @@ export function buildMpesaInvoiceAudit({
     const rowIssues = [];
     const addIssue = (value) => { rowIssues.push(value); issues.push(value); };
     const voided = isVoided(invoice);
+    const debt = isInvoiceDebt(invoice, balanceCents);
 
     if (!voided && invoicePayments.length > 0 && capturedPaymentCents !== storedPaidCents) {
-      addIssue(issue({ code: "invoice_payment_total_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice paid total does not match payments", message: `${reference} stores ${storedPaidCents} cents paid, but its captured payment records total ${capturedPaymentCents} cents.` }));
+      addIssue(issue({ code: "invoice_payment_total_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice paid total does not match payments", message: `${reference} records ${kes(storedPaidCents)} as paid, but its captured payment records total ${kes(capturedPaymentCents)}.` }));
     }
     if (!voided && storedPaidCents > totalCents) {
       addIssue(issue({ code: "invoice_overpaid", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice is overpaid", message: `${reference} has more paid than its invoice total.` }));
@@ -252,7 +269,7 @@ export function buildMpesaInvoiceAudit({
       addIssue(issue({ code: "voided_invoice_has_allocation", severity: "critical", entityType: "invoice", entityId: id, title: "Voided invoice has active M-Pesa money", message: `${reference} is voided but still has active provider allocations.` }));
     }
     if (providerMpesaPayments.length > 0 && providerMpesaCents !== allocationCents) {
-      addIssue(issue({ code: "provider_payment_allocation_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa payment is not fully traceable", message: `${reference} has ${providerMpesaCents} cents in verified M-Pesa payments but ${allocationCents} cents in active provider allocations.` }));
+      addIssue(issue({ code: "provider_payment_allocation_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa payment is not fully traceable", message: `${reference} has ${kes(providerMpesaCents)} in verified M-Pesa payments but ${kes(allocationCents)} in active provider allocations.` }));
     }
     if (allocationCents > totalCents && totalCents > 0) {
       addIssue(issue({ code: "invoice_allocation_exceeds_total", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa allocations exceed invoice total", message: `${reference} has more active M-Pesa allocation than its total value.` }));
@@ -266,6 +283,7 @@ export function buildMpesaInvoiceAudit({
 
     let comment;
     if (voided) comment = allocationCents > 0 ? "Voided invoice requires immediate allocation review." : "Voided invoice; excluded from active sales settlement.";
+    else if (debt) comment = `Carried-over invoice debt remains outstanding. ${allocationCents > 0 ? "Verified M-Pesa allocation is shown in the trace." : "No active verified M-Pesa allocation is attached."}`;
     else if (balanceCents > 0) comment = `Outstanding balance remains. ${allocationCents > 0 ? "Verified M-Pesa allocation is shown in the trace." : "No active verified M-Pesa allocation is attached."}`;
     else if (offsetCents > 0 && cashCents > 0) comment = "Invoice is paid as cash. A later till deposit is linked separately for audit and does not change the payment method.";
     else comment = "Invoice payment total is fully settled and traceable in the captured payment records.";
@@ -287,6 +305,7 @@ export function buildMpesaInvoiceAudit({
       activeAllocations,
       activeOffsets,
       voided,
+      debt,
       timestamp: invoiceTimestamp(invoice),
       branchName: branchById.get(text(invoice.branchId))?.name || text(invoice.branchId) || "Unknown branch",
       issues: rowIssues,
@@ -306,6 +325,8 @@ export function buildMpesaInvoiceAudit({
     availableCents: customerTransactions.reduce((sum, transaction) => sum + transaction.availableCents, 0),
     invoiceValueCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.totalCents, 0),
     invoiceBalanceCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.balanceCents, 0),
+    debtCount: invoiceRows.filter((invoice) => invoice.debt).length,
+    debtOutstandingCents: invoiceRows.filter((invoice) => invoice.debt).reduce((sum, invoice) => sum + invoice.balanceCents, 0),
     criticalCount: issues.filter((entry) => entry.severity === "critical").length,
     warningCount: issues.filter((entry) => entry.severity === "warning").length,
     infoCount: issues.filter((entry) => entry.severity === "info").length,
