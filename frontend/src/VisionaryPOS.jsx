@@ -4466,8 +4466,51 @@ body{overscroll-behavior:none}
 .invoice-state.debt{background:rgba(230,67,104,.13);color:var(--danger)}
 .invoice-state.voided{background:rgba(230,67,104,.13);color:var(--danger)}
 @media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:repeat(2,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
-@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(3,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
-@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:1fr}.audit-view-tabs{grid-template-columns:1fr 1fr}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
+@media(max-width:720px){
+  .mpesa-audit-page{gap:8px;overflow:visible}
+  .mpesa-audit-page>.page-h{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:5px 8px;margin-bottom:0}
+  .mpesa-audit-page>.page-h>div:first-child{grid-column:1;min-width:0}
+  .mpesa-audit-page>.page-h .title{margin-top:0;font-size:18px!important;line-height:1.15}
+  .mpesa-audit-page>.page-h .sub{margin-top:3px;font-size:11px;line-height:1.35}
+  .mpesa-audit-page>.page-h>.audit-readonly{grid-column:2;grid-row:1;width:auto!important;height:30px;padding:0 8px;justify-self:end;white-space:nowrap}
+  .mpesa-audit-page>.page-h>.audit-readonly svg{width:14px;height:14px}
+  .audit-controls{grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:7px;padding:8px}
+  .audit-controls>label:first-child,.audit-date-modes,.audit-range-fields,.audit-period{grid-column:1/-1}
+  .audit-date-modes{grid-template-columns:repeat(3,minmax(0,1fr));min-height:38px;padding:2px}
+  .audit-date-modes button{min-width:0;gap:4px;padding:6px 4px;font-size:10px;white-space:nowrap}
+  .audit-date-modes button svg{width:13px;height:13px}
+  .audit-business-select{grid-column:1}
+  .audit-refresh{grid-column:2;width:auto;min-width:92px;height:40px;padding-inline:10px}
+  .audit-range-fields{grid-template-columns:1fr 1fr}
+  .audit-period{gap:8px;padding:7px 9px}
+  .audit-period>svg{width:16px;height:16px}
+  .audit-period strong{font-size:11px}
+  .audit-period span{font-size:9px;line-height:1.35}
+  .mpesa-audit-page>.notice{display:flex;align-items:flex-start;justify-content:flex-start;gap:8px;min-height:0;margin-top:0;padding:9px 10px;border-radius:6px;text-align:left;font-size:10.5px;line-height:1.4}
+  .mpesa-audit-page>.notice>svg{width:17px;height:17px;flex:none}
+  .audit-summary-heading{align-items:flex-start;margin:7px 0 3px}
+  .audit-summary-heading strong{font-size:12px}
+  .audit-summary-heading span{max-width:56%;font-size:9px;line-height:1.3;text-align:right}
+  .audit-summary,.audit-summary.invoice-totals{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .audit-summary>div{padding:9px}
+  .audit-summary b{font-size:14px}
+  .audit-summary small{font-size:8.5px}
+  .audit-result-tools{grid-template-columns:1fr}
+  .audit-view-tabs{display:grid;grid-template-columns:repeat(3,1fr)}
+  .audit-view-tabs button{justify-content:center;padding-inline:6px}
+  .audit-issue{grid-template-columns:auto minmax(0,1fr)}
+  .audit-severity-badge{grid-column:2;justify-self:start}
+  .audit-trace>summary{grid-template-columns:1fr}
+  .audit-trace-values{justify-content:space-between}
+  .audit-trace-metrics{grid-template-columns:1fr 1fr}
+}
+@media(max-width:470px){
+  .audit-date-modes{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .audit-range-fields{grid-template-columns:1fr}
+  .audit-summary,.audit-summary.invoice-totals{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .audit-view-tabs{grid-template-columns:1fr 1fr}
+  .audit-payment-methods{align-items:flex-start;flex-direction:column}
+}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
@@ -6755,12 +6798,17 @@ function AdminLogin({ onBack, onSignedIn }) {
   }, [resendCooldown]);
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
-    if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit email code.");
+    if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit verification code.");
     const raw = email.trim();
     setErr("");
     setBusy(true);
     try {
-      const cloud = await cloudLogin({ identifier: raw, password: pw, code: code.trim() || undefined, deviceName: "VISIONPOS Admin" });
+      const cloud = await cloudLogin({
+        identifier: raw,
+        password: pw,
+        code: code.trim() || undefined,
+        deviceName: "VISIONPOS Admin"
+      });
       if (cloud?.emailVerificationRequired) {
         setEmailVerifyRequired(true);
         setEmailVerifyEmail(cloud.target || raw);
@@ -6775,7 +6823,7 @@ function AdminLogin({ onBack, onSignedIn }) {
         setCodeTarget(cloud.target || "your admin email");
         setFocusField("code");
         setCode("");
-        setErr(`Enter the code sent to ${cloud.target || "your admin email"}.`);
+        setErr("");
         return;
       }
       if (cloud?.account) {
@@ -6785,10 +6833,12 @@ function AdminLogin({ onBack, onSignedIn }) {
       }
     } catch (error) {
       const message = String(error?.message || "login_failed");
-      setErr(message === "invalid_code" ? "That email code is incorrect." :
-        message === "code_not_found_or_expired" ? "That email code expired. Sign in again to get a new code." :
+      setErr(message === "invalid_code" ? "That verification code is incorrect." :
+        message === "code_not_found_or_expired" ? "That verification code expired. Sign in again to get a new code." :
         message === "too_many_attempts" ? "Too many incorrect code attempts. Sign in again to get a new code." :
+        message === "too_many_code_requests" ? "Too many code requests. Wait a few minutes before trying again." :
         message === "admin_email_required" ? "This management account needs an email address before email code login can work." :
+        message === "admin_login_code_send_failed" ? "The verification code could not be sent. Try again shortly." :
         message === "email_verification_send_failed" ? "Verification email could not be sent right now. Try again later." :
         message === "Failed to fetch" ? "Cloud login is unreachable. Check your internet connection." :
         "Those credentials don't match.");

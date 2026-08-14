@@ -22,9 +22,18 @@ const PASSWORD_RESET_RATE_WINDOW_MINUTES = 30;
 const PASSWORD_RESET_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.PASSWORD_RESET_RATE_MAX || "3", 10)));
 const resetRequestBuckets = new Map();
 const emailVerificationBuckets = new Map();
+const adminLoginCodeBuckets = new Map();
 const EMAIL_VERIFICATION_RESEND_SECONDS = 60;
 const EMAIL_VERIFICATION_RATE_WINDOW_MINUTES = 10;
 const EMAIL_VERIFICATION_RATE_MAX = Math.max(1, Math.min(10, parseInt(process.env.EMAIL_VERIFICATION_RATE_MAX || "5", 10)));
+const configuredAdminLoginCodeWindow = Number.parseInt(process.env.ADMIN_LOGIN_CODE_RATE_WINDOW_MINUTES || "10", 10);
+const configuredAdminLoginCodeMax = Number.parseInt(process.env.ADMIN_LOGIN_CODE_RATE_MAX || "5", 10);
+const ADMIN_LOGIN_CODE_RATE_WINDOW_MINUTES = Number.isFinite(configuredAdminLoginCodeWindow)
+  ? Math.max(1, Math.min(60, configuredAdminLoginCodeWindow))
+  : 10;
+const ADMIN_LOGIN_CODE_RATE_MAX = Number.isFinite(configuredAdminLoginCodeMax)
+  ? Math.max(1, Math.min(10, configuredAdminLoginCodeMax))
+  : 5;
 const checkoutOverrideBuckets = new Map();
 
 function tokenHash(token) {
@@ -1566,10 +1575,34 @@ router.post("/login", async (req, res) => {
             await audit("login_failed", req, row.id, { mode: "password", reason: "admin_email_required" });
             return res.status(400).json({ error: "admin_email_required" });
           }
+          const maskedTarget = maskEmail(target);
           if (!loginCode) {
-            const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "admin_login" });
-            await audit("admin_login_code_sent", req, row.id, { target: maskEmail(target), expiresInMinutes });
-            return res.json({ ok: true, verificationRequired: true, channel: "email", target: maskEmail(target), expiresInMinutes });
+            const { ipAddress } = requestMeta(req);
+            if (bucketRateLimited(
+              adminLoginCodeBuckets,
+              `${row.id}|email|${ipAddress || ""}`,
+              ADMIN_LOGIN_CODE_RATE_WINDOW_MINUTES,
+              ADMIN_LOGIN_CODE_RATE_MAX
+            )) {
+              await audit("admin_login_code_rate_limited", req, row.id, { channel: "email", target: maskedTarget });
+              return res.status(429).json({ error: "too_many_code_requests" });
+            }
+            try {
+              await expireAdminLoginCodesForAccount(row);
+              const expiresInMinutes = await sendAndStoreCode({ channel: "email", target, purpose: "admin_login" });
+              await audit("admin_login_code_sent", req, row.id, { channel: "email", target: maskedTarget, expiresInMinutes });
+              return res.json({
+                ok: true,
+                verificationRequired: true,
+                channel: "email",
+                target: maskedTarget,
+                expiresInMinutes
+              });
+            } catch (error) {
+              console.error("admin login code send failed:", { channel: "email", message: error.message, statusCode: error.statusCode || null });
+              await audit("admin_login_code_send_failed", req, row.id, { channel: "email", target: maskedTarget, reason: error.message });
+              return res.status(error.statusCode || 503).json({ error: "admin_login_code_send_failed" });
+            }
           }
           await verifyAuthCode({ channel: "email", target, code: loginCode, purpose: "admin_login", consume: true });
         }
@@ -1787,8 +1820,35 @@ async function sendAndStoreCode({ channel, target, purpose }) {
          VALUES ($1, $2, $3, $4, now() + ($5 || ' minutes')::interval)`,
     [channel, target, codeHash, purpose, ttl]
   );
-  await sendVerificationCode({ channel, target, code });
+  try {
+    await sendVerificationCode({ channel, target, code });
+  } catch (error) {
+    await q(
+      `UPDATE auth_verification_codes
+          SET consumed_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE channel = $1
+          AND target = $2
+          AND purpose = $3
+          AND consumed_at IS NULL`,
+      [channel, target, purpose]
+    );
+    throw error;
+  }
   return ttl;
+}
+
+async function expireAdminLoginCodesForAccount(row) {
+  const target = normalizeTarget("email", row?.email);
+  if (!validTarget("email", target)) return;
+  await q(
+    `UPDATE auth_verification_codes
+        SET consumed_at = ${isMySql ? "NOW()" : "now()"}
+      WHERE channel = 'email'
+        AND target = $1
+        AND purpose = 'admin_login'
+        AND consumed_at IS NULL`,
+    [target]
+  );
 }
 
 async function verifyAuthCode({ channel, target, code, purpose, consume = false }) {
