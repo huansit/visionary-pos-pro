@@ -19,6 +19,7 @@ import {
   updateQuickInventoryDraftCount,
 } from "./admin/quickInventoryDraft.js";
 import {
+  addOrderedPurchaseLine,
   correctReceivedPurchaseCost,
   recoverableDeletedPurchaseLines,
   restoreDeletedPurchaseLine,
@@ -12083,6 +12084,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const [receiptCorrection, setReceiptCorrection] = useState(null);
   const [costRepair, setCostRepair] = useState(null);
   const [costRepairError, setCostRepairError] = useState("");
+  const [poLineAdd, setPoLineAdd] = useState(null);
+  const [poLineAddError, setPoLineAddError] = useState("");
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
@@ -12321,7 +12324,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       purchaseId: purchase.id,
       productName: purchase.productName,
       branchName: data.branches.find((entry) => entry.id === purchase.branchId)?.name || "the branch",
-      quantity: Number(purchase.qty || 0),
+      previousQuantity: Number(purchase.qty || 0),
+      quantity: String(Number(purchase.qty || 0)),
       previousUnitCostCents: purchaseUnitCostCents(purchase),
       unitCost: decimalText(purchaseUnitCostCents(purchase) / 100),
       reason: "",
@@ -12343,12 +12347,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   };
   const submitCostRepair = () => {
     const correctedUnitCostCents = (Number.parseFloat(costRepair?.unitCost) || 0) * 100;
+    const updatedQuantity = Math.trunc(Number(costRepair?.quantity));
     const reason = String(costRepair?.reason || "").trim();
+    if (costRepair?.mode === "order" && !(updatedQuantity > 0)) { setCostRepairError("Enter a valid delivered quantity."); return; }
     if (!(correctedUnitCostCents > 0)) { setCostRepairError("Enter a valid purchase unit cost."); return; }
     if (reason.length < 3) { setCostRepairError("Enter a clear correction reason."); return; }
     const options = {
       correctedUnitCostCents,
       updatedUnitCostCents: correctedUnitCostCents,
+      ...(costRepair.mode === "order" ? { updatedQuantity } : {}),
       reason,
       actor,
       idFactory: uid,
@@ -12385,6 +12392,74 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       setCostRepairError("");
     } catch (error) {
       setCostRepairError(error?.message || "The purchase cost could not be repaired.");
+    }
+  };
+  const pendingLineProducts = poLineAdd ? sortProductsAZ(branchProductsUnique(data, poLineAdd.branchId)
+    .filter(productIsEnabled)
+    .filter((product) => !(data.purchases || []).some((purchase) => String(purchase.batchId || purchase.id) === String(poLineAdd.batchId)
+      && String(purchase.branchId) === String(poLineAdd.branchId)
+      && String(purchase.productId) === String(product.id)))) : [];
+  const pendingLineUnitCost = (productId, supplierId, branchId) => {
+    const quote = sp.find((entry) => entry.productId === productId && entry.supplierId === supplierId);
+    const product = data.products.find((entry) => entry.id === productId);
+    return quote?.costCents || (product ? branchInventoryCostCents(data, product, branchId) : 0);
+  };
+  const openPendingLineAdd = (items) => {
+    const pending = items.find((purchase) => purchase.status !== "received") || items[0];
+    const branchId = pending?.branchId || branch.id;
+    const supplierId = pending?.supplierId || data.suppliers[0]?.id || "";
+    const existing = new Set(items.filter((purchase) => purchase.branchId === branchId).map((purchase) => purchase.productId));
+    const product = sortProductsAZ(branchProductsUnique(data, branchId).filter(productIsEnabled)).find((entry) => !existing.has(entry.id));
+    const productId = product?.id || "";
+    setPoLineAddError("");
+    setPoLineAdd({
+      batchId: String(pending?.batchId || pending?.id || ""),
+      batchNo: pending?.batchNo || "Purchase order",
+      branchId,
+      supplierId,
+      productId,
+      quantity: "",
+      unitCost: decimalText(pendingLineUnitCost(productId, supplierId, branchId) / 100),
+      reason: "Product omitted from original purchase order",
+    });
+  };
+  const updatePendingLineProduct = (productId) => setPoLineAdd((current) => ({
+    ...current,
+    productId,
+    unitCost: decimalText(pendingLineUnitCost(productId, current.supplierId, current.branchId) / 100),
+  }));
+  const updatePendingLineSupplier = (supplierId) => setPoLineAdd((current) => ({
+    ...current,
+    supplierId,
+    unitCost: decimalText(pendingLineUnitCost(current.productId, supplierId, current.branchId) / 100),
+  }));
+  const updatePendingLineBranch = (branchId) => setPoLineAdd((current) => {
+    const existing = new Set((data.purchases || []).filter((purchase) => String(purchase.batchId || purchase.id) === String(current.batchId)
+      && String(purchase.branchId) === String(branchId)).map((purchase) => purchase.productId));
+    const productId = sortProductsAZ(branchProductsUnique(data, branchId).filter(productIsEnabled)).find((entry) => !existing.has(entry.id))?.id || "";
+    return { ...current, branchId, productId, unitCost: decimalText(pendingLineUnitCost(productId, current.supplierId, branchId) / 100) };
+  });
+  const submitPendingLineAdd = () => {
+    const options = {
+      batchId: poLineAdd?.batchId,
+      branchId: poLineAdd?.branchId,
+      supplierId: poLineAdd?.supplierId,
+      productId: poLineAdd?.productId,
+      quantity: Math.trunc(Number(poLineAdd?.quantity)),
+      unitCostCents: (Number.parseFloat(poLineAdd?.unitCost) || 0) * 100,
+      reason: poLineAdd?.reason,
+      actor,
+      idFactory: uid,
+    };
+    try {
+      addOrderedPurchaseLine(data, options);
+      update((current) => {
+        try { return addOrderedPurchaseLine(current, options).data; } catch (_) { return current; }
+      });
+      setPoLineAdd(null);
+      setPoLineAddError("");
+    } catch (error) {
+      setPoLineAddError(error?.message || "The product could not be added to this purchase order.");
     }
   };
   const [plan, setPlan] = useState(null);
@@ -12470,11 +12545,13 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const receiveBatch = (items) => update((d) => receivePurchases(d, items.map((po) => po.id)));
   const [poView, setPoView] = useState(null); // batch key being viewed
   const [poReportQuery, setPoReportQuery] = useState("");
+  const [poReportBranch, setPoReportBranch] = useState("all");
   const [poReportView, setPoReportView] = useState(null);
   const purchaseReports = useMemo(() => buildPurchaseOrderReports(data), [data]);
   const visiblePurchaseReports = useMemo(
-    () => searchPurchaseOrderReports(purchaseReports, poReportQuery),
-    [purchaseReports, poReportQuery],
+    () => searchPurchaseOrderReports(purchaseReports, poReportQuery)
+      .filter((report) => poReportBranch === "all" || report.branchIds.includes(poReportBranch)),
+    [purchaseReports, poReportQuery, poReportBranch],
   );
   return (
     <div className="purchase-workspace">
@@ -12622,6 +12699,10 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       >
       <div className="po-report-search">
         <div className="searchbox"><Search /><input value={poReportQuery} onChange={(event) => setPoReportQuery(event.target.value)} placeholder="Search PO number, product, supplier, branch, SKU, or category" /></div>
+        <select className="select" aria-label="Filter purchase orders by branch" value={poReportBranch} onChange={(event) => setPoReportBranch(event.target.value)}>
+          <option value="all">All branches</option>
+          {data.branches.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+        </select>
         <span className="sub">{visiblePurchaseReports.length} of {purchaseReports.length} files</span>
       </div>
       {(() => {
@@ -12686,8 +12767,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
                   <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
-                  <div><span>Quantity</span><b>{po.qty}</b></div>
-                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Updated by {po.orderCostEdits.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit cost</button>}</div>
+                  <div><span>Quantity</span><b>{po.qty}</b>{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</small>}</div>
+                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
                   {isAdmin && po.status === "received" && <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>}
                   {isAdmin && po.status !== "received" && <button className="smdel supplier-invoice-delete" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })} aria-label={`Delete ${po.productName}`}><Trash2 /></button>}
@@ -12697,16 +12778,17 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Updated by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td>{po.status === "received"
                       ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
-                      : <div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-ghost" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit cost</button><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button></div>}</td>}
+                      : <div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-ghost" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button></div>}</td>}
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
                 <div className="sub">Total <b style={{ color: "var(--text)", fontSize: 16 }}>{fmtExact(total, cur)}</b> · {items.length} line(s){!isAdmin && <span style={{ display: "block", marginTop: 4 }}>Read-only purchase record.</span>}</div>
                 <div style={{ display: "flex", gap: 8 }}>
+                  {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => openPendingLineAdd(items)}><Plus /> Add product</button>}
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => setReceiptCorrection({ ids: items.filter((po) => po.status !== "received").map((po) => po.id), label: head.batchNo || "this purchase" })}><Wrench /> Fix stale status</button>}
                   {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive stock</button>}
                   {isAdmin && canDeleteFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
@@ -12739,9 +12821,37 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
           </div>
         </div>
       )}
+      {poLineAdd && (
+        <div className="scrim" onClick={() => setPoLineAdd(null)}>
+          <div className="modal" style={{ maxWidth: 560 }} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div><div className="sub" style={{ margin: 0 }}>Pending purchase order</div><div className="title" style={{ fontSize: 19 }}><Plus /> Add product to {poLineAdd.batchNo}</div></div>
+              <button className="iconbtn" onClick={() => setPoLineAdd(null)}><X /></button>
+            </div>
+            <div className="notice" style={{ marginTop: 8 }}>This creates an outstanding line on the same purchase order. Stock is added only after the new line is received.</div>
+            <div className="grid2" style={{ marginTop: 14 }}>
+              <div><label className="label">Branch</label><select className="select" value={poLineAdd.branchId} onChange={(event) => { setPoLineAddError(""); updatePendingLineBranch(event.target.value); }}>{data.branches.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></div>
+              <div><label className="label">Supplier</label><select className="select" value={poLineAdd.supplierId} onChange={(event) => { setPoLineAddError(""); updatePendingLineSupplier(event.target.value); }}>{data.suppliers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></div>
+            </div>
+            <div className="field" style={{ marginTop: 12 }}><label className="label">Product</label><select className="select" value={poLineAdd.productId} onChange={(event) => { setPoLineAddError(""); updatePendingLineProduct(event.target.value); }}><option value="">Select product</option>{pendingLineProducts.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></div>
+            {pendingLineProducts.length === 0 && <div className="notice" style={{ marginTop: 10 }}>Every enabled product for this branch is already on the purchase order.</div>}
+            <div className="grid2" style={{ marginTop: 12 }}>
+              <div><label className="label">Ordered quantity</label><input className="input" inputMode="numeric" value={poLineAdd.quantity} onChange={(event) => { setPoLineAddError(""); setPoLineAdd((current) => ({ ...current, quantity: event.target.value.replace(/\D/g, "") })); }} placeholder="1" /></div>
+              <div><label className="label">Unit cost (KES)</label><input className="input" inputMode="decimal" value={poLineAdd.unitCost} onChange={(event) => { setPoLineAddError(""); setPoLineAdd((current) => ({ ...current, unitCost: cleanDecimalInput(event.target.value) })); }} placeholder="0.00" /></div>
+            </div>
+            <div className="field" style={{ marginTop: 12 }}><label className="label">Reason</label><input className="input" value={poLineAdd.reason} onChange={(event) => { setPoLineAddError(""); setPoLineAdd((current) => ({ ...current, reason: event.target.value })); }} /></div>
+            {poLineAddError && <div className="notice" style={{ marginTop: 10, color: "var(--danger)", borderColor: "var(--danger)" }}>{poLineAddError}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+              <button className="btn btn-ghost" onClick={() => setPoLineAdd(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={!pendingLineProducts.length || !poLineAdd.productId || !poLineAdd.supplierId} onClick={submitPendingLineAdd}><Plus /> Add to order</button>
+            </div>
+          </div>
+        </div>
+      )}
       {costRepair && (() => {
         const enteredUnitCostCents = (Number.parseFloat(costRepair.unitCost) || 0) * 100;
-        const correctedLineTotalCents = Math.round(costRepair.quantity * enteredUnitCostCents);
+        const enteredQuantity = Math.trunc(Number(costRepair.quantity) || 0);
+        const correctedLineTotalCents = Math.round(enteredQuantity * enteredUnitCostCents);
         const restoring = costRepair.mode === "restore";
         const editingOrder = costRepair.mode === "order";
         return (
@@ -12750,18 +12860,22 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
               <div className="modal-head">
                 <div>
                   <div className="sub" style={{ margin: 0 }}>{restoring ? "Purchase recovery" : editingOrder ? "Prepared purchase order" : "Purchase cost correction"}</div>
-                  <div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18 }} /> {restoring ? "Restore deleted line" : editingOrder ? "Edit order cost" : "Correct received cost"}</div>
+                  <div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18 }} /> {restoring ? "Restore deleted line" : editingOrder ? "Edit purchase order" : "Correct received cost"}</div>
                 </div>
                 <button className="iconbtn" onClick={() => setCostRepair(null)}><X /></button>
               </div>
               <div className="notice" style={{ marginTop: 8 }}>
                 <b>{costRepair.productName}</b> · {costRepair.quantity} unit{costRepair.quantity === 1 ? "" : "s"}<br />
                 {editingOrder
-                  ? "No stock has been received. This changes only the prepared order estimate; inventory quantities and costs stay unchanged."
+                  ? "Enter the quantity the supplier will actually deliver. Stock changes only when Receive is clicked."
                   : `Stock quantity and historical invoice profits will not be changed. The current ${costRepair.branchName} inventory cost will be recalculated.`}
               </div>
               {restoring && <div className="notice" style={{ marginTop: 8, borderColor: "var(--warn)" }}>The stock receipt already exists, so this restores only the missing PO-0043 document line.</div>}
               <div className="grid2" style={{ marginTop: 14 }}>
+                {editingOrder && <div>
+                  <label className="label">Delivered quantity</label>
+                  <input className="input" inputMode="numeric" value={costRepair.quantity} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, quantity: e.target.value.replace(/\D/g, "") })); }} />
+                </div>}
                 <div>
                   <label className="label">Previous unit cost</label>
                   <div className="input" style={{ display: "flex", alignItems: "center" }}>{fmtExact(costRepair.previousUnitCostCents, cur, 6)}</div>
@@ -12771,7 +12885,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                   <input className="input" inputMode="decimal" value={costRepair.unitCost} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, unitCost: cleanDecimalInput(e.target.value) })); }} />
                 </div>
               </div>
-              <div className="notice" style={{ marginTop: 10 }}>{editingOrder ? "Updated line total" : "Corrected line total"}: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
+              <div className="notice" style={{ marginTop: 10 }}>{editingOrder ? "Updated order total" : "Corrected line total"}: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
               <div className="field" style={{ marginTop: 12 }}>
                 <label className="label">Reason (required)</label>
                 <textarea className="input" style={{ minHeight: 78, resize: "vertical" }} value={costRepair.reason} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, reason: e.target.value })); }} placeholder="Example: supplier invoice cost was entered incorrectly" />
@@ -12779,7 +12893,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
               {costRepairError && <div className="notice" style={{ marginTop: 10, color: "var(--danger)", borderColor: "var(--danger)" }}>{costRepairError}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                 <button className="btn btn-ghost" onClick={() => setCostRepair(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={submitCostRepair}><Check /> {restoring ? "Restore & correct" : editingOrder ? "Save order cost" : "Save correction"}</button>
+                <button className="btn btn-primary" onClick={submitCostRepair}><Check /> {restoring ? "Restore & correct" : editingOrder ? "Save order changes" : "Save correction"}</button>
               </div>
             </div>
           </div>

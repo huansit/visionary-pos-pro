@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addOrderedPurchaseLine,
   correctReceivedPurchaseCost,
   purchaseRepairStockQuantity,
   recoverableDeletedPurchaseLines,
@@ -156,6 +157,87 @@ test("outstanding purchase cost can be replaced before receiving without changin
   assert.strictEqual(result.data.products, data.products);
 });
 
+test("outstanding purchase quantity can be reduced to the delivered amount without receiving stock", () => {
+  const data = baseData();
+  data.purchases[0].status = "ordered";
+  data.purchases[0].receivedAt = null;
+  data.purchases[0].qty = 10;
+  data.purchases[0].lineTotalCents = 100000;
+  const beforeMovements = data.stockMovements.length;
+
+  const result = updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedQuantity: 6,
+    updatedUnitCostCents: 10000,
+    reason: "Supplier delivered six of the ten units",
+    actor: { id: "u_admin", name: "Admin" },
+    updatedAt: 701,
+    idFactory: ids(),
+  });
+
+  assert.equal(result.purchase.qty, 6);
+  assert.equal(result.purchase.lineTotalCents, 60000);
+  assert.equal(result.audit.previousQuantity, 10);
+  assert.equal(result.audit.updatedQuantity, 6);
+  assert.equal(result.data.stockMovements.length, beforeMovements);
+});
+
+test("product can be added to a pending purchase order without creating stock", () => {
+  const data = baseData();
+  data.purchases[0].status = "ordered";
+  data.purchases[0].receivedAt = null;
+  data.products.push({ id: "p_2", name: "Product Two", sku: "CPT002" });
+  const beforeMovements = data.stockMovements.length;
+
+  const result = addOrderedPurchaseLine(data, {
+    batchId: "pb_43",
+    productId: "p_2",
+    branchId: "b_cpt",
+    supplierId: "s_1",
+    quantity: 4,
+    unitCostCents: 7500,
+    reason: "Product was omitted from the original order",
+    actor: { id: "u_admin", name: "Admin" },
+    addedAt: 702,
+    idFactory: ids(),
+  });
+
+  assert.equal(result.purchase.batchNo, "PO-0043");
+  assert.equal(result.purchase.productId, "p_2");
+  assert.equal(result.purchase.qty, 4);
+  assert.equal(result.purchase.lineTotalCents, 30000);
+  assert.equal(result.purchase.status, "ordered");
+  assert.equal(result.purchase.orderLineAddition.actorName, "Admin");
+  assert.equal(result.data.stockMovements.length, beforeMovements);
+});
+
+test("pending purchase order rejects duplicate products and invalid quantities", () => {
+  const data = baseData();
+  data.purchases[0].status = "ordered";
+  data.purchases[0].receivedAt = null;
+
+  assert.throws(() => addOrderedPurchaseLine(data, {
+    batchId: "pb_43", productId: "p_1", branchId: "b_cpt", supplierId: "s_1",
+    quantity: 1, unitCostCents: 10000, reason: "Duplicate product",
+  }), /already on the purchase order/);
+
+  data.products.push({ id: "p_2", name: "Product Two", sku: "CPT002" });
+  assert.throws(() => addOrderedPurchaseLine(data, {
+    batchId: "pb_43", productId: "p_2", branchId: "b_cpt", supplierId: "s_1",
+    quantity: 0, unitCostCents: 10000, reason: "No quantity",
+  }), /valid ordered quantity/);
+});
+
+test("received purchase order rejects additional products", () => {
+  const data = baseData();
+  data.products.push({ id: "p_2", name: "Product Two", sku: "CPT002" });
+
+  assert.throws(() => addOrderedPurchaseLine(data, {
+    batchId: "pb_43", productId: "p_2", branchId: "b_cpt", supplierId: "s_1",
+    quantity: 1, unitCostCents: 10000, reason: "Late addition",
+  }), /only be added while the purchase order is pending/);
+});
+
 test("outstanding cost edit rejects received, unchanged, and unexplained changes", () => {
   const data = baseData();
   assert.throws(() => updateOrderedPurchaseCost(data, {
@@ -175,4 +257,10 @@ test("outstanding cost edit rejects received, unchanged, and unexplained changes
     updatedUnitCostCents: 12500,
     reason: "",
   }), /correction reason/);
+  assert.throws(() => updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedQuantity: 0,
+    updatedUnitCostCents: 10000,
+    reason: "Supplier delivered none",
+  }), /valid delivered quantity/);
 });

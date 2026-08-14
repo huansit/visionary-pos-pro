@@ -162,27 +162,35 @@ function correctionMovement({ purchase, audit, correctedAt, idFactory }) {
 export function updateOrderedPurchaseCost(data, options = {}) {
   const purchase = (data?.purchases || []).find((entry) => entry.id === options.purchaseId);
   if (!purchase) throw new Error("Purchase line was not found.");
-  if (normalizedStatus(purchase.status) === "received") throw new Error("Received purchase costs must use the audited correction workflow.");
+  if (normalizedStatus(purchase.status) === "received") throw new Error("Received purchase costs and quantities must use the audited correction workflow.");
 
   const reason = requiredReason(options.reason);
-  const updatedUnitCostCents = preciseCents(options.updatedUnitCostCents);
-  if (!(updatedUnitCostCents > 0)) throw new Error("Enter a valid purchase unit cost.");
+  const previousQuantity = Math.trunc(Number(purchase.qty || 0));
+  const updatedQuantity = Math.trunc(Number(options.updatedQuantity ?? previousQuantity));
+  if (!(updatedQuantity > 0)) throw new Error("Enter a valid delivered quantity.");
   const previousUnitCostCents = purchaseRepairUnitCostCents(purchase);
-  if (Math.abs(updatedUnitCostCents - previousUnitCostCents) < 0.000001) throw new Error("The purchase cost is unchanged.");
+  const updatedUnitCostCents = preciseCents(options.updatedUnitCostCents ?? previousUnitCostCents);
+  if (!(updatedUnitCostCents > 0)) throw new Error("Enter a valid purchase unit cost.");
+  const quantityChanged = updatedQuantity !== previousQuantity;
+  const costChanged = Math.abs(updatedUnitCostCents - previousUnitCostCents) >= 0.000001;
+  if (!quantityChanged && !costChanged) throw new Error("The purchase order is unchanged.");
 
   const updatedAt = Number(options.updatedAt || Date.now());
   const audit = {
     id: makeId("poe", options.idFactory),
+    previousQuantity,
+    updatedQuantity,
     previousUnitCostCents,
-    previousLineTotalCents: Math.round(Number(purchase.qty || 0) * previousUnitCostCents),
+    previousLineTotalCents: Math.round(previousQuantity * previousUnitCostCents),
     updatedUnitCostCents,
-    updatedLineTotalCents: Math.round(Number(purchase.qty || 0) * updatedUnitCostCents),
+    updatedLineTotalCents: Math.round(updatedQuantity * updatedUnitCostCents),
     reason,
     updatedAt,
     ...actorFields(options.actor),
   };
   const updatedPurchase = {
     ...purchase,
+    qty: updatedQuantity,
     costCents: updatedUnitCostCents,
     lineTotalCents: audit.updatedLineTotalCents,
     orderCostEdits: [...(purchase.orderCostEdits || []), audit],
@@ -197,6 +205,70 @@ export function updateOrderedPurchaseCost(data, options = {}) {
     },
     purchase: updatedPurchase,
     audit,
+  };
+}
+
+export function addOrderedPurchaseLine(data, options = {}) {
+  const batchKey = String(options.batchId || "");
+  const batchLines = (data?.purchases || []).filter((purchase) => String(purchase.batchId || purchase.id) === batchKey);
+  if (!batchLines.length) throw new Error("Purchase order was not found.");
+  if (!batchLines.some((purchase) => normalizedStatus(purchase.status) !== "received")) {
+    throw new Error("Products can only be added while the purchase order is pending.");
+  }
+
+  const productId = String(options.productId || "");
+  const branchId = String(options.branchId || "");
+  const supplierId = String(options.supplierId || "");
+  const product = (data?.products || []).find((entry) => String(entry.id) === productId);
+  const branch = (data?.branches || []).find((entry) => String(entry.id) === branchId);
+  const supplier = (data?.suppliers || []).find((entry) => String(entry.id) === supplierId);
+  if (!product) throw new Error("Select a valid product.");
+  if (!branch) throw new Error("Select a valid branch.");
+  if (!supplier) throw new Error("Select a valid supplier.");
+  if (batchLines.some((purchase) => String(purchase.productId) === productId && String(purchase.branchId) === branchId)) {
+    throw new Error("This product is already on the purchase order. Edit its quantity instead.");
+  }
+
+  const quantity = Math.trunc(Number(options.quantity));
+  const unitCostCents = preciseCents(options.unitCostCents);
+  if (!(quantity > 0)) throw new Error("Enter a valid ordered quantity.");
+  if (!(unitCostCents > 0)) throw new Error("Enter a valid purchase unit cost.");
+  const reason = requiredReason(options.reason);
+  const addedAt = Number(options.addedAt || Date.now());
+  const head = batchLines[0];
+  const addition = {
+    id: makeId("poa", options.idFactory),
+    quantity,
+    unitCostCents,
+    reason,
+    addedAt,
+    ...actorFields(options.actor),
+  };
+  const purchase = {
+    id: makeId("po", options.idFactory),
+    batchId: head.batchId || batchKey,
+    batchNo: head.batchNo || null,
+    supplierId,
+    supplierName: supplier.name || "",
+    productId,
+    productName: product.name || "Product",
+    branchId,
+    qty: quantity,
+    costCents: unitCostCents,
+    lineTotalCents: Math.round(quantity * unitCostCents),
+    status: "ordered",
+    date: head.date || new Date(addedAt).toISOString().slice(0, 10),
+    ts: addedAt,
+    updatedAt: addedAt,
+    receivedAt: null,
+    orderLineAddition: addition,
+    synced: false,
+  };
+
+  return {
+    data: { ...data, purchases: [purchase, ...(data.purchases || [])] },
+    purchase,
+    audit: addition,
   };
 }
 
