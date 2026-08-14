@@ -119,6 +119,39 @@ test("voided invoices are excluded from invoice totals and detailed invoice resu
   assert.equal(audit.excludedVoidedInvoiceCount, 1);
 });
 
+test("approved void decisions exclude invoices whose stored status is still open", () => {
+  const pendingStatusInvoice = invoice({
+    id: "inv_287",
+    number: "RCP-SIP-000287",
+    branchId: "b_sip",
+    status: "open",
+    totalCents: 25000,
+    paidCents: 0,
+  });
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [pendingStatusInvoice],
+    referenceInvoices: [pendingStatusInvoice],
+    payments: [],
+    invoiceVoidRequests: [{ id: "void_request_287", invoiceId: "inv_287", requestedAt: 2000 }],
+    invoiceVoidDecisions: [{
+      id: "void_decision_287",
+      requestId: "void_request_287",
+      invoiceId: "inv_287",
+      decision: "approved",
+      decidedAt: 3000,
+    }],
+    branches,
+    now: 5000,
+  });
+
+  assert.equal(audit.invoices.length, 0);
+  assert.equal(audit.summary.invoiceCount, 0);
+  assert.equal(audit.summary.invoiceValueCents, 0);
+  assert.equal(audit.summary.voidedInvoiceCount, 1);
+  assert.equal(audit.excludedVoidedInvoiceCount, 1);
+});
+
 test("allocations to voided invoices are flagged without inflating active invoice allocations", () => {
   const voided = invoice({ id: "inv_void", number: "RCP-CPT-000002", status: "voided", totalCents: 10000, paidCents: 0 });
   const linked = transaction({

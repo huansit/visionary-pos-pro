@@ -1,3 +1,5 @@
+import { invoiceIsVoidedFromData } from "./invoiceVoidState.js";
+
 const ACTIVE = "active";
 const CAPTURED = "captured";
 
@@ -71,10 +73,6 @@ function invoiceStatus(invoice) {
   return lower(invoice?.status || "open");
 }
 
-function isVoided(invoice) {
-  return ["void", "voided", "cancelled", "canceled", "rejected"].includes(invoiceStatus(invoice));
-}
-
 function isPaidStatus(invoice) {
   return ["paid", "cleared", "settled"].includes(invoiceStatus(invoice));
 }
@@ -83,8 +81,8 @@ function isOpenStatus(invoice) {
   return ["open", "pending", "debt", "overdue", "partial", "partially_paid"].includes(invoiceStatus(invoice));
 }
 
-function isInvoiceDebt(invoice, balanceCents) {
-  if (balanceCents <= 0 || isVoided(invoice)) return false;
+function isInvoiceDebt(invoice, balanceCents, voided = false) {
+  if (balanceCents <= 0 || voided) return false;
   return invoice?.carriedOver === true
     || Number(invoice?.carriedOverAt || 0) > 0
     || Boolean(invoice?.closedDayId)
@@ -106,6 +104,8 @@ export function buildMpesaInvoiceAudit({
   invoices = [],
   referenceInvoices = invoices,
   payments = [],
+  invoiceVoidRequests = [],
+  invoiceVoidDecisions = [],
   branches = [],
   branchAuditStarts = null,
   auditPeriod = null,
@@ -113,6 +113,12 @@ export function buildMpesaInvoiceAudit({
   staleAfterMs = 24 * 60 * 60 * 1000,
   transactionScopeComplete = true,
 } = {}) {
+  const invoiceVoidData = {
+    invoices: referenceInvoices,
+    invoiceVoidRequests,
+    invoiceVoidDecisions,
+  };
+  const isVoidedInvoice = (invoice) => invoiceIsVoidedFromData(invoiceVoidData, invoice);
   const branchById = new Map(branches.map((branch) => [text(branch.id), branch]));
   const auditStartByBranch = branchAuditStarts === null
     ? null
@@ -124,8 +130,8 @@ export function buildMpesaInvoiceAudit({
   };
   const scopedTransactions = transactions.filter((transaction) => inAuditPeriod(transaction, transactionTimestamp(transaction)));
   const scopedInvoiceCandidates = invoices.filter((invoice) => inAuditPeriod(invoice, invoiceTimestamp(invoice)));
-  const excludedVoidedInvoices = scopedInvoiceCandidates.filter(isVoided);
-  const scopedInvoices = scopedInvoiceCandidates.filter((invoice) => !isVoided(invoice));
+  const excludedVoidedInvoices = scopedInvoiceCandidates.filter(isVoidedInvoice);
+  const scopedInvoices = scopedInvoiceCandidates.filter((invoice) => !isVoidedInvoice(invoice));
   const invoiceById = new Map([...referenceInvoices, ...invoices].map((invoice) => [text(invoice.id), invoice]));
   const auditPeriodStart = Math.max(0, Number(auditPeriod?.startedAt) || 0);
   const auditPeriodEnd = Math.max(0, Number(auditPeriod?.endedAt) || 0);
@@ -154,7 +160,7 @@ export function buildMpesaInvoiceAudit({
         invoiceNumber: allocation.invoiceNumber || (invoice ? invoiceReference(invoice) : ""),
         invoiceTimestamp: invoice ? invoiceTimestamp(invoice) : 0,
         invoicePeriodCategory: invoice ? invoicePeriodCategory(invoice) : "other_period",
-        invoiceVoided: Boolean(invoice && isVoided(invoice)),
+        invoiceVoided: Boolean(invoice && isVoidedInvoice(invoice)),
       };
     });
     const activeOffsets = uniqueById((transaction.offsets || []).filter(activeEntry));
@@ -191,7 +197,7 @@ export function buildMpesaInvoiceAudit({
         addIssue(issue({ code: "orphan_allocation", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation has no invoice", message: `${reference} allocates money to a missing invoice record.` }));
       } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId)) {
         addIssue(issue({ code: "allocation_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Branch mismatch", message: `${reference} is assigned to ${invoiceReference(invoice)} in a different branch.` }));
-      } else if (isVoided(invoice)) {
+      } else if (isVoidedInvoice(invoice)) {
         addIssue(issue({ code: "allocation_to_voided_invoice", severity: "critical", entityType: "transaction", entityId: id, title: "Money allocated to voided invoice", message: `${reference} still has an active allocation to voided invoice ${invoiceReference(invoice)}.` }));
       }
     });
@@ -205,7 +211,7 @@ export function buildMpesaInvoiceAudit({
         addIssue(issue({ code: "orphan_cash_offset", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset has no invoice", message: `${reference} offsets cash against a missing invoice record.` }));
       } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId)) {
         addIssue(issue({ code: "offset_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset branch mismatch", message: `${reference} offsets ${invoiceReference(invoice)} in a different branch.` }));
-      } else if (isVoided(invoice)) {
+      } else if (isVoidedInvoice(invoice)) {
         addIssue(issue({ code: "offset_to_voided_invoice", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset linked to voided invoice", message: `${reference} still has an active cash offset against voided invoice ${invoiceReference(invoice)}.` }));
       }
     });
@@ -303,8 +309,8 @@ export function buildMpesaInvoiceAudit({
     const offsetCents = activeOffsets.reduce((sum, offset) => sum + Math.max(0, cents(offset.amountCents)), 0);
     const rowIssues = [];
     const addIssue = (value) => { rowIssues.push(value); issues.push(value); };
-    const voided = isVoided(invoice);
-    const debt = isInvoiceDebt(invoice, balanceCents);
+    const voided = isVoidedInvoice(invoice);
+    const debt = isInvoiceDebt(invoice, balanceCents, voided);
 
     if (!voided && capturedPaymentCents !== storedPaidCents) {
       addIssue(issue({ code: "invoice_payment_total_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice paid total does not match payments", message: `${reference} records ${kes(storedPaidCents)} as paid, but its captured payment records total ${kes(capturedPaymentCents)}.` }));

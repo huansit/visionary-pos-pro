@@ -17515,11 +17515,13 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     invoices: scopedInvoices,
     referenceInvoices: data?.invoices || [],
     payments: data?.payments || [],
+    invoiceVoidRequests: data?.invoiceVoidRequests || [],
+    invoiceVoidDecisions: data?.invoiceVoidDecisions || [],
     branches,
     branchAuditStarts: ledger.integrationStarts,
     transactionScopeComplete: dateMode === "all",
     auditPeriod: dateMode === "all" || !rangeValid ? null : { startedAt: rangeFrom, endedAt: rangeTo },
-  }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, branches, dateMode, rangeValid, rangeFrom, rangeTo]);
+  }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, data?.invoiceVoidRequests, data?.invoiceVoidDecisions, branches, dateMode, rangeValid, rangeFrom, rangeTo]);
   const transactionById = useMemo(() => new Map(audit.transactions.map((entry) => [entry.id, entry])), [audit.transactions]);
   const invoiceById = useMemo(() => new Map(audit.invoices.map((entry) => [entry.id, entry])), [audit.invoices]);
   const needle = search.trim().toLowerCase();
