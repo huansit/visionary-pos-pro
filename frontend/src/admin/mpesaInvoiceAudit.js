@@ -91,18 +91,29 @@ export function buildMpesaInvoiceAudit({
   referenceInvoices = invoices,
   payments = [],
   branches = [],
+  branchAuditStarts = null,
   now = Date.now(),
   staleAfterMs = 24 * 60 * 60 * 1000,
   transactionScopeComplete = true,
 } = {}) {
   const branchById = new Map(branches.map((branch) => [text(branch.id), branch]));
+  const auditStartByBranch = branchAuditStarts === null
+    ? null
+    : new Map(Object.entries(branchAuditStarts).map(([branchId, timestamp]) => [text(branchId), Number(timestamp) || 0]));
+  const inAuditPeriod = (entry, timestamp) => {
+    if (auditStartByBranch === null) return true;
+    const start = auditStartByBranch.get(text(entry?.branchId)) || 0;
+    return start > 0 && timestamp >= start;
+  };
+  const scopedTransactions = transactions.filter((transaction) => inAuditPeriod(transaction, transactionTimestamp(transaction)));
+  const scopedInvoices = invoices.filter((invoice) => inAuditPeriod(invoice, invoiceTimestamp(invoice)));
   const invoiceById = new Map([...referenceInvoices, ...invoices].map((invoice) => [text(invoice.id), invoice]));
-  const transactionById = new Map(transactions.map((transaction) => [text(transaction.id), transaction]));
+  const transactionById = new Map(scopedTransactions.map((transaction) => [text(transaction.id), transaction]));
   const issues = [];
   const allocationsByInvoiceId = new Map();
   const offsetsByInvoiceId = new Map();
 
-  const transactionRows = transactions.map((transaction) => {
+  const transactionRows = scopedTransactions.map((transaction) => {
     const id = text(transaction.id);
     const reference = transactionReference(transaction);
     const amountCents = Math.max(0, cents(transaction.amountCents));
@@ -204,7 +215,7 @@ export function buildMpesaInvoiceAudit({
     paymentsByInvoiceId.get(invoiceId).push(payment);
   });
 
-  const invoiceRows = invoices.map((invoice) => {
+  const invoiceRows = scopedInvoices.map((invoice) => {
     const id = text(invoice.id);
     const reference = invoiceReference(invoice);
     const totalCents = Math.max(0, cents(invoice.totalCents));
@@ -312,5 +323,8 @@ export function buildMpesaInvoiceAudit({
     issues: issues.sort((left, right) => issueRank(left.severity) - issueRank(right.severity) || left.title.localeCompare(right.title)),
     summary,
     availableComment,
+    auditStartByBranch: auditStartByBranch === null ? null : Object.fromEntries(auditStartByBranch),
+    excludedTransactionCount: transactions.length - scopedTransactions.length,
+    excludedInvoiceCount: invoices.length - scopedInvoices.length,
   };
 }

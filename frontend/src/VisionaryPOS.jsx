@@ -17426,7 +17426,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   const [view, setView] = useState("issues");
   const [severity, setSeverity] = useState("all");
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [ledger, setLedger] = useState({ loading: true, refreshing: false, error: "", transactions: [], truncated: false });
+  const [ledger, setLedger] = useState({ loading: true, refreshing: false, error: "", transactions: [], truncated: false, integrationStarts: null });
 
   useEffect(() => {
     if (branchScope && branchScope !== "all" && branches.some((entry) => entry.id === branchScope)) return;
@@ -17470,11 +17470,29 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   useEffect(() => {
     let active = true;
     if (!branchScope || !rangeValid) {
-      setLedger((current) => ({ ...current, loading: false, refreshing: false, error: branchScope ? "Choose a complete and valid audit date range." : "Choose a branch to run the audit." }));
+      setLedger({
+        loading: false,
+        refreshing: false,
+        error: branchScope ? "Choose a complete and valid audit date range." : "Choose a branch to run the audit.",
+        transactions: [],
+        truncated: false,
+        integrationStarts: null,
+      });
       return () => { active = false; };
     }
-    setLedger((current) => ({ ...current, loading: current.transactions.length === 0, refreshing: current.transactions.length > 0, error: "" }));
+    setLedger({ loading: true, refreshing: false, error: "", transactions: [], truncated: false, integrationStarts: null });
     const load = async () => {
+      const scopedBranchIds = branchScope === "all"
+        ? branches.map((entry) => entry.id).filter(Boolean)
+        : [branchScope];
+      const integrationStarts = Object.fromEntries(scopedBranchIds.map((branchId) => [branchId, 0]));
+      await Promise.all(scopedBranchIds.map(async (branchId) => {
+        const firstPage = await listKopokopoTransactions({ branchId, status: "all", sort: "asc", limit: 1, offset: 0 });
+        const first = Array.isArray(firstPage.transactions) ? firstPage.transactions[0] : null;
+        const rawTimestamp = first?.originationTime || first?.createdAt || "";
+        const timestamp = typeof rawTimestamp === "number" ? rawTimestamp : Date.parse(rawTimestamp);
+        integrationStarts[branchId] = Number.isFinite(timestamp) ? timestamp : 0;
+      }));
       const transactions = [];
       let offset = 0;
       let total = Number.POSITIVE_INFINITY;
@@ -17495,7 +17513,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
         offset += rows.length;
       }
       if (!active) return;
-      setLedger({ loading: false, refreshing: false, error: "", transactions, truncated: transactions.length < total });
+      setLedger({ loading: false, refreshing: false, error: "", transactions, truncated: transactions.length < total, integrationStarts });
     };
     load().catch((error) => {
       if (!active) return;
@@ -17505,7 +17523,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       setLedger((current) => ({ ...current, loading: false, refreshing: false, error: message }));
     });
     return () => { active = false; };
-  }, [branchScope, rangeValid, apiFrom, apiTo, refreshNonce]);
+  }, [branchScope, branches, rangeValid, apiFrom, apiTo, refreshNonce]);
 
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
@@ -17520,18 +17538,21 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   const scopedInvoices = useMemo(() => (data?.invoices || []).filter((invoice) => {
     if (branchScope !== "all" && invoice.branchId !== branchScope) return false;
     const timestamp = invoiceIssuedTimestamp(invoice);
+    const integrationStart = ledger.integrationStarts?.[invoice.branchId] || 0;
+    if (integrationStart <= 0 || timestamp < integrationStart) return false;
     if (rangeFrom > 0 && timestamp < rangeFrom) return false;
     if (rangeTo > 0 && timestamp > rangeTo) return false;
     return true;
-  }), [data?.invoices, branchScope, rangeFrom, rangeTo]);
+  }), [data?.invoices, branchScope, rangeFrom, rangeTo, ledger.integrationStarts]);
   const audit = useMemo(() => buildMpesaInvoiceAudit({
     transactions: ledger.transactions,
     invoices: scopedInvoices,
     referenceInvoices: data?.invoices || [],
     payments: data?.payments || [],
     branches,
+    branchAuditStarts: ledger.integrationStarts,
     transactionScopeComplete: dateMode === "all",
-  }), [ledger.transactions, scopedInvoices, data?.invoices, data?.payments, branches, dateMode]);
+  }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, branches, dateMode]);
   const transactionById = useMemo(() => new Map(audit.transactions.map((entry) => [entry.id, entry])), [audit.transactions]);
   const invoiceById = useMemo(() => new Map(audit.invoices.map((entry) => [entry.id, entry])), [audit.invoices]);
   const needle = search.trim().toLowerCase();
@@ -17555,9 +17576,12 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     setDateMode(mode);
     if (mode !== "business") setBusinessDaySelection("current");
   };
-  const branchName = branchScope === "all" ? "All branches" : branches.find((entry) => entry.id === branchScope)?.name || "Branch";
+  const integrationStartEntries = Object.entries(ledger.integrationStarts || {}).filter(([, timestamp]) => timestamp > 0);
+  const integrationStartText = integrationStartEntries.length
+    ? integrationStartEntries.map(([branchId, timestamp]) => `${branches.find((entry) => entry.id === branchId)?.name || branchId}: ${formatBusinessDateTime(timestamp, timeZone)}`).join(" / ")
+    : "No verified M-Pesa integration history for this scope";
   const periodHeading = dateMode === "all"
-    ? "All recorded dates"
+    ? "Since M-Pesa integration"
     : dateMode === "business"
       ? `${selectedPeriod?.current ? "Current" : "Closed"} business day ${selectedPeriod?.businessDate || ""}`
       : "Custom date range";
@@ -17591,10 +17615,11 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       </select></label> : null}
       {dateMode === "range" ? <div className="audit-range-fields"><label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label><label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label></div> : null}
       <button type="button" className="btn audit-refresh" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button>
-      <div className="audit-period"><CalendarDays /><div><strong>{periodHeading}</strong><span>{dateMode === "all" ? `${branchName} / no date limit` : rangeValid ? `${formatBusinessDateTime(rangeFrom, timeZone)} to ${formatBusinessDateTime(rangeTo, timeZone)}` : "Choose both dates to run the audit"}</span></div></div>
+      <div className="audit-period"><CalendarDays /><div><strong>{periodHeading}</strong><span>{dateMode === "all" ? integrationStartText : rangeValid ? `${formatBusinessDateTime(rangeFrom, timeZone)} to ${formatBusinessDateTime(rangeTo, timeZone)}` : "Choose both dates to run the audit"}</span></div></div>
     </section>
 
     {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
+    {!ledger.loading && !ledger.error ? <div className="notice"><ShieldCheck /> Audit begins at the first verified Kopo Kopo transaction for each branch: {integrationStartText}. Earlier invoices and transactions are excluded.</div> : null}
     {ledger.truncated ? <div className="notice warn"><AlertCircle /> This scope contains more than {maxTransactions.toLocaleString()} M-Pesa records. Narrow the date range for a complete audit.</div> : null}
 
     <section className="audit-summary" aria-label="Audit totals">

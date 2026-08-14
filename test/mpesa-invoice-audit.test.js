@@ -131,3 +131,46 @@ test("invoice paid amount must agree with captured payments", () => {
   assert.ok(audit.issues.some((entry) => entry.code === "invoice_payment_total_mismatch"));
   assert.ok(audit.issues.some((entry) => entry.code === "paid_invoice_has_balance"));
 });
+
+test("audit excludes transactions and invoices created before each branch integration", () => {
+  const transactions = [
+    transaction({ id: "tx_cpt_before", branchId: "b_cpt", originationTime: new Date(1500).toISOString() }),
+    transaction({ id: "tx_cpt_after", branchId: "b_cpt", originationTime: new Date(2500).toISOString() }),
+    transaction({ id: "tx_sip_before", branchId: "b_sip", originationTime: new Date(3500).toISOString() }),
+    transaction({ id: "tx_sip_after", branchId: "b_sip", originationTime: new Date(4500).toISOString() }),
+  ].map((entry) => ({ ...entry, allocations: [], allocatedCents: 0, remainingCents: entry.amountCents }));
+  const invoices = [
+    invoice({ id: "inv_cpt_before", branchId: "b_cpt", ts: 1500 }),
+    invoice({ id: "inv_cpt_after", branchId: "b_cpt", ts: 2500 }),
+    invoice({ id: "inv_sip_before", branchId: "b_sip", ts: 3500 }),
+    invoice({ id: "inv_sip_after", branchId: "b_sip", ts: 4500 }),
+  ];
+
+  const audit = buildMpesaInvoiceAudit({
+    transactions,
+    invoices,
+    payments: [],
+    branches,
+    branchAuditStarts: { b_cpt: 2000, b_sip: 4000 },
+    now: 5000,
+  });
+
+  assert.deepEqual(audit.transactions.map((entry) => entry.id).sort(), ["tx_cpt_after", "tx_sip_after"]);
+  assert.deepEqual(audit.invoices.map((entry) => entry.id).sort(), ["inv_cpt_after", "inv_sip_after"]);
+  assert.equal(audit.excludedTransactionCount, 2);
+  assert.equal(audit.excludedInvoiceCount, 2);
+});
+
+test("a branch without verified Kopo Kopo history is not audited", () => {
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [invoice({ branchId: "b_sip", ts: 5000 })],
+    payments: [],
+    branches,
+    branchAuditStarts: { b_sip: 0 },
+    now: 6000,
+  });
+
+  assert.equal(audit.invoices.length, 0);
+  assert.equal(audit.excludedInvoiceCount, 1);
+});
