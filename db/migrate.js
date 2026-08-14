@@ -113,10 +113,18 @@ async function ensureKopokopoTransactionColumns() {
     ["purpose_changed_by", "text"],
     ["purpose_changed_by_name", "text"],
     ["purpose_note", "text"],
+    ["cross_branch_allowed", "boolean NOT NULL DEFAULT false"],
+    ["cross_branch_changed_at", "timestamptz"],
+    ["cross_branch_changed_by", "text"],
+    ["cross_branch_changed_by_name", "text"],
   ]) {
     if (!(await hasColumn("kopokopo_transactions", column))) {
       await pool.query(`ALTER TABLE kopokopo_transactions ADD COLUMN ${column} ${definition}`);
     }
+  }
+  const allocations = await pool.query("SELECT to_regclass('public.kopokopo_allocations') AS table_name");
+  if (allocations.rows[0]?.table_name && !(await hasColumn("kopokopo_allocations", "cross_branch_authorized"))) {
+    await pool.query("ALTER TABLE kopokopo_allocations ADD COLUMN cross_branch_authorized boolean NOT NULL DEFAULT false");
   }
   await pool.query(`
     CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx

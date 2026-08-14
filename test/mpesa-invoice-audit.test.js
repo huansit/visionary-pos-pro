@@ -56,12 +56,31 @@ test("stored used amount must match active allocation and offset links", () => {
   assert.ok(audit.issues.some((entry) => entry.code === "ledger_link_mismatch" && entry.severity === "critical"));
 });
 
-test("orphan and cross-branch allocations are flagged", () => {
+test("orphan and unauthorized cross-branch allocations are flagged", () => {
   const missing = transaction({ id: "tx_missing", allocations: [{ id: "a_missing", invoiceId: "none", amountCents: 5000 }], amountCents: 5000, allocatedCents: 5000 });
   const crossBranch = transaction({ id: "tx_cross", referenceMasked: "****CROSS", branchId: "b_sip" });
   const audit = buildMpesaInvoiceAudit({ transactions: [missing, crossBranch], invoices: [invoice()], payments: [], branches, now: 5000 });
   assert.ok(audit.issues.some((entry) => entry.code === "orphan_allocation"));
-  assert.ok(audit.issues.some((entry) => entry.code === "allocation_branch_mismatch"));
+  assert.ok(audit.issues.some((entry) => entry.code === "allocation_without_cross_branch_whitelist"));
+});
+
+test("an authorized cross-branch settlement stays valid after its whitelist is revoked", () => {
+  const crossBranch = transaction({
+    branchId: "b_sip",
+    crossBranchAllowed: false,
+    allocations: [{
+      id: "alloc_cross",
+      invoiceId: "inv_1",
+      invoiceNumber: "RCP-CPT-000001",
+      branchId: "b_cpt",
+      amountCents: 10000,
+      status: "active",
+      crossBranchAuthorized: true,
+    }],
+  });
+  const audit = buildMpesaInvoiceAudit({ transactions: [crossBranch], invoices: [invoice()], payments: [], branches, now: 5000 });
+  assert.ok(!audit.issues.some((entry) => entry.code === "allocation_without_cross_branch_whitelist"));
+  assert.ok(!audit.issues.some((entry) => entry.code === "allocation_target_branch_mismatch"));
 });
 
 test("a transaction can trace an invoice outside the selected report period", () => {

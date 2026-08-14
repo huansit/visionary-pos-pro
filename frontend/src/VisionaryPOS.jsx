@@ -1271,6 +1271,9 @@ async function listKopokopoTransactions(filters = {}) {
 async function setKopokopoTransactionPurpose(transactionId, purpose) {
   return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/purpose`, { purpose }, { session: true });
 }
+async function setKopokopoCrossBranchAccess(transactionId, allowed) {
+  return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/cross-branch`, { allowed }, { session: true });
+}
 async function listKopokopoInvoiceOffsets(invoiceIds = []) {
   const ids = [...new Set(invoiceIds.map((invoiceId) => String(invoiceId || "").trim()).filter(Boolean))];
   const offsetsByInvoiceId = Object.fromEntries(ids.map((invoiceId) => [invoiceId, []]));
@@ -8227,7 +8230,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
@@ -9145,7 +9148,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
         const mpesaPayments = paymentRecords.filter((payment) => payment.method === "m-pesa");
         const providerResult = await allocateKopokopoTransaction({
           transactionId: providerTransaction.id,
-          branchId: branch.id,
+          branchId: providerTransaction.branchId || branch.id,
           idempotencyKey: batchId,
           allocations: mpesaPayments.map((payment) => ({
             invoiceId: payment.invoiceId,
@@ -9933,7 +9936,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         const mpesaPayment = paymentRecords.find((payment) => payment.method === "m-pesa");
         const providerResult = await allocateKopokopoTransaction({
           transactionId: providerTransaction.id,
-          branchId: live.branchId,
+          branchId: providerTransaction.branchId || live.branchId,
           idempotencyKey: batchId,
           allocations: [{ invoiceId: live.id, amountCents: mpesaCents, localPaymentId: mpesaPayment.id }],
         });
@@ -17099,7 +17102,7 @@ function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved })
   </div>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false }) {
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false, canWhitelistCrossBranch = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -17116,6 +17119,8 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
   const [offsetTarget, setOffsetTarget] = useState(null);
   const [purposeBusyId, setPurposeBusyId] = useState("");
   const [purposeError, setPurposeError] = useState("");
+  const [crossBranchBusyId, setCrossBranchBusyId] = useState("");
+  const [crossBranchError, setCrossBranchError] = useState("");
   const [ledger, setLedger] = useState({
     loading: true,
     refreshing: false,
@@ -17219,7 +17224,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
     const onRealtime = (event) => {
       const detail = event.detail || {};
       const types = Array.isArray(detail.types) ? detail.types : [];
-      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation" || type === "kopokopoOffset")) return;
+      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation" || type === "kopokopoOffset" || type === "kopokopoCrossBranchAccess")) return;
       if (detail.branchId && detail.branchId !== selectedBranchId) return;
       refresh();
     };
@@ -17313,6 +17318,29 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       setPurposeBusyId("");
     }
   };
+  const changeCrossBranchAccess = async (transaction) => {
+    if (crossBranchBusyId) return;
+    const allow = !transaction.crossBranchAllowed;
+    const message = allow
+      ? "Allow this exact verified M-Pesa transaction to settle invoices from another branch? Its remaining balance can then be used across branches until you restrict it again."
+      : "Restrict this transaction to its receiving branch again? Existing allocations remain recorded, but no new cross-branch allocation will be allowed.";
+    if (!window.confirm(message)) return;
+    setCrossBranchBusyId(transaction.id);
+    setCrossBranchError("");
+    try {
+      await setKopokopoCrossBranchAccess(transaction.id, allow);
+      setRefreshNonce((value) => value + 1);
+    } catch (error) {
+      const messages = {
+        kopokopo_transaction_not_allocatable: "Only an active customer payment can be enabled for cross-branch settlement.",
+        kopokopo_transaction_fully_used: "This transaction has no available balance to use in another branch.",
+        branch_not_authorized: "Your account cannot change this transaction's branch access.",
+      };
+      setCrossBranchError(messages[error.message] || "Cross-branch access could not be changed. Refresh and try again.");
+    } finally {
+      setCrossBranchBusyId("");
+    }
+  };
   const transactionActionMenu = (transaction, mobile = false) => {
     const cashDepositAvailable = canOffset
       && transaction.allocatable !== false
@@ -17321,8 +17349,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
     const purposeChangeAvailable = canClassifyFunding
       && !transaction.reversedAt
       && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0);
-    if (!cashDepositAvailable && !purposeChangeAvailable) return null;
-    const busy = purposeBusyId === transaction.id;
+    const crossBranchChangeAvailable = canWhitelistCrossBranch
+      && transaction.allocatable !== false
+      && !transaction.reversedAt
+      && (transaction.crossBranchAllowed || Number(transaction.remainingCents || 0) > 0);
+    if (!cashDepositAvailable && !purposeChangeAvailable && !crossBranchChangeAvailable) return null;
+    const busy = purposeBusyId === transaction.id || crossBranchBusyId === transaction.id;
     return <label className={`mpesa-transaction-actions${mobile ? " mobile" : ""}`}>
       <MoreVertical aria-hidden="true" />
       <select
@@ -17333,11 +17365,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
           const action = event.target.value;
           if (action === "cash_deposit") setOffsetTarget(transaction);
           if (action === "stock_funding") void changeTransactionPurpose(transaction);
+          if (action === "cross_branch") void changeCrossBranchAccess(transaction);
         }}
       >
         <option value="" disabled>{busy ? "Saving..." : "Actions"}</option>
         {cashDepositAvailable ? <option value="cash_deposit">Cash deposit</option> : null}
         {purposeChangeAvailable ? <option value="stock_funding">{transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark stock funding"}</option> : null}
+        {crossBranchChangeAvailable ? <option value="cross_branch">{transaction.crossBranchAllowed ? "Restrict to receiving branch" : "Allow cross-branch invoices"}</option> : null}
       </select>
       <ChevronDown aria-hidden="true" />
     </label>;
@@ -17380,6 +17414,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       <div className="mpesa-transaction-results">
         {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
         {purposeError ? <div className="errorbox">{purposeError}</div> : null}
+        {crossBranchError ? <div className="errorbox">{crossBranchError}</div> : null}
         {!ledger.error && ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading M-Pesa transactions...</div> : null}
         {!ledger.error && !ledger.loading && ledger.transactions.length === 0 ? <div className="notice">No M-Pesa transactions match these filters.</div> : null}
 
@@ -17395,14 +17430,14 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
                   <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
-                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transactionActionMenu(transaction)}</div></td>
+                  <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction)}</div></td>
                 </tr>); })}</tbody>
             </table>
           </div>
           <div className="mpesa-ledger-mobile">{ledger.transactions.map((transaction) => { const transactionStatus = kopokopoLedgerStatus(transaction); return (
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
-              <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transactionActionMenu(transaction, true)}</div>
+              <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction, true)}</div>
               <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
         </> : null}

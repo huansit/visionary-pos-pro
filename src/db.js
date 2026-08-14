@@ -170,12 +170,21 @@ async function applyMySqlSchema() {
     "purpose_changed_by varchar(191)",
     "purpose_changed_by_name varchar(255)",
     "purpose_note varchar(500)",
+    "cross_branch_allowed boolean NOT NULL DEFAULT false",
+    "cross_branch_changed_at datetime",
+    "cross_branch_changed_by varchar(191)",
+    "cross_branch_changed_by_name varchar(255)",
   ]) {
     try {
       await pool.query(`ALTER TABLE kopokopo_transactions ADD COLUMN ${definition}`);
     } catch (error) {
       if (error?.code !== "ER_DUP_FIELDNAME") throw error;
     }
+  }
+  try {
+    await pool.query("ALTER TABLE kopokopo_allocations ADD COLUMN cross_branch_authorized boolean NOT NULL DEFAULT false");
+  } catch (error) {
+    if (error?.code !== "ER_DUP_FIELDNAME") throw error;
   }
   try {
     await pool.query("CREATE INDEX kopokopo_transactions_phone_lookup_idx ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time)");

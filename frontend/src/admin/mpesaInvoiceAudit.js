@@ -195,8 +195,10 @@ export function buildMpesaInvoiceAudit({
       const invoice = invoiceById.get(invoiceId);
       if (!invoice) {
         addIssue(issue({ code: "orphan_allocation", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation has no invoice", message: `${reference} allocates money to a missing invoice record.` }));
-      } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId)) {
-        addIssue(issue({ code: "allocation_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Branch mismatch", message: `${reference} is assigned to ${invoiceReference(invoice)} in a different branch.` }));
+      } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId) && !allocation.crossBranchAuthorized && !transaction.crossBranchAllowed) {
+        addIssue(issue({ code: "allocation_without_cross_branch_whitelist", severity: "critical", entityType: "transaction", entityId: id, title: "Cross-branch allocation was not authorized", message: `${reference} is assigned to ${invoiceReference(invoice)} in a different branch without an active exact-transaction whitelist.` }));
+      } else if (text(allocation.branchId) && text(invoice.branchId) && text(allocation.branchId) !== text(invoice.branchId)) {
+        addIssue(issue({ code: "allocation_target_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation ledger branch is incorrect", message: `${reference} is assigned to ${invoiceReference(invoice)}, but its allocation is recorded against a different branch.` }));
       } else if (isVoidedInvoice(invoice)) {
         addIssue(issue({ code: "allocation_to_voided_invoice", severity: "critical", entityType: "transaction", entityId: id, title: "Money allocated to voided invoice", message: `${reference} still has an active allocation to voided invoice ${invoiceReference(invoice)}.` }));
       }

@@ -84,6 +84,7 @@ function publicTransaction(row) {
   const transactionKind = kopokopoTransactionKind(providerTopic);
   const purpose = transactionPurpose(row);
   const allocatable = !reversed && purpose !== "stock_funding";
+  const crossBranchAllowedValue = row.cross_branch_allowed ?? row.crossBranchAllowed;
   return {
     id: row.id,
     referenceMasked: `****${referenceLast4}`,
@@ -107,6 +108,9 @@ function publicTransaction(row) {
     purposeChangedAt: row.purpose_changed_at ?? row.purposeChangedAt ?? null,
     purposeChangedByName: row.purpose_changed_by_name ?? row.purposeChangedByName ?? null,
     purposeNote: row.purpose_note ?? row.purposeNote ?? null,
+    crossBranchAllowed: crossBranchAllowedValue === true || Number(crossBranchAllowedValue) === 1,
+    crossBranchChangedAt: row.cross_branch_changed_at ?? row.crossBranchChangedAt ?? null,
+    crossBranchChangedByName: row.cross_branch_changed_by_name ?? row.crossBranchChangedByName ?? null,
   };
 }
 
@@ -224,11 +228,14 @@ function ledgerBranchPeriods(value) {
 function publicAllocation(row, invoicePayload = null) {
   const payload = invoicePayload || {};
   const invoiceId = row.invoice_id ?? row.invoiceId;
+  const crossBranchAuthorizedValue = row.cross_branch_authorized ?? row.crossBranchAuthorized;
   return {
     id: row.id,
     invoiceId,
     invoiceNumber: payload.number || payload.invoiceNumber || payload.receiptNo || invoiceId,
     amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
+    branchId: row.branch_id ?? row.branchId ?? null,
+    crossBranchAuthorized: crossBranchAuthorizedValue === true || Number(crossBranchAuthorizedValue) === 1,
     status: row.status || "active",
     allocatedByName: row.allocated_by_name ?? row.allocatedByName ?? null,
     allocatedAt: row.allocated_at ?? row.allocatedAt ?? null,
@@ -242,6 +249,7 @@ function publicOffset(row, invoicePayload = null) {
     id: row.id,
     invoiceId,
     invoiceNumber: payload.number || payload.invoiceNumber || payload.receiptNo || invoiceId,
+    branchId: row.branch_id ?? row.branchId ?? payload.branchId ?? null,
     amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
     reason: row.reason || "cash_to_till",
     note: row.note || null,
@@ -462,7 +470,7 @@ async function createKopokopoCashOffsets({ transactionId, offsets, branchId, not
   });
 }
 
-async function validateAllocationInvoices(client, allocations, branchId, syntheticInvoices = new Map()) {
+async function validateAllocationInvoices(client, allocations, sourceBranchId, transaction, account, syntheticInvoices = new Map()) {
   const invoiceIds = allocations.map((entry) => entry.invoiceId);
   const placeholders = invoiceIds.map((_, index) => `$${index + 1}`).join(", ");
   const storedInvoiceIds = invoiceIds.filter((id) => !syntheticInvoices.has(id));
@@ -481,12 +489,32 @@ async function validateAllocationInvoices(client, allocations, branchId, synthet
   }
   const invoiceById = new Map(storedInvoices.map((row) => [row.id, row]));
   for (const [id, invoice] of syntheticInvoices) invoiceById.set(id, invoice);
+  const crossBranchAllowedValue = transaction?.cross_branch_allowed ?? transaction?.crossBranchAllowed;
+  const crossBranchAllowed = crossBranchAllowedValue === true || Number(crossBranchAllowedValue) === 1;
+  for (const allocation of allocations) {
+    const invoice = invoiceById.get(allocation.invoiceId);
+    if (!invoice) return { conflict: "kopokopo_invoice_not_found", invoiceId: allocation.invoiceId };
+    const payload = invoice.payload || {};
+    const invoiceBranchId = String(invoice.branch_id ?? invoice.branchId ?? payload.branchId ?? "").trim();
+    if (!invoiceBranchId) return { conflict: "kopokopo_invoice_branch_mismatch", invoiceId: allocation.invoiceId };
+    if (invoiceBranchId !== sourceBranchId) {
+      if (!crossBranchAllowed) {
+        return { conflict: "kopokopo_cross_branch_not_whitelisted", invoiceId: allocation.invoiceId };
+      }
+      if (!accountCanAccessBranch(account, invoiceBranchId)) {
+        return { forbidden: "branch_not_authorized", invoiceId: allocation.invoiceId };
+      }
+    }
+    allocation.branchId = invoiceBranchId;
+  }
+  const invoiceBranchIds = [...new Set(allocations.map((entry) => entry.branchId))];
+  const branchPlaceholders = invoiceBranchIds.map((_, index) => `$${index + 1}`).join(", ");
   const relatedEvents = await client.query(
     `SELECT id, type, payload
        FROM events
       WHERE type IN ('payment', 'invoiceVoidDecision')
-        AND (branch_id = $1 OR branch_id IS NULL)`,
-    [branchId]
+        AND (branch_id IN (${branchPlaceholders}) OR branch_id IS NULL)`,
+    invoiceBranchIds
   );
   const paymentIds = new Set();
   const paidByInvoice = new Map();
@@ -522,12 +550,7 @@ async function validateAllocationInvoices(client, allocations, branchId, synthet
 
   for (const allocation of allocations) {
     const invoice = invoiceById.get(allocation.invoiceId);
-    if (!invoice) return { conflict: "kopokopo_invoice_not_found", invoiceId: allocation.invoiceId };
     const payload = invoice.payload || {};
-    const invoiceBranchId = String(invoice.branch_id ?? invoice.branchId ?? payload.branchId ?? "").trim();
-    if (!invoiceBranchId || invoiceBranchId !== branchId) {
-      return { conflict: "kopokopo_invoice_branch_mismatch", invoiceId: allocation.invoiceId };
-    }
     if (voidedInvoiceIds.has(allocation.invoiceId) || String(payload.status || "").toLowerCase() === "voided") {
       return { conflict: "kopokopo_invoice_voided", invoiceId: allocation.invoiceId };
     }
@@ -573,7 +596,6 @@ async function allocateKopokopoPayment({
         const requestedEntry = allocations.find((entry) => entry.invoiceId === (row.invoice_id ?? row.invoiceId));
         return requestedEntry
           && (row.transaction_id ?? row.transactionId) === transactionId
-          && (row.branch_id ?? row.branchId) === branchId
           && Number(row.amount_cents ?? row.amountCents) === requestedEntry.amountCents
           && (row.local_payment_id ?? row.localPaymentId) === requestedEntry.localPaymentId;
       });
@@ -598,19 +620,27 @@ async function allocateKopokopoPayment({
     if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
     const remaining = Number(transaction.amount_cents) - Number(transaction.allocated_cents);
     if (requestedTotal > remaining) return { conflict: "kopokopo_amount_exceeds_balance", remainingCents: Math.max(0, remaining) };
-    const invoiceConflict = await validateAllocationInvoices(client, allocations, branchId, syntheticInvoices);
+    const invoiceConflict = await validateAllocationInvoices(
+      client,
+      allocations,
+      branchId,
+      transaction,
+      account,
+      syntheticInvoices
+    );
     if (invoiceConflict) return invoiceConflict;
 
     const inserted = [];
     for (const entry of allocations) {
       const id = `kpa_${crypto.randomUUID()}`;
+      const crossBranchAuthorized = entry.branchId !== branchId;
       const saved = await client.query(
         `INSERT INTO kopokopo_allocations
-          (id, transaction_id, invoice_id, branch_id, amount_cents, allocated_by, allocated_by_name, batch_idempotency_key, local_payment_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [id, transactionId, entry.invoiceId, branchId, entry.amountCents, account?.id || null, account?.name || null, idempotencyKey, entry.localPaymentId]
+          (id, transaction_id, invoice_id, branch_id, amount_cents, cross_branch_authorized, allocated_by, allocated_by_name, batch_idempotency_key, local_payment_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [id, transactionId, entry.invoiceId, entry.branchId, entry.amountCents, crossBranchAuthorized, account?.id || null, account?.name || null, idempotencyKey, entry.localPaymentId]
       );
-      inserted.push({ id, transactionId, invoiceId: entry.invoiceId, branchId, amountCents: entry.amountCents, localPaymentId: entry.localPaymentId, raw: saved.raw || null });
+      inserted.push({ id, transactionId, invoiceId: entry.invoiceId, branchId: entry.branchId, amountCents: entry.amountCents, crossBranchAuthorized, localPaymentId: entry.localPaymentId, raw: saved.raw || null });
     }
     await client.query(
       `UPDATE kopokopo_transactions
@@ -1070,7 +1100,8 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const result = await q(
       `SELECT id, webhook_event_id, reference_last4, amount_cents, allocated_cents, currency, status, till_number,
               branch_id, payer_name, payer_phone_last4, origination_time, reversed_at, created_at,
-              purpose, purpose_changed_at, purpose_changed_by_name, purpose_note
+              purpose, purpose_changed_at, purpose_changed_by_name, purpose_note,
+              cross_branch_allowed, cross_branch_changed_at, cross_branch_changed_by_name
          FROM kopokopo_transactions
         WHERE ${where}
         ORDER BY COALESCE(origination_time, created_at) ${sort}, created_at ${sort}, id ${sort}
@@ -1107,7 +1138,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
       const transactionPlaceholders = transactionIds.map((_, index) => `$${index + 1}`).join(", ");
       const [allocationResult, offsetResult] = await Promise.all([
         q(
-          `SELECT id, transaction_id, invoice_id, amount_cents, status, allocated_by_name, allocated_at
+          `SELECT id, transaction_id, invoice_id, branch_id, amount_cents, cross_branch_authorized, status, allocated_by_name, allocated_at
              FROM kopokopo_allocations
             WHERE transaction_id IN (${transactionPlaceholders})
             ORDER BY allocated_at, id`,
@@ -1312,6 +1343,64 @@ router.post("/transactions/:id/purpose", requireOwnerOrAdmin, async (req, res) =
   }
 });
 
+router.post("/transactions/:id/cross-branch", requireOwnerOrAdmin, async (req, res) => {
+  try {
+    const transactionId = identifier(req.params.id);
+    const allowed = req.body?.allowed;
+    if (!transactionId || typeof allowed !== "boolean") {
+      return res.status(400).json({ error: "invalid_kopokopo_cross_branch_request" });
+    }
+
+    const result = await tx(async (client) => {
+      const locked = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
+      const transaction = locked.rows[0];
+      if (!transaction) return { notFound: true };
+      const branchId = configuredTransactionBranch(transaction)
+        || String(transaction.branch_id ?? transaction.branchId ?? "").trim();
+      if (!branchId || !accountCanAccessBranch(req.account, branchId)) return { forbidden: true };
+      await attachProviderTopic(client, transaction);
+      if (allowed && (!transactionCanAllocate(transaction) || !transactionStatusAvailable(transaction))) {
+        return { conflict: "kopokopo_transaction_unavailable" };
+      }
+      const currentValue = transaction.cross_branch_allowed ?? transaction.crossBranchAllowed;
+      const currentAllowed = currentValue === true || Number(currentValue) === 1;
+      if (currentAllowed === allowed) {
+        return { duplicate: true, branchId, transaction: publicTransaction(transaction) };
+      }
+
+      await client.query(
+        `UPDATE kopokopo_transactions
+            SET cross_branch_allowed = $2,
+                cross_branch_changed_at = ${isMySql ? "NOW()" : "now()"},
+                cross_branch_changed_by = $3,
+                cross_branch_changed_by_name = $4,
+                updated_at = ${isMySql ? "NOW()" : "now()"}
+          WHERE id = $1`,
+        [transactionId, allowed, req.account?.id || null, req.account?.name || null]
+      );
+      const updated = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+      await attachProviderTopic(client, updated.rows[0]);
+      return { duplicate: false, branchId, transaction: publicTransaction(updated.rows[0]) };
+    });
+
+    if (result.notFound) return res.status(404).json({ error: "kopokopo_transaction_not_found" });
+    if (result.forbidden) return res.status(403).json({ error: "branch_not_authorized" });
+    if (result.conflict) return res.status(409).json({ error: result.conflict });
+    if (!result.duplicate) {
+      publishRealtimeEvent("kopokopo", {
+        source: "kopokopo",
+        branchId: result.branchId,
+        accepted: 1,
+        types: ["kopokopoCrossBranchAccess"],
+      });
+    }
+    return res.json({ duplicate: result.duplicate, transaction: result.transaction });
+  } catch (error) {
+    console.error("Kopo Kopo cross-branch access update failed:", error);
+    return res.status(500).json({ error: "kopokopo_cross_branch_update_failed" });
+  }
+});
+
 router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) => {
   try {
     const config = kopokopoConfig();
@@ -1327,7 +1416,9 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
               transaction_row.amount_cents, transaction_row.allocated_cents, transaction_row.currency,
               transaction_row.status, transaction_row.till_number, transaction_row.branch_id,
               transaction_row.payer_name, transaction_row.payer_phone_last4, transaction_row.origination_time,
-              transaction_row.reversed_at, transaction_row.purpose, event_row.topic AS provider_topic
+              transaction_row.reversed_at, transaction_row.purpose,
+              transaction_row.cross_branch_allowed, transaction_row.cross_branch_changed_at,
+              transaction_row.cross_branch_changed_by_name, event_row.topic AS provider_topic
          FROM kopokopo_transactions transaction_row
          LEFT JOIN kopokopo_webhook_events event_row ON event_row.event_id = transaction_row.webhook_event_id
         WHERE transaction_row.reference_last4 = $1
@@ -1340,7 +1431,14 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
       [last4]
     );
     const transactions = result.rows
-      .filter((transaction) => transactionBelongsToBranch(transaction, branchId))
+      .filter((transaction) => {
+        const sourceBranchId = configuredTransactionBranch(transaction)
+          || String(transaction.branch_id ?? transaction.branchId ?? "").trim();
+        if (sourceBranchId === branchId) return true;
+        const flag = transaction.cross_branch_allowed ?? transaction.crossBranchAllowed;
+        const crossBranchAllowed = flag === true || Number(flag) === 1;
+        return crossBranchAllowed && sourceBranchId && accountCanAccessBranch(req.account, sourceBranchId);
+      })
       .filter(transactionCanAllocate)
       .slice(0, 20)
       .map(publicTransaction);
@@ -1448,13 +1546,22 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
         invoiceRemainingCents: result.invoiceRemainingCents,
       });
     }
+    if (result.forbidden) {
+      return res.status(403).json({ error: result.forbidden, invoiceId: result.invoiceId });
+    }
     if (!result.duplicate) {
-      publishRealtimeEvent("kopokopo", {
-        source: "kopokopo",
+      const affectedBranchIds = new Set([
         branchId,
-        accepted: result.allocations.length,
-        types: ["kopokopoAllocation"],
-      });
+        ...result.allocations.map((allocation) => allocation.branchId).filter(Boolean),
+      ]);
+      for (const affectedBranchId of affectedBranchIds) {
+        publishRealtimeEvent("kopokopo", {
+          source: "kopokopo",
+          branchId: affectedBranchId,
+          accepted: result.allocations.length,
+          types: ["kopokopoAllocation"],
+        });
+      }
     }
     return res.json(result);
   } catch (error) {

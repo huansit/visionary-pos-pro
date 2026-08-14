@@ -2098,7 +2098,7 @@ test("allocates atomically, rejects excess, and makes retries idempotent", async
   assert.equal(excess.body.remainingCents, 50000);
 });
 
-test("rejects allocations for missing, cross-branch, or overpaid invoices", async () => {
+test("keeps payments branch-scoped until an admin whitelists the exact transaction", async () => {
   await request(app)
     .post("/api/integrations/kopokopo/allocations")
     .set("X-Session-Token", sessionToken)
@@ -2121,7 +2121,67 @@ test("rejects allocations for missing, cross-branch, or overpaid invoices", asyn
       allocations: [{ invoiceId: "inv-cpt", amountCents: 100, localPaymentId: "cross-branch-pay" }],
     })
     .expect(409)
-    .expect((response) => assert.equal(response.body.error, "kopokopo_invoice_branch_mismatch"));
+    .expect((response) => assert.equal(response.body.error, "kopokopo_cross_branch_not_whitelisted"));
+
+  await request(app)
+    .post("/api/integrations/kopokopo/transactions/txn-1/cross-branch")
+    .set("X-Session-Token", cashierSessionToken)
+    .send({ allowed: true })
+    .expect(403)
+    .expect({ error: "insufficient_role" });
+
+  const enabled = await request(app)
+    .post("/api/integrations/kopokopo/transactions/txn-1/cross-branch")
+    .set("X-Session-Token", sessionToken)
+    .send({ allowed: true })
+    .expect(200);
+  assert.equal(enabled.body.duplicate, false);
+  assert.equal(enabled.body.transaction.crossBranchAllowed, true);
+  assert.equal(enabled.body.transaction.crossBranchChangedByName, "Kopo Admin");
+  assert.deepEqual(getLatestRealtimeEvent("kopokopo").types, ["kopokopoCrossBranchAccess"]);
+
+  const crossBranchLookup = await request(app)
+    .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_cpt&last4=12CD")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(crossBranchLookup.body.transactions.length, 1);
+  assert.equal(crossBranchLookup.body.transactions[0].id, "txn-1");
+
+  const allocated = await request(app)
+    .post("/api/integrations/kopokopo/allocations")
+    .set("X-Session-Token", sessionToken)
+    .send({
+      transactionId: "txn-1",
+      branchId: "b_sip",
+      idempotencyKey: "whitelisted-cross-branch-batch",
+      allocations: [{ invoiceId: "inv-cpt", amountCents: 100, localPaymentId: "cross-branch-pay" }],
+    })
+    .expect(200);
+  assert.equal(allocated.body.duplicate, false);
+  assert.equal(allocated.body.allocations[0].branchId, "b_cpt");
+  assert.equal(allocated.body.allocations[0].crossBranchAuthorized, true);
+
+  const ledger = await request(app)
+    .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=000001")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  const ledgerTransaction = ledger.body.transactions.find((transaction) => transaction.id === "txn-1");
+  const crossBranchAllocation = ledgerTransaction.allocations.find((allocation) => allocation.invoiceId === "inv-cpt");
+  assert.equal(crossBranchAllocation.branchId, "b_cpt");
+  assert.equal(crossBranchAllocation.crossBranchAuthorized, true);
+
+  const disabled = await request(app)
+    .post("/api/integrations/kopokopo/transactions/txn-1/cross-branch")
+    .set("X-Session-Token", sessionToken)
+    .send({ allowed: false })
+    .expect(200);
+  assert.equal(disabled.body.transaction.crossBranchAllowed, false);
+
+  const lockedLookup = await request(app)
+    .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_cpt&last4=12CD")
+    .set("X-Session-Token", sessionToken)
+    .expect(200);
+  assert.equal(lockedLookup.body.transactions.length, 0);
 
   await request(app)
     .post("/api/integrations/kopokopo/allocations")
