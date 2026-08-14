@@ -93,16 +93,22 @@ export function buildPurchaseLotTrace(data = {}) {
     if (movement.transferId) {
       const cargo = transferCargo.get(transferKey(movement.transferId, movement.productId)) || [];
       let carried = 0;
+      const received = [];
       for (const sourceLot of cargo) {
         if (carried >= qty) break;
         const amount = Math.min(positiveNumber(sourceLot.qty), qty - carried);
         if (!(amount > 0)) continue;
-        queue.push({ ...sourceLot, qtyReceived: amount, qtyRemaining: amount, transferredAt: movement.ts });
+        const transferredLot = { ...sourceLot, qty: amount, qtyReceived: amount, qtyRemaining: amount, transferredAt: movement.ts };
+        queue.push(transferredLot);
+        received.push({ ...transferredLot });
         carried += amount;
       }
       if (carried < qty) {
-        queue.push({ tracked: false, reference: "Legacy/untracked stock", qtyReceived: qty - carried, qtyRemaining: qty - carried, receivedAt: movement.ts });
+        const untracked = { tracked: false, reference: "Legacy/untracked stock", qty: qty - carried, qtyReceived: qty - carried, qtyRemaining: qty - carried, receivedAt: movement.ts };
+        queue.push(untracked);
+        received.push({ ...untracked });
       }
+      allocations.set(movement.id, received);
       continue;
     }
 

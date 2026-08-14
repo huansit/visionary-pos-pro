@@ -29,6 +29,11 @@ import {
   formatPurchaseLotStamp,
   nextPurchaseOrderNumber,
 } from "./admin/purchaseLotTraceability.js";
+import {
+  buildPurchaseOrderReports,
+  purchaseOrderReportCsv,
+  searchPurchaseOrderReports,
+} from "./admin/purchaseOrderReport.js";
 import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
   addPurchaseOrderProduct,
@@ -5003,6 +5008,41 @@ body{overscroll-behavior:none}
 .purchase-plan-footer b{font:750 16px var(--font-mono)}
 .purchase-plan-footer .purchase-plan-total b{color:var(--accent)}
 @media(max-width:720px){.purchase-plan{padding:12px}.purchase-plan-controls{grid-template-columns:1fr 1fr}.purchase-plan-controls label:first-child{grid-column:1/-1}.purchase-plan-add{grid-template-columns:1fr 1fr}.purchase-plan-add label:first-child{grid-column:1/-1}.purchase-plan-add .btn{width:100%}.purchase-plan-footer{display:grid;grid-template-columns:1fr 1fr}.purchase-plan-footer .btn{width:100%}.purchase-plan-head .sub{white-space:normal}}
+.po-report-search{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border-soft)}
+.po-report-search .searchbox{flex:1;min-width:0;margin:0}
+.po-report-search .sub{white-space:nowrap}
+.po-report-row-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.po-report-modal{width:min(1120px,calc(100vw - 32px));max-width:1120px;max-height:calc(100dvh - 32px);overflow:auto;padding:0}
+.po-report-modal-head{position:sticky;top:0;z-index:3;padding:18px 20px 14px;background:var(--surface);border-bottom:1px solid var(--border-soft)}
+.po-report-modal-body{padding:16px 20px 22px}
+.po-report-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.po-report-heading>div{min-width:0}
+.po-report-heading .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.po-report-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.po-report-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border-soft);border-radius:8px;overflow:hidden;background:var(--surface-2)}
+.po-report-stat{min-height:76px;padding:12px 14px;border-right:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
+.po-report-stat:nth-child(4n){border-right:0}.po-report-stat:nth-last-child(-n+4){border-bottom:0}
+.po-report-stat span{display:block;font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:800}
+.po-report-stat b{display:block;margin-top:4px;font:750 17px var(--font-mono);color:var(--text)}
+.po-report-stat small{display:block;margin-top:3px;color:var(--muted);font-size:10.5px}
+.po-report-stat.positive b{color:var(--ok)}.po-report-stat.negative b{color:var(--danger)}.po-report-stat.pending b{color:var(--warn)}
+.po-report-section{margin-top:18px}
+.po-report-section-head{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-bottom:8px}
+.po-report-section-head h3{margin:0;font-size:14px}.po-report-section-head span{font-size:11px;color:var(--muted)}
+.po-report-table{overflow:auto;border:1px solid var(--border-soft);border-radius:8px;-webkit-overflow-scrolling:touch}
+.po-report-table table{width:100%;border-collapse:collapse;min-width:930px}
+.po-report-table th{position:sticky;top:0;background:var(--surface-3);z-index:1;text-align:left;font-size:10px;text-transform:uppercase;color:var(--muted-2);padding:9px 10px;white-space:nowrap;border-bottom:1px solid var(--border-soft)}
+.po-report-table td{padding:10px;border-bottom:1px solid var(--border-soft);font-size:12px;vertical-align:top}
+.po-report-table tr:last-child td{border-bottom:0}
+.po-report-table .money{font:700 11.5px var(--font-mono);white-space:nowrap}.po-report-table .positive{color:var(--ok)}.po-report-table .negative{color:var(--danger)}.po-report-table .pending{color:var(--warn)}
+.po-report-product{min-width:180px}.po-report-product strong{display:block}.po-report-product small{display:block;margin-top:2px;color:var(--muted)}
+.po-report-tier{display:inline-flex;padding:3px 7px;border-radius:999px;font-size:9px;font-weight:850;text-transform:uppercase}
+.po-report-tier.fast{color:var(--danger);background:rgba(230,67,104,.12)}.po-report-tier.medium{color:var(--warn);background:rgba(245,158,11,.14)}.po-report-tier.slow{color:var(--muted);background:var(--surface-3)}
+.po-report-branch-stock{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.po-report-branch-stock span{padding:2px 5px;border-radius:5px;background:var(--surface-3);font-size:9.5px;color:var(--muted)}
+.po-report-issue{margin-top:12px;border-left:3px solid var(--warn);padding:10px 12px;background:rgba(245,158,11,.08);font-size:12px;color:var(--text)}
+.po-report-issue div+div{margin-top:4px}
+.po-report-movement-kind{font-weight:750;white-space:nowrap}.po-report-movement-kind.sale{color:var(--ok)}.po-report-movement-kind.loss,.po-report-movement-kind.shrinkage,.po-report-movement-kind.voided_sale{color:var(--danger)}
+@media(max-width:720px){.po-report-search{display:grid;grid-template-columns:1fr}.po-report-search .sub{display:none}.po-report-row-actions{width:100%;justify-content:flex-end}.po-report-modal{width:100%;max-height:100dvh;border-radius:0}.po-report-modal-head{padding:12px}.po-report-modal-body{padding:12px}.po-report-modal-head .btn span{display:none}.po-report-summary{grid-template-columns:1fr 1fr}.po-report-stat:nth-child(4n){border-right:1px solid var(--border-soft)}.po-report-stat:nth-child(2n){border-right:0}.po-report-stat:nth-last-child(-n+4){border-bottom:1px solid var(--border-soft)}.po-report-stat:nth-last-child(-n+2){border-bottom:0}.po-report-section{margin-top:14px}}
 .guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
 .guidance-action svg{width:14px;height:14px;flex:0 0 auto}
 .guidance-action small{color:var(--muted);font-size:10.5px;font-weight:600}
@@ -12429,6 +12469,13 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const preparedOrderTotal = purchaseOrderTotalCents(plan || []);
   const receiveBatch = (items) => update((d) => receivePurchases(d, items.map((po) => po.id)));
   const [poView, setPoView] = useState(null); // batch key being viewed
+  const [poReportQuery, setPoReportQuery] = useState("");
+  const [poReportView, setPoReportView] = useState(null);
+  const purchaseReports = useMemo(() => buildPurchaseOrderReports(data), [data]);
+  const visiblePurchaseReports = useMemo(
+    () => searchPurchaseOrderReports(purchaseReports, poReportQuery),
+    [purchaseReports, poReportQuery],
+  );
   return (
     <div className="purchase-workspace">
       <PageHead title="Purchases" sub="Receiving a purchase order adds stock to the branch." />
@@ -12570,13 +12617,18 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       )}
       <DocumentFile
         title="Purchase order files"
-        count={new Set((data.purchases || []).map((purchase) => purchase.batchId || purchase.id)).size}
+        count={purchaseReports.length}
         meta="Received and outstanding purchase documents"
       >
+      <div className="po-report-search">
+        <div className="searchbox"><Search /><input value={poReportQuery} onChange={(event) => setPoReportQuery(event.target.value)} placeholder="Search PO number, product, supplier, branch, SKU, or category" /></div>
+        <span className="sub">{visiblePurchaseReports.length} of {purchaseReports.length} files</span>
+      </div>
       {(() => {
         const groups = {};
         data.purchases.forEach((po) => { const k = po.batchId || po.id; (groups[k] = groups[k] || []).push(po); });
-        const rows = Object.entries(groups).map(([key, items]) => {
+        const visibleKeys = new Set(visiblePurchaseReports.map((report) => report.key));
+        const rows = Object.entries(groups).filter(([key]) => visibleKeys.has(key)).map(([key, items]) => {
           const ts = Math.max(...items.map((i) => i.ts));
           const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
           const units = items.reduce((s, i) => s + i.qty, 0);
@@ -12592,9 +12644,13 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
               <div className="meta"><div className="nm">{g.no ? g.no + " · " : ""}{g.items.length} item{g.items.length > 1 ? "s" : ""} · {g.units} unit{g.units > 1 ? "s" : ""}</div>
                 <div className="mt2">{g.suppliers.join(", ") || "—"} · {g.branches.join(", ")} · {dt(g.ts)} · {fmt(g.total, cur)}</div></div>
               {g.recd === g.items.length ? <span className="ist paid">received</span> : <span className="ist">{g.recd}/{g.items.length} received</span>}
-              <button className="btn xs btn-ghost" onClick={(e) => { e.stopPropagation(); setPoView(g.key); }}>View</button>
+              <div className="po-report-row-actions">
+                <button className="btn xs btn-ghost" onClick={(e) => { e.stopPropagation(); setPoView(g.key); }}><Eye /> View</button>
+                <button className="btn xs btn-primary" onClick={(e) => { e.stopPropagation(); setPoReportView(g.key); }}><BarChart3 /> Report</button>
+              </div>
             </div>))}
-            {rows.length === 0 && <div className="notice">No purchase orders yet.</div>}</div>
+            {purchaseReports.length === 0 && <div className="notice">No purchase orders yet.</div>}
+            {purchaseReports.length > 0 && rows.length === 0 && <div className="notice">No purchase order matches this search.</div>}</div>
         );
       })()}
       </DocumentFile>
@@ -12660,6 +12716,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
           </div>
         );
       })()}
+      {poReportView && <PurchaseOrderPerformanceModal report={purchaseReports.find((entry) => entry.key === poReportView)} currency={cur} onClose={() => setPoReportView(null)} />}
       {cameraOpen && (
         <CameraBarcodeScanner
           eyebrow="Purchases"
@@ -12747,6 +12804,68 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
 }
 
 /* ---- Suppliers / Customers / Branches ---- */
+function PurchaseOrderPerformanceModal({ report, currency, onClose }) {
+  if (!report) return null;
+  const pct = (value) => value == null ? "-" : `${Math.round(Number(value) * 10) / 10}%`;
+  const receivedCost = report.receivedCostCents || report.orderedCostCents;
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="modal po-report-modal" role="dialog" aria-modal="true" aria-label={`${report.number} performance report`} onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head po-report-modal-head">
+          <div className="po-report-heading">
+            <div className="avatar"><BarChart3 style={{ width: 18, height: 18 }} /></div>
+            <div><div className="sub" style={{ margin: 0 }}>Purchase order performance</div><div className="title" style={{ fontSize: 20 }}>{report.number}</div><div className="mt2">{report.suppliers.join(", ") || "No supplier"} / {report.branchNames.join(", ") || "No branch"} / {dt(report.createdAt)}</div></div>
+          </div>
+          <div className="po-report-actions">
+            <button className="btn sm btn-ghost" onClick={() => downloadFile(`visionary-${report.number}-trace.csv`, purchaseOrderReportCsv(report), "text/csv;charset=utf-8")}><Download /><span>Export CSV</span></button>
+            <button className="iconbtn" aria-label="Close report" onClick={onClose}><X /></button>
+          </div>
+        </div>
+        <div className="po-report-modal-body">
+          <div className="po-report-summary">
+            <div className="po-report-stat"><span>Purchase cost</span><b>{fmtExact(receivedCost, currency)}</b><small>{report.receivedUnits} of {report.orderedUnits} units received</small></div>
+            <div className="po-report-stat"><span>Units sold / available</span><b>{report.soldUnits} / {report.availableUnits}</b><small>{pct(report.sellThroughPct)} sell-through</small></div>
+            <div className="po-report-stat positive"><span>Recognized revenue</span><b>{fmtExact(report.recognizedRevenueCents, currency)}</b><small>Paid and closed business days</small></div>
+            <div className="po-report-stat positive"><span>Recognized gross profit</span><b>{fmtExact(report.recognizedGrossProfitCents, currency)}</b><small>{pct(report.grossMarginPct)} gross margin</small></div>
+            <div className="po-report-stat pending"><span>Pending revenue</span><b>{fmtExact(report.pendingRevenueCents, currency)}</b><small>Open or not yet day-closed</small></div>
+            <div className="po-report-stat negative"><span>Loss / shortage</span><b>{fmtExact(report.lossValueCents, currency)}</b><small>{report.lossUnits} unit{report.lossUnits === 1 ? "" : "s"}</small></div>
+            <div className="po-report-stat"><span>Stock still on hand</span><b>{fmtExact(report.availableValueCents, currency)}</b><small>{report.availableUnits} unit{report.availableUnits === 1 ? "" : "s"} across branches</small></div>
+            <div className={"po-report-stat " + (report.netContributionCents >= 0 ? "positive" : "negative")}><span>Net contribution</span><b>{fmtExact(report.netContributionCents, currency)}</b><small>Recognized profit less recorded losses</small></div>
+          </div>
+
+          {report.issues.length > 0 && <div className="po-report-issue"><b>Review required</b>{report.issues.map((issue, index) => <div key={`${index}:${issue}`}>{issue}</div>)}</div>}
+
+          <section className="po-report-section">
+            <div className="po-report-section-head"><h3>Purchased product performance</h3><span>{report.tiers.fast} fast / {report.tiers.medium} medium / {report.tiers.slow} slow</span></div>
+            <div className="po-report-table"><table><thead><tr><th>Product</th><th>Movement</th><th>Ordered</th><th>Received</th><th>Sold</th><th>Available</th><th>Loss</th><th>Unit cost</th><th>Revenue</th><th>Gross profit</th><th>Pending</th><th>Sell-through</th></tr></thead>
+              <tbody>{report.lines.map((line) => <tr key={line.purchaseId}>
+                <td className="po-report-product"><strong>{line.productName}</strong><small>{line.sku || "No SKU"}{line.category ? ` / ${line.category}` : ""}</small></td>
+                <td><span className={`po-report-tier ${line.tier}`}>{line.tier}</span><div className="mt2">{Number(line.weeklyDemand.toFixed(1))} / week</div></td>
+                <td>{line.orderedQty}</td><td>{line.receivedQty}</td><td>{line.soldQty}</td>
+                <td><b>{line.availableQty}</b><div className="po-report-branch-stock">{line.availableByBranch.map((entry) => <span key={entry.branchId}>{entry.branchName}: {entry.qty}</span>)}</div></td>
+                <td className={line.lossQty + line.shrinkageQty > 0 ? "negative" : ""}>{line.lossQty + line.shrinkageQty}</td>
+                <td className="money">{fmtExact(line.unitCostCents, currency, 6)}</td>
+                <td className="money positive">{fmtExact(line.recognizedRevenueCents, currency)}</td>
+                <td className={"money " + (line.recognizedGrossProfitCents >= 0 ? "positive" : "negative")}>{fmtExact(line.recognizedGrossProfitCents, currency)}</td>
+                <td className="money pending">{fmtExact(line.pendingRevenueCents, currency)}</td><td>{pct(line.sellThroughPct)}</td>
+              </tr>)}</tbody></table></div>
+          </section>
+
+          <section className="po-report-section">
+            <div className="po-report-section-head"><h3>Movement and audit trail</h3><span>{report.movements.length} linked records / {report.lines.reduce((sum, line) => sum + line.invoiceCount, 0)} invoices</span></div>
+            <div className="po-report-table"><table><thead><tr><th>Date</th><th>Movement</th><th>Product</th><th>Branch</th><th>Qty</th><th>Receipt / reference</th><th>Customer / cashier</th><th>Accounting</th><th>Value</th></tr></thead>
+              <tbody>{report.movements.map((movement) => <tr key={movement.id}>
+                <td style={{ whiteSpace: "nowrap" }}>{dt(movement.ts)}</td><td><span className={`po-report-movement-kind ${movement.kind}`}>{movement.label}</span></td><td>{movement.productName}</td><td>{movement.branchName}</td><td>{movement.qty}</td>
+                <td className="money">{movement.reference || "-"}</td><td>{movement.customerName || movement.cashierName ? <><div>{movement.customerName || "No customer"}</div><div className="mt2">{movement.cashierName ? `Cashier: ${movement.cashierName}` : ""}</div></> : "-"}</td>
+                <td><span className={"ist " + (movement.accountingStatus === "recognized" ? "paid" : "")}>{movement.accountingStatus}</span></td><td className="money">{fmtExact(movement.valueCents, currency)}</td>
+              </tr>)}{report.movements.length === 0 && <tr><td colSpan="9">No linked stock movements found.</td></tr>}</tbody></table></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SuppliersTab({ data, update }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false); const [f, setF] = useState({ name: "", contact: "", phone: "" });
