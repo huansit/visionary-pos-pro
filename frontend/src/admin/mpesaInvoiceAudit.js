@@ -1,0 +1,316 @@
+const ACTIVE = "active";
+const CAPTURED = "captured";
+
+function cents(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : 0;
+}
+
+function text(value) {
+  return String(value || "").trim();
+}
+
+function lower(value) {
+  return text(value).toLowerCase();
+}
+
+function activeEntry(entry) {
+  return !entry?.status || lower(entry.status) === ACTIVE;
+}
+
+function capturedPayment(payment) {
+  return !payment?.status || lower(payment.status) === CAPTURED;
+}
+
+function paymentInvoiceId(payment) {
+  return text(payment?.invoiceId || payment?.orderId);
+}
+
+function transactionTimestamp(transaction) {
+  const value = transaction?.originationTime || transaction?.createdAt || transaction?.ts;
+  const timestamp = typeof value === "number" ? value : Date.parse(value || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function invoiceTimestamp(invoice) {
+  const value = invoice?.ts || invoice?.issuedAt || invoice?.createdAt;
+  const timestamp = typeof value === "number" ? value : Date.parse(value || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function transactionReference(transaction) {
+  return text(transaction?.referenceMasked || transaction?.referenceLast4 || transaction?.id) || "Unknown M-Pesa transaction";
+}
+
+function invoiceReference(invoice) {
+  return text(invoice?.number || invoice?.receiptNo || invoice?.id) || "Unknown invoice";
+}
+
+function issue({ code, severity = "warning", entityType, entityId, title, message }) {
+  return { id: `${entityType}:${entityId}:${code}`, code, severity, entityType, entityId, title, message };
+}
+
+function issueRank(severity) {
+  return severity === "critical" ? 0 : severity === "warning" ? 1 : 2;
+}
+
+function isMpesa(payment) {
+  const method = lower(payment?.method).replace(/[^a-z0-9]/g, "");
+  return method === "mpesa";
+}
+
+function invoiceStatus(invoice) {
+  return lower(invoice?.status || "open");
+}
+
+function isVoided(invoice) {
+  return ["void", "voided", "cancelled", "canceled", "rejected"].includes(invoiceStatus(invoice));
+}
+
+function isPaidStatus(invoice) {
+  return ["paid", "cleared", "settled"].includes(invoiceStatus(invoice));
+}
+
+function isOpenStatus(invoice) {
+  return ["open", "pending", "debt", "overdue", "partial", "partially_paid"].includes(invoiceStatus(invoice));
+}
+
+function uniqueById(entries) {
+  const seen = new Set();
+  return entries.filter((entry, index) => {
+    const key = text(entry?.id) || `row:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function buildMpesaInvoiceAudit({
+  transactions = [],
+  invoices = [],
+  referenceInvoices = invoices,
+  payments = [],
+  branches = [],
+  now = Date.now(),
+  staleAfterMs = 24 * 60 * 60 * 1000,
+  transactionScopeComplete = true,
+} = {}) {
+  const branchById = new Map(branches.map((branch) => [text(branch.id), branch]));
+  const invoiceById = new Map([...referenceInvoices, ...invoices].map((invoice) => [text(invoice.id), invoice]));
+  const transactionById = new Map(transactions.map((transaction) => [text(transaction.id), transaction]));
+  const issues = [];
+  const allocationsByInvoiceId = new Map();
+  const offsetsByInvoiceId = new Map();
+
+  const transactionRows = transactions.map((transaction) => {
+    const id = text(transaction.id);
+    const reference = transactionReference(transaction);
+    const amountCents = Math.max(0, cents(transaction.amountCents));
+    const storedAllocatedCents = Math.max(0, cents(transaction.allocatedCents));
+    const activeAllocations = uniqueById((transaction.allocations || []).filter(activeEntry));
+    const activeOffsets = uniqueById((transaction.offsets || []).filter(activeEntry));
+    const invoiceAllocatedCents = activeAllocations.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const offsetCents = activeOffsets.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const linkedConsumedCents = invoiceAllocatedCents + offsetCents;
+    const reversed = Boolean(transaction.reversedAt) || lower(transaction.status) === "reversed";
+    const funding = lower(transaction.purpose) === "stock_funding";
+    const allocatable = !reversed && !funding && transaction.allocatable !== false;
+    const computedAvailableCents = allocatable ? Math.max(0, amountCents - storedAllocatedCents) : 0;
+    const suppliedAvailable = Number(transaction.remainingCents);
+    const rowIssues = [];
+    const addIssue = (value) => { rowIssues.push(value); issues.push(value); };
+
+    activeAllocations.forEach((allocation) => {
+      const invoiceId = text(allocation.invoiceId);
+      if (!allocationsByInvoiceId.has(invoiceId)) allocationsByInvoiceId.set(invoiceId, []);
+      allocationsByInvoiceId.get(invoiceId).push({ ...allocation, transactionId: id, transactionReference: reference });
+      const invoice = invoiceById.get(invoiceId);
+      if (!invoice) {
+        addIssue(issue({ code: "orphan_allocation", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation has no invoice", message: `${reference} allocates money to a missing invoice record.` }));
+      } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId)) {
+        addIssue(issue({ code: "allocation_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Branch mismatch", message: `${reference} is assigned to ${invoiceReference(invoice)} in a different branch.` }));
+      } else if (isVoided(invoice)) {
+        addIssue(issue({ code: "allocation_to_voided_invoice", severity: "critical", entityType: "transaction", entityId: id, title: "Money allocated to voided invoice", message: `${reference} still has an active allocation to voided invoice ${invoiceReference(invoice)}.` }));
+      }
+    });
+
+    activeOffsets.forEach((offset) => {
+      const invoiceId = text(offset.invoiceId);
+      if (!offsetsByInvoiceId.has(invoiceId)) offsetsByInvoiceId.set(invoiceId, []);
+      offsetsByInvoiceId.get(invoiceId).push({ ...offset, transactionId: id, transactionReference: reference });
+      const invoice = invoiceById.get(invoiceId);
+      if (!invoice) {
+        addIssue(issue({ code: "orphan_cash_offset", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset has no invoice", message: `${reference} offsets cash against a missing invoice record.` }));
+      } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId)) {
+        addIssue(issue({ code: "offset_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset branch mismatch", message: `${reference} offsets ${invoiceReference(invoice)} in a different branch.` }));
+      } else if (isVoided(invoice)) {
+        addIssue(issue({ code: "offset_to_voided_invoice", severity: "critical", entityType: "transaction", entityId: id, title: "Cash offset linked to voided invoice", message: `${reference} still has an active cash offset against voided invoice ${invoiceReference(invoice)}.` }));
+      }
+    });
+
+    if (allocatable && storedAllocatedCents !== linkedConsumedCents) {
+      addIssue(issue({ code: "ledger_link_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Used amount does not match its audit trail", message: `${reference} stores ${storedAllocatedCents} cents as used, but active invoice allocations and cash offsets total ${linkedConsumedCents} cents.` }));
+    }
+    if (allocatable && (storedAllocatedCents > amountCents || linkedConsumedCents > amountCents)) {
+      addIssue(issue({ code: "transaction_overallocated", severity: "critical", entityType: "transaction", entityId: id, title: "Transaction is over-allocated", message: `${reference} has more money consumed than the verified amount received.` }));
+    }
+    if (allocatable && Number.isFinite(suppliedAvailable) && Math.max(0, cents(suppliedAvailable)) !== computedAvailableCents) {
+      addIssue(issue({ code: "available_balance_mismatch", severity: "warning", entityType: "transaction", entityId: id, title: "Available balance is inconsistent", message: `${reference} reports a different available balance from amount received minus amount used.` }));
+    }
+
+    const timestamp = transactionTimestamp(transaction);
+    const staleAvailable = allocatable && computedAvailableCents > 0 && timestamp > 0 && now - timestamp >= staleAfterMs;
+    if (staleAvailable) {
+      addIssue(issue({ code: "stale_available_money", severity: "warning", entityType: "transaction", entityId: id, title: "Available money needs review", message: `${reference} has remained available for more than ${Math.max(1, Math.round(staleAfterMs / 3600000))} hours.` }));
+    }
+
+    let comment;
+    if (reversed) comment = "Reversed by the provider. No money is available for invoice settlement.";
+    else if (funding) comment = "Classified as stock funding. It is excluded from customer-payment totals and invoice settlement.";
+    else if (computedAvailableCents > 0) comment = staleAvailable
+      ? "Verified money remains unused and is older than the audit threshold. Confirm whether it should settle an invoice, offset deposited cash, or be classified as stock funding."
+      : "Verified money remains available. It can settle invoices or offset cash receipts deposited to the till.";
+    else if (offsetCents > 0 && invoiceAllocatedCents > 0) comment = "Fully accounted for through invoice allocations and cash-deposit offsets.";
+    else if (offsetCents > 0) comment = "Fully accounted for as cash deposited to the till. The linked invoices remain cash invoices.";
+    else comment = "Fully accounted for through invoice allocation.";
+
+    return {
+      ...transaction,
+      id,
+      reference,
+      amountCents,
+      storedAllocatedCents,
+      invoiceAllocatedCents,
+      offsetCents,
+      linkedConsumedCents,
+      availableCents: computedAvailableCents,
+      reversed,
+      funding,
+      allocatable,
+      timestamp,
+      branchName: branchById.get(text(transaction.branchId))?.name || text(transaction.branchId) || "Unknown branch",
+      activeAllocations,
+      activeOffsets,
+      issues: rowIssues,
+      comment,
+    };
+  });
+
+  const paymentsByInvoiceId = new Map();
+  payments.filter(capturedPayment).forEach((payment) => {
+    const invoiceId = paymentInvoiceId(payment);
+    if (!invoiceId) return;
+    if (!paymentsByInvoiceId.has(invoiceId)) paymentsByInvoiceId.set(invoiceId, []);
+    paymentsByInvoiceId.get(invoiceId).push(payment);
+  });
+
+  const invoiceRows = invoices.map((invoice) => {
+    const id = text(invoice.id);
+    const reference = invoiceReference(invoice);
+    const totalCents = Math.max(0, cents(invoice.totalCents));
+    const storedPaidCents = Math.max(0, cents(invoice.paidCents));
+    const balanceCents = Math.max(0, totalCents - storedPaidCents);
+    const invoicePayments = paymentsByInvoiceId.get(id) || [];
+    const capturedPaymentCents = invoicePayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const mpesaPayments = invoicePayments.filter(isMpesa);
+    const providerMpesaPayments = mpesaPayments.filter((payment) => payment.providerVerified || payment.kopokopoTransactionId || payment.kopokopoAllocationId);
+    const providerMpesaCents = providerMpesaPayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const cashCents = invoicePayments.filter((payment) => lower(payment.method) === "cash").reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const payrollCents = invoicePayments.filter((payment) => lower(payment.method) === "payroll").reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const activeAllocations = allocationsByInvoiceId.get(id) || [];
+    const activeOffsets = offsetsByInvoiceId.get(id) || [];
+    const allocationCents = activeAllocations.reduce((sum, allocation) => sum + Math.max(0, cents(allocation.amountCents)), 0);
+    const offsetCents = activeOffsets.reduce((sum, offset) => sum + Math.max(0, cents(offset.amountCents)), 0);
+    const rowIssues = [];
+    const addIssue = (value) => { rowIssues.push(value); issues.push(value); };
+    const voided = isVoided(invoice);
+
+    if (!voided && invoicePayments.length > 0 && capturedPaymentCents !== storedPaidCents) {
+      addIssue(issue({ code: "invoice_payment_total_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice paid total does not match payments", message: `${reference} stores ${storedPaidCents} cents paid, but its captured payment records total ${capturedPaymentCents} cents.` }));
+    }
+    if (!voided && storedPaidCents > totalCents) {
+      addIssue(issue({ code: "invoice_overpaid", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice is overpaid", message: `${reference} has more paid than its invoice total.` }));
+    }
+    if (!voided && isPaidStatus(invoice) && balanceCents > 0) {
+      addIssue(issue({ code: "paid_invoice_has_balance", severity: "critical", entityType: "invoice", entityId: id, title: "Paid invoice still has a balance", message: `${reference} is marked paid but still has an outstanding balance.` }));
+    }
+    if (!voided && isOpenStatus(invoice) && totalCents > 0 && balanceCents === 0) {
+      addIssue(issue({ code: "settled_invoice_still_open", severity: "warning", entityType: "invoice", entityId: id, title: "Settled invoice is still open", message: `${reference} has no balance but its status is still ${invoiceStatus(invoice)}.` }));
+    }
+    if (voided && allocationCents > 0) {
+      addIssue(issue({ code: "voided_invoice_has_allocation", severity: "critical", entityType: "invoice", entityId: id, title: "Voided invoice has active M-Pesa money", message: `${reference} is voided but still has active provider allocations.` }));
+    }
+    if (providerMpesaPayments.length > 0 && providerMpesaCents !== allocationCents) {
+      addIssue(issue({ code: "provider_payment_allocation_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa payment is not fully traceable", message: `${reference} has ${providerMpesaCents} cents in verified M-Pesa payments but ${allocationCents} cents in active provider allocations.` }));
+    }
+    if (allocationCents > totalCents && totalCents > 0) {
+      addIssue(issue({ code: "invoice_allocation_exceeds_total", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa allocations exceed invoice total", message: `${reference} has more active M-Pesa allocation than its total value.` }));
+    }
+    providerMpesaPayments.forEach((payment) => {
+      const transactionId = text(payment.kopokopoTransactionId);
+      if (transactionScopeComplete && transactionId && !transactionById.has(transactionId)) {
+        addIssue(issue({ code: `missing_provider_transaction_${text(payment.id)}`, severity: "warning", entityType: "invoice", entityId: id, title: "Verified payment has no ledger transaction", message: `${reference} contains a provider-verified payment whose M-Pesa transaction is outside or missing from this audit scope.` }));
+      }
+    });
+
+    let comment;
+    if (voided) comment = allocationCents > 0 ? "Voided invoice requires immediate allocation review." : "Voided invoice; excluded from active sales settlement.";
+    else if (balanceCents > 0) comment = `Outstanding balance remains. ${allocationCents > 0 ? "Verified M-Pesa allocation is shown in the trace." : "No active verified M-Pesa allocation is attached."}`;
+    else if (offsetCents > 0 && cashCents > 0) comment = "Invoice is paid as cash. A later till deposit is linked separately for audit and does not change the payment method.";
+    else comment = "Invoice payment total is fully settled and traceable in the captured payment records.";
+
+    return {
+      ...invoice,
+      id,
+      reference,
+      totalCents,
+      storedPaidCents,
+      balanceCents,
+      capturedPaymentCents,
+      providerMpesaCents,
+      cashCents,
+      payrollCents,
+      allocationCents,
+      offsetCents,
+      invoicePayments,
+      activeAllocations,
+      activeOffsets,
+      voided,
+      timestamp: invoiceTimestamp(invoice),
+      branchName: branchById.get(text(invoice.branchId))?.name || text(invoice.branchId) || "Unknown branch",
+      issues: rowIssues,
+      comment,
+    };
+  });
+
+  const customerTransactions = transactionRows.filter((transaction) => transaction.allocatable);
+  const availableRows = customerTransactions.filter((transaction) => transaction.availableCents > 0);
+  const staleAvailableRows = availableRows.filter((transaction) => transaction.issues.some((entry) => entry.code === "stale_available_money"));
+  const summary = {
+    transactionCount: customerTransactions.length,
+    invoiceCount: invoiceRows.filter((invoice) => !invoice.voided).length,
+    receivedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.amountCents, 0),
+    invoiceAllocatedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.invoiceAllocatedCents, 0),
+    offsetCents: customerTransactions.reduce((sum, transaction) => sum + transaction.offsetCents, 0),
+    availableCents: customerTransactions.reduce((sum, transaction) => sum + transaction.availableCents, 0),
+    invoiceValueCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.totalCents, 0),
+    invoiceBalanceCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.balanceCents, 0),
+    criticalCount: issues.filter((entry) => entry.severity === "critical").length,
+    warningCount: issues.filter((entry) => entry.severity === "warning").length,
+    infoCount: issues.filter((entry) => entry.severity === "info").length,
+    flaggedCount: issues.length,
+    staleAvailableCents: staleAvailableRows.reduce((sum, transaction) => sum + transaction.availableCents, 0),
+  };
+
+  const availableComment = summary.availableCents <= 0
+    ? "All verified customer M-Pesa money in this audit scope is accounted for by active invoice allocations or cash-deposit offsets."
+    : `Verified money remains available across ${availableRows.length} transaction${availableRows.length === 1 ? "" : "s"}. Available money has not yet settled an invoice or offset a cash receipt.${summary.staleAvailableCents > 0 ? " Some of it is older than the audit threshold and needs review." : ""}`;
+
+  return {
+    transactions: transactionRows.sort((left, right) => right.timestamp - left.timestamp),
+    invoices: invoiceRows.sort((left, right) => right.timestamp - left.timestamp),
+    issues: issues.sort((left, right) => issueRank(left.severity) - issueRank(right.severity) || left.title.localeCompare(right.title)),
+    summary,
+    availableComment,
+  };
+}

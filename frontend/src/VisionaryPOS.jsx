@@ -12,6 +12,7 @@ import {
   receiptForSettlement,
 } from "./admin/mpesaReceiptLedger.js";
 import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
+import { buildMpesaInvoiceAudit } from "./admin/mpesaInvoiceAudit.js";
 import {
   activeQuickInventoryDraft,
   createQuickInventoryDraft,
@@ -4383,6 +4384,93 @@ body{overscroll-behavior:none}
 .mpesa-transaction-results{min-width:0}
 .mpesa-ledger-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;color:var(--muted);font-size:12px}
 .mpesa-ledger-pager>div{display:flex;align-items:center;gap:6px}
+.mpesa-audit-page{display:grid;gap:12px;min-width:0}
+.audit-readonly{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 11px;border:1px solid rgba(52,211,153,.3);border-radius:6px;background:rgba(52,211,153,.08);color:var(--ok);font-size:10px;font-weight:850;text-transform:uppercase}
+.audit-readonly svg{width:16px;height:16px}
+.audit-controls{display:grid;grid-template-columns:minmax(150px,190px) minmax(360px,1fr) minmax(180px,230px) auto;align-items:end;gap:8px;padding:10px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface)}
+.audit-controls label{display:grid;gap:4px;min-width:0}
+.audit-controls label>span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
+.audit-date-modes{display:grid;grid-template-columns:repeat(3,1fr);min-height:42px;padding:3px;border:1px solid var(--border-soft);border-radius:6px;background:var(--surface-2)}
+.audit-date-modes button{display:flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:750 11px var(--font-ui);cursor:pointer}
+.audit-date-modes button svg{width:15px;height:15px}
+.audit-date-modes button.active{background:var(--surface);color:var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+.audit-range-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.audit-refresh{height:42px}
+.audit-period{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:9px 11px;border-left:3px solid var(--accent);border-radius:5px;background:var(--surface-2)}
+.audit-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
+.audit-period>div{display:grid;gap:2px;min-width:0}
+.audit-period strong{font-size:12px}
+.audit-period span{color:var(--muted);font-family:var(--font-mono);font-size:10px;overflow-wrap:anywhere}
+.audit-summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
+.audit-summary>div{display:grid;gap:3px;padding:12px;background:var(--surface)}
+.audit-summary span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
+.audit-summary b{font:850 17px var(--font-mono)}
+.audit-summary small{color:var(--muted);font-size:9.5px}
+.audit-summary .offset b{color:var(--warn)}
+.audit-summary .available b,.audit-summary .clear b{color:var(--ok)}
+.audit-summary .flagged b{color:var(--danger)}
+.audit-comment{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border:1px solid rgba(52,211,153,.22);border-left:3px solid var(--ok);border-radius:6px;background:rgba(52,211,153,.06)}
+.audit-comment.warn{border-color:rgba(245,158,11,.28);border-left-color:var(--warn);background:rgba(245,158,11,.07)}
+.audit-comment>svg{width:18px;height:18px;color:var(--ok);flex:none}
+.audit-comment.warn>svg{color:var(--warn)}
+.audit-comment>div{display:grid;gap:3px}
+.audit-comment strong{font-size:11px}
+.audit-comment span{color:var(--muted);font-size:11px;line-height:1.45}
+.audit-result-tools{display:grid;grid-template-columns:auto minmax(260px,1fr) 150px;align-items:center;gap:8px}
+.audit-view-tabs{display:flex;gap:4px}
+.audit-view-tabs button{display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:7px 11px;border:1px solid var(--border-soft);border-radius:5px;background:var(--surface-2);color:var(--muted);font:800 11px var(--font-ui);cursor:pointer}
+.audit-view-tabs button.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.audit-view-tabs span{min-width:19px;padding:2px 5px;border-radius:999px;background:var(--surface-3);font-size:9px;text-align:center}
+.audit-search{position:relative;min-width:0}
+.audit-search svg{position:absolute;left:12px;top:50%;width:17px;height:17px;color:var(--muted-2);transform:translateY(-50%);pointer-events:none}
+.audit-search .input{padding-left:38px}
+.audit-issues,.audit-traces{display:grid;gap:7px}
+.audit-issue{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;padding:11px 12px;border:1px solid var(--border-soft);border-left:3px solid var(--warn);border-radius:6px;background:var(--surface)}
+.audit-issue.critical{border-left-color:var(--danger)}
+.audit-issue-icon{display:grid;place-items:center;width:28px;height:28px;border-radius:5px;background:rgba(245,158,11,.1);color:var(--warn)}
+.audit-issue.critical .audit-issue-icon{background:rgba(230,67,104,.1);color:var(--danger)}
+.audit-issue-icon svg{width:16px;height:16px}
+.audit-issue>div{display:grid;gap:2px;min-width:0}
+.audit-issue strong{font-size:12px}
+.audit-issue small{color:var(--muted-2);font:700 9.5px var(--font-mono)}
+.audit-issue p{margin:3px 0 0;color:var(--muted);font-size:11px;line-height:1.45}
+.audit-severity-badge,.audit-inline-flags span{padding:3px 7px;border-radius:999px;font-size:8.5px;font-weight:850;text-transform:uppercase}
+.audit-severity-badge.critical,.audit-inline-flags .critical{background:rgba(230,67,104,.13);color:var(--danger)}
+.audit-severity-badge.warning,.audit-inline-flags .warning{background:rgba(245,158,11,.14);color:var(--warn)}
+.audit-severity-badge.info,.audit-inline-flags .info{background:rgba(46,120,199,.13);color:#2e78c7}
+.audit-empty{display:grid;place-items:center;gap:7px;min-height:150px;padding:24px;border:1px dashed var(--border);border-radius:7px;color:var(--muted);text-align:center}
+.audit-empty svg{width:28px;height:28px;color:var(--ok)}
+.audit-empty strong{color:var(--text);font-size:13px}
+.audit-empty span{font-size:11px}
+.audit-trace{border:1px solid var(--border-soft);border-left:3px solid var(--accent);border-radius:6px;background:var(--surface);overflow:hidden}
+.audit-trace.has-issues{border-left-color:var(--danger)}
+.audit-trace>summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:11px 12px;cursor:pointer;list-style:none}
+.audit-trace>summary::-webkit-details-marker{display:none}
+.audit-trace-title{display:grid;gap:3px;min-width:0}
+.audit-trace-title>strong,.audit-trace-title .mpesa-reference{font:850 12px var(--font-mono)}
+.audit-trace-title>span{color:var(--muted);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audit-trace-values{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.audit-trace-values>b{font:850 12px var(--font-mono)}
+.audit-trace-values>svg{width:15px;height:15px;color:var(--muted);transition:transform .15s}
+.audit-trace[open] .audit-trace-values>svg{transform:rotate(180deg)}
+.audit-trace-body{display:grid;gap:10px;padding:0 12px 12px;border-top:1px solid var(--border-soft)}
+.audit-trace-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--border-soft)}
+.audit-trace-metrics>span{display:grid;gap:3px;padding:9px;background:var(--surface-2)}
+.audit-trace-metrics small{color:var(--muted-2);font-size:8.5px;font-weight:850;text-transform:uppercase}
+.audit-trace-metrics b{font:750 10.5px var(--font-mono);overflow-wrap:anywhere}
+.audit-trace-metrics .available b{color:var(--ok)}
+.audit-trace-body>p{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
+.audit-trace-body .mpesa-allocation-menu{max-width:480px}
+.audit-payment-methods{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px;border-radius:5px;background:var(--surface-2);font-size:10.5px}
+.audit-payment-methods span{color:var(--muted)}
+.audit-inline-flags{display:flex;gap:5px;flex-wrap:wrap}
+.invoice-state{display:inline-flex;padding:3px 7px;border-radius:999px;font-size:8.5px;font-weight:850;text-transform:uppercase}
+.invoice-state.paid{background:rgba(52,211,153,.13);color:var(--ok)}
+.invoice-state.open{background:rgba(46,120,199,.13);color:#2e78c7}
+.invoice-state.voided{background:rgba(230,67,104,.13);color:var(--danger)}
+@media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary{grid-template-columns:repeat(3,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
+@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-summary>div:last-child{grid-column:1/-1}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(3,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary{grid-template-columns:1fr}.audit-summary>div:last-child{grid-column:auto}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
@@ -7881,7 +7969,7 @@ const NAV_TOP = [
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
   products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
-  cash: "cash", payments: "cash", mpesa: "cash", expenses: "expenses",
+  cash: "cash", payments: "cash", mpesa: "cash", audit: "__admin_only", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
@@ -7902,6 +7990,7 @@ const NAV_GROUPS = [
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
     { id: "payments", label: "Payments", icon: CreditCard },
     { id: "mpesa", label: "M-Pesa Transactions", icon: Smartphone },
+    { id: "audit", label: "M-Pesa & Invoice Audit", icon: ClipboardCheck },
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
   ] },
@@ -8012,7 +8101,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     const content = workspaceRootRef.current?.closest(".content");
     if (!content) return undefined;
     content.classList.toggle("invoice-page-active", tab === "invoices");
-    content.classList.toggle("mpesa-page-active", tab === "mpesa");
+    content.classList.toggle("mpesa-page-active", tab === "mpesa" || tab === "audit");
     return () => {
       content.classList.remove("invoice-page-active", "mpesa-page-active");
     };
@@ -8092,6 +8181,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} />;
+      case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
       case "branches": return <BranchesTab data={data} update={update} />;
@@ -8107,7 +8197,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
   };
   return (
-    <div ref={workspaceRootRef} className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "invoices" ? " invoice-active" : "") + (tab === "mpesa" ? " mpesa-active" : "")}>
+    <div ref={workspaceRootRef} className={"fade adminwrap" + (navCollapsed ? " nav-collapsed" : "") + (tab === "invoices" ? " invoice-active" : "") + ((tab === "mpesa" || tab === "audit") ? " mpesa-active" : "")}>
       <label className="admin-mobile-nav">
         <span><LayoutDashboard /> Workspace</span>
         <select value={tab} onChange={(event) => activateWorkspace(event.target.value)} aria-label="Choose workspace">
@@ -17318,6 +17408,223 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       {offsetTarget ? <MpesaCashOffsetModal transaction={offsetTarget} data={data} timeZone={timeZone} onClose={() => setOffsetTarget(null)} onSaved={() => { setOffsetTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
     </div>
   );
+}
+
+function MpesaInvoiceAuditTab({ data, branch }) {
+  const pageSize = 100;
+  const maxTransactions = 5000;
+  const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
+  const branches = useMemo(() => (data?.branches || []).filter((entry) => entry.active !== false), [data?.branches]);
+  const defaultBranchId = branch?.id || branches[0]?.id || "";
+  const [branchScope, setBranchScope] = useState(defaultBranchId);
+  const [dateMode, setDateMode] = useState("business");
+  const [businessDaySelection, setBusinessDaySelection] = useState("current");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [view, setView] = useState("issues");
+  const [severity, setSeverity] = useState("all");
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [ledger, setLedger] = useState({ loading: true, refreshing: false, error: "", transactions: [], truncated: false });
+
+  useEffect(() => {
+    if (branchScope && branchScope !== "all" && branches.some((entry) => entry.id === branchScope)) return;
+    setBranchScope(defaultBranchId);
+  }, [branchScope, branches, defaultBranchId]);
+
+  const periodOptions = useMemo(() => branchScope && branchScope !== "all"
+    ? businessDayPeriodOptions(data, [branchScope], timeZone)
+    : [], [data, branchScope, timeZone]);
+  const selectedClosedDay = businessDaySelection === "current"
+    ? null
+    : periodOptions.find((option) => option.id === businessDaySelection) || null;
+  const selectedClosedPeriod = selectedClosedDay?.periods?.[branchScope] || null;
+  const todayBusinessDate = businessDateValue(Date.now(), timeZone);
+  const currentPeriodStart = branchScope && branchScope !== "all"
+    ? branchLastEndDay(data, branchScope) + 1
+    : 0;
+  const fallbackCurrentStart = Date.parse(businessDateTimeBoundary(`${todayBusinessDate}T00:00`, timeZone, "start"));
+  const selectedPeriod = dateMode === "business"
+    ? selectedClosedPeriod || {
+      businessDate: todayBusinessDate,
+      startedAt: currentPeriodStart > 1 ? currentPeriodStart : fallbackCurrentStart,
+      endedAt: Date.now(),
+      current: true,
+    }
+    : null;
+  const rangeFrom = dateMode === "business"
+    ? selectedPeriod?.startedAt || 0
+    : dateMode === "range" && dateFrom
+      ? Date.parse(businessDateTimeBoundary(`${dateFrom}T00:00`, timeZone, "start"))
+      : 0;
+  const rangeTo = dateMode === "business"
+    ? selectedPeriod?.endedAt || 0
+    : dateMode === "range" && dateTo
+      ? Date.parse(businessDateTimeBoundary(`${dateTo}T23:59`, timeZone, "end"))
+      : 0;
+  const rangeValid = dateMode === "all" || (rangeFrom > 0 && rangeTo > 0 && rangeTo >= rangeFrom);
+  const apiFrom = rangeFrom > 0 ? new Date(rangeFrom).toISOString() : "";
+  const apiTo = rangeTo > 0 ? new Date(rangeTo).toISOString() : "";
+
+  useEffect(() => {
+    let active = true;
+    if (!branchScope || !rangeValid) {
+      setLedger((current) => ({ ...current, loading: false, refreshing: false, error: branchScope ? "Choose a complete and valid audit date range." : "Choose a branch to run the audit." }));
+      return () => { active = false; };
+    }
+    setLedger((current) => ({ ...current, loading: current.transactions.length === 0, refreshing: current.transactions.length > 0, error: "" }));
+    const load = async () => {
+      const transactions = [];
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+      while (offset < total && transactions.length < maxTransactions) {
+        const result = await listKopokopoTransactions({
+          branchId: branchScope,
+          status: "all",
+          sort: "desc",
+          from: apiFrom,
+          to: apiTo,
+          limit: pageSize,
+          offset,
+        });
+        const rows = Array.isArray(result.transactions) ? result.transactions : [];
+        transactions.push(...rows);
+        total = Number(result.page?.total || transactions.length);
+        if (rows.length === 0) break;
+        offset += rows.length;
+      }
+      if (!active) return;
+      setLedger({ loading: false, refreshing: false, error: "", transactions, truncated: transactions.length < total });
+    };
+    load().catch((error) => {
+      if (!active) return;
+      const message = error.message === "branch_not_authorized"
+        ? "Your account cannot audit this branch."
+        : "The audit ledger could not be loaded. Refresh and try again.";
+      setLedger((current) => ({ ...current, loading: false, refreshing: false, error: message }));
+    });
+    return () => { active = false; };
+  }, [branchScope, rangeValid, apiFrom, apiTo, refreshNonce]);
+
+  useEffect(() => {
+    const refresh = () => setRefreshNonce((value) => value + 1);
+    const onRealtime = (event) => {
+      const types = Array.isArray(event.detail?.types) ? event.detail.types : [];
+      if (types.some((type) => ["kopokopoTransaction", "kopokopoAllocation", "kopokopoOffset", "invoice", "payment"].includes(type))) refresh();
+    };
+    window.addEventListener("visionpos:realtime", onRealtime);
+    return () => window.removeEventListener("visionpos:realtime", onRealtime);
+  }, []);
+
+  const scopedInvoices = useMemo(() => (data?.invoices || []).filter((invoice) => {
+    if (branchScope !== "all" && invoice.branchId !== branchScope) return false;
+    const timestamp = invoiceIssuedTimestamp(invoice);
+    if (rangeFrom > 0 && timestamp < rangeFrom) return false;
+    if (rangeTo > 0 && timestamp > rangeTo) return false;
+    return true;
+  }), [data?.invoices, branchScope, rangeFrom, rangeTo]);
+  const audit = useMemo(() => buildMpesaInvoiceAudit({
+    transactions: ledger.transactions,
+    invoices: scopedInvoices,
+    referenceInvoices: data?.invoices || [],
+    payments: data?.payments || [],
+    branches,
+    transactionScopeComplete: dateMode === "all",
+  }), [ledger.transactions, scopedInvoices, data?.invoices, data?.payments, branches, dateMode]);
+  const transactionById = useMemo(() => new Map(audit.transactions.map((entry) => [entry.id, entry])), [audit.transactions]);
+  const invoiceById = useMemo(() => new Map(audit.invoices.map((entry) => [entry.id, entry])), [audit.invoices]);
+  const needle = search.trim().toLowerCase();
+  const matchesSearch = (values) => !needle || values.some((value) => String(value || "").toLowerCase().includes(needle));
+  const visibleIssues = audit.issues.filter((entry) => {
+    if (severity !== "all" && entry.severity !== severity) return false;
+    const entity = entry.entityType === "transaction" ? transactionById.get(entry.entityId) : invoiceById.get(entry.entityId);
+    return matchesSearch([entry.title, entry.message, entity?.reference, entity?.payerName, entity?.customerName, entity?.cashier]);
+  });
+  const visibleTransactions = audit.transactions.filter((entry) => matchesSearch([
+    entry.reference, entry.payerName, entry.payerPhoneLast4, entry.branchName,
+    ...(entry.activeAllocations || []).map((allocation) => allocation.invoiceNumber || allocation.invoiceId),
+  ]));
+  const visibleInvoices = audit.invoices.filter((entry) => matchesSearch([
+    entry.reference, entry.customerName, entry.cashier, entry.branchName,
+    JSON.stringify(entry.items || entry.lines || []),
+    ...(entry.activeAllocations || []).map((allocation) => allocation.transactionReference),
+  ]));
+  const switchDateMode = (mode) => {
+    if (mode === "business" && branchScope === "all") setBranchScope(defaultBranchId);
+    setDateMode(mode);
+    if (mode !== "business") setBusinessDaySelection("current");
+  };
+  const branchName = branchScope === "all" ? "All branches" : branches.find((entry) => entry.id === branchScope)?.name || "Branch";
+  const periodHeading = dateMode === "all"
+    ? "All recorded dates"
+    : dateMode === "business"
+      ? `${selectedPeriod?.current ? "Current" : "Closed"} business day ${selectedPeriod?.businessDate || ""}`
+      : "Custom date range";
+  const issueEntityLabel = (entry) => {
+    const entity = entry.entityType === "transaction" ? transactionById.get(entry.entityId) : invoiceById.get(entry.entityId);
+    return entity?.reference || entry.entityId;
+  };
+  const methodsForInvoice = (entry) => [
+    entry.providerMpesaCents > 0 ? `M-Pesa ${fmt(entry.providerMpesaCents, "KES")}` : "",
+    entry.cashCents > 0 ? `Cash ${fmt(entry.cashCents, "KES")}` : "",
+    entry.payrollCents > 0 ? `Payroll ${fmt(entry.payrollCents, "KES")}` : "",
+  ].filter(Boolean).join(" / ") || "No captured payments";
+
+  return <div className="mpesa-audit-page">
+    <PageHead title="M-Pesa & Invoice Audit" sub="Trace verified money from receipt through invoice settlement, cash offset, funding, or reversal."
+      right={<div className="audit-readonly"><ShieldCheck /> Read only</div>} />
+
+    <section className="audit-controls" aria-label="Audit scope">
+      <label><span>Branch</span><select className="select" value={branchScope} onChange={(event) => { setBranchScope(event.target.value); setBusinessDaySelection("current"); }}>
+        {dateMode !== "business" ? <option value="all">All branches</option> : null}
+        {branches.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+      </select></label>
+      <div className="audit-date-modes" aria-label="Audit date filter">
+        <button type="button" className={dateMode === "business" ? "active" : ""} onClick={() => switchDateMode("business")}><Clock3 /> Business day</button>
+        <button type="button" className={dateMode === "range" ? "active" : ""} onClick={() => switchDateMode("range")}><CalendarDays /> Date range</button>
+        <button type="button" className={dateMode === "all" ? "active" : ""} onClick={() => switchDateMode("all")}><Files /> All dates</button>
+      </div>
+      {dateMode === "business" ? <label className="audit-business-select"><span>Choose business day</span><select className="select" value={businessDaySelection} onChange={(event) => setBusinessDaySelection(event.target.value)}>
+        <option value="current">Current business day</option>
+        {periodOptions.map((option) => <option key={option.id} value={option.id}>{option.businessDate}</option>)}
+      </select></label> : null}
+      {dateMode === "range" ? <div className="audit-range-fields"><label><span>From date</span><input className="input" type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} /></label><label><span>To date</span><input className="input" type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} /></label></div> : null}
+      <button type="button" className="btn audit-refresh" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button>
+      <div className="audit-period"><CalendarDays /><div><strong>{periodHeading}</strong><span>{dateMode === "all" ? `${branchName} / no date limit` : rangeValid ? `${formatBusinessDateTime(rangeFrom, timeZone)} to ${formatBusinessDateTime(rangeTo, timeZone)}` : "Choose both dates to run the audit"}</span></div></div>
+    </section>
+
+    {ledger.error ? <div className="errorbox">{ledger.error}</div> : null}
+    {ledger.truncated ? <div className="notice warn"><AlertCircle /> This scope contains more than {maxTransactions.toLocaleString()} M-Pesa records. Narrow the date range for a complete audit.</div> : null}
+
+    <section className="audit-summary" aria-label="Audit totals">
+      <div><span>Received</span><b>{fmt(audit.summary.receivedCents, "KES")}</b><small>{audit.summary.transactionCount} customer payments</small></div>
+      <div><span>Invoice allocations</span><b>{fmt(audit.summary.invoiceAllocatedCents, "KES")}</b><small>Paid directly to invoices</small></div>
+      <div className="offset"><span>Cash offsets</span><b>{fmt(audit.summary.offsetCents, "KES")}</b><small>Cash later deposited to till</small></div>
+      <div className="available"><span>Available</span><b>{fmt(audit.summary.availableCents, "KES")}</b><small>Not allocated or offset</small></div>
+      <div className={audit.summary.criticalCount > 0 ? "flagged" : "clear"}><span>Audit flags</span><b>{audit.summary.flaggedCount}</b><small>{audit.summary.criticalCount} critical / {audit.summary.warningCount} warning</small></div>
+    </section>
+    <div className={`audit-comment ${audit.summary.staleAvailableCents > 0 ? "warn" : ""}`}><Wallet /><div><strong>Available-money comment</strong><span>{audit.availableComment}{audit.summary.staleAvailableCents > 0 ? ` ${fmt(audit.summary.staleAvailableCents, "KES")} is stale.` : ""}</span></div></div>
+
+    <div className="audit-result-tools">
+      <div className="audit-view-tabs">
+        <button type="button" className={view === "issues" ? "active" : ""} onClick={() => setView("issues")}>Flags <span>{audit.summary.flaggedCount}</span></button>
+        <button type="button" className={view === "transactions" ? "active" : ""} onClick={() => setView("transactions")}>M-Pesa <span>{audit.transactions.length}</span></button>
+        <button type="button" className={view === "invoices" ? "active" : ""} onClick={() => setView("invoices")}>Invoices <span>{audit.invoices.length}</span></button>
+      </div>
+      <label className="audit-search"><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, receipt, payer, customer, or cashier" /></label>
+      {view === "issues" ? <label className="audit-severity"><span className="sr-only">Flag severity</span><select className="select" value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All flags</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Information</option></select></label> : null}
+    </div>
+
+    {ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading the complete audit trail...</div> : null}
+    {!ledger.loading && view === "issues" ? <div className="audit-issues">{visibleIssues.length ? visibleIssues.map((entry) => <article className={`audit-issue ${entry.severity}`} key={entry.id}><span className="audit-issue-icon">{entry.severity === "critical" ? <AlertCircle /> : <ShieldCheck />}</span><div><strong>{entry.title}</strong><small>{entry.entityType === "transaction" ? "M-Pesa" : "Invoice"} / {issueEntityLabel(entry)}</small><p>{entry.message}</p></div><span className={`audit-severity-badge ${entry.severity}`}>{entry.severity}</span></article>) : <div className="audit-empty"><ShieldCheck /><strong>No audit flags in this scope</strong><span>Invoice totals and verified M-Pesa usage reconcile for the selected branch and period.</span></div>}</div> : null}
+
+    {!ledger.loading && view === "transactions" ? <div className="audit-traces">{visibleTransactions.length ? visibleTransactions.slice(0, 300).map((entry) => {
+      const status = kopokopoLedgerStatus(entry);
+      return <details className={`audit-trace transaction ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}><summary><div className="audit-trace-title"><MpesaReference value={entry.reference} tone={status.key} /><span>{entry.payerName || "Payer not supplied"} / {entry.branchName}</span></div><div className="audit-trace-values"><b>{fmt(entry.amountCents, entry.currency || "KES")}</b><span className={`mpesa-ledger-status ${status.key}`}>{status.label}</span><ChevronDown /></div></summary><div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Invoice allocated</small><b>{fmt(entry.invoiceAllocatedCents, "KES")}</b></span><span><small>Cash offset</small><b>{fmt(entry.offsetCents, "KES")}</b></span><span className="available"><small>Available</small><b>{fmt(entry.availableCents, "KES")}</b></span><span><small>Received</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div></details>;
+    }) : <div className="audit-empty"><Receipt /><strong>No M-Pesa records match</strong><span>Change the search or audit period.</span></div>}</div> : null}
+
+    {!ledger.loading && view === "invoices" ? <div className="audit-traces">{visibleInvoices.length ? visibleInvoices.slice(0, 300).map((entry) => <details className={`audit-trace invoice ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}><summary><div className="audit-trace-title"><strong>{entry.reference}</strong><span>{entry.customerName || "Walk-in"} / {entry.cashier || "Cashier not supplied"}</span></div><div className="audit-trace-values"><b>{fmt(entry.totalCents, "KES")}</b><span className={`invoice-state ${entry.voided ? "voided" : entry.balanceCents > 0 ? "open" : "paid"}`}>{entry.voided ? "Voided" : entry.balanceCents > 0 ? "Open" : "Paid"}</span><ChevronDown /></div></summary><div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Paid</small><b>{fmt(entry.storedPaidCents, "KES")}</b></span><span><small>Balance</small><b>{fmt(entry.balanceCents, "KES")}</b></span><span><small>M-Pesa allocated</small><b>{fmt(entry.allocationCents, "KES")}</b></span><span><small>Issued</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><div className="audit-payment-methods"><strong>Captured payments</strong><span>{methodsForInvoice(entry)}</span></div>{entry.activeAllocations.length || entry.activeOffsets.length ? <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} currency="KES" timeZone={timeZone} /> : null}{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div></details>) : <div className="audit-empty"><FileText /><strong>No invoices match</strong><span>Change the search or audit period.</span></div>}</div> : null}
+  </div>;
 }
 
 function KopokopoSandboxTest({ data }) {
