@@ -4164,13 +4164,18 @@ body{overscroll-behavior:none}
 .navitem svg{width:16px;height:16px;flex:none}
 .navitem:hover{background:var(--surface-2);color:var(--text)}
 .navitem.main{font-weight:800;font-size:14px;color:var(--text)}
+.navitem.main.toned{color:var(--nav-tone);background:color-mix(in srgb,var(--nav-tone) 9%,var(--surface));border:1px solid color-mix(in srgb,var(--nav-tone) 24%,transparent)}
+.navitem.main.toned svg{color:var(--nav-tone)}
+.navitem.main.toned:hover{color:var(--nav-tone);background:color-mix(in srgb,var(--nav-tone) 15%,var(--surface));border-color:color-mix(in srgb,var(--nav-tone) 38%,transparent)}
 .navitem.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 6px 16px -8px var(--accent)}
+.navitem.main.toned.on{color:#fff;border-color:transparent}
+.navitem.main.toned.on svg{color:#fff}
 .navbadge{margin-left:auto;min-width:19px;height:19px;border-radius:999px;background:#EF4444;color:#fff;font-size:11px;font-weight:850;display:inline-flex;align-items:center;justify-content:center;padding:0 6px;line-height:1}
 .navside.collapsed .navbadge{position:absolute;right:6px;top:4px;min-width:17px;height:17px;font-size:10px;padding:0 5px}
 .navgrp{display:flex;flex-direction:column;gap:3px}
-.navsec{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:800;padding:13px 11px 5px;display:flex;align-items:center;gap:7px;white-space:nowrap;width:100%;border:none;background:none;cursor:pointer;font-family:inherit;border-radius:8px;transition:.13s}
-.navsec:hover{color:var(--text);background:var(--surface-2)}
-.navsec svg{width:13px;height:13px;flex:none}
+.navsec{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--nav-tone,var(--muted));font-weight:850;padding:8px 9px;display:flex;align-items:center;gap:8px;white-space:nowrap;width:100%;border:1px solid color-mix(in srgb,var(--nav-tone,var(--muted)) 22%,transparent);background:color-mix(in srgb,var(--nav-tone,var(--muted)) 8%,var(--surface));cursor:pointer;font-family:inherit;border-radius:9px;transition:.13s;margin-top:3px}
+.navsec:hover,.navsec.open{color:var(--nav-tone,var(--text));background:color-mix(in srgb,var(--nav-tone,var(--muted)) 14%,var(--surface));border-color:color-mix(in srgb,var(--nav-tone,var(--muted)) 35%,transparent)}
+.navsec>svg{width:24px;height:24px;flex:none;padding:5px;border-radius:7px;background:var(--nav-tone,var(--muted));color:#fff}
 .navsec-chev{margin-left:auto;display:grid;place-items:center;color:var(--muted-2)}
 .navsec-chev svg{width:14px;height:14px}
 .navdiv{height:1px;background:var(--border-soft);margin:8px 4px}
@@ -7815,8 +7820,8 @@ function ModulesOverview({ branches, onOpen }) {
   );
 }
 const NAV_TOP = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "ai", label: "AI Assistant", icon: Sparkles },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, tone: "#1687a7" },
+  { id: "ai", label: "AI Assistant", icon: Sparkles, tone: "#7c5ce7" },
 ];
 // Which access right each module requires. Tabs not listed (dashboard, ai) are open to anyone with admin-area access.
 const TAB_RIGHT = {
@@ -7828,11 +7833,11 @@ const TAB_RIGHT = {
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
 };
 const NAV_GROUPS = [
-  { id: "salesgrp", label: "Sales & Customers", icon: Receipt, items: [
+  { id: "salesgrp", label: "Sales & Customers", icon: Receipt, tone: "#dc5a6f", items: [
     { id: "invoices", label: "Sales", icon: FileText },
     { id: "customers", label: "Customers", icon: Users },
   ] },
-  { id: "invgrp", label: "Inventory", icon: Boxes, items: [
+  { id: "invgrp", label: "Inventory", icon: Boxes, tone: "#218c63", items: [
     { id: "products", label: "Products", icon: Tag },
     { id: "pricing", label: "Pricing", icon: Tags },
     { id: "stock", label: "Stock", icon: Boxes },
@@ -7840,21 +7845,21 @@ const NAV_GROUPS = [
     { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
     { id: "suppliers", label: "Suppliers", icon: Truck },
   ] },
-  { id: "fingrp", label: "Finance", icon: Banknote, items: [
+  { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
     { id: "payments", label: "Payments", icon: CreditCard },
     { id: "mpesa", label: "M-Pesa Transactions", icon: Smartphone },
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
   ] },
-  { id: "opsgrp", label: "Branch Operations", icon: Building2, items: [
+  { id: "opsgrp", label: "Branch Operations", icon: Building2, tone: "#c77b20", items: [
     { id: "branches", label: "Branches", icon: Building2 },
     { id: "documents", label: "Documents", icon: Files },
   ] },
-  { id: "anlgrp", label: "Analytics", icon: BarChart3, items: [
+  { id: "anlgrp", label: "Analytics", icon: BarChart3, tone: "#8a55bd", items: [
     { id: "reports", label: "Reports", icon: BarChart3 },
     { id: "insights", label: "Insights", icon: Sparkles },
   ] },
-  { id: "admgrp", label: "Administration", icon: ShieldCheck, items: [
+  { id: "admgrp", label: "Administration", icon: ShieldCheck, tone: "#5967b0", items: [
     { id: "users", label: "Users & Security", icon: ShieldCheck },
     { id: "terminals", label: "Terminals", icon: KeyRound },
     { id: "environment", label: "Environment", icon: ShieldCheck },
@@ -8008,7 +8013,8 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
         : "expenses pending approval";
     return (
       <button
-        className={"navitem" + (main ? " main" : "") + (tab === item.id ? " on" : "")}
+        className={"navitem" + (main ? " main" : "") + (item.tone ? " toned" : "") + (tab === item.id ? " on" : "")}
+        style={item.tone ? { "--nav-tone": item.tone } : undefined}
         title={badgeCount > 0 ? `${item.label}: ${badgeCount} ${badgeLabel}` : item.label}
         onClick={() => activateWorkspace(item.id)}
       >
@@ -8061,7 +8067,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
         <div className="navdiv" />
         {visibleGroups.map((g) => { const GI = g.icon; const open = navCollapsed || openGroups[g.id]; return (
           <div className="navgrp" key={g.id}>
-            <button className={"navsec" + (open ? " open" : "")} onClick={() => toggleGroup(g.id)} title={g.label}>
+            <button className={"navsec" + (open ? " open" : "")} style={{ "--nav-tone": g.tone }} onClick={() => toggleGroup(g.id)} title={g.label}>
               <GI /> <span className="navlabel">{g.label}</span>
               <span className="navsec-chev navlabel">{open ? <ChevronDown /> : <ChevronRight />}</span>
             </button>
