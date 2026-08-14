@@ -14,6 +14,7 @@ import {
 import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
 import { buildMpesaInvoiceAudit } from "./admin/mpesaInvoiceAudit.js";
 import { reconcileInvoicePaymentState } from "./admin/invoicePaymentReconciliation.js";
+import { invoiceIsVoidedFromData, invoiceVoidStateFromData } from "./admin/invoiceVoidState.js";
 import {
   activeQuickInventoryDraft,
   createQuickInventoryDraft,
@@ -3261,24 +3262,11 @@ function invStatus(inv) {
   if (invIsOverdue(inv)) return "overdue";
   return inv.paidCents > 0 ? "partial" : "open";
 }
-function latestInvoiceVoidRequest(data, invoiceId) {
-  return [...(data?.invoiceVoidRequests || [])]
-    .filter((entry) => entry.invoiceId === invoiceId)
-    .sort((a, b) => Number(b.requestedAt || b.ts || 0) - Number(a.requestedAt || a.ts || 0))[0] || null;
-}
-function latestInvoiceVoidDecision(data, invoiceId, requestId = "") {
-  return [...(data?.invoiceVoidDecisions || [])]
-    .filter((entry) => entry.invoiceId === invoiceId && (!requestId || entry.requestId === requestId))
-    .sort((a, b) => Number(b.decidedAt || b.ts || 0) - Number(a.decidedAt || a.ts || 0))[0] || null;
-}
 function invoiceVoidState(data, invoiceId) {
-  const request = latestInvoiceVoidRequest(data, invoiceId);
-  const decision = latestInvoiceVoidDecision(data, invoiceId, request?.id);
-  return { request, decision, status: decision?.decision || (request ? "pending" : "none") };
+  return invoiceVoidStateFromData(data, invoiceId);
 }
 function invoiceIsVoided(data, invoiceOrId) {
-  const invoiceId = typeof invoiceOrId === "string" ? invoiceOrId : invoiceOrId?.id;
-  return Boolean(invoiceId && invoiceVoidState(data, invoiceId).status === "approved");
+  return invoiceIsVoidedFromData(data, invoiceOrId);
 }
 function operationalInvoices(data) {
   return (data?.invoices || [])
@@ -8394,7 +8382,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const open = outstanding.filter((i) => !invIsDebt(i) && !invIsOverdue(i));
   const partialInvoices = activeInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status !== "pending"
     && Number(invoice.paidCents || 0) > 0 && invOutstanding(invoice) > 0);
-  const periodActiveInvoices = activeInvoices.filter(periodMatchesInvoice);
+  // Keep the reporting boundary defensive: an approved void must never enter totals.
+  const periodActiveInvoices = activeInvoices.filter((invoice) => !invoiceIsVoided(data, invoice) && periodMatchesInvoice(invoice));
   const periodVoidedInvoices = voidedInvoices.filter(periodMatchesInvoice);
   const periodDisplayInvoices = [...periodActiveInvoices, ...periodVoidedInvoices];
   const periodOutstanding = periodActiveInvoices.filter((invoice) => invOutstanding(invoice) > 0);
