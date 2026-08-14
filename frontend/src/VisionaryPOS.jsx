@@ -13,6 +13,7 @@ import {
 } from "./admin/mpesaReceiptLedger.js";
 import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/creditRecovery.js";
 import { buildMpesaInvoiceAudit } from "./admin/mpesaInvoiceAudit.js";
+import { reconcileInvoicePaymentState } from "./admin/invoicePaymentReconciliation.js";
 import {
   activeQuickInventoryDraft,
   createQuickInventoryDraft,
@@ -1893,9 +1894,9 @@ function reconcileInvoicePayments(data) {
   return {
     ...data,
     invoices: (data?.invoices || []).map((inv) => {
-      const total = Number(inv.totalCents) || 0;
-      const paid = Math.min(total, Math.max(Number(inv.paidCents) || 0, totals[inv.id] || 0));
-      const reconciled = { ...inv, paidCents: paid };
+      const reconciled = reconcileInvoicePaymentState(inv, totals[inv.id] || 0, {
+        voided: invoiceIsVoided(data, inv),
+      });
       return { ...reconciled, carriedOver: invoiceWasCarriedOver(data, reconciled) };
     }),
   };
