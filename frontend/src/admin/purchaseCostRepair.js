@@ -142,6 +142,7 @@ function correctionMovement({ purchase, audit, correctedAt, idFactory }) {
     id: makeId("mv", idFactory),
     purchaseId: purchase.id,
     purchaseBatchId: purchase.batchId || null,
+    purchaseBatchNo: purchase.batchNo || null,
     productId: purchase.productId,
     branchId: purchase.branchId,
     qty: 0,
@@ -155,6 +156,47 @@ function correctionMovement({ purchase, audit, correctedAt, idFactory }) {
     reason: `Purchase cost correction ${purchase.batchNo || purchase.id}: ${audit.reason}`,
     ts: correctedAt,
     synced: false,
+  };
+}
+
+export function updateOrderedPurchaseCost(data, options = {}) {
+  const purchase = (data?.purchases || []).find((entry) => entry.id === options.purchaseId);
+  if (!purchase) throw new Error("Purchase line was not found.");
+  if (normalizedStatus(purchase.status) === "received") throw new Error("Received purchase costs must use the audited correction workflow.");
+
+  const reason = requiredReason(options.reason);
+  const updatedUnitCostCents = preciseCents(options.updatedUnitCostCents);
+  if (!(updatedUnitCostCents > 0)) throw new Error("Enter a valid purchase unit cost.");
+  const previousUnitCostCents = purchaseRepairUnitCostCents(purchase);
+  if (Math.abs(updatedUnitCostCents - previousUnitCostCents) < 0.000001) throw new Error("The purchase cost is unchanged.");
+
+  const updatedAt = Number(options.updatedAt || Date.now());
+  const audit = {
+    id: makeId("poe", options.idFactory),
+    previousUnitCostCents,
+    previousLineTotalCents: Math.round(Number(purchase.qty || 0) * previousUnitCostCents),
+    updatedUnitCostCents,
+    updatedLineTotalCents: Math.round(Number(purchase.qty || 0) * updatedUnitCostCents),
+    reason,
+    updatedAt,
+    ...actorFields(options.actor),
+  };
+  const updatedPurchase = {
+    ...purchase,
+    costCents: updatedUnitCostCents,
+    lineTotalCents: audit.updatedLineTotalCents,
+    orderCostEdits: [...(purchase.orderCostEdits || []), audit],
+    updatedAt,
+    synced: false,
+  };
+
+  return {
+    data: {
+      ...data,
+      purchases: data.purchases.map((entry) => entry.id === purchase.id ? updatedPurchase : entry),
+    },
+    purchase: updatedPurchase,
+    audit,
   };
 }
 

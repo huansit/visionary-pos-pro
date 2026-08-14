@@ -22,7 +22,13 @@ import {
   correctReceivedPurchaseCost,
   recoverableDeletedPurchaseLines,
   restoreDeletedPurchaseLine,
+  updateOrderedPurchaseCost,
 } from "./admin/purchaseCostRepair.js";
+import {
+  buildPurchaseLotTrace,
+  formatPurchaseLotStamp,
+  nextPurchaseOrderNumber,
+} from "./admin/purchaseLotTraceability.js";
 import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
   addPurchaseOrderProduct,
@@ -10224,6 +10230,10 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const visibleBranchProducts = branchProductsUnique(data, branch.id);
   const enabledProductCount = visibleBranchProducts.filter(productIsEnabled).length;
   const scannedProduct = visibleBranchProducts.find((p) => p.id === scannedProductId) || null;
+  const purchaseLotTrace = useMemo(
+    () => buildPurchaseLotTrace(data),
+    [data.purchases, data.stockMovements]
+  );
   const productCodeMatch = (p, code) => {
     const normalized = cleanCode(code).toLowerCase();
     if (!normalized) return false;
@@ -10598,6 +10608,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         const margin = price > 0 ? Math.round((price - cost) / price * 100) : 0;
         const supplier = data.suppliers.find((item) => item.id === scannedProduct.supplierId)?.name || "No supplier";
         const codes = [scannedProduct.barcode, ...(scannedProduct.barcodes || [])].filter(Boolean).join(", ") || "No barcode";
+        const purchaseStamp = formatPurchaseLotStamp(purchaseLotTrace.activeLotsFor(scannedProduct.id, branch.id));
         return (
           <div className="xferinfo fade" role="status" style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
@@ -10616,6 +10627,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             </div>
             <div className="sub" style={{ marginTop: 12, lineHeight: 1.65, overflowWrap: "anywhere" }}>
               SKU: <b>{scannedProduct.sku}</b> · Barcode: <b>{codes}</b> · Size: <b>{scannedProduct.size || "Not set"}</b> · Category: <b>{scannedProduct.category || "Other"}</b> · Supplier: <b>{supplier}</b>
+            </div>
+            <div className="sub" style={{ marginTop: 6, lineHeight: 1.55 }}>
+              Purchase stock: <b style={{ color: purchaseStamp ? "var(--accent)" : "var(--muted-2)" }}>{purchaseStamp || "No stock on hand"}</b>
             </div>
           </div>
         );
@@ -10640,6 +10654,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   const branchCost = branchInventoryCostCents(data, p, branch.id);
                   const branchPrice = branchProductPriceCents(p, branch.id);
                   const marg = branchPrice > 0 ? Math.round((branchPrice - branchCost) / branchPrice * 100) : 0;
+                  const purchaseStamp = formatPurchaseLotStamp(purchaseLotTrace.activeLotsFor(p.id, branch.id));
                   if (editId === p.id) return (
                     <tr key={p.id}>
                       <td colSpan={9}>
@@ -10659,7 +10674,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   return (
                     <tr key={p.id} className={productIsEnabled(p) ? "" : "product-row-disabled"}>
                       <td><div className="ptimg"><ProductImage src={productDisplayImage(p)} alt="" fit="cover" /></div></td>
-                      <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div></td>
+                      <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div>{purchaseStamp && <div className="ptsub" style={{ color: "var(--accent)", fontWeight: 800 }}>PO stock · {purchaseStamp}</div>}</td>
                       <td><span className="ptcat">{p.category}</span></td>
                       <td className="num"><span className="ptstk"><span className={"dot " + cls} /> {left}</span></td>
                       <td className="num">{fmtExact(branchCost, cur, 6)}</td>
@@ -10743,6 +10758,10 @@ function StockTab({ data, update, branch }) {
   const totalUnits = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId), 0);
   const stockValue = uniqueProducts.reduce((s, p) => s + productOnHand(data, p, bId) * branchInventoryCostCents(data, p, bId), 0);
   const lossList = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Loss/Damage") && m.branchId === bId).sort((a, b) => b.ts - a.ts);
+  const purchaseLotTrace = useMemo(
+    () => buildPurchaseLotTrace(data),
+    [data.purchases, data.stockMovements]
+  );
   const lossValue = lossList.reduce((s, m) => {
     const product = data.products.find((p) => p.id === m.productId);
     return s + Math.abs(m.qty) * movementUnitCostCents(data, m, product);
@@ -11279,6 +11298,15 @@ function StockTab({ data, update, branch }) {
             <div className="stat"><div className="sl">Overage total</div><div className="sv">{fmt(report.overCost, cur)}</div></div>
             <div className="stat"><div className="sl">Net variance value</div><div className={"sv" + (report.varianceCost < 0 ? " warn" : "")}>{fmt(report.varianceCost, cur)}</div></div>
           </div>
+          {report.discrepancies.some((line) => line.variance < 0) && <div style={{ marginTop: 14 }}>
+            <div className="label">Missing stock purchase trace</div>
+            <div className="list">
+              {report.discrepancies.filter((line) => line.variance < 0).map((line) => <div className="row" key={line.id}>
+                <div className="meta"><div className="nm">{line.name}</div><div className="mt2">PO source: {line.purchaseReferences || "Legacy/untracked stock"}</div></div>
+                <b style={{ color: "var(--danger)" }}>{Math.abs(line.variance)} missing</b>
+              </div>)}
+            </div>
+          </div>}
         </div>
       )}
       <DocumentFile title="Stock correction records" count={correctionList.length} meta={`Audited quantity corrections for ${bname}`}>
@@ -11394,6 +11422,19 @@ function StockTab({ data, update, branch }) {
               <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={lf.note} onChange={(e) => setLf({ ...lf, note: e.target.value })} placeholder="e.g. broken in transit" /></div>
               <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={!(parseInt(lf.qty, 10) > 0)} onClick={recordLoss}><Check /> Record write-off</button>
             </>}
+            {lossList.length > 0 && <div style={{ marginTop: 16 }}>
+              <div className="label">Recent loss trace</div>
+              <div className="list" style={{ maxHeight: 190, overflow: "auto" }}>
+                {lossList.slice(0, 8).map((movement) => {
+                  const product = data.products.find((entry) => entry.id === movement.productId);
+                  const purchaseStamp = formatPurchaseLotStamp(purchaseLotTrace.referencesForMovement(movement.id));
+                  return <div className="row" key={movement.id}>
+                    <div className="meta"><div className="nm">{product?.name || "Product"}</div><div className="mt2">{dt(movement.ts)} · PO source: {purchaseStamp || "Legacy/untracked stock"}</div></div>
+                    <b>{Math.abs(Number(movement.qty || 0))}</b>
+                  </div>;
+                })}
+              </div>
+            </div>}
           </div>
         </div>
       )}
@@ -11705,22 +11746,35 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
 }
 
 function buildStockCountReport(session, rows, movements, data, branchName) {
-  const discrepancies = rows.filter((row) => row.varianceQty !== 0).map((row) => ({
-    id: row.productId,
-    name: row.product.name,
-    sku: row.product.sku,
-    system: row.expectedQty,
-    counted: row.countedQty,
-    variance: row.varianceQty,
-    costCents: branchInventoryCostCents(data, row.product, session.branchId),
-    kind: "session",
-  }));
+  const trace = buildPurchaseLotTrace({
+    ...data,
+    stockMovements: [...(data.stockMovements || []), ...movements],
+  });
+  const movementByProduct = new Map(movements.map((movement) => [movement.productId, movement]));
+  const reportLine = (row) => {
+    const movement = movementByProduct.get(row.productId);
+    const purchaseLots = row.varianceQty < 0 && movement ? trace.referencesForMovement(movement.id) : [];
+    return {
+      id: row.productId,
+      name: row.product.name,
+      sku: row.product.sku,
+      system: row.expectedQty,
+      counted: row.countedQty,
+      variance: row.varianceQty,
+      costCents: branchInventoryCostCents(data, row.product, session.branchId),
+      purchaseLots,
+      purchaseReferences: formatPurchaseLotStamp(purchaseLots),
+      kind: "session",
+    };
+  };
+  const lines = rows.map(reportLine);
+  const discrepancies = lines.filter((line) => line.variance !== 0);
   return {
     branchName,
     branchId: session.branchId,
     code: session.code,
     ts: session.committedAt || now(),
-    lines: rows.map((row) => ({ id: row.productId, name: row.product.name, sku: row.product.sku, system: row.expectedQty, counted: row.countedQty, variance: row.varianceQty, costCents: branchInventoryCostCents(data, row.product, session.branchId), kind: "session" })),
+    lines,
     discrepancies,
     varianceUnits: rows.reduce((s, row) => s + (row.varianceQty || 0), 0),
     varianceCost: rows.reduce((s, row) => s + row.valueImpact, 0),
@@ -12099,13 +12153,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     const sup = data.suppliers.find((s) => s.id === f.supplierId); const prod = data.products.find((p) => p.id === f.productId);
     const lbr = f.branchId || branch.id; const ts = now(); const received = f.received;
     update((d) => {
-      const po = { id: uid("po"), supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: received ? ts : null, synced: false };
+      const batchId = uid("pb");
+      const batchNo = nextPurchaseOrderNumber(d.purchases);
+      const po = { id: uid("po"), batchId, batchNo, supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: received ? ts : null, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
       const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchInventoryCostCents(d, cur, lbr) : cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -12125,8 +12181,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     update((d) => {
       let products = [...d.products]; const purchases = []; const movements = []; const ohCache = {};
       const batchId = uid("pb");
-      const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1;
-      const batchNo = "PO-" + String(bn).padStart(4, "0");
+      const batchNo = nextPurchaseOrderNumber(d.purchases);
       const getOH = (pid, bid) => {
         const key = bid + ":" + pid;
         if (ohCache[key] === undefined) ohCache[key] = onHand(d, pid, bid);
@@ -12143,7 +12198,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
+          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
       return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
@@ -12172,7 +12227,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       if (currentProduct) products = withBranchProductCostForKey(products, currentProduct, targetBranchId, newCost);
       onHandByProduct[stockKey] = currentOnHand + Number(po.qty || 0);
       movements.push({
-        id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null,
+        id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null, purchaseBatchNo: po.batchNo || null,
         productId: po.productId, branchId: targetBranchId, qty: po.qty,
         costCents: receivedUnitCost, valueCents: purchaseLineTotalCents(po),
         reason: "Purchase " + po.supplierName, ts: receivedAt, synced: false,
@@ -12219,6 +12274,19 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       reason: "",
     });
   };
+  const openOrderedCostEdit = (purchase) => {
+    setCostRepairError("");
+    setCostRepair({
+      mode: "order",
+      purchaseId: purchase.id,
+      productName: purchase.productName,
+      branchName: data.branches.find((entry) => entry.id === purchase.branchId)?.name || "the branch",
+      quantity: Number(purchase.qty || 0),
+      previousUnitCostCents: purchaseUnitCostCents(purchase),
+      unitCost: decimalText(purchaseUnitCostCents(purchase) / 100),
+      reason: "",
+    });
+  };
   const openDeletedLineRecovery = (candidate, purchaseHead) => {
     setCostRepairError("");
     setCostRepair({
@@ -12240,6 +12308,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     if (reason.length < 3) { setCostRepairError("Enter a clear correction reason."); return; }
     const options = {
       correctedUnitCostCents,
+      updatedUnitCostCents: correctedUnitCostCents,
       reason,
       actor,
       idFactory: uid,
@@ -12249,12 +12318,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     };
     const runRepair = (source) => costRepair.mode === "restore"
       ? restoreDeletedPurchaseLine(source, options)
-      : correctReceivedPurchaseCost(source, options);
+      : costRepair.mode === "order"
+        ? updateOrderedPurchaseCost(source, options)
+        : correctReceivedPurchaseCost(source, options);
     try {
       runRepair(data);
       update((current) => {
         try {
           const result = runRepair(current);
+          if (costRepair.mode === "order") return result.data;
           const product = result.data.products.find((entry) => entry.id === result.purchase.productId);
           return {
             ...result.data,
@@ -12324,8 +12396,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     setLine(line.productId, { supplierId, costCents: quote ? quote.costCents : line.averageCostCents });
   };
   const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, updatedAt: ts, receivedAt: null, synced: false }; };
-  const createLine = (line) => { if (!line.qty || line.qty <= 0 || !line.supplierId) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(line, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((lines) => lines.filter((entry) => entry.productId !== line.productId)); };
-  const createAll = () => { const ts = now(); const valid = selectedPurchaseOrderLines(plan || []).filter((line) => line.supplierId); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((line) => poFromLine(line, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); setPlanProductId(""); setPlanProductQuery(""); };
+  const createLine = (line) => { if (!line.qty || line.qty <= 0 || !line.supplierId) return; update((d) => ({ ...d, purchases: [poFromLine(line, now(), { id: uid("pb"), no: nextPurchaseOrderNumber(d.purchases) }), ...d.purchases] })); setPlan((lines) => lines.filter((entry) => entry.productId !== line.productId)); };
+  const createAll = () => { const ts = now(); const valid = selectedPurchaseOrderLines(plan || []).filter((line) => line.supplierId); if (!valid.length) return; update((d) => { const batch = { id: uid("pb"), no: nextPurchaseOrderNumber(d.purchases) }; const pos = valid.map((line) => poFromLine(line, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); setPlanProductId(""); setPlanProductQuery(""); };
   const exportPlan = () => {
     const lines = selectedPurchaseOrderLines(plan || []);
     if (!lines.length) return;
@@ -12559,7 +12631,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
                   <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
                   <div><span>Quantity</span><b>{po.qty}</b></div>
-                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}</div>
+                  <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Updated by {po.orderCostEdits.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit cost</button>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
                   {isAdmin && po.status === "received" && <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>}
                   {isAdmin && po.status !== "received" && <button className="smdel supplier-invoice-delete" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })} aria-label={`Delete ${po.productName}`}><Trash2 /></button>}
@@ -12569,11 +12641,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Updated by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td>{po.status === "received"
                       ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
-                      : <button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button>}</td>}
+                      : <div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-ghost" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit cost</button><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button></div>}</td>}
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
@@ -12614,19 +12686,22 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
         const enteredUnitCostCents = (Number.parseFloat(costRepair.unitCost) || 0) * 100;
         const correctedLineTotalCents = Math.round(costRepair.quantity * enteredUnitCostCents);
         const restoring = costRepair.mode === "restore";
+        const editingOrder = costRepair.mode === "order";
         return (
           <div className="scrim" onClick={() => setCostRepair(null)}>
             <div className="modal" style={{ maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
               <div className="modal-head">
                 <div>
-                  <div className="sub" style={{ margin: 0 }}>{restoring ? "Purchase recovery" : "Purchase cost correction"}</div>
-                  <div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18 }} /> {restoring ? "Restore deleted line" : "Correct received cost"}</div>
+                  <div className="sub" style={{ margin: 0 }}>{restoring ? "Purchase recovery" : editingOrder ? "Prepared purchase order" : "Purchase cost correction"}</div>
+                  <div className="title" style={{ fontSize: 19, display: "flex", alignItems: "center", gap: 8 }}><Wrench style={{ width: 18, height: 18 }} /> {restoring ? "Restore deleted line" : editingOrder ? "Edit order cost" : "Correct received cost"}</div>
                 </div>
                 <button className="iconbtn" onClick={() => setCostRepair(null)}><X /></button>
               </div>
               <div className="notice" style={{ marginTop: 8 }}>
                 <b>{costRepair.productName}</b> · {costRepair.quantity} unit{costRepair.quantity === 1 ? "" : "s"}<br />
-                Stock quantity and historical invoice profits will not be changed. The current {costRepair.branchName} inventory cost will be recalculated.
+                {editingOrder
+                  ? "No stock has been received. This changes only the prepared order estimate; inventory quantities and costs stay unchanged."
+                  : `Stock quantity and historical invoice profits will not be changed. The current ${costRepair.branchName} inventory cost will be recalculated.`}
               </div>
               {restoring && <div className="notice" style={{ marginTop: 8, borderColor: "var(--warn)" }}>The stock receipt already exists, so this restores only the missing PO-0043 document line.</div>}
               <div className="grid2" style={{ marginTop: 14 }}>
@@ -12635,11 +12710,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                   <div className="input" style={{ display: "flex", alignItems: "center" }}>{fmtExact(costRepair.previousUnitCostCents, cur, 6)}</div>
                 </div>
                 <div>
-                  <label className="label">Correct unit cost (KES)</label>
+                  <label className="label">{editingOrder ? "Final unit cost (KES)" : "Correct unit cost (KES)"}</label>
                   <input className="input" inputMode="decimal" value={costRepair.unitCost} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, unitCost: cleanDecimalInput(e.target.value) })); }} />
                 </div>
               </div>
-              <div className="notice" style={{ marginTop: 10 }}>Corrected line total: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
+              <div className="notice" style={{ marginTop: 10 }}>{editingOrder ? "Updated line total" : "Corrected line total"}: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
               <div className="field" style={{ marginTop: 12 }}>
                 <label className="label">Reason (required)</label>
                 <textarea className="input" style={{ minHeight: 78, resize: "vertical" }} value={costRepair.reason} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, reason: e.target.value })); }} placeholder="Example: supplier invoice cost was entered incorrectly" />
@@ -12647,7 +12722,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
               {costRepairError && <div className="notice" style={{ marginTop: 10, color: "var(--danger)", borderColor: "var(--danger)" }}>{costRepairError}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                 <button className="btn btn-ghost" onClick={() => setCostRepair(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={submitCostRepair}><Check /> {restoring ? "Restore & correct" : "Save correction"}</button>
+                <button className="btn btn-primary" onClick={submitCostRepair}><Check /> {restoring ? "Restore & correct" : editingOrder ? "Save order cost" : "Save correction"}</button>
               </div>
             </div>
           </div>
@@ -14439,6 +14514,7 @@ function exportDiscrepancy(report, cur, kind) {
         { key: "counted", label: "Counted", align: "right" },
         { key: "variance", label: "Variance", align: "right" },
         { key: "value", label: "Value", align: "right" },
+        { key: "purchaseSource", label: "Purchase source" },
         { key: "type", label: "Type" },
       ],
       rows: reportLines.map((l) => ({
@@ -14449,6 +14525,7 @@ function exportDiscrepancy(report, cur, kind) {
         counted: l.counted,
         variance: (l.variance > 0 ? "+" : "") + l.variance,
         value: fmt(l.variance * l.costCents, cur),
+        purchaseSource: l.purchaseReferences || (l.variance < 0 ? "Legacy/untracked stock" : "-"),
         type: l.kind === "amendment" ? "amendment" : "count",
       })),
       totals: [
@@ -14477,10 +14554,10 @@ function exportDiscrepancy(report, cur, kind) {
   }
   const lines = report.lines && report.lines.length ? report.lines : report.discrepancies;
   if (kind === "csv") {
-    const headers = ["Product", "SKU", "System", "Counted", "Variance", "Variance value", "Type"];
-    const rows = lines.map((l) => [l.name, l.sku, l.system, l.counted, l.variance, (l.variance * l.costCents) / 100, l.kind || "count"]);
+    const headers = ["Product", "SKU", "System", "Counted", "Variance", "Variance value", "Purchase source", "Type"];
+    const rows = lines.map((l) => [l.name, l.sku, l.system, l.counted, l.variance, (l.variance * l.costCents) / 100, l.purchaseReferences || (l.variance < 0 ? "Legacy/untracked stock" : "-"), l.kind || "count"]);
     downloadFile(stamp + ".csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
-  } else downloadFile(stamp + ".json", JSON.stringify({ branch: report.branchName, at: new Date(report.ts).toISOString(), discrepancies: report.discrepancies.length, amendments: report.amendments, lines: lines.map((l) => ({ product: l.name, sku: l.sku, system: l.system, counted: l.counted, variance: l.variance, type: l.kind || "count" })) }, null, 2), "application/json");
+  } else downloadFile(stamp + ".json", JSON.stringify({ branch: report.branchName, at: new Date(report.ts).toISOString(), discrepancies: report.discrepancies.length, amendments: report.amendments, lines: lines.map((l) => ({ product: l.name, sku: l.sku, system: l.system, counted: l.counted, variance: l.variance, purchaseSource: l.purchaseReferences || (l.variance < 0 ? "Legacy/untracked stock" : "-"), type: l.kind || "count" })) }, null, 2), "application/json");
 }
 
 function ReportsTab({ data, initialTab, onOpenCashierCredit }) {

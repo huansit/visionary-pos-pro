@@ -5,6 +5,7 @@ import {
   purchaseRepairStockQuantity,
   recoverableDeletedPurchaseLines,
   restoreDeletedPurchaseLine,
+  updateOrderedPurchaseCost,
 } from "../frontend/src/admin/purchaseCostRepair.js";
 
 const ids = () => {
@@ -126,6 +127,52 @@ test("purchase repair requires a reason and cannot edit an outstanding order", (
   assert.throws(() => correctReceivedPurchaseCost(data, {
     purchaseId: "po_keep",
     correctedUnitCostCents: 12500,
+    reason: "",
+  }), /correction reason/);
+});
+
+test("outstanding purchase cost can be replaced before receiving without changing stock", () => {
+  const data = baseData();
+  data.purchases[0].status = "ordered";
+  data.purchases[0].receivedAt = null;
+  const beforeMovements = data.stockMovements.length;
+
+  const result = updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedUnitCostCents: 13500,
+    reason: "Supplier confirmed the final invoice price",
+    actor: { id: "u_admin", name: "Admin" },
+    updatedAt: 700,
+    idFactory: ids(),
+  });
+
+  assert.equal(result.purchase.costCents, 13500);
+  assert.equal(result.purchase.lineTotalCents, 27000);
+  assert.equal(result.purchase.orderCostEdits.length, 1);
+  assert.equal(result.purchase.orderCostEdits[0].previousUnitCostCents, 10000);
+  assert.equal(result.purchase.orderCostEdits[0].actorName, "Admin");
+  assert.equal(result.purchase.updatedAt, 700);
+  assert.equal(result.data.stockMovements.length, beforeMovements);
+  assert.strictEqual(result.data.products, data.products);
+});
+
+test("outstanding cost edit rejects received, unchanged, and unexplained changes", () => {
+  const data = baseData();
+  assert.throws(() => updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedUnitCostCents: 12500,
+    reason: "Final supplier price",
+  }), /Received purchase costs/);
+
+  data.purchases[0].status = "ordered";
+  assert.throws(() => updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedUnitCostCents: 10000,
+    reason: "Final supplier price",
+  }), /unchanged/);
+  assert.throws(() => updateOrderedPurchaseCost(data, {
+    purchaseId: "po_keep",
+    updatedUnitCostCents: 12500,
     reason: "",
   }), /correction reason/);
 });
