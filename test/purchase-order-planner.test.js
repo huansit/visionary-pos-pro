@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  addPurchaseOrderProduct,
   preparePurchaseOrderLines,
   purchaseOrderExportText,
   purchaseOrderLineTotalCents,
@@ -76,4 +77,29 @@ test("plain-text exports do not include commas", () => {
 
   assert.equal(output, "Products-Amount\r\nJuice Orange-3");
   assert.equal(output.includes(","), false);
+});
+
+test("adds a catalogue product that was not suggested without duplicating it", () => {
+  const product = { id: "water-cpt", name: "Water", sku: "W001" };
+  const options = {
+    onHand: 7,
+    averageCostCents: 6000,
+    suppliers: [{ id: "s1", name: "Supplier A" }, { id: "s2", name: "Supplier B" }],
+    supplierPrices: [
+      { id: "q1", productId: "water-cpt", supplierId: "s1", costCents: 5500 },
+      { id: "q2", productId: "water-cpt", supplierId: "s2", costCents: 5000 },
+    ],
+  };
+
+  const lines = addPurchaseOrderProduct([], product, options);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].tier, "manual");
+  assert.equal(lines[0].manuallyAdded, true);
+  assert.equal(lines[0].qty, 1);
+  assert.equal(lines[0].onHand, 7);
+  assert.equal(lines[0].supplierId, "s2");
+  assert.equal(lines[0].averageCostCents, 6000);
+  assert.equal(lines[0].costCents, 5000);
+  assert.equal(lines[0].quotes.length, 2);
+  assert.strictEqual(addPurchaseOrderProduct(lines, product, options), lines);
 });

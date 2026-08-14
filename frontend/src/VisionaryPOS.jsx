@@ -25,6 +25,7 @@ import {
 } from "./admin/purchaseCostRepair.js";
 import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
+  addPurchaseOrderProduct,
   preparePurchaseOrderLines,
   purchaseOrderExportText,
   purchaseOrderLineTotalCents,
@@ -4972,12 +4973,17 @@ body{overscroll-behavior:none}
 .movement-badge,.stock-urgency{width:max-content;border-radius:999px;padding:3px 7px;font-size:9.5px;font-weight:800;text-transform:uppercase}
 .movement-badge.fast{background:rgba(230,67,104,.12);color:var(--danger)}
 .movement-badge.medium{background:rgba(245,158,11,.14);color:var(--warn)}
+.movement-badge.manual{background:rgba(78,196,211,.14);color:var(--accent)}
 .purchase-plan{padding:16px}
 .purchase-plan-head{align-items:center;margin-bottom:10px}
 .purchase-plan-controls{display:grid;grid-template-columns:minmax(190px,1.25fr) minmax(150px,.75fr) minmax(170px,.8fr);gap:10px;margin-bottom:10px}
 .purchase-plan-controls label{display:flex;flex-direction:column;gap:4px}
 .purchase-plan-controls label>span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
 .purchase-plan-controls .select{height:38px;padding-top:0;padding-bottom:0}
+.purchase-plan-add{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(260px,1.4fr) auto;gap:10px;align-items:end;margin-bottom:12px;padding:10px;border:1px solid var(--border-soft);border-radius:8px;background:var(--surface-2)}
+.purchase-plan-add label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.purchase-plan-add label>span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
+.purchase-plan-add .input,.purchase-plan-add .select{height:38px}
 .purchase-plan-table{overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
 .purchase-plan-table table{min-width:1280px}
 .purchase-plan-table th,.purchase-plan-table td{white-space:nowrap}
@@ -4990,7 +4996,7 @@ body{overscroll-behavior:none}
 .purchase-plan-footer span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
 .purchase-plan-footer b{font:750 16px var(--font-mono)}
 .purchase-plan-footer .purchase-plan-total b{color:var(--accent)}
-@media(max-width:720px){.purchase-plan{padding:12px}.purchase-plan-controls{grid-template-columns:1fr 1fr}.purchase-plan-controls label:first-child{grid-column:1/-1}.purchase-plan-footer{display:grid;grid-template-columns:1fr 1fr}.purchase-plan-footer .btn{width:100%}.purchase-plan-head .sub{white-space:normal}}
+@media(max-width:720px){.purchase-plan{padding:12px}.purchase-plan-controls{grid-template-columns:1fr 1fr}.purchase-plan-controls label:first-child{grid-column:1/-1}.purchase-plan-add{grid-template-columns:1fr 1fr}.purchase-plan-add label:first-child{grid-column:1/-1}.purchase-plan-add .btn{width:100%}.purchase-plan-footer{display:grid;grid-template-columns:1fr 1fr}.purchase-plan-footer .btn{width:100%}.purchase-plan-head .sub{white-space:normal}}
 .guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
 .guidance-action svg{width:14px;height:14px;flex:0 0 auto}
 .guidance-action small{color:var(--muted);font-size:10.5px;font-weight:600}
@@ -12274,6 +12280,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const [planCoverWeeks, setPlanCoverWeeks] = useState(2);
   const [planMovementFilter, setPlanMovementFilter] = useState("active");
   const [planNote, setPlanNote] = useState("");
+  const [planProductQuery, setPlanProductQuery] = useState("");
+  const [planProductId, setPlanProductId] = useState("");
   const purchaseDemandLookbackDays = 28;
   const buildLines = (bid, coverWeeks, movementFilter) => preparePurchaseOrderLines(
     buildStockMovementAnalysis(data, purchaseDemandLookbackDays, { targetCoverDays: coverWeeks * 7 }).recommendations,
@@ -12294,10 +12302,20 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   const prepare = (bid = branch.id, coverWeeks = planCoverWeeks, movementFilter = planMovementFilter) => {
     const useBid = bid || branch.id;
     const lines = buildLines(useBid, coverWeeks, movementFilter);
+    const branchChanged = useBid !== planBranch;
     setPlanBranch(useBid);
     setPlanCoverWeeks(coverWeeks);
     setPlanMovementFilter(movementFilter);
-    setPlan(lines);
+    setPlan((current) => {
+      if (branchChanged) return lines;
+      const suggestedIds = new Set(lines.map((line) => line.productId));
+      const manuallyAdded = (current || []).filter((line) => line.manuallyAdded && !suggestedIds.has(line.productId));
+      return [...lines, ...manuallyAdded];
+    });
+    if (branchChanged) {
+      setPlanProductQuery("");
+      setPlanProductId("");
+    }
     setPlanNote(lines.length ? localNote(lines, coverWeeks) : "");
   };
   const setLine = (pid, patch) => setPlan((lines) => (lines || []).map((line) => line.productId === pid ? { ...line, ...patch } : line));
@@ -12307,13 +12325,33 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   };
   const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, updatedAt: ts, receivedAt: null, synced: false }; };
   const createLine = (line) => { if (!line.qty || line.qty <= 0 || !line.supplierId) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(line, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((lines) => lines.filter((entry) => entry.productId !== line.productId)); };
-  const createAll = () => { const ts = now(); const valid = selectedPurchaseOrderLines(plan || []).filter((line) => line.supplierId); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((line) => poFromLine(line, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); };
+  const createAll = () => { const ts = now(); const valid = selectedPurchaseOrderLines(plan || []).filter((line) => line.supplierId); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((line) => poFromLine(line, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); setPlanProductId(""); setPlanProductQuery(""); };
   const exportPlan = () => {
     const lines = selectedPurchaseOrderLines(plan || []);
     if (!lines.length) return;
     const branchName = data.branches.find((entry) => entry.id === planBranch)?.name || "branch";
     const safeBranchName = branchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "branch";
     downloadFile(`products-amount-${safeBranchName}-${todayStr()}.txt`, purchaseOrderExportText(lines), "text/plain;charset=utf-8");
+  };
+  const availablePlanProducts = sortProductsAZ(branchProductsUnique(data, planBranch)
+    .filter(productIsEnabled)
+    .filter((product) => !(plan || []).some((line) => line.productId === product.id)));
+  const planProductMatches = availablePlanProducts.filter((product) => {
+    const query = planProductQuery.trim().toLowerCase();
+    return !query || [product.name, product.sku, product.barcode].some((value) => String(value || "").toLowerCase().includes(query));
+  });
+  const addProductToPlan = () => {
+    const product = availablePlanProducts.find((entry) => entry.id === planProductId);
+    if (!product) return;
+    setPlan((lines) => addPurchaseOrderProduct(lines, product, {
+      suppliers: data.suppliers,
+      supplierPrices: sp,
+      defaultSupplierId: data.suppliers[0]?.id || "",
+      averageCostCents: branchInventoryCostCents(data, product, planBranch),
+      onHand: productOnHand(data, product, planBranch),
+    }));
+    setPlanProductId("");
+    setPlanProductQuery("");
   };
   const selectedPlanLines = selectedPurchaseOrderLines(plan || []);
   const preparedOrderTotal = purchaseOrderTotalCents(plan || []);
@@ -12408,7 +12446,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
           <div className="page-h purchase-plan-head">
             <div><div className="title" style={{ fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}><ClipboardCheck style={{ width: 17, height: 17, color: "var(--accent)" }} /> Prepared purchase order</div>
               <div className="sub">Fast and medium movers · average weekly sales · supplier stock still required</div></div>
-            <button className="iconbtn" title="Close prepared order" onClick={() => { setPlan(null); setPlanNote(""); }}><X /></button>
+            <button className="iconbtn" title="Close prepared order" onClick={() => { setPlan(null); setPlanNote(""); setPlanProductId(""); setPlanProductQuery(""); }}><X /></button>
           </div>
           <div className="purchase-plan-controls">
             <label><span>Order for branch</span><select className="select" value={planBranch} onChange={(event) => prepare(event.target.value, planCoverWeeks, planMovementFilter)}>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
@@ -12418,6 +12456,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
             <label><span>Movement</span><select className="select" value={planMovementFilter} onChange={(event) => prepare(planBranch, planCoverWeeks, event.target.value)}>
               <option value="active">Fast + medium</option><option value="fast">Fast only</option><option value="medium">Medium only</option>
             </select></label>
+          </div>
+          <div className="purchase-plan-add">
+            <label><span>Find another product</span><input className="input" value={planProductQuery} onChange={(event) => { setPlanProductQuery(event.target.value); setPlanProductId(""); }} placeholder="Name, SKU, or barcode" /></label>
+            <label><span>Product to add</span><select className="select" value={planProductId} onChange={(event) => setPlanProductId(event.target.value)}><option value="">{planProductMatches.length ? "Choose product" : "No matching products"}</option>{planProductMatches.map((product) => <option key={product.id} value={product.id}>{product.name}{product.sku ? ` · ${product.sku}` : ""}</option>)}</select></label>
+            <button className="btn btn-ghost" disabled={!planProductId} onClick={addProductToPlan}><Plus /> Add product</button>
           </div>
           {planNote && <div className="insans" style={{ marginBottom: 12 }}>{planNote}</div>}
           {plan.length === 0 ? <div className="notice">No {planMovementFilter === "active" ? "fast or medium" : planMovementFilter} movers need supplier stock at {data.branches.find((entry) => entry.id === planBranch)?.name || branch.name}. Open orders, pending transfers, and available stock at the other branch have already been considered.</div> : (
@@ -12429,8 +12472,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                 <tbody>{plan.map((line) => { const recommendedQuote = line.quotes[0]; const isRecommended = recommendedQuote && line.supplierId === recommendedQuote.supplierId; const selectedQuote = line.quotes.find((quote) => quote.supplierId === line.supplierId); return (
                   <tr key={line.productId} className={line.selected === false ? "purchase-plan-unselected" : ""}>
                     <td><input type="checkbox" aria-label={`Select ${line.name}`} checked={line.selected !== false} onChange={(event) => setLine(line.productId, { selected: event.target.checked })} /></td>
-                    <td><span className={`movement-badge ${line.tier}`}>{line.tier}</span></td>
-                    <td className="purchase-plan-product"><div className="nm">{line.name}</div><div className="mt2">{line.sku} · target {line.targetStock} · incoming {line.incomingQty} · transfer {line.transferQty}</div></td>
+                    <td><span className={`movement-badge ${line.tier}`}>{line.manuallyAdded ? "added" : line.tier}</span></td>
+                    <td className="purchase-plan-product"><div className="nm">{line.name}</div><div className="mt2">{line.manuallyAdded ? `${line.sku || "No SKU"} · ${line.onHand} on hand · manually added` : `${line.sku} · target ${line.targetStock} · incoming ${line.incomingQty} · transfer ${line.transferQty}`}</div></td>
                     <td className="amt">{Number(line.weeklyDemand.toFixed(1))}</td>
                     <td className="amt">{line.onHand}</td>
                     <td><input className="input" aria-label={`Order amount for ${line.name}`} style={{ width: 78, height: 36, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={line.qty} onChange={(event) => setLine(line.productId, { qty: parseInt(event.target.value.replace(/\D/g, ""), 10) || 0 })} /></td>
@@ -12441,7 +12484,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                     </td>
                     <td className="amt">{fmt(line.costCents, cur)}</td>
                     <td className="amt purchase-plan-line-total">{fmt(purchaseOrderLineTotalCents(line), cur)}</td>
-                    <td><button className="btn xs btn-primary" disabled={!line.supplierId || line.qty <= 0} onClick={() => createLine(line)}><Check /> Order</button></td>
+                    <td><div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-primary" disabled={!line.supplierId || line.qty <= 0} onClick={() => createLine(line)}><Check /> Order</button><button className="smdel" title={`Remove ${line.name}`} aria-label={`Remove ${line.name}`} onClick={() => setPlan((lines) => lines.filter((entry) => entry.productId !== line.productId))}><Trash2 /></button></div></td>
                   </tr>); })}</tbody></table></div>
               <div className="purchase-plan-footer">
                 <div><span>Selected products</span><b>{selectedPlanLines.length}</b></div>
