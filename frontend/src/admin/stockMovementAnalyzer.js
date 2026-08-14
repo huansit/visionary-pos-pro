@@ -38,12 +38,16 @@ function urgencyScore(urgency) {
 export function analyzeStockMovements(rows = [], options = {}) {
   const settings = { ...DEFAULTS, ...(options.settings || {}) };
   const lookbackDays = Math.max(1, Number(options.lookbackDays) || 28);
+  const requestedTargetCoverDays = Number(options.targetCoverDays);
+  const fixedTargetCoverDays = Number.isFinite(requestedTargetCoverDays) && requestedTargetCoverDays > 0
+    ? Math.ceil(requestedTargetCoverDays)
+    : null;
   const prepared = (rows || []).map((source, index) => {
     const soldUnits = Math.max(0, Number(source?.soldUnits) || 0);
     const dailyDemand = soldUnits / lookbackDays;
     const weeklyDemand = dailyDemand * 7;
     const tier = movementTier(weeklyDemand, settings);
-    const targetCoverDays = coverTargetDays(tier, settings);
+    const targetCoverDays = fixedTargetCoverDays ?? coverTargetDays(tier, settings);
     const reorderLevel = whole(source?.reorderLevel);
     const onHand = Math.floor(Number(source?.onHand) || 0);
     const purchaseIncomingQty = whole(source?.purchaseIncomingQty ?? source?.incomingQty);

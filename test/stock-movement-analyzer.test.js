@@ -96,3 +96,14 @@ test("does not recommend transfers or reorders for slow-moving products", () => 
   assert.equal(result.rows[0].tier, "slow");
   assert.deepEqual(result.recommendations, []);
 });
+
+test("longer order coverage never suggests less stock from the same demand history", () => {
+  const rows = [row({ onHand: 2, soldUnits: 28, reorderLevel: 0 })];
+  const oneWeek = analyzeStockMovements(rows, { lookbackDays: 28, targetCoverDays: 7 }).recommendations[0];
+  const fourWeeks = analyzeStockMovements(rows, { lookbackDays: 28, targetCoverDays: 28 }).recommendations[0];
+
+  assert.equal(oneWeek.weeklyDemand, fourWeeks.weeklyDemand);
+  assert.equal(oneWeek.reorderQty, 5);
+  assert.equal(fourWeeks.reorderQty, 26);
+  assert.ok(fourWeeks.reorderQty >= oneWeek.reorderQty);
+});

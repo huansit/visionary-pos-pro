@@ -26,7 +26,7 @@ import {
 import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
   preparePurchaseOrderLines,
-  purchaseOrderExportCsv,
+  purchaseOrderExportText,
   purchaseOrderLineTotalCents,
   purchaseOrderTotalCents,
   selectedPurchaseOrderLines,
@@ -3171,7 +3171,7 @@ function saleMoveRecognized(data, move) {
   if (!saleMoveOperational(data, move)) return false;
   return invRecognized(inv, data);
 }
-function buildStockMovementAnalysis(data, analysisDays = 28) {
+function buildStockMovementAnalysis(data, analysisDays = 28, options = {}) {
   const activeBranches = (data.branches || []).filter((entry) => entry.active !== false);
   const cutoff = now() - analysisDays * 86400000;
   const productById = new Map((data.products || []).map((entry) => [entry.id, entry]));
@@ -3234,7 +3234,7 @@ function buildStockMovementAnalysis(data, analysisDays = 28) {
       });
     });
   });
-  return analyzeStockMovements(observations, { lookbackDays: analysisDays });
+  return analyzeStockMovements(observations, { lookbackDays: analysisDays, ...options });
 }
 // Identifier validation (format only — no network verification in the offline prototype).
 function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").trim()); }
@@ -12265,11 +12265,12 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   };
   const [plan, setPlan] = useState(null);
   const [planBranch, setPlanBranch] = useState(branch.id);
-  const [planDays, setPlanDays] = useState(28);
+  const [planCoverWeeks, setPlanCoverWeeks] = useState(2);
   const [planMovementFilter, setPlanMovementFilter] = useState("active");
   const [planNote, setPlanNote] = useState("");
-  const buildLines = (bid, days, movementFilter) => preparePurchaseOrderLines(
-    buildStockMovementAnalysis(data, days).recommendations,
+  const purchaseDemandLookbackDays = 28;
+  const buildLines = (bid, coverWeeks, movementFilter) => preparePurchaseOrderLines(
+    buildStockMovementAnalysis(data, purchaseDemandLookbackDays, { targetCoverDays: coverWeeks * 7 }).recommendations,
     {
       branchId: bid,
       movementFilter,
@@ -12278,19 +12279,20 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       defaultSupplierId: data.suppliers[0]?.id || "",
     }
   );
-  const localNote = (lines, days) => {
+  const localNote = (lines, coverWeeks) => {
     const quoted = lines.filter((line) => line.hasQuote).length;
     return `${lines.length} fast or medium mover(s) need supplier stock after open purchases and available branch transfers. `
-      + `Demand is the average per week from ${days} days of sales. ${quoted} item(s) use the cheapest saved supplier quote; the rest use branch average cost.`;
+      + `Demand is the average per week from the last ${purchaseDemandLookbackDays} days; amounts top stock up to ${coverWeeks} week${coverWeeks === 1 ? "" : "s"} of cover. `
+      + `${quoted} item(s) use the cheapest saved supplier quote; the rest use branch average cost.`;
   };
-  const prepare = (bid = branch.id, days = planDays, movementFilter = planMovementFilter) => {
+  const prepare = (bid = branch.id, coverWeeks = planCoverWeeks, movementFilter = planMovementFilter) => {
     const useBid = bid || branch.id;
-    const lines = buildLines(useBid, days, movementFilter);
+    const lines = buildLines(useBid, coverWeeks, movementFilter);
     setPlanBranch(useBid);
-    setPlanDays(days);
+    setPlanCoverWeeks(coverWeeks);
     setPlanMovementFilter(movementFilter);
     setPlan(lines);
-    setPlanNote(lines.length ? localNote(lines, days) : "");
+    setPlanNote(lines.length ? localNote(lines, coverWeeks) : "");
   };
   const setLine = (pid, patch) => setPlan((lines) => (lines || []).map((line) => line.productId === pid ? { ...line, ...patch } : line));
   const lineSupplier = (line, supplierId) => {
@@ -12305,7 +12307,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     if (!lines.length) return;
     const branchName = data.branches.find((entry) => entry.id === planBranch)?.name || "branch";
     const safeBranchName = branchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "branch";
-    downloadFile(`purchase-order-${safeBranchName}-${todayStr()}.csv`, purchaseOrderExportCsv(lines), "text/csv;charset=utf-8");
+    downloadFile(`products-amount-${safeBranchName}-${todayStr()}.txt`, purchaseOrderExportText(lines), "text/plain;charset=utf-8");
   };
   const selectedPlanLines = selectedPurchaseOrderLines(plan || []);
   const preparedOrderTotal = purchaseOrderTotalCents(plan || []);
@@ -12403,11 +12405,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
             <button className="iconbtn" title="Close prepared order" onClick={() => { setPlan(null); setPlanNote(""); }}><X /></button>
           </div>
           <div className="purchase-plan-controls">
-            <label><span>Order for branch</span><select className="select" value={planBranch} onChange={(event) => prepare(event.target.value, planDays, planMovementFilter)}>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
-            <label><span>Sales history</span><select className="select" value={planDays} onChange={(event) => { const days = Number(event.target.value); prepare(planBranch, days, planMovementFilter); }}>
-              <option value={7}>1 week</option><option value={14}>2 weeks</option><option value={28}>4 weeks</option><option value={56}>8 weeks</option>
+            <label><span>Order for branch</span><select className="select" value={planBranch} onChange={(event) => prepare(event.target.value, planCoverWeeks, planMovementFilter)}>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+            <label><span>Order coverage</span><select className="select" value={planCoverWeeks} onChange={(event) => { const weeks = Number(event.target.value); prepare(planBranch, weeks, planMovementFilter); }}>
+              <option value={1}>1 week</option><option value={2}>2 weeks</option><option value={4}>4 weeks</option><option value={8}>8 weeks</option>
             </select></label>
-            <label><span>Movement</span><select className="select" value={planMovementFilter} onChange={(event) => prepare(planBranch, planDays, event.target.value)}>
+            <label><span>Movement</span><select className="select" value={planMovementFilter} onChange={(event) => prepare(planBranch, planCoverWeeks, event.target.value)}>
               <option value="active">Fast + medium</option><option value="fast">Fast only</option><option value="medium">Medium only</option>
             </select></label>
           </div>

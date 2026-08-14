@@ -4,10 +4,6 @@ function whole(value) {
   return Math.max(0, Math.floor(Number(value) || 0));
 }
 
-function csvCell(value) {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
-}
-
 export function preparePurchaseOrderLines(recommendations = [], options = {}) {
   const branchId = String(options.branchId || "");
   const movementFilter = String(options.movementFilter || "active");
@@ -65,9 +61,9 @@ export function purchaseOrderTotalCents(lines = []) {
   return selectedPurchaseOrderLines(lines).reduce((sum, line) => sum + purchaseOrderLineTotalCents(line), 0);
 }
 
-export function purchaseOrderExportCsv(lines = []) {
+export function purchaseOrderExportText(lines = []) {
   return [
-    ["Product", "Amount"],
-    ...selectedPurchaseOrderLines(lines).map((line) => [line.name, whole(line.qty)]),
-  ].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    "Products-Amount",
+    ...selectedPurchaseOrderLines(lines).map((line) => `${String(line.name || "").replace(/,/g, "").trim()}-${whole(line.qty)}`),
+  ].join("\r\n");
 }

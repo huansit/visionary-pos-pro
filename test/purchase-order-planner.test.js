@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   preparePurchaseOrderLines,
-  purchaseOrderExportCsv,
+  purchaseOrderExportText,
   purchaseOrderLineTotalCents,
   purchaseOrderTotalCents,
 } from "../frontend/src/admin/purchaseOrderPlanner.js";
@@ -66,5 +66,14 @@ test("totals and exports only selected positive-amount products", () => {
     { name: "Soda", qty: 0, costCents: 7000, selected: true },
   ];
   assert.equal(purchaseOrderTotalCents(lines), 40000);
-  assert.equal(purchaseOrderExportCsv(lines), '"Product","Amount"\r\n"Juice","4"');
+  assert.equal(purchaseOrderExportText(lines), "Products-Amount\r\nJuice-4");
+});
+
+test("plain-text exports do not include commas", () => {
+  const output = purchaseOrderExportText([
+    { name: "Juice, Orange", qty: 3, costCents: 10000, selected: true },
+  ]);
+
+  assert.equal(output, "Products-Amount\r\nJuice Orange-3");
+  assert.equal(output.includes(","), false);
 });
