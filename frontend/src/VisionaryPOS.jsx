@@ -4403,11 +4403,16 @@ body{overscroll-behavior:none}
 .audit-period strong{font-size:12px}
 .audit-period span{color:var(--muted);font-family:var(--font-mono);font-size:10px;overflow-wrap:anywhere}
 .audit-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
+.audit-summary-heading{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:14px 0 6px}
+.audit-summary-heading strong{font-size:13px}
+.audit-summary-heading span{color:var(--muted);font-size:10px}
+.audit-summary.invoice-totals{grid-template-columns:repeat(4,minmax(0,1fr))}
 .audit-summary>div{display:grid;gap:3px;padding:12px;background:var(--surface)}
 .audit-summary span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
 .audit-summary b{font:850 17px var(--font-mono)}
 .audit-summary small{color:var(--muted);font-size:9.5px}
 .audit-summary .offset b{color:var(--warn)}
+.audit-summary .paid b{color:var(--ok)}
 .audit-summary .available b,.audit-summary .clear b{color:var(--ok)}
 .audit-summary .debt b{color:var(--danger)}
 .audit-summary .flagged b{color:var(--danger)}
@@ -4471,9 +4476,9 @@ body{overscroll-behavior:none}
 .invoice-state.open{background:rgba(46,120,199,.13);color:#2e78c7}
 .invoice-state.debt{background:rgba(230,67,104,.13);color:var(--danger)}
 .invoice-state.voided{background:rgba(230,67,104,.13);color:var(--danger)}
-@media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary{grid-template-columns:repeat(3,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
+@media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:repeat(2,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
 @media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(4,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
-@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary{grid-template-columns:1fr}.audit-view-tabs{grid-template-columns:1fr 1fr}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
+@media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:1fr}.audit-view-tabs{grid-template-columns:1fr 1fr}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
 @media(max-width:1250px){.mpesa-ledger-toolbar{grid-template-columns:minmax(220px,1fr) 150px 150px 190px 190px}.mpesa-ledger-actions{grid-column:1/-1;justify-content:flex-end}}
@@ -17603,9 +17608,11 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     return entity?.reference || entry.entityId;
   };
   const methodsForInvoice = (entry) => [
-    entry.providerMpesaCents > 0 ? `M-Pesa ${fmt(entry.providerMpesaCents, "KES")}` : "",
+    entry.providerMpesaCents > 0 ? `Verified M-Pesa ${fmt(entry.providerMpesaCents, "KES")}` : "",
+    entry.manualMpesaCents > 0 ? `Manual M-Pesa ${fmt(entry.manualMpesaCents, "KES")}` : "",
     entry.cashCents > 0 ? `Cash ${fmt(entry.cashCents, "KES")}` : "",
     entry.payrollCents > 0 ? `Payroll ${fmt(entry.payrollCents, "KES")}` : "",
+    entry.otherCents > 0 ? `Other ${fmt(entry.otherCents, "KES")}` : "",
   ].filter(Boolean).join(" / ") || "No captured payments";
   const renderInvoiceAuditTrace = (entry) => {
     const stateKey = entry.voided ? "voided" : entry.debt ? "debt" : entry.balanceCents > 0 ? "open" : "paid";
@@ -17643,8 +17650,18 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     {!ledger.loading && !ledger.error ? <div className="notice"><ShieldCheck /> Audit begins at the first verified Kopo Kopo transaction for each branch: {integrationStartText}. Earlier invoices and transactions are excluded.</div> : null}
     {ledger.truncated ? <div className="notice warn"><AlertCircle /> This scope contains more than {maxTransactions.toLocaleString()} M-Pesa records. Narrow the date range for a complete audit.</div> : null}
 
-    <section className="audit-summary" aria-label="Audit totals">
-      <div><span>Received</span><b>{fmt(audit.summary.receivedCents, "KES")}</b><small>{audit.summary.transactionCount} customer payments</small></div>
+    <div className="audit-summary-heading"><strong>Invoice reconciliation</strong><span>Voided invoices are excluded from value and balance</span></div>
+    <section className="audit-summary invoice-totals" aria-label="Invoice audit totals">
+      <div><span>Total invoices</span><b>{audit.summary.invoiceCount}</b><small>{audit.summary.voidedInvoiceCount} voided excluded</small></div>
+      <div><span>Invoice total</span><b>{fmt(audit.summary.invoiceValueCents, "KES")}</b><small>Value of active invoices</small></div>
+      <div className="paid"><span>Paid on invoices</span><b>{fmt(audit.summary.invoicePaidCents, "KES")}</b><small>All captured payment methods</small></div>
+      <div className={audit.summary.invoiceBalanceCents > 0 ? "debt" : "clear"}><span>Balance due</span><b>{fmt(audit.summary.invoiceBalanceCents, "KES")}</b><small>Open and debt balances</small></div>
+    </section>
+    <div className={`audit-comment ${audit.summary.untracedPaidCents > 0 || audit.summary.excessCapturedPaymentCents > 0 ? "warn" : ""}`}><Receipt /><div><strong>Invoice equation</strong><span>{audit.invoiceComment}</span></div></div>
+
+    <div className="audit-summary-heading"><strong>M-Pesa reconciliation</strong><span>Received money is separate from invoice value until allocated</span></div>
+    <section className="audit-summary" aria-label="M-Pesa audit totals">
+      <div><span>M-Pesa received</span><b>{fmt(audit.summary.receivedCents, "KES")}</b><small>{audit.summary.transactionCount} customer payments</small></div>
       <div><span>Invoice allocations</span><b>{fmt(audit.summary.invoiceAllocatedCents, "KES")}</b><small>Paid directly to invoices</small></div>
       <div className="offset"><span>Cash offsets</span><b>{fmt(audit.summary.offsetCents, "KES")}</b><small>Cash later deposited to till</small></div>
       <div className="available"><span>Available</span><b>{fmt(audit.summary.availableCents, "KES")}</b><small>Not allocated or offset</small></div>

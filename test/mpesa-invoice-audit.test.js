@@ -132,6 +132,47 @@ test("invoice paid amount must agree with captured payments", () => {
   assert.ok(audit.issues.some((entry) => entry.code === "paid_invoice_has_balance"));
 });
 
+test("invoice summary reconciles total, paid, balance, and payment methods", () => {
+  const businessDayInvoice = invoice({ status: "open", totalCents: 567000, paidCents: 539000 });
+  const mpesa = transaction({ amountCents: 501000, allocatedCents: 501000, remainingCents: 0,
+    allocations: [{ id: "alloc_1", invoiceId: "inv_1", invoiceNumber: businessDayInvoice.number, amountCents: 501000, status: "active" }] });
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [mpesa],
+    invoices: [businessDayInvoice],
+    payments: [
+      providerPayment({ amountCents: 501000 }),
+      { id: "cash_1", invoiceId: "inv_1", method: "cash", status: "captured", amountCents: 38000 },
+    ],
+    branches,
+    now: 5000,
+  });
+
+  assert.equal(audit.summary.invoiceCount, 1);
+  assert.equal(audit.summary.invoiceValueCents, 567000);
+  assert.equal(audit.summary.invoicePaidCents, 539000);
+  assert.equal(audit.summary.invoiceBalanceCents, 28000);
+  assert.equal(audit.summary.providerMpesaPaymentCents, 501000);
+  assert.equal(audit.summary.cashPaymentCents, 38000);
+  assert.equal(audit.summary.untracedPaidCents, 0);
+  assert.match(audit.invoiceComment, /KES 5,670/);
+  assert.match(audit.invoiceComment, /cash KES 380/i);
+  assert.equal(audit.issues.length, 0);
+});
+
+test("paid invoice without a captured payment record is flagged", () => {
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [invoice()],
+    payments: [],
+    branches,
+    now: 5000,
+  });
+
+  assert.equal(audit.summary.untracedPaidCents, 10000);
+  assert.ok(audit.issues.some((entry) => entry.code === "invoice_payment_total_mismatch"));
+  assert.match(audit.invoiceComment, /no captured payment record/i);
+});
+
 test("audit messages display KES instead of internal cents", () => {
   const audit = buildMpesaInvoiceAudit({
     transactions: [],

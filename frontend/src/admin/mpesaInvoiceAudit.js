@@ -241,9 +241,14 @@ export function buildMpesaInvoiceAudit({
     const capturedPaymentCents = invoicePayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
     const mpesaPayments = invoicePayments.filter(isMpesa);
     const providerMpesaPayments = mpesaPayments.filter((payment) => payment.providerVerified || payment.kopokopoTransactionId || payment.kopokopoAllocationId);
+    const manualMpesaPayments = mpesaPayments.filter((payment) => !providerMpesaPayments.includes(payment));
+    const mpesaCents = mpesaPayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
     const providerMpesaCents = providerMpesaPayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const manualMpesaCents = manualMpesaPayments.reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
     const cashCents = invoicePayments.filter((payment) => lower(payment.method) === "cash").reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
     const payrollCents = invoicePayments.filter((payment) => lower(payment.method) === "payroll").reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const otherCents = invoicePayments.filter((payment) => !isMpesa(payment) && !["cash", "payroll"].includes(lower(payment.method)))
+      .reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
     const activeAllocations = allocationsByInvoiceId.get(id) || [];
     const activeOffsets = offsetsByInvoiceId.get(id) || [];
     const allocationCents = activeAllocations.reduce((sum, allocation) => sum + Math.max(0, cents(allocation.amountCents)), 0);
@@ -253,7 +258,7 @@ export function buildMpesaInvoiceAudit({
     const voided = isVoided(invoice);
     const debt = isInvoiceDebt(invoice, balanceCents);
 
-    if (!voided && invoicePayments.length > 0 && capturedPaymentCents !== storedPaidCents) {
+    if (!voided && capturedPaymentCents !== storedPaidCents) {
       addIssue(issue({ code: "invoice_payment_total_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "Invoice paid total does not match payments", message: `${reference} records ${kes(storedPaidCents)} as paid, but its captured payment records total ${kes(capturedPaymentCents)}.` }));
     }
     if (!voided && storedPaidCents > totalCents) {
@@ -296,9 +301,12 @@ export function buildMpesaInvoiceAudit({
       storedPaidCents,
       balanceCents,
       capturedPaymentCents,
+      mpesaCents,
       providerMpesaCents,
+      manualMpesaCents,
       cashCents,
       payrollCents,
+      otherCents,
       allocationCents,
       offsetCents,
       invoicePayments,
@@ -316,15 +324,26 @@ export function buildMpesaInvoiceAudit({
   const customerTransactions = transactionRows.filter((transaction) => transaction.allocatable);
   const availableRows = customerTransactions.filter((transaction) => transaction.availableCents > 0);
   const staleAvailableRows = availableRows.filter((transaction) => transaction.issues.some((entry) => entry.code === "stale_available_money"));
+  const activeInvoiceRows = invoiceRows.filter((invoice) => !invoice.voided);
   const summary = {
     transactionCount: customerTransactions.length,
-    invoiceCount: invoiceRows.filter((invoice) => !invoice.voided).length,
+    invoiceCount: activeInvoiceRows.length,
+    voidedInvoiceCount: invoiceRows.filter((invoice) => invoice.voided).length,
     receivedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.amountCents, 0),
     invoiceAllocatedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.invoiceAllocatedCents, 0),
     offsetCents: customerTransactions.reduce((sum, transaction) => sum + transaction.offsetCents, 0),
     availableCents: customerTransactions.reduce((sum, transaction) => sum + transaction.availableCents, 0),
-    invoiceValueCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.totalCents, 0),
-    invoiceBalanceCents: invoiceRows.filter((invoice) => !invoice.voided).reduce((sum, invoice) => sum + invoice.balanceCents, 0),
+    invoiceValueCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.totalCents, 0),
+    invoicePaidCents: activeInvoiceRows.reduce((sum, invoice) => sum + Math.min(invoice.totalCents, invoice.storedPaidCents), 0),
+    invoiceBalanceCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.balanceCents, 0),
+    capturedInvoicePaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.capturedPaymentCents, 0),
+    providerMpesaPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.providerMpesaCents, 0),
+    manualMpesaPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.manualMpesaCents, 0),
+    cashPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.cashCents, 0),
+    payrollPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.payrollCents, 0),
+    otherPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.otherCents, 0),
+    untracedPaidCents: activeInvoiceRows.reduce((sum, invoice) => sum + Math.max(0, Math.min(invoice.totalCents, invoice.storedPaidCents) - invoice.capturedPaymentCents), 0),
+    excessCapturedPaymentCents: activeInvoiceRows.reduce((sum, invoice) => sum + Math.max(0, invoice.capturedPaymentCents - invoice.storedPaidCents), 0),
     debtCount: invoiceRows.filter((invoice) => invoice.debt).length,
     debtOutstandingCents: invoiceRows.filter((invoice) => invoice.debt).reduce((sum, invoice) => sum + invoice.balanceCents, 0),
     criticalCount: issues.filter((entry) => entry.severity === "critical").length,
@@ -338,12 +357,27 @@ export function buildMpesaInvoiceAudit({
     ? "All verified customer M-Pesa money in this audit scope is accounted for by active invoice allocations or cash-deposit offsets."
     : `Verified money remains available across ${availableRows.length} transaction${availableRows.length === 1 ? "" : "s"}. Available money has not yet settled an invoice or offset a cash receipt.${summary.staleAvailableCents > 0 ? " Some of it is older than the audit threshold and needs review." : ""}`;
 
+  const invoicePaymentParts = [
+    summary.providerMpesaPaymentCents > 0 ? `verified M-Pesa ${kes(summary.providerMpesaPaymentCents)}` : "",
+    summary.manualMpesaPaymentCents > 0 ? `manual M-Pesa ${kes(summary.manualMpesaPaymentCents)}` : "",
+    summary.cashPaymentCents > 0 ? `cash ${kes(summary.cashPaymentCents)}` : "",
+    summary.payrollPaymentCents > 0 ? `payroll ${kes(summary.payrollPaymentCents)}` : "",
+    summary.otherPaymentCents > 0 ? `other ${kes(summary.otherPaymentCents)}` : "",
+  ].filter(Boolean);
+  const traceWarning = summary.untracedPaidCents > 0
+    ? ` ${kes(summary.untracedPaidCents)} of the paid amount has no captured payment record and is flagged.`
+    : summary.excessCapturedPaymentCents > 0
+      ? ` Captured payment records exceed invoice paid totals by ${kes(summary.excessCapturedPaymentCents)} and are flagged.`
+      : " All paid amounts are backed by captured payment records.";
+  const invoiceComment = `${summary.invoiceCount} active invoice${summary.invoiceCount === 1 ? "" : "s"} total ${kes(summary.invoiceValueCents)}: ${kes(summary.invoicePaidCents)} paid plus ${kes(summary.invoiceBalanceCents)} outstanding.${invoicePaymentParts.length ? ` Captured payment methods: ${invoicePaymentParts.join(", ")}.` : " No captured payments are recorded."}${traceWarning}`;
+
   return {
     transactions: transactionRows.sort((left, right) => right.timestamp - left.timestamp),
     invoices: invoiceRows.sort((left, right) => right.timestamp - left.timestamp),
     issues: issues.sort((left, right) => issueRank(left.severity) - issueRank(right.severity) || left.title.localeCompare(right.title)),
     summary,
     availableComment,
+    invoiceComment,
     auditStartByBranch: auditStartByBranch === null ? null : Object.fromEntries(auditStartByBranch),
     excludedTransactionCount: transactions.length - scopedTransactions.length,
     excludedInvoiceCount: invoices.length - scopedInvoices.length,
