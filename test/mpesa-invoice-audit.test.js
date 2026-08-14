@@ -101,6 +101,39 @@ test("cash offsets must remain in the same branch and cannot target voided invoi
   assert.ok(audit.issues.some((entry) => entry.code === "offset_to_voided_invoice"));
 });
 
+test("voided invoices are excluded from invoice totals and detailed invoice results", () => {
+  const active = invoice();
+  const voided = invoice({ id: "inv_void", number: "RCP-CPT-000002", status: "voided", totalCents: 25000, paidCents: 0 });
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [transaction()],
+    invoices: [active, voided],
+    payments: [providerPayment()],
+    branches,
+    now: 5000,
+  });
+
+  assert.deepEqual(audit.invoices.map((entry) => entry.id), ["inv_1"]);
+  assert.equal(audit.summary.invoiceCount, 1);
+  assert.equal(audit.summary.invoiceValueCents, 10000);
+  assert.equal(audit.summary.voidedInvoiceCount, 1);
+  assert.equal(audit.excludedVoidedInvoiceCount, 1);
+});
+
+test("allocations to voided invoices are flagged without inflating active invoice allocations", () => {
+  const voided = invoice({ id: "inv_void", number: "RCP-CPT-000002", status: "voided", totalCents: 10000, paidCents: 0 });
+  const linked = transaction({
+    allocations: [{ id: "alloc_void", invoiceId: "inv_void", invoiceNumber: voided.number, amountCents: 10000, status: "active" }],
+  });
+  const audit = buildMpesaInvoiceAudit({ transactions: [linked], invoices: [voided], payments: [], branches, now: 5000 });
+
+  assert.equal(audit.summary.invoiceCount, 0);
+  assert.equal(audit.summary.invoiceAllocatedCents, 0);
+  assert.equal(audit.summary.voidedInvoiceAllocationCents, 10000);
+  assert.equal(audit.summary.reconciliationGapCents, 0);
+  assert.equal(audit.transactions[0].activeAllocations.length, 0);
+  assert.ok(audit.issues.some((entry) => entry.code === "allocation_to_voided_invoice"));
+});
+
 test("old unallocated money is explained and flagged for review", () => {
   const old = transaction({ amountCents: 3000, allocatedCents: 0, remainingCents: 3000, allocations: [], originationTime: new Date(1000).toISOString() });
   const audit = buildMpesaInvoiceAudit({ transactions: [old], invoices: [], payments: [], branches, now: 48 * 3600000, staleAfterMs: 24 * 3600000 });
@@ -157,6 +190,39 @@ test("invoice summary reconciles total, paid, balance, and payment methods", () 
   assert.match(audit.invoiceComment, /KES 5,670/);
   assert.match(audit.invoiceComment, /cash KES 380/i);
   assert.equal(audit.issues.length, 0);
+});
+
+test("selected-period M-Pesa is split between current invoices and older debt recovery", () => {
+  const oldInvoice = invoice({ id: "inv_old", number: "RCP-CPT-000099", ts: 5000, totalCents: 6000, paidCents: 6000 });
+  const currentInvoice = invoice({ id: "inv_current", number: "RCP-CPT-000100", ts: 15000, totalCents: 3000, paidCents: 3000 });
+  const received = transaction({
+    amountCents: 10000,
+    allocatedCents: 9000,
+    remainingCents: 1000,
+    originationTime: new Date(16000).toISOString(),
+    allocations: [
+      { id: "alloc_old", invoiceId: oldInvoice.id, invoiceNumber: oldInvoice.number, amountCents: 6000, status: "active" },
+      { id: "alloc_current", invoiceId: currentInvoice.id, invoiceNumber: currentInvoice.number, amountCents: 3000, status: "active" },
+    ],
+  });
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [received],
+    invoices: [currentInvoice],
+    referenceInvoices: [oldInvoice, currentInvoice],
+    payments: [],
+    branches,
+    auditPeriod: { startedAt: 10000, endedAt: 20000 },
+    now: 21000,
+    transactionScopeComplete: false,
+  });
+
+  assert.equal(audit.summary.selectedPeriodInvoiceAllocationCents, 3000);
+  assert.equal(audit.summary.olderInvoiceRecoveryCents, 6000);
+  assert.equal(audit.summary.otherPeriodInvoiceAllocationCents, 0);
+  assert.equal(audit.summary.availableCents, 1000);
+  assert.equal(audit.summary.recoveryTransactionCount, 1);
+  assert.equal(audit.summary.reconciliationGapCents, 0);
+  assert.match(audit.reconciliationComment, /recovered older invoice debt/i);
 });
 
 test("paid invoice without a captured payment record is flagged", () => {

@@ -4402,7 +4402,7 @@ body{overscroll-behavior:none}
 .audit-period>div{display:grid;gap:2px;min-width:0}
 .audit-period strong{font-size:12px}
 .audit-period span{color:var(--muted);font-family:var(--font-mono);font-size:10px;overflow-wrap:anywhere}
-.audit-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
+.audit-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;overflow:hidden;border:1px solid var(--border-soft);border-radius:7px;background:var(--border-soft)}
 .audit-summary-heading{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:14px 0 6px}
 .audit-summary-heading strong{font-size:13px}
 .audit-summary-heading span{color:var(--muted);font-size:10px}
@@ -4412,6 +4412,7 @@ body{overscroll-behavior:none}
 .audit-summary b{font:850 17px var(--font-mono)}
 .audit-summary small{color:var(--muted);font-size:9.5px}
 .audit-summary .offset b{color:var(--warn)}
+.audit-summary .recovery b{color:var(--accent)}
 .audit-summary .paid b{color:var(--ok)}
 .audit-summary .available b,.audit-summary .clear b{color:var(--ok)}
 .audit-summary .debt b{color:var(--danger)}
@@ -4477,7 +4478,7 @@ body{overscroll-behavior:none}
 .invoice-state.debt{background:rgba(230,67,104,.13);color:var(--danger)}
 .invoice-state.voided{background:rgba(230,67,104,.13);color:var(--danger)}
 @media(max-width:1050px){.audit-controls{grid-template-columns:1fr 1fr}.audit-date-modes{grid-column:1/-1}.audit-refresh{justify-self:end}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:repeat(2,1fr)}.audit-result-tools{grid-template-columns:1fr 1fr}.audit-view-tabs{grid-column:1/-1}}
-@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(4,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:720px){.mpesa-audit-page{overflow:visible}.mpesa-audit-page .page-header{display:grid;gap:8px}.audit-readonly{justify-self:start}.audit-controls{grid-template-columns:1fr;padding:9px}.audit-date-modes,.audit-refresh{grid-column:auto;width:100%}.audit-range-fields{grid-template-columns:1fr 1fr}.audit-summary{grid-template-columns:1fr 1fr}.audit-result-tools{grid-template-columns:1fr}.audit-view-tabs{display:grid;grid-template-columns:repeat(3,1fr)}.audit-view-tabs button{justify-content:center;padding-inline:6px}.audit-issue{grid-template-columns:auto minmax(0,1fr)}.audit-severity-badge{grid-column:2;justify-self:start}.audit-trace>summary{grid-template-columns:1fr}.audit-trace-values{justify-content:space-between}.audit-trace-metrics{grid-template-columns:1fr 1fr}}
 @media(max-width:470px){.audit-date-modes{grid-template-columns:1fr}.audit-range-fields{grid-template-columns:1fr}.audit-summary,.audit-summary.invoice-totals{grid-template-columns:1fr}.audit-view-tabs{grid-template-columns:1fr 1fr}.audit-payment-methods{align-items:flex-start;flex-direction:column}}
 @keyframes ledger-spin{to{transform:rotate(360deg)}}
 .mpesa-page-actions .spin{animation:ledger-spin .8s linear infinite}
@@ -8935,7 +8936,6 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   const selectedInvoices = visibleInvoices.filter((invoice) => selectedIds.has(invoice.id));
   const totalCents = selectedInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const [mpesaAmount, setMpesaAmount] = useState("");
-  const [cashAmount, setCashAmount] = useState("0");
   const [mpesaCode, setMpesaCode] = useState("");
   const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
   const [error, setError] = useState("");
@@ -8947,9 +8947,8 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
-  const cashCents = clampPaymentCents(cashAmount, totalCents);
   const mpesaCents = clampPaymentCents(mpesaAmount, totalCents);
-  const settlementCents = cashCents + mpesaCents;
+  const settlementCents = mpesaCents;
   const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
   const savedReceipt = normalizedMpesaCode.length === 4
     ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: normalizedMpesaCode })
@@ -8979,7 +8978,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
   }, [providerTransaction?.id]);
   let validationError = "";
   if (selectedInvoices.length === 0 || totalCents <= 0) validationError = "Select at least one invoice with an outstanding balance.";
-  else if (settlementCents <= 0) validationError = "Enter an M-Pesa or cash amount to apply.";
+  else if (settlementCents <= 0) validationError = "Enter an M-Pesa amount to apply.";
   else if (settlementCents > totalCents) validationError = `The payment cannot exceed ${fmt(totalCents, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) validationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) validationError = providerSelectionError;
@@ -8996,7 +8995,6 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     setSelectedIds(nextIds);
     const available = existingReceipt?.remainingCents ?? centsFromInput(mpesaReceiptAmount);
     setMpesaAmount(available > 0 ? moneyInputValue(Math.min(nextTotal, available)) : "");
-    setCashAmount("0");
     setError("");
   };
   const changeCashier = (nextCashier) => {
@@ -9025,7 +9023,6 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: branch.id, codeLast4: code }) : null;
     setMpesaCode(code);
     setProviderTransactionId("");
-    setCashAmount("0");
     if (receipt) {
       setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
       setMpesaAmount(moneyInputValue(Math.min(totalCents, receipt.remainingCents)));
@@ -9070,7 +9067,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       registeredByName: actorName,
     }) : null;
     const receiptFields = receipt ? mpesaReceiptPaymentFields(receipt) : {};
-    const allocationPlan = allocateInvoicePayments(selectedInvoices, { mpesaCents, cashCents });
+    const allocationPlan = allocateInvoicePayments(selectedInvoices, { mpesaCents });
 
     allocationPlan.allocations.forEach((allocation) => {
       const invoice = selectedInvoices.find((entry) => entry.id === allocation.invoiceId);
@@ -9090,16 +9087,6 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
         });
         methods.push("M-Pesa");
       }
-      const cashPart = allocation.cashCents;
-      if (cashPart > 0) {
-        paymentRecords.push({
-          id: uid("pay"), orderId: invoice.id, invoiceId: invoice.id, branchId: invoice.branchId,
-          method: "cash", amountCents: cashPart, status: "captured", recordedBy: user,
-          recordedByName: actorName, settledBy: user, settledByName: actorName, ts, synced: false,
-          bulkSettlementId: batchId, cashierId: invoice.cashierId || "", cashierName: invoiceCashierName(invoice),
-        });
-        methods.push("Cash");
-      }
       if (allocation.appliedCents > 0) {
         invoiceMethods.set(invoice.id, methods.join(" + "));
         invoicePaidCents.set(invoice.id, allocation.paidCents);
@@ -9107,7 +9094,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
     });
 
     const allocatedCents = paymentRecords.reduce((sum, payment) => sum + payment.amountCents, 0);
-    if (allocationPlan.cashRemaining !== 0 || allocationPlan.mpesaRemaining !== 0 || allocatedCents !== settlementCents) {
+    if (allocationPlan.mpesaRemaining !== 0 || allocatedCents !== settlementCents) {
       submittingRef.current = false;
       setSubmitting(false);
       setError("The payment allocation could not be applied exactly. Review the amounts and retry.");
@@ -9181,7 +9168,7 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
         </div>
 
         <div className="notice">
-          Select invoices at {branch.name}. Enter M-Pesa details manually or use a verified transaction. A receipt may cover several invoices and cashiers, but never beyond its saved balance.
+          Select invoices at {branch.name}. Every invoice settlement requires an M-Pesa code. One verified receipt may cover several invoices and cashiers, but never beyond its saved balance.
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -9233,11 +9220,6 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
             <input className="input" inputMode="decimal" value={mpesaAmount}
               onChange={(event) => { setMpesaAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} />
           </div>
-          <div>
-            <label className="label">Cash to apply now</label>
-            <input className="input" inputMode="decimal" value={cashAmount}
-              onChange={(event) => { setCashAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} />
-          </div>
         </div>
 
         {providerLookup.transactions.length > 1 ? (
@@ -9273,12 +9255,11 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
 
         <div className="settlement-totals" style={{ marginTop: 14 }}>
           <div><span>M-Pesa</span><b>{fmt(mpesaCents, cur)}</b></div>
-          <div><span>Cash</span><b>{fmt(cashCents, cur)}</b></div>
           <div className="due"><span>Apply now</span><b>{fmt(settlementCents, cur)}</b></div>
         </div>
 
         <div className="alert" style={{ marginTop: 14 }}>
-          The receipt total is counted once. Each invoice allocation reduces its balance, and invoices remain open whenever M-Pesa plus cash is below the selected amount.
+          The receipt total is counted once. Each invoice allocation reduces its balance, and invoices remain open whenever the available M-Pesa amount is below the selected balance.
         </div>
         {error || validationError ? <div className="formerr" style={{ marginTop: 10 }}>{error || validationError}</div> : null}
 
@@ -9692,7 +9673,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [mpesaCode, setMpesaCode] = useState("");
   const [mpesaReceiptAmount, setMpesaReceiptAmount] = useState("");
   const [mpesaAmount, setMpesaAmount] = useState("");
-  const [cashAmount, setCashAmount] = useState("0");
   const [settlementMethod, setSettlementMethod] = useState("standard");
   const [payrollAmount, setPayrollAmount] = useState("");
   const [paymentError, setPaymentError] = useState("");
@@ -9713,7 +9693,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setMpesaCode("");
     setMpesaReceiptAmount("");
     setMpesaAmount("");
-    setCashAmount("0");
     setSettlementMethod("standard");
     setPayrollAmount("");
     setPaymentError("");
@@ -9763,7 +9742,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           setProviderTransactionId(transaction.id || "");
           setMpesaReceiptAmount(moneyInputValue(transaction.amountCents));
           setMpesaAmount(moneyInputValue(Math.min(out, transaction.remainingCents)));
-          setCashAmount("0");
           setPaymentError("");
           setStkError("");
           return;
@@ -9790,14 +9768,13 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   }, [stkRequest?.id, out]);
   const payrollEligible = out > 0 && invoiceWasCarriedOver(data, live);
   const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
-  const cashCents = settlementMethod === "standard" ? clampPaymentCents(cashAmount, out) : 0;
   const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
   useEffect(() => {
     if (normalizedMpesaCode.length !== 4 || receiptAvailableCents <= 0) return;
-    const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, Math.max(0, out - cashCents)));
+    const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, out));
     if (nextMpesaAmount !== mpesaAmount) setMpesaAmount(nextMpesaAmount);
-  }, [normalizedMpesaCode, receiptAvailableCents, cashCents, out, mpesaAmount]);
-  const paymentCents = mpesaCents + cashCents + payrollCents;
+  }, [normalizedMpesaCode, receiptAvailableCents, out, mpesaAmount]);
+  const paymentCents = mpesaCents + payrollCents;
   const providerSelectionError = mpesaProviderSelectionError({
     amountCents: mpesaCents,
     loading: providerLookup.loading,
@@ -9806,7 +9783,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   });
   let paymentValidationError = "";
   if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only for carried-over debt invoices.";
-  else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : "Enter an M-Pesa or cash amount.";
+  else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : "Enter an M-Pesa code and amount.";
   else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) paymentValidationError = providerSelectionError;
@@ -9901,15 +9878,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         recordedByName: actorName, settledBy: user, settledByName: actorName,
         cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
         ...receiptFields,
-      });
-    }
-    if (cashCents > 0) {
-      methods.push("Cash");
-      paymentRecords.push({
-        id: uid("pay"), orderId: live.id, invoiceId: live.id, branchId: live.branchId,
-        method: "cash", amountCents: cashCents, status: "captured", recordedBy: user,
-        recordedByName: actorName, settledBy: user, settledByName: actorName,
-        cashierId: live.cashierId || "", cashierName: invoiceCashierName(live), ts, synced: false,
       });
     }
     if (payrollCents > 0) {
@@ -10048,14 +10016,13 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
             <div className="invoice-payment-head">
               <b>Record payment</b>
               <span>{fmt(out, cur)} due</span>
-              {settlementMethod === "standard" ? <button type="button" className="btn sm btn-ghost" onClick={() => { setMpesaAmount("0"); setCashAmount(moneyInputValue(out)); setPaymentError(""); }}><Banknote /> Cash only</button> : null}
             </div>
             {payrollEligible ? (
               <div className="inventory-payment-methods" role="radiogroup" aria-label="Cashier debt settlement method">
                 <button type="button" role="radio" aria-checked={settlementMethod === "standard"}
                   className={"invoice-method" + (settlementMethod === "standard" ? " on" : "")}
                   onClick={() => { setSettlementMethod("standard"); setPayrollAmount(""); setPaymentError(""); }}>
-                  <Smartphone /> M-Pesa / Cash
+                  <Smartphone /> M-Pesa code
                 </button>
                 <button type="button" role="radio" aria-checked={settlementMethod === "payroll"}
                   className={"invoice-method" + (settlementMethod === "payroll" ? " on" : "")}
@@ -10064,7 +10031,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     setMpesaCode("");
                     setMpesaReceiptAmount("");
                     setMpesaAmount("");
-                    setCashAmount("0");
                     setProviderTransactionId("");
                     setPayrollAmount(moneyInputValue(out));
                     setPaymentError("");
@@ -10101,7 +10067,6 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     const receipt = code.length === 4 ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: code }) : null;
                     setMpesaCode(code);
                     setProviderTransactionId("");
-                    setCashAmount("0");
                     if (receipt) {
                       setMpesaReceiptAmount(moneyInputValue(receipt.totalCents));
                       setMpesaAmount(moneyInputValue(Math.min(out, receipt.remainingCents)));
@@ -10119,16 +10084,11 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     const paidCents = centsFromInput(clean);
                     setMpesaReceiptAmount(clean);
                     setMpesaAmount(moneyInputValue(Math.min(out, paidCents)));
-                    setCashAmount("0");
                     setPaymentError("");
                   }} />
               </label> : null}
               <label><span>M-Pesa to apply</span>
                 <input className="input" inputMode="decimal" value={mpesaAmount} readOnly aria-readonly="true" />
-              </label>
-              <label><span>Cash to apply</span>
-                <input className="input" inputMode="decimal" value={cashAmount}
-                  onChange={(e) => { setCashAmount(e.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
               </label>
             </div>
             {providerLookup.transactions.length > 1 ? (
@@ -17569,7 +17529,8 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     branches,
     branchAuditStarts: ledger.integrationStarts,
     transactionScopeComplete: dateMode === "all",
-  }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, branches, dateMode]);
+    auditPeriod: dateMode === "all" || !rangeValid ? null : { startedAt: rangeFrom, endedAt: rangeTo },
+  }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, branches, dateMode, rangeValid, rangeFrom, rangeTo]);
   const transactionById = useMemo(() => new Map(audit.transactions.map((entry) => [entry.id, entry])), [audit.transactions]);
   const invoiceById = useMemo(() => new Map(audit.invoices.map((entry) => [entry.id, entry])), [audit.invoices]);
   const needle = search.trim().toLowerCase();
@@ -17589,6 +17550,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     ...(entry.activeAllocations || []).map((allocation) => allocation.transactionReference),
   ]));
   const visibleDebts = visibleInvoices.filter((entry) => entry.debt);
+  const visibleRecoveries = visibleTransactions.filter((entry) => entry.olderInvoiceRecoveryCents > 0);
   const switchDateMode = (mode) => {
     if (mode === "business" && branchScope === "all") setBranchScope(defaultBranchId);
     setDateMode(mode);
@@ -17620,6 +17582,25 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     return <details className={`audit-trace invoice ${entry.debt ? "debt" : ""} ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}>
       <summary><div className="audit-trace-title"><strong>{entry.reference}</strong><span>{entry.customerName || "Walk-in"} / {entry.cashier || "Cashier not supplied"}</span></div><div className="audit-trace-values"><b>{fmt(entry.totalCents, "KES")}</b><span className={`invoice-state ${stateKey}`}>{stateLabel}</span><ChevronDown /></div></summary>
       <div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Paid</small><b>{fmt(entry.storedPaidCents, "KES")}</b></span><span><small>{entry.debt ? "Debt balance" : "Balance"}</small><b>{fmt(entry.balanceCents, "KES")}</b></span><span><small>M-Pesa allocated</small><b>{fmt(entry.allocationCents, "KES")}</b></span><span><small>Issued</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><div className="audit-payment-methods"><strong>Captured payments</strong><span>{methodsForInvoice(entry)}</span></div>{entry.activeAllocations.length || entry.activeOffsets.length ? <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} currency="KES" timeZone={timeZone} /> : null}{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div>
+    </details>;
+  };
+  const renderTransactionAuditTrace = (entry) => {
+    const status = kopokopoLedgerStatus(entry);
+    return <details className={`audit-trace transaction ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}>
+      <summary><div className="audit-trace-title"><MpesaReference value={entry.reference} tone={status.key} /><span>{entry.payerName || "Payer not supplied"} / {entry.branchName}</span></div><div className="audit-trace-values"><b>{fmt(entry.amountCents, entry.currency || "KES")}</b><span className={`mpesa-ledger-status ${status.key}`}>{status.label}</span><ChevronDown /></div></summary>
+      <div className="audit-trace-body">
+        <div className="audit-trace-metrics">
+          <span><small>Current-period invoices</small><b>{fmt(entry.selectedPeriodInvoiceAllocationCents, "KES")}</b></span>
+          <span><small>Older debt recovered</small><b>{fmt(entry.olderInvoiceRecoveryCents, "KES")}</b></span>
+          <span><small>Other-period invoices</small><b>{fmt(entry.otherPeriodInvoiceAllocationCents, "KES")}</b></span>
+          <span><small>Cash offset</small><b>{fmt(entry.offsetCents, "KES")}</b></span>
+          <span className="available"><small>Available</small><b>{fmt(entry.availableCents, "KES")}</b></span>
+          <span><small>Received</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span>
+        </div>
+        <p>{entry.comment}</p>
+        <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />
+        {entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}
+      </div>
     </details>;
   };
 
@@ -17662,12 +17643,15 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     <div className="audit-summary-heading"><strong>M-Pesa reconciliation</strong><span>Received money is separate from invoice value until allocated</span></div>
     <section className="audit-summary" aria-label="M-Pesa audit totals">
       <div><span>M-Pesa received</span><b>{fmt(audit.summary.receivedCents, "KES")}</b><small>{audit.summary.transactionCount} customer payments</small></div>
-      <div><span>Invoice allocations</span><b>{fmt(audit.summary.invoiceAllocatedCents, "KES")}</b><small>Paid directly to invoices</small></div>
+      <div><span>Current-period invoices</span><b>{fmt(audit.summary.selectedPeriodInvoiceAllocationCents, "KES")}</b><small>Invoices issued in this audit period</small></div>
+      <div className="recovery"><span>Older debt recovered</span><b>{fmt(audit.summary.olderInvoiceRecoveryCents, "KES")}</b><small>{audit.summary.recoveryTransactionCount} M-Pesa receipt{audit.summary.recoveryTransactionCount === 1 ? "" : "s"} used</small></div>
+      <div><span>Other-period invoices</span><b>{fmt(audit.summary.otherPeriodInvoiceAllocationCents, "KES")}</b><small>Invoices outside the selected period</small></div>
       <div className="offset"><span>Cash offsets</span><b>{fmt(audit.summary.offsetCents, "KES")}</b><small>Cash later deposited to till</small></div>
       <div className="available"><span>Available</span><b>{fmt(audit.summary.availableCents, "KES")}</b><small>Not allocated or offset</small></div>
       <div className="debt"><span>Invoice debts</span><b>{fmt(audit.summary.debtOutstandingCents, "KES")}</b><small>{audit.summary.debtCount} carried-over invoices</small></div>
       <div className={audit.summary.criticalCount > 0 ? "flagged" : "clear"}><span>Audit flags</span><b>{audit.summary.flaggedCount}</b><small>{audit.summary.criticalCount} critical / {audit.summary.warningCount} warning</small></div>
     </section>
+    <div className={`audit-comment ${audit.summary.reconciliationGapCents !== 0 ? "warn" : ""}`}><Receipt /><div><strong>Funds-use equation</strong><span>{audit.reconciliationComment}</span></div></div>
     <div className={`audit-comment ${audit.summary.staleAvailableCents > 0 ? "warn" : ""}`}><Wallet /><div><strong>Available-money comment</strong><span>{audit.availableComment}{audit.summary.staleAvailableCents > 0 ? ` ${fmt(audit.summary.staleAvailableCents, "KES")} is stale.` : ""}</span></div></div>
 
     <div className="audit-result-tools">
@@ -17676,6 +17660,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
         <button type="button" className={view === "transactions" ? "active" : ""} onClick={() => setView("transactions")}>M-Pesa <span>{audit.transactions.length}</span></button>
         <button type="button" className={view === "invoices" ? "active" : ""} onClick={() => setView("invoices")}>Invoices <span>{audit.invoices.length}</span></button>
         <button type="button" className={view === "debts" ? "active" : ""} onClick={() => setView("debts")}>Debts <span>{audit.summary.debtCount}</span></button>
+        <button type="button" className={view === "recoveries" ? "active" : ""} onClick={() => setView("recoveries")}>Older debt <span>{audit.summary.recoveryTransactionCount}</span></button>
       </div>
       <label className="audit-search"><Search /><input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, receipt, payer, customer, or cashier" /></label>
       {view === "issues" ? <label className="audit-severity"><span className="sr-only">Flag severity</span><select className="select" value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All flags</option><option value="critical">Critical</option><option value="warning">Warnings</option><option value="info">Information</option></select></label> : null}
@@ -17684,14 +17669,13 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     {ledger.loading && ledger.transactions.length === 0 ? <div className="notice">Loading the complete audit trail...</div> : null}
     {!ledger.loading && view === "issues" ? <div className="audit-issues">{visibleIssues.length ? visibleIssues.map((entry) => <article className={`audit-issue ${entry.severity}`} key={entry.id}><span className="audit-issue-icon">{entry.severity === "critical" ? <AlertCircle /> : <ShieldCheck />}</span><div><strong>{entry.title}</strong><small>{entry.entityType === "transaction" ? "M-Pesa" : "Invoice"} / {issueEntityLabel(entry)}</small><p>{entry.message}</p></div><span className={`audit-severity-badge ${entry.severity}`}>{entry.severity}</span></article>) : <div className="audit-empty"><ShieldCheck /><strong>No audit flags in this scope</strong><span>Invoice totals and verified M-Pesa usage reconcile for the selected branch and period.</span></div>}</div> : null}
 
-    {!ledger.loading && view === "transactions" ? <div className="audit-traces">{visibleTransactions.length ? visibleTransactions.slice(0, 300).map((entry) => {
-      const status = kopokopoLedgerStatus(entry);
-      return <details className={`audit-trace transaction ${entry.issues.length ? "has-issues" : ""}`} key={entry.id}><summary><div className="audit-trace-title"><MpesaReference value={entry.reference} tone={status.key} /><span>{entry.payerName || "Payer not supplied"} / {entry.branchName}</span></div><div className="audit-trace-values"><b>{fmt(entry.amountCents, entry.currency || "KES")}</b><span className={`mpesa-ledger-status ${status.key}`}>{status.label}</span><ChevronDown /></div></summary><div className="audit-trace-body"><div className="audit-trace-metrics"><span><small>Invoice allocated</small><b>{fmt(entry.invoiceAllocatedCents, "KES")}</b></span><span><small>Cash offset</small><b>{fmt(entry.offsetCents, "KES")}</b></span><span className="available"><small>Available</small><b>{fmt(entry.availableCents, "KES")}</b></span><span><small>Received</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span></div><p>{entry.comment}</p><MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />{entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}</div></details>;
-    }) : <div className="audit-empty"><Receipt /><strong>No M-Pesa records match</strong><span>Change the search or audit period.</span></div>}</div> : null}
+    {!ledger.loading && view === "transactions" ? <div className="audit-traces">{visibleTransactions.length ? visibleTransactions.slice(0, 300).map(renderTransactionAuditTrace) : <div className="audit-empty"><Receipt /><strong>No M-Pesa records match</strong><span>Change the search or audit period.</span></div>}</div> : null}
 
     {!ledger.loading && view === "invoices" ? <div className="audit-traces">{visibleInvoices.length ? visibleInvoices.slice(0, 300).map(renderInvoiceAuditTrace) : <div className="audit-empty"><FileText /><strong>No invoices match</strong><span>Change the search or audit period.</span></div>}</div> : null}
 
     {!ledger.loading && view === "debts" ? <div className="audit-traces">{visibleDebts.length ? visibleDebts.slice(0, 300).map(renderInvoiceAuditTrace) : <div className="audit-empty"><Wallet /><strong>No invoice debts match</strong><span>Only carried-over invoice balances created after M-Pesa integration appear here.</span></div>}</div> : null}
+
+    {!ledger.loading && view === "recoveries" ? <div className="audit-traces">{visibleRecoveries.length ? visibleRecoveries.slice(0, 300).map(renderTransactionAuditTrace) : <div className="audit-empty"><Wallet /><strong>No older debt recoveries match</strong><span>Only M-Pesa received in this audit period and allocated to invoices issued before it appears here.</span></div>}</div> : null}
   </div>;
 }
 

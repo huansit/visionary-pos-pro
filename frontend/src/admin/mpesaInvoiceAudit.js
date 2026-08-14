@@ -108,6 +108,7 @@ export function buildMpesaInvoiceAudit({
   payments = [],
   branches = [],
   branchAuditStarts = null,
+  auditPeriod = null,
   now = Date.now(),
   staleAfterMs = 24 * 60 * 60 * 1000,
   transactionScopeComplete = true,
@@ -122,8 +123,20 @@ export function buildMpesaInvoiceAudit({
     return start > 0 && timestamp >= start;
   };
   const scopedTransactions = transactions.filter((transaction) => inAuditPeriod(transaction, transactionTimestamp(transaction)));
-  const scopedInvoices = invoices.filter((invoice) => inAuditPeriod(invoice, invoiceTimestamp(invoice)));
+  const scopedInvoiceCandidates = invoices.filter((invoice) => inAuditPeriod(invoice, invoiceTimestamp(invoice)));
+  const excludedVoidedInvoices = scopedInvoiceCandidates.filter(isVoided);
+  const scopedInvoices = scopedInvoiceCandidates.filter((invoice) => !isVoided(invoice));
   const invoiceById = new Map([...referenceInvoices, ...invoices].map((invoice) => [text(invoice.id), invoice]));
+  const auditPeriodStart = Math.max(0, Number(auditPeriod?.startedAt) || 0);
+  const auditPeriodEnd = Math.max(0, Number(auditPeriod?.endedAt) || 0);
+  const hasAuditPeriod = auditPeriodStart > 0 && auditPeriodEnd >= auditPeriodStart;
+  const invoicePeriodCategory = (invoice) => {
+    if (!hasAuditPeriod) return "selected_period";
+    const timestamp = invoiceTimestamp(invoice);
+    if (!timestamp) return "other_period";
+    if (timestamp < auditPeriodStart) return "older_invoice";
+    return timestamp <= auditPeriodEnd ? "selected_period" : "other_period";
+  };
   const transactionById = new Map(scopedTransactions.map((transaction) => [text(transaction.id), transaction]));
   const issues = [];
   const allocationsByInvoiceId = new Map();
@@ -134,11 +147,33 @@ export function buildMpesaInvoiceAudit({
     const reference = transactionReference(transaction);
     const amountCents = Math.max(0, cents(transaction.amountCents));
     const storedAllocatedCents = Math.max(0, cents(transaction.allocatedCents));
-    const activeAllocations = uniqueById((transaction.allocations || []).filter(activeEntry));
+    const activeAllocations = uniqueById((transaction.allocations || []).filter(activeEntry)).map((allocation) => {
+      const invoice = invoiceById.get(text(allocation.invoiceId));
+      return {
+        ...allocation,
+        invoiceNumber: allocation.invoiceNumber || (invoice ? invoiceReference(invoice) : ""),
+        invoiceTimestamp: invoice ? invoiceTimestamp(invoice) : 0,
+        invoicePeriodCategory: invoice ? invoicePeriodCategory(invoice) : "other_period",
+        invoiceVoided: Boolean(invoice && isVoided(invoice)),
+      };
+    });
     const activeOffsets = uniqueById((transaction.offsets || []).filter(activeEntry));
-    const invoiceAllocatedCents = activeAllocations.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const auditableAllocations = activeAllocations.filter((entry) => !entry.invoiceVoided);
+    const invoiceAllocatedCents = auditableAllocations.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const voidedInvoiceAllocationCents = activeAllocations
+      .filter((entry) => entry.invoiceVoided)
+      .reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const selectedPeriodInvoiceAllocationCents = auditableAllocations
+      .filter((entry) => entry.invoicePeriodCategory === "selected_period")
+      .reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const olderInvoiceRecoveryCents = auditableAllocations
+      .filter((entry) => entry.invoicePeriodCategory === "older_invoice")
+      .reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const otherPeriodInvoiceAllocationCents = auditableAllocations
+      .filter((entry) => entry.invoicePeriodCategory === "other_period")
+      .reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
     const offsetCents = activeOffsets.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
-    const linkedConsumedCents = invoiceAllocatedCents + offsetCents;
+    const linkedConsumedCents = invoiceAllocatedCents + voidedInvoiceAllocationCents + offsetCents;
     const reversed = Boolean(transaction.reversedAt) || lower(transaction.status) === "reversed";
     const funding = lower(transaction.purpose) === "stock_funding";
     const allocatable = !reversed && !funding && transaction.allocatable !== false;
@@ -197,9 +232,18 @@ export function buildMpesaInvoiceAudit({
     else if (computedAvailableCents > 0) comment = staleAvailable
       ? "Verified money remains unused and is older than the audit threshold. Confirm whether it should settle an invoice, offset deposited cash, or be classified as stock funding."
       : "Verified money remains available. It can settle invoices or offset cash receipts deposited to the till.";
+    else if (voidedInvoiceAllocationCents > 0) comment = "Money is still linked to a voided invoice and requires correction.";
     else if (offsetCents > 0 && invoiceAllocatedCents > 0) comment = "Fully accounted for through invoice allocations and cash-deposit offsets.";
     else if (offsetCents > 0) comment = "Fully accounted for as cash deposited to the till. The linked invoices remain cash invoices.";
     else comment = "Fully accounted for through invoice allocation.";
+    if (hasAuditPeriod && invoiceAllocatedCents > 0) {
+      const periodParts = [
+        selectedPeriodInvoiceAllocationCents > 0 ? `${kes(selectedPeriodInvoiceAllocationCents)} settled invoices issued in this audit period` : "",
+        olderInvoiceRecoveryCents > 0 ? `${kes(olderInvoiceRecoveryCents)} recovered older invoice debt` : "",
+        otherPeriodInvoiceAllocationCents > 0 ? `${kes(otherPeriodInvoiceAllocationCents)} settled invoices outside this audit period` : "",
+      ].filter(Boolean);
+      comment = `${comment} ${periodParts.join("; ")}.`;
+    }
 
     return {
       ...transaction,
@@ -208,6 +252,10 @@ export function buildMpesaInvoiceAudit({
       amountCents,
       storedAllocatedCents,
       invoiceAllocatedCents,
+      voidedInvoiceAllocationCents,
+      selectedPeriodInvoiceAllocationCents,
+      olderInvoiceRecoveryCents,
+      otherPeriodInvoiceAllocationCents,
       offsetCents,
       linkedConsumedCents,
       availableCents: computedAvailableCents,
@@ -216,7 +264,7 @@ export function buildMpesaInvoiceAudit({
       allocatable,
       timestamp,
       branchName: branchById.get(text(transaction.branchId))?.name || text(transaction.branchId) || "Unknown branch",
-      activeAllocations,
+      activeAllocations: auditableAllocations,
       activeOffsets,
       issues: rowIssues,
       comment,
@@ -328,9 +376,14 @@ export function buildMpesaInvoiceAudit({
   const summary = {
     transactionCount: customerTransactions.length,
     invoiceCount: activeInvoiceRows.length,
-    voidedInvoiceCount: invoiceRows.filter((invoice) => invoice.voided).length,
+    voidedInvoiceCount: excludedVoidedInvoices.length,
     receivedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.amountCents, 0),
     invoiceAllocatedCents: customerTransactions.reduce((sum, transaction) => sum + transaction.invoiceAllocatedCents, 0),
+    voidedInvoiceAllocationCents: customerTransactions.reduce((sum, transaction) => sum + transaction.voidedInvoiceAllocationCents, 0),
+    selectedPeriodInvoiceAllocationCents: customerTransactions.reduce((sum, transaction) => sum + transaction.selectedPeriodInvoiceAllocationCents, 0),
+    olderInvoiceRecoveryCents: customerTransactions.reduce((sum, transaction) => sum + transaction.olderInvoiceRecoveryCents, 0),
+    otherPeriodInvoiceAllocationCents: customerTransactions.reduce((sum, transaction) => sum + transaction.otherPeriodInvoiceAllocationCents, 0),
+    recoveryTransactionCount: customerTransactions.filter((transaction) => transaction.olderInvoiceRecoveryCents > 0).length,
     offsetCents: customerTransactions.reduce((sum, transaction) => sum + transaction.offsetCents, 0),
     availableCents: customerTransactions.reduce((sum, transaction) => sum + transaction.availableCents, 0),
     invoiceValueCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.totalCents, 0),
@@ -352,6 +405,13 @@ export function buildMpesaInvoiceAudit({
     flaggedCount: issues.length,
     staleAvailableCents: staleAvailableRows.reduce((sum, transaction) => sum + transaction.availableCents, 0),
   };
+  summary.reconciliationGapCents = summary.receivedCents
+    - summary.selectedPeriodInvoiceAllocationCents
+    - summary.olderInvoiceRecoveryCents
+    - summary.otherPeriodInvoiceAllocationCents
+    - summary.voidedInvoiceAllocationCents
+    - summary.offsetCents
+    - summary.availableCents;
 
   const availableComment = summary.availableCents <= 0
     ? "All verified customer M-Pesa money in this audit scope is accounted for by active invoice allocations or cash-deposit offsets."
@@ -370,6 +430,15 @@ export function buildMpesaInvoiceAudit({
       ? ` Captured payment records exceed invoice paid totals by ${kes(summary.excessCapturedPaymentCents)} and are flagged.`
       : " All paid amounts are backed by captured payment records.";
   const invoiceComment = `${summary.invoiceCount} active invoice${summary.invoiceCount === 1 ? "" : "s"} total ${kes(summary.invoiceValueCents)}: ${kes(summary.invoicePaidCents)} paid plus ${kes(summary.invoiceBalanceCents)} outstanding.${invoicePaymentParts.length ? ` Captured payment methods: ${invoicePaymentParts.join(", ")}.` : " No captured payments are recorded."}${traceWarning}`;
+  const reconciliationParts = [
+    `${kes(summary.selectedPeriodInvoiceAllocationCents)} settled invoices issued in the selected period`,
+    `${kes(summary.olderInvoiceRecoveryCents)} recovered older invoice debt`,
+    summary.otherPeriodInvoiceAllocationCents > 0 ? `${kes(summary.otherPeriodInvoiceAllocationCents)} settled invoices outside the selected period` : "",
+    summary.voidedInvoiceAllocationCents > 0 ? `${kes(summary.voidedInvoiceAllocationCents)} is still linked to voided invoices and flagged` : "",
+    `${kes(summary.offsetCents)} offset cash deposited to till`,
+    `${kes(summary.availableCents)} remains available`,
+  ].filter(Boolean);
+  const reconciliationComment = `${kes(summary.receivedCents)} received: ${reconciliationParts.join("; ")}.${summary.reconciliationGapCents !== 0 ? ` ${kes(summary.reconciliationGapCents)} does not reconcile and requires review.` : " The funds-use equation balances."}`;
 
   return {
     transactions: transactionRows.sort((left, right) => right.timestamp - left.timestamp),
@@ -378,8 +447,10 @@ export function buildMpesaInvoiceAudit({
     summary,
     availableComment,
     invoiceComment,
+    reconciliationComment,
     auditStartByBranch: auditStartByBranch === null ? null : Object.fromEntries(auditStartByBranch),
     excludedTransactionCount: transactions.length - scopedTransactions.length,
     excludedInvoiceCount: invoices.length - scopedInvoices.length,
+    excludedVoidedInvoiceCount: excludedVoidedInvoices.length,
   };
 }
