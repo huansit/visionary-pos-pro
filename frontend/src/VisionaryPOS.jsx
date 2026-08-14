@@ -5011,6 +5011,7 @@ body{overscroll-behavior:none}
 @media(max-width:720px){.purchase-plan{padding:12px}.purchase-plan-controls{grid-template-columns:1fr 1fr}.purchase-plan-controls label:first-child{grid-column:1/-1}.purchase-plan-add{grid-template-columns:1fr 1fr}.purchase-plan-add label:first-child{grid-column:1/-1}.purchase-plan-add .btn{width:100%}.purchase-plan-footer{display:grid;grid-template-columns:1fr 1fr}.purchase-plan-footer .btn{width:100%}.purchase-plan-head .sub{white-space:normal}}
 .po-report-search{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border-soft)}
 .po-report-search .searchbox{flex:1;min-width:0;margin:0}
+.po-report-search .po-report-branch-filter{flex:0 0 180px;width:180px;min-width:180px;max-width:180px;height:42px;padding-top:0;padding-bottom:0}
 .po-report-search .sub{white-space:nowrap}
 .po-report-row-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .po-report-modal{width:min(1120px,calc(100vw - 32px));max-width:1120px;max-height:calc(100dvh - 32px);overflow:auto;padding:0}
@@ -5043,7 +5044,7 @@ body{overscroll-behavior:none}
 .po-report-issue{margin-top:12px;border-left:3px solid var(--warn);padding:10px 12px;background:rgba(245,158,11,.08);font-size:12px;color:var(--text)}
 .po-report-issue div+div{margin-top:4px}
 .po-report-movement-kind{font-weight:750;white-space:nowrap}.po-report-movement-kind.sale{color:var(--ok)}.po-report-movement-kind.loss,.po-report-movement-kind.shrinkage,.po-report-movement-kind.voided_sale{color:var(--danger)}
-@media(max-width:720px){.po-report-search{display:grid;grid-template-columns:1fr}.po-report-search .sub{display:none}.po-report-row-actions{width:100%;justify-content:flex-end}.po-report-modal{width:100%;max-height:100dvh;border-radius:0}.po-report-modal-head{padding:12px}.po-report-modal-body{padding:12px}.po-report-modal-head .btn span{display:none}.po-report-summary{grid-template-columns:1fr 1fr}.po-report-stat:nth-child(4n){border-right:1px solid var(--border-soft)}.po-report-stat:nth-child(2n){border-right:0}.po-report-stat:nth-last-child(-n+4){border-bottom:1px solid var(--border-soft)}.po-report-stat:nth-last-child(-n+2){border-bottom:0}.po-report-section{margin-top:14px}}
+@media(max-width:720px){.po-report-search{display:grid;grid-template-columns:minmax(0,1fr) auto}.po-report-search .searchbox{grid-column:1/-1}.po-report-search .po-report-branch-filter{width:150px;min-width:0;max-width:150px;justify-self:start}.po-report-search .sub{display:none}.po-report-row-actions{width:100%;justify-content:flex-end}.po-report-modal{width:100%;max-height:100dvh;border-radius:0}.po-report-modal-head{padding:12px}.po-report-modal-body{padding:12px}.po-report-modal-head .btn span{display:none}.po-report-summary{grid-template-columns:1fr 1fr}.po-report-stat:nth-child(4n){border-right:1px solid var(--border-soft)}.po-report-stat:nth-child(2n){border-right:0}.po-report-stat:nth-last-child(-n+4){border-bottom:1px solid var(--border-soft)}.po-report-stat:nth-last-child(-n+2){border-bottom:0}.po-report-section{margin-top:14px}}
 .guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
 .guidance-action svg{width:14px;height:14px;flex:0 0 auto}
 .guidance-action small{color:var(--muted);font-size:10.5px;font-weight:600}
@@ -12699,7 +12700,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       >
       <div className="po-report-search">
         <div className="searchbox"><Search /><input value={poReportQuery} onChange={(event) => setPoReportQuery(event.target.value)} placeholder="Search PO number, product, supplier, branch, SKU, or category" /></div>
-        <select className="select" aria-label="Filter purchase orders by branch" value={poReportBranch} onChange={(event) => setPoReportBranch(event.target.value)}>
+        <select className="select po-report-branch-filter" aria-label="Filter purchase orders by branch" value={poReportBranch} onChange={(event) => setPoReportBranch(event.target.value)}>
           <option value="all">All branches</option>
           {data.branches.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
         </select>

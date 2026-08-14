@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import VisionPOS from "./VisionaryPOS.jsx";
+import PwaInstallPrompt from "./PwaInstallPrompt.jsx";
 import { isPublishedBundleNewer } from "./appBundleUpdate.js";
 
 class VisionPOSErrorBoundary extends React.Component {
@@ -78,6 +79,7 @@ createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <VisionPOSErrorBoundary>
       <VisionPOS />
+      <PwaInstallPrompt />
     </VisionPOSErrorBoundary>
   </React.StrictMode>
 );
