@@ -12399,7 +12399,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
     const reason = String(costRepair?.reason || "").trim();
     if (costRepair?.mode === "order" && !(updatedQuantity > 0)) { setCostRepairError("Enter a valid delivered quantity."); return; }
     if (!(correctedUnitCostCents > 0)) { setCostRepairError("Enter a valid purchase unit cost."); return; }
-    if (reason.length < 3) { setCostRepairError("Enter a clear correction reason."); return; }
+    if (costRepair?.mode !== "order" && reason.length < 3) { setCostRepairError("Enter a clear correction reason."); return; }
     const options = {
       correctedUnitCostCents,
       updatedUnitCostCents: correctedUnitCostCents,
@@ -12934,10 +12934,10 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
                 </div>
               </div>
               <div className="notice" style={{ marginTop: 10 }}>{editingOrder ? "Updated order total" : "Corrected line total"}: <b>{fmtExact(correctedLineTotalCents, cur)}</b></div>
-              <div className="field" style={{ marginTop: 12 }}>
+              {!editingOrder && <div className="field" style={{ marginTop: 12 }}>
                 <label className="label">Reason (required)</label>
                 <textarea className="input" style={{ minHeight: 78, resize: "vertical" }} value={costRepair.reason} onChange={(e) => { setCostRepairError(""); setCostRepair((current) => ({ ...current, reason: e.target.value })); }} placeholder="Example: supplier invoice cost was entered incorrectly" />
-              </div>
+              </div>}
               {costRepairError && <div className="notice" style={{ marginTop: 10, color: "var(--danger)", borderColor: "var(--danger)" }}>{costRepairError}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                 <button className="btn btn-ghost" onClick={() => setCostRepair(null)}>Cancel</button>

@@ -141,7 +141,6 @@ test("outstanding purchase cost can be replaced before receiving without changin
   const result = updateOrderedPurchaseCost(data, {
     purchaseId: "po_keep",
     updatedUnitCostCents: 13500,
-    reason: "Supplier confirmed the final invoice price",
     actor: { id: "u_admin", name: "Admin" },
     updatedAt: 700,
     idFactory: ids(),
@@ -151,6 +150,7 @@ test("outstanding purchase cost can be replaced before receiving without changin
   assert.equal(result.purchase.lineTotalCents, 27000);
   assert.equal(result.purchase.orderCostEdits.length, 1);
   assert.equal(result.purchase.orderCostEdits[0].previousUnitCostCents, 10000);
+  assert.equal(result.purchase.orderCostEdits[0].reason, "");
   assert.equal(result.purchase.orderCostEdits[0].actorName, "Admin");
   assert.equal(result.purchase.updatedAt, 700);
   assert.equal(result.data.stockMovements.length, beforeMovements);
@@ -238,7 +238,7 @@ test("received purchase order rejects additional products", () => {
   }), /only be added while the purchase order is pending/);
 });
 
-test("outstanding cost edit rejects received, unchanged, and unexplained changes", () => {
+test("outstanding cost edit rejects received and unchanged changes but does not require a reason", () => {
   const data = baseData();
   assert.throws(() => updateOrderedPurchaseCost(data, {
     purchaseId: "po_keep",
@@ -252,11 +252,13 @@ test("outstanding cost edit rejects received, unchanged, and unexplained changes
     updatedUnitCostCents: 10000,
     reason: "Final supplier price",
   }), /unchanged/);
-  assert.throws(() => updateOrderedPurchaseCost(data, {
+  const unexplained = updateOrderedPurchaseCost(data, {
     purchaseId: "po_keep",
     updatedUnitCostCents: 12500,
     reason: "",
-  }), /correction reason/);
+  });
+  assert.equal(unexplained.purchase.costCents, 12500);
+  assert.equal(unexplained.audit.reason, "");
   assert.throws(() => updateOrderedPurchaseCost(data, {
     purchaseId: "po_keep",
     updatedQuantity: 0,

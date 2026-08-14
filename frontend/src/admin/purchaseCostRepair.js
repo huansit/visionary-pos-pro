@@ -164,7 +164,7 @@ export function updateOrderedPurchaseCost(data, options = {}) {
   if (!purchase) throw new Error("Purchase line was not found.");
   if (normalizedStatus(purchase.status) === "received") throw new Error("Received purchase costs and quantities must use the audited correction workflow.");
 
-  const reason = requiredReason(options.reason);
+  const reason = String(options.reason || "").trim();
   const previousQuantity = Math.trunc(Number(purchase.qty || 0));
   const updatedQuantity = Math.trunc(Number(options.updatedQuantity ?? previousQuantity));
   if (!(updatedQuantity > 0)) throw new Error("Enter a valid delivered quantity.");
