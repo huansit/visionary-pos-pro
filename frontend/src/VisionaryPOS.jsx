@@ -25,6 +25,13 @@ import {
 } from "./admin/purchaseCostRepair.js";
 import { analyzeStockMovements } from "./admin/stockMovementAnalyzer.js";
 import {
+  preparePurchaseOrderLines,
+  purchaseOrderExportCsv,
+  purchaseOrderLineTotalCents,
+  purchaseOrderTotalCents,
+  selectedPurchaseOrderLines,
+} from "./admin/purchaseOrderPlanner.js";
+import {
   DEFAULT_BUSINESS_TIME_ZONE,
   businessDateTimeBoundary,
   businessDateValue,
@@ -3164,6 +3171,71 @@ function saleMoveRecognized(data, move) {
   if (!saleMoveOperational(data, move)) return false;
   return invRecognized(inv, data);
 }
+function buildStockMovementAnalysis(data, analysisDays = 28) {
+  const activeBranches = (data.branches || []).filter((entry) => entry.active !== false);
+  const cutoff = now() - analysisDays * 86400000;
+  const productById = new Map((data.products || []).map((entry) => [entry.id, entry]));
+  const soldByKey = new Map();
+  const pendingIncomingByKey = new Map();
+  const reservedOutgoingByKey = new Map();
+  const decidedTransferRequestIds = new Set((data.stockTransferDecisions || [])
+    .map((decision) => String(decision.requestId || ""))
+    .filter(Boolean));
+
+  (data.stockMovements || []).forEach((movement) => {
+    if (Number(movement.ts || 0) < cutoff || Number(movement.qty || 0) >= 0 || !saleMoveOperational(data, movement)) return;
+    const product = productById.get(movement.productId);
+    if (!product) return;
+    const key = `${productDedupeKey(product)}:${movement.branchId}`;
+    soldByKey.set(key, (soldByKey.get(key) || 0) + Math.abs(Number(movement.qty || 0)));
+  });
+
+  (data.stockTransferRequests || []).forEach((request) => {
+    if (decidedTransferRequestIds.has(String(request.id || "")) || String(request.status || "pending").toLowerCase() !== "pending") return;
+    (request.items || []).forEach((item) => {
+      const product = productById.get(item.productId);
+      if (!product) return;
+      const productKey = productDedupeKey(product);
+      const qty = Math.max(0, Math.floor(Number(item.qty || 0)));
+      const outgoingKey = `${productKey}:${request.fromBranchId}`;
+      const incomingKey = `${productKey}:${request.toBranchId}`;
+      reservedOutgoingByKey.set(outgoingKey, (reservedOutgoingByKey.get(outgoingKey) || 0) + qty);
+      pendingIncomingByKey.set(incomingKey, (pendingIncomingByKey.get(incomingKey) || 0) + qty);
+    });
+  });
+
+  const observations = [];
+  activeBranches.forEach((entryBranch) => {
+    branchProductsUnique(data, entryBranch.id).filter(productIsEnabled).forEach((product) => {
+      const productIds = new Set(duplicateProductIds(data, product, entryBranch.id));
+      const purchaseIncomingQty = (data.purchases || []).reduce((sum, purchase) => (
+        purchase.branchId === entryBranch.id
+        && productIds.has(purchase.productId)
+        && String(purchase.status || "").toLowerCase() !== "received"
+          ? sum + Math.max(0, Number(purchase.qty || 0))
+          : sum
+      ), 0);
+      const productKey = productDedupeKey(product);
+      observations.push({
+        id: `${productKey}:${entryBranch.id}`,
+        productKey,
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        branchId: entryBranch.id,
+        branchName: entryBranch.name,
+        onHand: productOnHand(data, product, entryBranch.id),
+        soldUnits: soldByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+        purchaseIncomingQty,
+        pendingTransferIncomingQty: pendingIncomingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+        reservedOutgoingQty: reservedOutgoingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
+        reorderLevel: product.reorderLevel ?? data.settings.reorderLevel,
+        costCents: branchInventoryCostCents(data, product, entryBranch.id),
+      });
+    });
+  });
+  return analyzeStockMovements(observations, { lookbackDays: analysisDays });
+}
 // Identifier validation (format only — no network verification in the offline prototype).
 function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").trim()); }
 function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").replace(/[\s-]/g, "")); }
@@ -4895,6 +4967,25 @@ body{overscroll-behavior:none}
 .movement-badge,.stock-urgency{width:max-content;border-radius:999px;padding:3px 7px;font-size:9.5px;font-weight:800;text-transform:uppercase}
 .movement-badge.fast{background:rgba(230,67,104,.12);color:var(--danger)}
 .movement-badge.medium{background:rgba(245,158,11,.14);color:var(--warn)}
+.purchase-plan{padding:16px}
+.purchase-plan-head{align-items:center;margin-bottom:10px}
+.purchase-plan-controls{display:grid;grid-template-columns:minmax(190px,1.25fr) minmax(150px,.75fr) minmax(170px,.8fr);gap:10px;margin-bottom:10px}
+.purchase-plan-controls label{display:flex;flex-direction:column;gap:4px}
+.purchase-plan-controls label>span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
+.purchase-plan-controls .select{height:38px;padding-top:0;padding-bottom:0}
+.purchase-plan-table{overflow-x:auto;overscroll-behavior-inline:contain;-webkit-overflow-scrolling:touch}
+.purchase-plan-table table{min-width:1280px}
+.purchase-plan-table th,.purchase-plan-table td{white-space:nowrap}
+.purchase-plan-table input[type="checkbox"]{width:17px;height:17px;accent-color:var(--accent);cursor:pointer}
+.purchase-plan-product{min-width:220px;white-space:normal!important}
+.purchase-plan-unselected{opacity:.5}
+.purchase-plan-line-total{font-weight:800;color:var(--text)}
+.purchase-plan-footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-soft);flex-wrap:wrap}
+.purchase-plan-footer>div{display:flex;flex-direction:column;gap:2px;min-width:120px}
+.purchase-plan-footer span{font-size:10px;text-transform:uppercase;color:var(--muted-2);font-weight:750}
+.purchase-plan-footer b{font:750 16px var(--font-mono)}
+.purchase-plan-footer .purchase-plan-total b{color:var(--accent)}
+@media(max-width:720px){.purchase-plan{padding:12px}.purchase-plan-controls{grid-template-columns:1fr 1fr}.purchase-plan-controls label:first-child{grid-column:1/-1}.purchase-plan-footer{display:grid;grid-template-columns:1fr 1fr}.purchase-plan-footer .btn{width:100%}.purchase-plan-head .sub{white-space:normal}}
 .guidance-action{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650}
 .guidance-action svg{width:14px;height:14px;flex:0 0 auto}
 .guidance-action small{color:var(--muted);font-size:10.5px;font-weight:600}
@@ -10662,66 +10753,7 @@ function StockTab({ data, update, branch }) {
   const correctionList = (data.stockMovements || []).filter((movement) => movement.branchId === bId
     && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
-  const stockAnalysis = useMemo(() => {
-    const activeBranches = (data.branches || []).filter((entry) => entry.active !== false);
-    const cutoff = now() - analysisDays * 86400000;
-    const productById = new Map((data.products || []).map((entry) => [entry.id, entry]));
-    const soldByKey = new Map();
-    const pendingIncomingByKey = new Map();
-    const reservedOutgoingByKey = new Map();
-    const decidedTransferRequestIds = new Set((data.stockTransferDecisions || []).map((decision) => String(decision.requestId || "")).filter(Boolean));
-    (data.stockMovements || []).forEach((movement) => {
-      if (Number(movement.ts || 0) < cutoff || Number(movement.qty || 0) >= 0 || !saleMoveOperational(data, movement)) return;
-      const product = productById.get(movement.productId);
-      if (!product) return;
-      const key = `${productDedupeKey(product)}:${movement.branchId}`;
-      soldByKey.set(key, (soldByKey.get(key) || 0) + Math.abs(Number(movement.qty || 0)));
-    });
-    (data.stockTransferRequests || []).forEach((request) => {
-      if (decidedTransferRequestIds.has(String(request.id || "")) || String(request.status || "pending").toLowerCase() !== "pending") return;
-      (request.items || []).forEach((item) => {
-        const product = productById.get(item.productId);
-        if (!product) return;
-        const productKey = productDedupeKey(product);
-        const qty = Math.max(0, Math.floor(Number(item.qty || 0)));
-        const outgoingKey = `${productKey}:${request.fromBranchId}`;
-        const incomingKey = `${productKey}:${request.toBranchId}`;
-        reservedOutgoingByKey.set(outgoingKey, (reservedOutgoingByKey.get(outgoingKey) || 0) + qty);
-        pendingIncomingByKey.set(incomingKey, (pendingIncomingByKey.get(incomingKey) || 0) + qty);
-      });
-    });
-    const observations = [];
-    activeBranches.forEach((entryBranch) => {
-      branchProductsUnique(data, entryBranch.id).filter(productIsEnabled).forEach((product) => {
-        const productIds = new Set(duplicateProductIds(data, product, entryBranch.id));
-        const purchaseIncomingQty = (data.purchases || []).reduce((sum, purchase) => (
-          purchase.branchId === entryBranch.id
-          && productIds.has(purchase.productId)
-          && String(purchase.status || "").toLowerCase() !== "received"
-            ? sum + Math.max(0, Number(purchase.qty || 0))
-            : sum
-        ), 0);
-        const productKey = productDedupeKey(product);
-        observations.push({
-          id: `${productKey}:${entryBranch.id}`,
-          productKey,
-          productId: product.id,
-          productName: product.name,
-          sku: product.sku,
-          branchId: entryBranch.id,
-          branchName: entryBranch.name,
-          onHand: productOnHand(data, product, entryBranch.id),
-          soldUnits: soldByKey.get(`${productKey}:${entryBranch.id}`) || 0,
-          purchaseIncomingQty,
-          pendingTransferIncomingQty: pendingIncomingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
-          reservedOutgoingQty: reservedOutgoingByKey.get(`${productKey}:${entryBranch.id}`) || 0,
-          reorderLevel: product.reorderLevel ?? data.settings.reorderLevel,
-          costCents: branchInventoryCostCents(data, product, entryBranch.id),
-        });
-      });
-    });
-    return analyzeStockMovements(observations, { lookbackDays: analysisDays });
-  }, [data, analysisDays]);
+  const stockAnalysis = useMemo(() => buildStockMovementAnalysis(data, analysisDays), [data, analysisDays]);
   const scopedStockRecommendations = stockAnalysis.recommendations.filter((entry) => analysisScope === "network" || entry.branchId === bId);
   const filteredStockRecommendations = scopedStockRecommendations.filter((entry) => {
     if (analysisFilter === "transfer") return entry.transferQty > 0;
@@ -12233,25 +12265,50 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   };
   const [plan, setPlan] = useState(null);
   const [planBranch, setPlanBranch] = useState(branch.id);
+  const [planDays, setPlanDays] = useState(28);
+  const [planMovementFilter, setPlanMovementFilter] = useState("active");
   const [planNote, setPlanNote] = useState("");
-  const reorderLvl = (p) => p.reorderLevel ?? data.settings.reorderLevel;
-  const suggestQty = (p, bid) => { const oh = productOnHand(data, p, bid); const lvl = reorderLvl(p); return Math.max(lvl * 2 - oh, lvl); };
-  const buildLines = (bid) => reorderList(data, bid).map((p) => {
-    const qs = quotesFor(p.id); const r = qs[0] || null;
-    return { productId: p.id, name: p.name, sku: p.sku, onHand: productOnHand(data, p, bid), reorder: reorderLvl(p), qty: suggestQty(p, bid), supplierId: r ? r.supplierId : (data.suppliers[0]?.id || ""), costCents: r ? r.costCents : branchInventoryCostCents(data, p, bid), hasQuote: !!r, quotes: qs };
-  });
-  const localNote = (lines) => { const named = lines.filter((l) => l.hasQuote).length; const total = lines.reduce((s, l) => s + l.qty * l.costCents, 0); return named + " of " + lines.length + " item(s) have supplier quotes — each matched to its cheapest supplier. Estimated order value " + fmt(total, cur) + (named < lines.length ? ". Items without quotes need a supplier chosen manually." : "."); };
-  const prepare = (bid) => {
-    const useBid = bid || branch.id; setPlanBranch(useBid);
-    const lines = buildLines(useBid); setPlan(lines); setPlanNote("");
-    if (lines.length === 0) return;
-    setPlanNote(localNote(lines));
+  const buildLines = (bid, days, movementFilter) => preparePurchaseOrderLines(
+    buildStockMovementAnalysis(data, days).recommendations,
+    {
+      branchId: bid,
+      movementFilter,
+      supplierPrices: sp,
+      suppliers: data.suppliers,
+      defaultSupplierId: data.suppliers[0]?.id || "",
+    }
+  );
+  const localNote = (lines, days) => {
+    const quoted = lines.filter((line) => line.hasQuote).length;
+    return `${lines.length} fast or medium mover(s) need supplier stock after open purchases and available branch transfers. `
+      + `Demand is the average per week from ${days} days of sales. ${quoted} item(s) use the cheapest saved supplier quote; the rest use branch average cost.`;
   };
-  const setLine = (pid, patch) => setPlan((ls) => ls.map((l) => l.productId === pid ? { ...l, ...patch } : l));
-  const lineSupplier = (l, sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === l.productId); setLine(l.productId, { supplierId: sid, costCents: e ? e.costCents : l.costCents }); };
+  const prepare = (bid = branch.id, days = planDays, movementFilter = planMovementFilter) => {
+    const useBid = bid || branch.id;
+    const lines = buildLines(useBid, days, movementFilter);
+    setPlanBranch(useBid);
+    setPlanDays(days);
+    setPlanMovementFilter(movementFilter);
+    setPlan(lines);
+    setPlanNote(lines.length ? localNote(lines, days) : "");
+  };
+  const setLine = (pid, patch) => setPlan((lines) => (lines || []).map((line) => line.productId === pid ? { ...line, ...patch } : line));
+  const lineSupplier = (line, supplierId) => {
+    const quote = sp.find((entry) => entry.supplierId === supplierId && entry.productId === line.productId);
+    setLine(line.productId, { supplierId, costCents: quote ? quote.costCents : line.averageCostCents });
+  };
   const poFromLine = (l, ts, batch) => { const sup = data.suppliers.find((s) => s.id === l.supplierId); return { id: uid("po"), batchId: batch?.id, batchNo: batch?.no, supplierId: l.supplierId, supplierName: sup?.name || "", productId: l.productId, productName: l.name, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: "ordered", branchId: planBranch || branch.id, date: todayStr(), ts, updatedAt: ts, receivedAt: null, synced: false }; };
-  const createLine = (l) => { if (!l.qty || l.qty <= 0) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(l, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((ls) => ls.filter((x) => x.productId !== l.productId)); };
-  const createAll = () => { const ts = now(); const valid = plan.filter((l) => l.qty > 0); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((l) => poFromLine(l, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); };
+  const createLine = (line) => { if (!line.qty || line.qty <= 0 || !line.supplierId) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; return { ...d, purchases: [poFromLine(line, now(), { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }), ...d.purchases] }; }); setPlan((lines) => lines.filter((entry) => entry.productId !== line.productId)); };
+  const createAll = () => { const ts = now(); const valid = selectedPurchaseOrderLines(plan || []).filter((line) => line.supplierId); if (!valid.length) return; update((d) => { const bn = new Set(d.purchases.filter((p) => p.batchNo).map((p) => p.batchNo)).size + 1; const batch = { id: uid("pb"), no: "PO-" + String(bn).padStart(4, "0") }; const pos = valid.map((line) => poFromLine(line, ts, batch)); return { ...d, purchases: [...pos, ...d.purchases] }; }); setPlan(null); setPlanNote(""); };
+  const exportPlan = () => {
+    const lines = selectedPurchaseOrderLines(plan || []);
+    if (!lines.length) return;
+    const branchName = data.branches.find((entry) => entry.id === planBranch)?.name || "branch";
+    const safeBranchName = branchName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "branch";
+    downloadFile(`purchase-order-${safeBranchName}-${todayStr()}.csv`, purchaseOrderExportCsv(lines), "text/csv;charset=utf-8");
+  };
+  const selectedPlanLines = selectedPurchaseOrderLines(plan || []);
+  const preparedOrderTotal = purchaseOrderTotalCents(plan || []);
   const receiveBatch = (items) => update((d) => receivePurchases(d, items.map((po) => po.id)));
   const [poView, setPoView] = useState(null); // batch key being viewed
   return (
@@ -12260,7 +12317,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
       {!adding ? (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button className="btn btn-primary" onClick={() => setAdding(true)}><Plus /> New purchase order</button>
-          <button className="btn btn-ghost" onClick={() => prepare()}><RefreshCw /> Prepare reorder</button>
+          <button className="btn btn-ghost" onClick={() => prepare()}><ClipboardCheck /> Prepare purchase order</button>
         </div>
       ) : (
         <div className="addpanel fade"><div className="grid2">
@@ -12339,36 +12396,50 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
           )}</div>
       )}
       {plan && (
-        <div className="addpanel fade" style={{ marginTop: 14 }}>
-          <div className="page-h" style={{ marginBottom: 6 }}>
-            <div><div className="title" style={{ fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}><Sparkles style={{ width: 16, height: 16, color: "var(--accent)" }} /> AI reorder plan</div>
-              <div className="sub">{data.branches.find((b) => b.id === planBranch)?.name || branch.name} · {plan.length} item(s) at or below reorder level</div></div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
-              <div><label className="label">Order for branch</label>
-                <select className="select" style={{ minWidth: 150, height: 36 }} value={planBranch} onChange={(e) => prepare(e.target.value)}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-              <button className="iconbtn" onClick={() => { setPlan(null); setPlanNote(""); }}><X /></button>
-            </div>
+        <div className="addpanel fade purchase-plan" style={{ marginTop: 14 }}>
+          <div className="page-h purchase-plan-head">
+            <div><div className="title" style={{ fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}><ClipboardCheck style={{ width: 17, height: 17, color: "var(--accent)" }} /> Prepared purchase order</div>
+              <div className="sub">Fast and medium movers · average weekly sales · supplier stock still required</div></div>
+            <button className="iconbtn" title="Close prepared order" onClick={() => { setPlan(null); setPlanNote(""); }}><X /></button>
+          </div>
+          <div className="purchase-plan-controls">
+            <label><span>Order for branch</span><select className="select" value={planBranch} onChange={(event) => prepare(event.target.value, planDays, planMovementFilter)}>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+            <label><span>Sales history</span><select className="select" value={planDays} onChange={(event) => { const days = Number(event.target.value); prepare(planBranch, days, planMovementFilter); }}>
+              <option value={7}>1 week</option><option value={14}>2 weeks</option><option value={28}>4 weeks</option><option value={56}>8 weeks</option>
+            </select></label>
+            <label><span>Movement</span><select className="select" value={planMovementFilter} onChange={(event) => prepare(planBranch, planDays, event.target.value)}>
+              <option value="active">Fast + medium</option><option value="fast">Fast only</option><option value="medium">Medium only</option>
+            </select></label>
           </div>
           {planNote && <div className="insans" style={{ marginBottom: 12 }}>{planNote}</div>}
-          {plan.length === 0 ? <div className="notice">Nothing is below reorder level at {data.branches.find((b) => b.id === planBranch)?.name || branch.name} right now.</div> : (
+          {plan.length === 0 ? <div className="notice">No {planMovementFilter === "active" ? "fast or medium" : planMovementFilter} movers need supplier stock at {data.branches.find((entry) => entry.id === planBranch)?.name || branch.name}. Open orders, pending transfers, and available stock at the other branch have already been considered.</div> : (
             <>
-              <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>On hand</th><th>Qty</th><th>Recommended supplier</th><th>Unit cost</th><th>Line total</th><th></th></tr></thead>
-                <tbody>{plan.map((l) => { const r = l.quotes[0]; const isRec = r && l.supplierId === r.supplierId; return (
-                  <tr key={l.productId}>
-                    <td><div className="nm">{l.name}</div><div className="mt2">{l.sku} · reorder {l.reorder}</div></td>
-                    <td style={{ fontWeight: 700 }}>{l.onHand}</td>
-                    <td><input className="input" style={{ width: 72, height: 36, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={l.qty} onChange={(e) => setLine(l.productId, { qty: parseInt(e.target.value.replace(/\D/g, ""), 10) || 0 })} /></td>
+              <div className="tablewrap tblscroll purchase-plan-table"><table className="tbl"><thead><tr>
+                <th><input type="checkbox" aria-label="Select all suggested products" checked={plan.length > 0 && plan.every((line) => line.selected !== false)} onChange={(event) => setPlan((lines) => lines.map((line) => ({ ...line, selected: event.target.checked })))} /></th>
+                <th>Priority</th><th>Product</th><th>Avg/week</th><th>On hand</th><th>Amount</th><th>Average cost</th><th>Supplier</th><th>Order cost</th><th>Line total</th><th></th>
+              </tr></thead>
+                <tbody>{plan.map((line) => { const recommendedQuote = line.quotes[0]; const isRecommended = recommendedQuote && line.supplierId === recommendedQuote.supplierId; const selectedQuote = line.quotes.find((quote) => quote.supplierId === line.supplierId); return (
+                  <tr key={line.productId} className={line.selected === false ? "purchase-plan-unselected" : ""}>
+                    <td><input type="checkbox" aria-label={`Select ${line.name}`} checked={line.selected !== false} onChange={(event) => setLine(line.productId, { selected: event.target.checked })} /></td>
+                    <td><span className={`movement-badge ${line.tier}`}>{line.tier}</span></td>
+                    <td className="purchase-plan-product"><div className="nm">{line.name}</div><div className="mt2">{line.sku} · target {line.targetStock} · incoming {line.incomingQty} · transfer {line.transferQty}</div></td>
+                    <td className="amt">{Number(line.weeklyDemand.toFixed(1))}</td>
+                    <td className="amt">{line.onHand}</td>
+                    <td><input className="input" aria-label={`Order amount for ${line.name}`} style={{ width: 78, height: 36, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={line.qty} onChange={(event) => setLine(line.productId, { qty: parseInt(event.target.value.replace(/\D/g, ""), 10) || 0 })} /></td>
+                    <td className="amt">{fmt(line.averageCostCents, cur)}</td>
                     <td>
-                      <select className="select" style={{ minWidth: 150, height: 36 }} value={l.supplierId} onChange={(e) => lineSupplier(l, e.target.value)}>{data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}{r && s.id === r.supplierId ? " ★" : ""}</option>)}</select>
-                      {l.hasQuote ? <div className="mt2" style={{ color: isRec ? "var(--ok)" : "var(--warn)" }}>{isRec ? ("Cheapest" + (l.quotes.length > 1 ? " of " + l.quotes.length : "")) : "Not the cheapest quote"}</div> : <div className="mt2" style={{ color: "var(--muted-2)" }}>No quotes — choose a supplier</div>}
+                      <select className="select" style={{ minWidth: 160, height: 36 }} value={line.supplierId} onChange={(event) => lineSupplier(line, event.target.value)}><option value="">Choose supplier</option>{data.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}{recommendedQuote && supplier.id === recommendedQuote.supplierId ? " ★" : ""}</option>)}</select>
+                      {selectedQuote ? <div className="mt2" style={{ color: isRecommended ? "var(--ok)" : "var(--warn)" }}>{isRecommended ? (`Cheapest${line.quotes.length > 1 ? ` of ${line.quotes.length}` : ""}`) : "Higher saved quote"}</div> : <div className="mt2" style={{ color: "var(--muted-2)" }}>Using branch average cost</div>}
                     </td>
-                    <td className="amt">{fmt(l.costCents, cur)}</td>
-                    <td className="amt">{fmt(l.costCents * l.qty, cur)}</td>
-                    <td><button className="btn xs btn-primary" onClick={() => createLine(l)}><Check /> Order</button></td>
+                    <td className="amt">{fmt(line.costCents, cur)}</td>
+                    <td className="amt purchase-plan-line-total">{fmt(purchaseOrderLineTotalCents(line), cur)}</td>
+                    <td><button className="btn xs btn-primary" disabled={!line.supplierId || line.qty <= 0} onClick={() => createLine(line)}><Check /> Order</button></td>
                   </tr>); })}</tbody></table></div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 10, flexWrap: "wrap" }}>
-                <div className="cust-meta">Estimated total: <b>{fmt(plan.reduce((s, l) => s + l.costCents * l.qty, 0), cur)}</b></div>
-                <button className="btn btn-primary" onClick={createAll}><Check /> Create all orders</button>
+              <div className="purchase-plan-footer">
+                <div><span>Selected products</span><b>{selectedPlanLines.length}</b></div>
+                <div className="purchase-plan-total"><span>Estimated order total</span><b>{fmt(preparedOrderTotal, cur)}</b></div>
+                <button className="btn btn-ghost" disabled={!selectedPlanLines.length} onClick={exportPlan}><Download /> Export product &amp; amount</button>
+                <button className="btn btn-primary" disabled={!selectedPlanLines.length || selectedPlanLines.some((line) => !line.supplierId)} onClick={createAll}><Check /> Create selected order</button>
               </div>
             </>
           )}
