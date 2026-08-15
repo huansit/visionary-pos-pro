@@ -4412,12 +4412,12 @@ body{overscroll-behavior:none}
 .audit-summary-heading{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:14px 0 6px}
 .audit-summary-heading strong{font-size:13px}
 .audit-summary-heading span{color:var(--muted);font-size:10px}
-.audit-summary-heading.invoice-heading strong{color:#3b82f6}
+.audit-summary-heading.invoice-heading strong{color:#d97706}
 .audit-summary-heading.mpesa-heading strong{color:#16a36a}
 .audit-summary.invoice-totals{grid-template-columns:repeat(4,minmax(0,1fr))}
 .audit-summary>div{display:grid;gap:3px;padding:12px;background:var(--surface)}
-.audit-summary.invoice-card{border-color:rgba(59,130,246,.42);background:rgba(59,130,246,.18);box-shadow:inset 3px 0 0 #3b82f6}
-.audit-summary.invoice-card>div{background:linear-gradient(180deg,rgba(59,130,246,.09),rgba(59,130,246,.035)),var(--surface)}
+.audit-summary.invoice-card{border-color:rgba(217,119,6,.46);background:rgba(217,119,6,.2);box-shadow:inset 3px 0 0 #d97706}
+.audit-summary.invoice-card>div{background:linear-gradient(180deg,rgba(245,158,11,.11),rgba(245,158,11,.04)),var(--surface)}
 .audit-summary.mpesa-card{border-color:rgba(22,163,106,.42);background:rgba(22,163,106,.18);box-shadow:inset 3px 0 0 #16a36a}
 .audit-summary.mpesa-card>div{background:linear-gradient(180deg,rgba(22,163,106,.09),rgba(22,163,106,.035)),var(--surface)}
 .audit-summary span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
