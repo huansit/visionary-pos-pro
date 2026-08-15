@@ -174,7 +174,15 @@ function normalizeExpenseCategory(cat, idx = 0) {
   };
 }
 function expenseCategories(data, { activeOnly = false } = {}) {
-  const source = Array.isArray(data?.expenseCategories) && data.expenseCategories.length ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES;
+  const configured = Array.isArray(data?.expenseCategories) ? data.expenseCategories.map(normalizeExpenseCategory) : [];
+  const configuredById = new Map(configured.map((cat) => [cat.id, cat]));
+  const configuredByName = new Map(configured.map((cat) => [cat.name.toLowerCase(), cat]));
+  const defaultIds = new Set(DEFAULT_EXPENSE_CATEGORIES.map((cat) => cat.id));
+  const defaultNames = new Set(DEFAULT_EXPENSE_CATEGORIES.map((cat) => cat.name.toLowerCase()));
+  const source = [
+    ...DEFAULT_EXPENSE_CATEGORIES.map((cat) => configuredById.get(cat.id) || configuredByName.get(cat.name.toLowerCase()) || cat),
+    ...configured.filter((cat) => !defaultIds.has(cat.id) && !defaultNames.has(cat.name.toLowerCase())),
+  ];
   return source
     .map(normalizeExpenseCategory)
     .filter((cat) => !activeOnly || cat.active !== false)
@@ -185,8 +193,7 @@ function cashierExpenseCategories(data) {
   return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
 }
 function adminExpenseCategories(data) {
-  const cats = expenseCategories(data, { activeOnly: true }).filter((cat) => !CASHIER_EXPENSE_CATEGORY_IDS.has(cat.id) && !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase()));
-  return cats.length ? cats : DEFAULT_EXPENSE_CATEGORIES.filter((cat) => !CASHIER_EXPENSE_CATEGORY_NAMES.has(cat.name.toLowerCase())).map(normalizeExpenseCategory);
+  return expenseCategories(data, { activeOnly: true });
 }
 function firstExpenseCategoryName(data) {
   return expenseCategories(data, { activeOnly: true })[0]?.name || "Other";
