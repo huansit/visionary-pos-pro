@@ -48,6 +48,10 @@ import {
   selectedPurchaseOrderLines,
 } from "./admin/purchaseOrderPlanner.js";
 import {
+  buildOneWeekPurchaseOrderPlans,
+  formatOneWeekPurchaseOrders,
+} from "./admin/businessIntelligence.js";
+import {
   DEFAULT_BUSINESS_TIME_ZONE,
   businessDateTimeBoundary,
   businessDateValue,
@@ -3269,6 +3273,15 @@ function buildStockMovementAnalysis(data, analysisDays = 28, options = {}) {
     });
   });
   return analyzeStockMovements(observations, { lookbackDays: analysisDays, ...options });
+}
+function oneWeekPurchaseOrderPlans(data) {
+  const recommendations = buildStockMovementAnalysis(data, 28, { targetCoverDays: 7 }).recommendations;
+  return buildOneWeekPurchaseOrderPlans({
+    branches: data.branches || [],
+    recommendations,
+    supplierPrices: data.supplierPrices || [],
+    suppliers: data.suppliers || [],
+  });
 }
 // Identifier validation (format only — no network verification in the offline prototype).
 function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").trim()); }
@@ -8108,11 +8121,11 @@ const NAV_GROUPS = [
   ] },
 ];
 const INSIGHT_GROUPS = [
-  { title: "Sales", icon: Receipt, qs: ["Daily sales summary.", "Top 5 products by revenue.", "Average invoice value.", "Sales trend last 7 days."] },
-  { title: "Stock", icon: Boxes, qs: ["Low-stock items.", "Fast-moving products.", "Stock discrepancies.", "Reorder alerts."] },
+  { title: "Sales", icon: Receipt, qs: ["Daily sales summary.", "Top 5 products by revenue.", "Average invoice value.", "Voided invoice summary."] },
+  { title: "Stock & purchasing", icon: Boxes, qs: ["Prepare tomorrow's one-week purchase orders.", "Pending purchase orders and transfers.", "Fast-moving products.", "Stock discrepancies."] },
   { title: "Cashiers", icon: Users, qs: ["Invoices cleared per cashier.", "Outstanding debts per cashier.", "Cashier performance summary."] },
   { title: "Customers", icon: FileText, qs: ["Overdue invoices.", "Top customers by spend.", "Credit recovery rate."] },
-  { title: "Operations", icon: SettingsIcon, qs: ["End-of-day summary.", "Offline transactions.", "Sync status log."] },
+  { title: "Operations", icon: SettingsIcon, qs: ["End-of-day summary.", "How do I audit M-Pesa and invoices?", "Offline transactions.", "Sync status log."] },
 ];
 function InsightsTab({ data, online }) {
   const cur = data.settings.currency;
@@ -8121,6 +8134,22 @@ function InsightsTab({ data, online }) {
   const local = (question) => {
     const Q = question.toLowerCase();
     const activeInvoices = operationalInvoices(data);
+    if (Q.includes("purchase order") || Q.includes("one-week reorder")) {
+      return formatOneWeekPurchaseOrders(oneWeekPurchaseOrderPlans(data));
+    }
+    if (Q.includes("pending purchase") || Q.includes("pending transfer")) {
+      const pendingPurchases = (data.purchases || []).filter((purchase) => String(purchase.status || "").toLowerCase() !== "received");
+      const pendingTransfers = (data.stockTransferRequests || []).filter((request) => String(request.status || "pending").toLowerCase() === "pending");
+      return `Pending purchase lines: ${pendingPurchases.length}\nPending stock transfer requests: ${pendingTransfers.length}`;
+    }
+    if (Q.includes("voided invoice")) {
+      const voided = (data.invoices || []).filter((invoice) => invoiceIsVoided(data, invoice));
+      const totalCents = voided.reduce((sum, invoice) => sum + Math.max(0, Number(invoice.totalCents) || 0), 0);
+      return voided.length ? `Voided invoices: ${voided.length}\nExcluded invoice value: ${f(totalCents)}` : "No voided invoices recorded.";
+    }
+    if (Q.includes("audit m-pesa") || Q.includes("audit mpesa") || Q.includes("invoice audit")) {
+      return "Open M-Pesa & Invoice Audit under Analytics to reconcile verified receipts, current invoices, older-debt recovery, cashier wallets, stock funding, available balances, and reversals.";
+    }
     if (Q.includes("low-stock") || Q.includes("reorder")) { const l = reorderList(data); return l.length ? "Items at or below reorder level:\n" + l.slice(0, 12).map((p) => "• " + p.name + " — " + onHand(data, p.id) + " left (reorder " + (p.reorderLevel ?? data.settings.reorderLevel) + ")").join("\n") : "All products are above their reorder level."; }
     if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) {
       const by = {};
@@ -14784,10 +14813,11 @@ function ExpensesTab({ data, update, branch, user }) {
 /* ---- AI Manager ---- */
 const ASK_EXAMPLES = [
   "How much did we make today?",
-  "Which branch needs stock?",
-  "Why were profits lower this week?",
-  "Show suspicious transactions.",
-  "Prepare tomorrow's purchase orders.",
+  "Prepare tomorrow's one-week purchase orders.",
+  "Which fast and medium movers need stock?",
+  "Summarize cashier debts and recovered credit.",
+  "What should I check in M-Pesa and invoice audit?",
+  "Show pending purchases and stock transfers.",
 ];
 function aiDigest(data) {
   const cur = data.settings.currency; const k = (c) => Math.round(c / 100);
@@ -14835,6 +14865,8 @@ function aiDigest(data) {
     totalUnits: transferUnitCount(t, data.products),
   }));
   const totalToday = branches.reduce((s, b) => s + b.salesTodayKES, 0); const totalProfit = branches.reduce((s, b) => s + b.grossProfitKES, 0); const totalExp = k(expT.reduce((s, e) => s + e.amountCents, 0));
+  const oneWeekOrders = oneWeekPurchaseOrderPlans(data);
+  const voidedInvoices = (data.invoices || []).filter((invoice) => invoiceIsVoided(data, invoice));
   return {
     currency: cur, date: formatBusinessDateTime(Date.now(), timeZone), company: data.settings.store || "VISIONPOS",
     totals: { salesTodayKES: totalToday, salesYesterdayKES: branches.reduce((s, b) => s + b.salesYesterdayKES, 0), transactionsToday: branches.reduce((s, b) => s + b.transactionsToday, 0), grossProfitKES: totalProfit, expensesTodayKES: totalExp, netProfitKES: totalProfit - totalExp },
@@ -14843,7 +14875,20 @@ function aiDigest(data) {
     paymentMix7dKES: Object.fromEntries(Object.entries(pay7).map(([m, v]) => [m, k(v)])),
     lowStock: lowStock.slice(0, 40), cashiers, cashierDebtsKES: Object.fromEntries(Object.entries(debt).map(([n, v]) => [n, k(v)])),
     expensesTodayByCategoryKES: Object.fromEntries(Object.entries(expCat).map(([c, v]) => [c, k(v)])), transfersToday: transfers, shrinkageToday: shrink,
-    dataNotes: "Values are in " + cur + " whole units. This system has NO discount, refund, void, loyalty, or customer-demographic data — do not invent any; state when something cannot be assessed from the data.",
+    oneWeekPurchaseOrders: oneWeekOrders.map((plan) => ({
+      branch: plan.branchName,
+      lookbackDays: plan.lookbackDays,
+      coverDays: plan.coverDays,
+      itemCount: plan.itemCount,
+      units: plan.unitCount,
+      estimatedTotalCostKES: k(plan.estimatedTotalCostCents),
+      output: plan.exportText,
+    })),
+    voidedInvoices: {
+      count: voidedInvoices.length,
+      excludedValueKES: k(voidedInvoices.reduce((sum, invoice) => sum + Math.max(0, Number(invoice.totalCents) || 0), 0)),
+    },
+    dataNotes: "Values are in " + cur + " whole units. Voided invoices are excluded from operational sales. Verified M-Pesa can be allocated to current invoices or older debt, credited to cashier wallets, marked as stock funding, left available, or reversed. Do not invent discounts, loyalty, demographics, or missing data.",
   };
 }
 function AIManagerTab({ data, sessionToken }) {
@@ -14857,7 +14902,15 @@ function AIManagerTab({ data, sessionToken }) {
     setError(""); setInput("");
     const history = [...messages, { role: "user", content: q }];
     setMessages(history); setLoading(true);
-    const system = "You are 'Ask My Business', the analyst for a multi-branch wines & spirits retailer in Kenya (currency KES). Answer using ONLY the JSON business data below. Be very brief: reply in 1-3 short sentences and lead with the direct answer/number. Do NOT add long explanations, methodology, or breakdowns unless the user explicitly asks for detail. For list requests (e.g. purchase orders, which branches), give a short bulleted list only — no preamble. Use KES. If something is not in the data (discounts, refunds, loyalty, demographics, hourly data), say briefly that it is not tracked rather than inventing it.\n\nBUSINESS DATA (JSON):\n" + JSON.stringify(aiDigest(data));
+    const purchaseOrderRequest = /\bpurchase orders?\b/i.test(q)
+      && /\b(prepare|tomorrow|one[\s-]?week|1[\s-]?week|reorder)\b/i.test(q);
+    if (purchaseOrderRequest) {
+      const answer = formatOneWeekPurchaseOrders(oneWeekPurchaseOrderPlans(data));
+      setMessages((current) => [...current, { role: "assistant", content: answer }]);
+      setLoading(false);
+      return;
+    }
+    const system = "You are 'Ask My Business', the analyst for a multi-branch wines & spirits retailer in Kenya (currency KES). Answer using ONLY the JSON business data below. Be very brief and lead with the direct answer. Use KES. If something is not in the data, say it is not tracked rather than inventing it. For purchase-order requests, use the supplied oneWeekPurchaseOrders values exactly. Format each branch as its name, then Products-Amount, then PRODUCT NAME-QUANTITY lines. Do not use bullets, commas, SKUs, costs, or recalculate quantities.\n\nBUSINESS DATA (JSON):\n" + JSON.stringify(aiDigest(data));
     try {
       const text = await aiComplete({ system, messages: history.map((m) => ({ role: m.role, content: m.content })), maxTokens: 400, sessionToken });
       setMessages((m) => [...m, { role: "assistant", content: text || "I couldn't generate an answer. Please try again." }]);
