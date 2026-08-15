@@ -8268,7 +8268,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
@@ -17382,7 +17382,7 @@ function CashierWalletCreditModal({ transaction, data, timeZone, onClose, onSave
   </div>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -17396,7 +17396,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
   const [sort, setSort] = useState("desc");
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [offsetTarget, setOffsetTarget] = useState(null);
   const [walletCreditTarget, setWalletCreditTarget] = useState(null);
   const [purposeBusyId, setPurposeBusyId] = useState("");
   const [purposeError, setPurposeError] = useState("");
@@ -17623,10 +17622,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
     }
   };
   const transactionActionMenu = (transaction, mobile = false) => {
-    const cashDepositAvailable = canOffset
-      && transaction.allocatable !== false
-      && !transaction.reversedAt
-      && Number(transaction.remainingCents || 0) > 0;
     const purposeChangeAvailable = canClassifyFunding
       && !transaction.reversedAt
       && (transaction.purpose === "stock_funding" || Number(transaction.allocatedCents || 0) === 0);
@@ -17639,7 +17634,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       && !transaction.reversedAt
       && transaction.purpose !== "stock_funding"
       && Number(transaction.remainingCents || 0) > 0;
-    if (!cashDepositAvailable && !purposeChangeAvailable && !crossBranchChangeAvailable && !walletFundingAvailable) return null;
+    if (!purposeChangeAvailable && !crossBranchChangeAvailable && !walletFundingAvailable) return null;
     const busy = purposeBusyId === transaction.id || crossBranchBusyId === transaction.id;
     return <label className={`mpesa-transaction-actions${mobile ? " mobile" : ""}`}>
       <MoreVertical aria-hidden="true" />
@@ -17649,14 +17644,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
         disabled={busy}
         onChange={(event) => {
           const action = event.target.value;
-          if (action === "cash_deposit") setOffsetTarget(transaction);
           if (action === "wallet_tip") setWalletCreditTarget(transaction);
           if (action === "stock_funding") void changeTransactionPurpose(transaction);
           if (action === "cross_branch") void changeCrossBranchAccess(transaction);
         }}
       >
         <option value="" disabled>{busy ? "Saving..." : "Actions"}</option>
-        {cashDepositAvailable ? <option value="cash_deposit">Cash deposit</option> : null}
         {walletFundingAvailable ? <option value="wallet_tip">Fund cashier wallet</option> : null}
         {purposeChangeAvailable ? <option value="stock_funding">{transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark stock funding"}</option> : null}
         {crossBranchChangeAvailable ? <option value="cross_branch">{transaction.crossBranchAllowed ? "Restrict to receiving branch" : "Allow cross-branch invoices"}</option> : null}
@@ -17735,7 +17728,6 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
           <div><button className="btn sm" disabled={!canPrevious} onClick={() => setOffset((value) => Math.max(0, value - pageSize))}><ChevronLeft /> Previous</button><button className="btn sm" disabled={!canNext} onClick={() => setOffset((value) => value + pageSize)}>Next <ChevronRight /></button></div>
         </div>
       </div>
-      {offsetTarget ? <MpesaCashOffsetModal transaction={offsetTarget} data={data} timeZone={timeZone} onClose={() => setOffsetTarget(null)} onSaved={() => { setOffsetTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
       {walletCreditTarget ? <CashierWalletCreditModal transaction={walletCreditTarget} data={data} timeZone={timeZone} onClose={() => setWalletCreditTarget(null)} onSaved={() => { setWalletCreditTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
     </div>
   );
