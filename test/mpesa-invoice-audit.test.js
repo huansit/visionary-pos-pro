@@ -50,6 +50,33 @@ test("cash offsets consume available money without paying the invoice", () => {
   assert.equal(audit.issues.length, 0);
 });
 
+test("cashier wallet funding consumes M-Pesa once and remains fully traceable", () => {
+  const funded = transaction({
+    amountCents: 10000,
+    allocatedCents: 3000,
+    remainingCents: 7000,
+    allocations: [],
+    walletCredits: [{
+      id: "wallet_credit_1",
+      cashierId: "cashier_1",
+      cashierName: "AMINA",
+      amountCents: 3000,
+      entryType: "tip_credit",
+      createdByName: "Admin",
+      createdAt: new Date(2000).toISOString(),
+    }],
+  });
+  const audit = buildMpesaInvoiceAudit({ transactions: [funded], invoices: [], payments: [], branches, now: 5000 });
+
+  assert.equal(audit.transactions[0].walletCreditCents, 3000);
+  assert.equal(audit.transactions[0].walletCredits[0].cashierName, "AMINA");
+  assert.equal(audit.summary.walletCreditCents, 3000);
+  assert.equal(audit.summary.availableCents, 7000);
+  assert.equal(audit.summary.reconciliationGapCents, 0);
+  assert.ok(!audit.issues.some((entry) => entry.code === "ledger_link_mismatch"));
+  assert.match(audit.reconciliationComment, /funded cashier tip wallets/i);
+});
+
 test("stored used amount must match active allocation and offset links", () => {
   const broken = transaction({ allocatedCents: 8000, remainingCents: 2000 });
   const audit = buildMpesaInvoiceAudit({ transactions: [broken], invoices: [invoice()], payments: [providerPayment()], branches, now: 5000 });

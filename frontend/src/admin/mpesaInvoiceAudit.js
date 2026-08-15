@@ -164,6 +164,7 @@ export function buildMpesaInvoiceAudit({
       };
     });
     const activeOffsets = uniqueById((transaction.offsets || []).filter(activeEntry));
+    const activeWalletCredits = uniqueById((transaction.walletCredits || []).filter(activeEntry));
     const auditableAllocations = activeAllocations.filter((entry) => !entry.invoiceVoided);
     const invoiceAllocatedCents = auditableAllocations.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
     const voidedInvoiceAllocationCents = activeAllocations
@@ -179,7 +180,8 @@ export function buildMpesaInvoiceAudit({
       .filter((entry) => entry.invoicePeriodCategory === "other_period")
       .reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
     const offsetCents = activeOffsets.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
-    const linkedConsumedCents = invoiceAllocatedCents + voidedInvoiceAllocationCents + offsetCents;
+    const walletCreditCents = activeWalletCredits.reduce((sum, entry) => sum + Math.max(0, cents(entry.amountCents)), 0);
+    const linkedConsumedCents = invoiceAllocatedCents + voidedInvoiceAllocationCents + walletCreditCents + offsetCents;
     const reversed = Boolean(transaction.reversedAt) || lower(transaction.status) === "reversed";
     const funding = lower(transaction.purpose) === "stock_funding";
     const allocatable = !reversed && !funding && transaction.allocatable !== false;
@@ -219,7 +221,7 @@ export function buildMpesaInvoiceAudit({
     });
 
     if (allocatable && storedAllocatedCents !== linkedConsumedCents) {
-      addIssue(issue({ code: "ledger_link_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Used amount does not match its audit trail", message: `${reference} records ${kes(storedAllocatedCents)} as used, but active invoice allocations and cash offsets total ${kes(linkedConsumedCents)}.` }));
+      addIssue(issue({ code: "ledger_link_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Used amount does not match its audit trail", message: `${reference} records ${kes(storedAllocatedCents)} as used, but active invoice allocations, cashier-wallet credits, and cash offsets total ${kes(linkedConsumedCents)}.` }));
     }
     if (allocatable && (storedAllocatedCents > amountCents || linkedConsumedCents > amountCents)) {
       addIssue(issue({ code: "transaction_overallocated", severity: "critical", entityType: "transaction", entityId: id, title: "Transaction is over-allocated", message: `${reference} has more money consumed than the verified amount received.` }));
@@ -241,6 +243,8 @@ export function buildMpesaInvoiceAudit({
       ? "Verified money remains unused and is older than the audit threshold. Confirm whether it should settle an invoice, offset deposited cash, or be classified as stock funding."
       : "Verified money remains available. It can settle invoices or offset cash receipts deposited to the till.";
     else if (voidedInvoiceAllocationCents > 0) comment = "Money is still linked to a voided invoice and requires correction.";
+    else if (walletCreditCents > 0 && offsetCents === 0 && invoiceAllocatedCents === 0) comment = "Fully accounted for as verified M-Pesa credited to cashier tip wallets.";
+    else if (walletCreditCents > 0) comment = "Fully accounted for through invoice allocations, cashier-wallet funding, or cash-deposit offsets.";
     else if (offsetCents > 0 && invoiceAllocatedCents > 0) comment = "Fully accounted for through invoice allocations and cash-deposit offsets.";
     else if (offsetCents > 0) comment = "Fully accounted for as cash deposited to the till. The linked invoices remain cash invoices.";
     else comment = "Fully accounted for through invoice allocation.";
@@ -265,6 +269,7 @@ export function buildMpesaInvoiceAudit({
       olderInvoiceRecoveryCents,
       otherPeriodInvoiceAllocationCents,
       offsetCents,
+      walletCreditCents,
       linkedConsumedCents,
       availableCents: computedAvailableCents,
       reversed,
@@ -274,6 +279,7 @@ export function buildMpesaInvoiceAudit({
       branchName: branchById.get(text(transaction.branchId))?.name || text(transaction.branchId) || "Unknown branch",
       activeAllocations: auditableAllocations,
       activeOffsets,
+      walletCredits: activeWalletCredits,
       issues: rowIssues,
       comment,
     };
@@ -393,6 +399,7 @@ export function buildMpesaInvoiceAudit({
     otherPeriodInvoiceAllocationCents: customerTransactions.reduce((sum, transaction) => sum + transaction.otherPeriodInvoiceAllocationCents, 0),
     recoveryTransactionCount: customerTransactions.filter((transaction) => transaction.olderInvoiceRecoveryCents > 0).length,
     offsetCents: customerTransactions.reduce((sum, transaction) => sum + transaction.offsetCents, 0),
+    walletCreditCents: customerTransactions.reduce((sum, transaction) => sum + transaction.walletCreditCents, 0),
     availableCents: customerTransactions.reduce((sum, transaction) => sum + transaction.availableCents, 0),
     invoiceValueCents: activeInvoiceRows.reduce((sum, invoice) => sum + invoice.totalCents, 0),
     invoicePaidCents: activeInvoiceRows.reduce((sum, invoice) => sum + Math.min(invoice.totalCents, invoice.storedPaidCents), 0),
@@ -418,12 +425,13 @@ export function buildMpesaInvoiceAudit({
     - summary.olderInvoiceRecoveryCents
     - summary.otherPeriodInvoiceAllocationCents
     - summary.voidedInvoiceAllocationCents
+    - summary.walletCreditCents
     - summary.offsetCents
     - summary.availableCents;
 
   const availableComment = summary.availableCents <= 0
-    ? "All verified customer M-Pesa money in this audit scope is accounted for by active invoice allocations or cash-deposit offsets."
-    : `Verified money remains available across ${availableRows.length} transaction${availableRows.length === 1 ? "" : "s"}. Available money has not yet settled an invoice or offset a cash receipt.${summary.staleAvailableCents > 0 ? " Some of it is older than the audit threshold and needs review." : ""}`;
+    ? "All verified customer M-Pesa money in this audit scope is accounted for by active invoice allocations, cashier-wallet funding, or cash-deposit offsets."
+    : `Verified money remains available across ${availableRows.length} transaction${availableRows.length === 1 ? "" : "s"}. Available money has not yet settled an invoice, funded a cashier wallet, or offset a cash receipt.${summary.staleAvailableCents > 0 ? " Some of it is older than the audit threshold and needs review." : ""}`;
 
   const invoicePaymentParts = [
     summary.providerMpesaPaymentCents > 0 ? `verified M-Pesa ${kes(summary.providerMpesaPaymentCents)}` : "",
@@ -443,6 +451,7 @@ export function buildMpesaInvoiceAudit({
     `${kes(summary.olderInvoiceRecoveryCents)} recovered older invoice debt`,
     summary.otherPeriodInvoiceAllocationCents > 0 ? `${kes(summary.otherPeriodInvoiceAllocationCents)} settled invoices outside the selected period` : "",
     summary.voidedInvoiceAllocationCents > 0 ? `${kes(summary.voidedInvoiceAllocationCents)} is still linked to voided invoices and flagged` : "",
+    summary.walletCreditCents > 0 ? `${kes(summary.walletCreditCents)} funded cashier tip wallets` : "",
     `${kes(summary.offsetCents)} offset cash deposited to till`,
     `${kes(summary.availableCents)} remains available`,
   ].filter(Boolean);

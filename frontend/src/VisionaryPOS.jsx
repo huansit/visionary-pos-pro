@@ -4418,6 +4418,7 @@ body{overscroll-behavior:none}
 .audit-summary b{font:850 17px var(--font-mono)}
 .audit-summary small{color:var(--muted);font-size:9.5px}
 .audit-summary .offset b{color:var(--warn)}
+.audit-summary .wallet b{color:var(--accent)}
 .audit-summary .recovery b{color:var(--accent)}
 .audit-summary .paid b{color:var(--ok)}
 .audit-summary .available b,.audit-summary .clear b{color:var(--ok)}
@@ -4473,6 +4474,8 @@ body{overscroll-behavior:none}
 .audit-trace-metrics small{color:var(--muted-2);font-size:8.5px;font-weight:850;text-transform:uppercase}
 .audit-trace-metrics b{font:750 10.5px var(--font-mono);overflow-wrap:anywhere}
 .audit-trace-metrics .available b{color:var(--ok)}
+.mpesa-wallet-credit{border-left:3px solid var(--accent)}
+.mpesa-wallet-credit .amount{color:var(--accent)}
 .audit-trace-body>p{margin:0;color:var(--muted);font-size:11px;line-height:1.45}
 .audit-trace-body .mpesa-allocation-menu{max-width:480px}
 .audit-payment-methods{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px;border-radius:5px;background:var(--surface-2);font-size:10.5px}
@@ -17950,12 +17953,13 @@ function MpesaInvoiceAuditTab({ data, branch }) {
           <span><small>Current-period invoices</small><b>{fmt(entry.selectedPeriodInvoiceAllocationCents, "KES")}</b></span>
           <span><small>Older debt recovered</small><b>{fmt(entry.olderInvoiceRecoveryCents, "KES")}</b></span>
           <span><small>Other-period invoices</small><b>{fmt(entry.otherPeriodInvoiceAllocationCents, "KES")}</b></span>
+          <span><small>Cashier wallets</small><b>{fmt(entry.walletCreditCents, "KES")}</b></span>
           <span><small>Cash offset</small><b>{fmt(entry.offsetCents, "KES")}</b></span>
           <span className="available"><small>Available</small><b>{fmt(entry.availableCents, "KES")}</b></span>
           <span><small>Received</small><b>{entry.timestamp ? formatBusinessDateTime(entry.timestamp, timeZone) : "Unknown"}</b></span>
         </div>
         <p>{entry.comment}</p>
-        <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />
+        <MpesaAllocationList allocations={entry.activeAllocations} offsets={entry.activeOffsets} walletCredits={entry.walletCredits} funding={entry.funding} currency={entry.currency || "KES"} timeZone={timeZone} />
         {entry.issues.length ? <div className="audit-inline-flags">{entry.issues.map((flag) => <span className={flag.severity} key={flag.id}>{flag.title}</span>)}</div> : null}
       </div>
     </details>;
@@ -18003,6 +18007,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
       <div><span>Current-period invoices</span><b>{fmt(audit.summary.selectedPeriodInvoiceAllocationCents, "KES")}</b><small>Invoices issued in this audit period</small></div>
       <div className="recovery"><span>Older debt recovered</span><b>{fmt(audit.summary.olderInvoiceRecoveryCents, "KES")}</b><small>{audit.summary.recoveryTransactionCount} M-Pesa receipt{audit.summary.recoveryTransactionCount === 1 ? "" : "s"} used</small></div>
       <div><span>Other-period invoices</span><b>{fmt(audit.summary.otherPeriodInvoiceAllocationCents, "KES")}</b><small>Invoices outside the selected period</small></div>
+      <div className="wallet"><span>Cashier wallets</span><b>{fmt(audit.summary.walletCreditCents, "KES")}</b><small>Verified M-Pesa tips credited</small></div>
       <div className="offset"><span>Cash offsets</span><b>{fmt(audit.summary.offsetCents, "KES")}</b><small>Cash later deposited to till</small></div>
       <div className="available"><span>Available</span><b>{fmt(audit.summary.availableCents, "KES")}</b><small>Not allocated or offset</small></div>
       <div className="debt"><span>Invoice debts</span><b>{fmt(audit.summary.debtOutstandingCents, "KES")}</b><small>{audit.summary.debtCount} carried-over invoices</small></div>
