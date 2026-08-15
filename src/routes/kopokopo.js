@@ -28,6 +28,7 @@ import {
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
 const requireKopokopoViewer = requireRoles(new Set(["owner", "admin", "manager", "supervisor", "cashier"]));
+let walletEventClock = Date.now();
 
 function integerCents(value) {
   const cents = Number(value);
@@ -65,6 +66,89 @@ function sandboxTestAvailable(config) {
 
 function branchRequiresVerifiedKopokopo(_config, branchId) {
   return Boolean(kopokopoConfigForBranch(branchId)?.enabled);
+}
+
+function normalizedRights(value) {
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string") return {};
+  try { return JSON.parse(value) || {}; } catch { return {}; }
+}
+
+function accountRole(account) {
+  const rights = normalizedRights(account?.rights);
+  return String(account?.role || rights.role || rights.name || rights.accountRole || account?.kind || "")
+    .trim()
+    .toLowerCase();
+}
+
+function nextWalletEventTs() {
+  walletEventClock = Math.max(Date.now(), walletEventClock + 1);
+  return walletEventClock;
+}
+
+function walletRequestFingerprint(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function publicWalletEntry(row) {
+  return {
+    id: row.id,
+    batchIdempotencyKey: row.batch_idempotency_key ?? row.batchIdempotencyKey,
+    cashierId: row.cashier_id ?? row.cashierId,
+    cashierName: row.cashier_name ?? row.cashierName,
+    branchId: row.branch_id ?? row.branchId,
+    amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
+    entryType: row.entry_type ?? row.entryType,
+    transactionId: row.kopokopo_transaction_id ?? row.kopokopoTransactionId ?? null,
+    invoiceId: row.related_invoice_id ?? row.relatedInvoiceId ?? null,
+    debtId: row.related_debt_id ?? row.relatedDebtId ?? null,
+    paymentId: row.related_payment_id ?? row.relatedPaymentId ?? null,
+    note: row.note || "",
+    createdBy: row.created_by ?? row.createdBy ?? null,
+    createdByName: row.created_by_name ?? row.createdByName ?? null,
+    createdAt: row.created_at ?? row.createdAt ?? null,
+  };
+}
+
+async function activeCashier(client, cashierId, branchId, lock = false) {
+  const result = await client.query(
+    `SELECT id, name, kind, branch_id, rights, status
+       FROM credentials
+      WHERE id = $1
+      LIMIT 1${lock ? " FOR UPDATE" : ""}`,
+    [cashierId]
+  );
+  const cashier = result.rows[0];
+  if (!cashier) return null;
+  const status = String(cashier.status || "active").trim().toLowerCase();
+  const role = accountRole(cashier);
+  const cashierBranchId = String(cashier.branch_id ?? cashier.branchId ?? "").trim();
+  if (status !== "active" || role !== "cashier" || cashierBranchId !== branchId) return null;
+  return { id: cashier.id, name: cashier.name || cashier.id, branchId: cashierBranchId };
+}
+
+async function walletRows(client, cashierId, branchId, lock = false) {
+  return (await client.query(
+    `SELECT *
+       FROM cashier_wallet_entries
+      WHERE cashier_id = $1 AND branch_id = $2
+      ORDER BY created_at, id${lock ? " FOR UPDATE" : ""}`,
+    [cashierId, branchId]
+  )).rows;
+}
+
+function walletBalanceCents(rows) {
+  return rows.reduce((sum, row) => sum + Number(row.amount_cents ?? row.amountCents ?? 0), 0);
+}
+
+async function insertWalletSyncEvent(client, { id, type, branchId, payload }) {
+  const ts = nextWalletEventTs();
+  await client.query(
+    `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, type, branchId, null, ts, ts, payload]
+  );
+  return { id, type, branchId, serverTs: ts, payload };
 }
 
 function transactionPurpose(transaction) {
@@ -653,6 +737,245 @@ async function allocateKopokopoPayment({
   });
 }
 
+async function fundCashierWallet({ transactionId, cashierId, branchId, amountCents, note, idempotencyKey, account }) {
+  const fingerprint = walletRequestFingerprint({ transactionId, cashierId, branchId, amountCents, note });
+  return tx(async (client) => {
+    const prior = await client.query(
+      "SELECT request_fingerprint FROM cashier_wallet_batches WHERE idempotency_key = $1 LIMIT 1",
+      [idempotencyKey]
+    );
+    if (prior.rows.length) {
+      if ((prior.rows[0].request_fingerprint ?? prior.rows[0].requestFingerprint) !== fingerprint) {
+        return { conflict: "idempotency_key_reused" };
+      }
+      const rows = await walletRows(client, cashierId, branchId);
+      const entry = rows.find((row) => (row.batch_idempotency_key ?? row.batchIdempotencyKey) === idempotencyKey);
+      if (!entry) return { conflict: "cashier_wallet_idempotency_inconsistent" };
+      return { duplicate: true, wallet: { cashierId, branchId, balanceCents: walletBalanceCents(rows) }, entry: publicWalletEntry(entry) };
+    }
+
+    const transactionResult = await client.query(
+      "SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE",
+      [transactionId]
+    );
+    const transaction = transactionResult.rows[0];
+    if (!transaction) return { conflict: "kopokopo_transaction_not_found" };
+    await attachProviderTopic(client, transaction);
+    if (!transactionCanAllocate(transaction)) return { conflict: "kopokopo_transaction_not_allocatable" };
+    if (!await repairTransactionBranch(client, transaction, branchId)) return { conflict: "kopokopo_branch_mismatch" };
+    if (!transactionStatusAvailable(transaction)) return { conflict: "kopokopo_transaction_unavailable" };
+    if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
+    const remainingCents = Number(transaction.amount_cents ?? transaction.amountCents ?? 0)
+      - Number(transaction.allocated_cents ?? transaction.allocatedCents ?? 0);
+    if (amountCents > remainingCents) {
+      return { conflict: "kopokopo_amount_exceeds_balance", remainingCents: Math.max(0, remainingCents) };
+    }
+    const cashier = await activeCashier(client, cashierId, branchId, true);
+    if (!cashier) return { conflict: "cashier_not_active_in_branch" };
+
+    await client.query(
+      `INSERT INTO cashier_wallet_batches
+        (idempotency_key, operation, cashier_id, branch_id, transaction_id, request_fingerprint,
+         total_cents, created_by, created_by_name)
+       VALUES ($1, 'tip_credit', $2, $3, $4, $5, $6, $7, $8)`,
+      [idempotencyKey, cashierId, branchId, transactionId, fingerprint, amountCents, account?.id || null, account?.name || null]
+    );
+    const entryId = `cwe_${crypto.randomUUID()}`;
+    await client.query(
+      `INSERT INTO cashier_wallet_entries
+        (id, batch_idempotency_key, cashier_id, cashier_name, branch_id, amount_cents, entry_type,
+         kopokopo_transaction_id, note, created_by, created_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, 'tip_credit', $7, $8, $9, $10)`,
+      [entryId, idempotencyKey, cashierId, cashier.name, branchId, amountCents, transactionId, note || null, account?.id || null, account?.name || null]
+    );
+    await client.query(
+      `UPDATE kopokopo_transactions
+          SET allocated_cents = allocated_cents + $2, updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [transactionId, amountCents]
+    );
+    const updated = (await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId])).rows[0];
+    const rows = await walletRows(client, cashierId, branchId);
+    return {
+      duplicate: false,
+      transaction: publicTransaction(updated),
+      wallet: { cashierId, cashierName: cashier.name, branchId, balanceCents: walletBalanceCents(rows) },
+      entry: publicWalletEntry(rows.find((row) => row.id === entryId)),
+    };
+  });
+}
+
+function walletTargetKey(target) {
+  return `${target.type}:${target.id}`;
+}
+
+async function payCashierDebtsFromWallet({ cashierId, branchId, targets, note, idempotencyKey, account }) {
+  const canonicalTargets = [...targets].sort((a, b) => walletTargetKey(a).localeCompare(walletTargetKey(b)));
+  const requestedTotal = canonicalTargets.reduce((sum, target) => sum + target.amountCents, 0);
+  const fingerprint = walletRequestFingerprint({ cashierId, branchId, targets: canonicalTargets, note });
+  return tx(async (client) => {
+    const prior = await client.query(
+      "SELECT request_fingerprint FROM cashier_wallet_batches WHERE idempotency_key = $1 LIMIT 1",
+      [idempotencyKey]
+    );
+    if (prior.rows.length) {
+      if ((prior.rows[0].request_fingerprint ?? prior.rows[0].requestFingerprint) !== fingerprint) {
+        return { conflict: "idempotency_key_reused" };
+      }
+      const rows = await walletRows(client, cashierId, branchId);
+      return {
+        duplicate: true,
+        wallet: { cashierId, branchId, balanceCents: walletBalanceCents(rows) },
+        entries: rows.filter((row) => (row.batch_idempotency_key ?? row.batchIdempotencyKey) === idempotencyKey).map(publicWalletEntry),
+        paymentEvents: [],
+      };
+    }
+
+    const cashier = await activeCashier(client, cashierId, branchId, true);
+    if (!cashier) return { conflict: "cashier_not_active_in_branch" };
+    const currentWalletRows = await walletRows(client, cashierId, branchId, true);
+    const balanceCents = walletBalanceCents(currentWalletRows);
+    if (requestedTotal > balanceCents) return { conflict: "cashier_wallet_balance_exceeded", balanceCents };
+
+    const supportingEvents = (await client.query(
+      `SELECT id, type, payload
+         FROM events
+        WHERE branch_id = $1
+          AND type IN ('payment', 'invoiceVoidDecision', 'cashierJointDebtPayment')`,
+      [branchId]
+    )).rows;
+    const paymentEvents = [];
+    const walletEntries = [];
+
+    for (const target of canonicalTargets) {
+      if (target.type === "invoice") {
+        const invoice = (await client.query(
+          "SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' FOR UPDATE",
+          [target.id]
+        )).rows[0];
+        if (!invoice) return { conflict: "cashier_wallet_invoice_not_found", targetId: target.id };
+        const payload = invoice.payload || {};
+        const invoiceBranchId = String(invoice.branch_id ?? invoice.branchId ?? payload.branchId ?? "").trim();
+        if (invoiceBranchId !== branchId) return { conflict: "cashier_wallet_invoice_branch_mismatch", targetId: target.id };
+        if (String(payload.cashierId || "") !== cashierId) return { conflict: "cashier_wallet_invoice_cashier_mismatch", targetId: target.id };
+        const approvedVoid = supportingEvents.some((event) => event.type === "invoiceVoidDecision"
+          && String(event.payload?.invoiceId || "") === target.id
+          && String(event.payload?.decision || "").toLowerCase() === "approved");
+        if (approvedVoid || ["void", "voided", "cancelled", "canceled"].includes(String(payload.status || "").toLowerCase())) {
+          return { conflict: "cashier_wallet_invoice_voided", targetId: target.id };
+        }
+        if (!(payload.carriedOver || payload.carriedOverAt || payload.closedDayId || String(payload.status || "").toLowerCase() === "debt")) {
+          return { conflict: "cashier_wallet_invoice_not_debt", targetId: target.id };
+        }
+        const capturedCents = supportingEvents.reduce((sum, event) => {
+          const payment = event.payload || {};
+          const invoiceId = payment.orderId || payment.invoiceId;
+          if (event.type !== "payment" || invoiceId !== target.id || String(payment.status || "captured").toLowerCase() !== "captured") return sum;
+          return sum + payloadCents(payment, "amountCents", "amount");
+        }, 0);
+        const outstandingCents = Math.max(0, payloadCents(payload, "totalCents", "total")
+          - Math.max(payloadCents(payload, "paidCents", "paid"), capturedCents));
+        if (target.amountCents > outstandingCents) {
+          return { conflict: "cashier_wallet_debt_balance_exceeded", targetId: target.id, remainingCents: outstandingCents };
+        }
+        const paymentId = `cwp_${crypto.randomUUID()}`;
+        const paymentPayload = {
+          id: paymentId,
+          orderId: target.id,
+          invoiceId: target.id,
+          branchId,
+          cashierId,
+          cashierName: cashier.name,
+          method: "cashier-wallet",
+          amountCents: target.amountCents,
+          status: "captured",
+          recordedBy: account?.id || null,
+          recordedByName: account?.name || null,
+          settledBy: account?.id || null,
+          settledByName: account?.name || null,
+          walletBatchId: idempotencyKey,
+          note,
+          ts: Date.now(),
+          synced: true,
+        };
+        paymentEvents.push(await insertWalletSyncEvent(client, { id: paymentId, type: "payment", branchId, payload: paymentPayload }));
+        walletEntries.push({ target, paymentId, entryType: "invoice_debt_payment" });
+      } else {
+        const debt = (await client.query(
+          "SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'cashierJointDebt' FOR UPDATE",
+          [target.id]
+        )).rows[0];
+        if (!debt) return { conflict: "cashier_wallet_inventory_debt_not_found", targetId: target.id };
+        const payload = debt.payload || {};
+        const debtBranchId = String(debt.branch_id ?? debt.branchId ?? payload.branchId ?? "").trim();
+        if (debtBranchId !== branchId) return { conflict: "cashier_wallet_inventory_debt_branch_mismatch", targetId: target.id };
+        const share = (Array.isArray(payload.shares) ? payload.shares : []).find((item) => String(item.cashierId || "") === cashierId);
+        if (!share) return { conflict: "cashier_wallet_inventory_debt_cashier_mismatch", targetId: target.id };
+        const priorPaidCents = supportingEvents.reduce((sum, event) => {
+          const payment = event.payload || {};
+          if (event.type !== "cashierJointDebtPayment" || payment.debtId !== target.id || payment.cashierId !== cashierId
+            || String(payment.status || "captured").toLowerCase() !== "captured") return sum;
+          return sum + payloadCents(payment, "amountCents", "amount");
+        }, 0);
+        const assignedCents = payloadCents(share, "amountCents", "amount");
+        const outstandingCents = Math.max(0, assignedCents - payloadCents(share, "paidCents", "paid") - priorPaidCents);
+        if (target.amountCents > outstandingCents) {
+          return { conflict: "cashier_wallet_debt_balance_exceeded", targetId: target.id, remainingCents: outstandingCents };
+        }
+        const paymentId = `cwjp_${crypto.randomUUID()}`;
+        const paymentPayload = {
+          id: paymentId,
+          debtId: target.id,
+          stockCountCode: payload.stockCountCode || payload.reference || target.id,
+          branchId,
+          cashierId,
+          cashierName: cashier.name,
+          amountCents: target.amountCents,
+          method: "cashier-wallet",
+          status: "captured",
+          recordedBy: account?.id || null,
+          recordedByName: account?.name || null,
+          walletBatchId: idempotencyKey,
+          note,
+          ts: Date.now(),
+          synced: true,
+        };
+        paymentEvents.push(await insertWalletSyncEvent(client, { id: paymentId, type: "cashierJointDebtPayment", branchId, payload: paymentPayload }));
+        walletEntries.push({ target, paymentId, entryType: "inventory_debt_payment" });
+      }
+    }
+
+    await client.query(
+      `INSERT INTO cashier_wallet_batches
+        (idempotency_key, operation, cashier_id, branch_id, request_fingerprint,
+         total_cents, created_by, created_by_name)
+       VALUES ($1, 'debt_payment', $2, $3, $4, $5, $6, $7)`,
+      [idempotencyKey, cashierId, branchId, fingerprint, requestedTotal, account?.id || null, account?.name || null]
+    );
+    for (const item of walletEntries) {
+      await client.query(
+        `INSERT INTO cashier_wallet_entries
+          (id, batch_idempotency_key, cashier_id, cashier_name, branch_id, amount_cents, entry_type,
+           related_invoice_id, related_debt_id, related_payment_id, note, created_by, created_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          `cwe_${crypto.randomUUID()}`, idempotencyKey, cashierId, cashier.name, branchId, -item.target.amountCents,
+          item.entryType, item.target.type === "invoice" ? item.target.id : null,
+          item.target.type === "inventory" ? item.target.id : null, item.paymentId, note || null,
+          account?.id || null, account?.name || null,
+        ]
+      );
+    }
+    const rows = await walletRows(client, cashierId, branchId);
+    return {
+      duplicate: false,
+      wallet: { cashierId, cashierName: cashier.name, branchId, balanceCents: walletBalanceCents(rows) },
+      entries: rows.filter((row) => (row.batch_idempotency_key ?? row.batchIdempotencyKey) === idempotencyKey).map(publicWalletEntry),
+      paymentEvents,
+    };
+  });
+}
+
 router.post("/webhook", async (req, res) => {
   try {
     const configs = kopokopoConfigs().filter((config) => config.enabled && config.webhookSecret);
@@ -1133,10 +1456,11 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     }
     const allocationsByTransaction = new Map();
     const offsetsByTransaction = new Map();
+    const walletCreditsByTransaction = new Map();
     if (transactionRows.length) {
       const transactionIds = transactionRows.map((row) => row.id);
       const transactionPlaceholders = transactionIds.map((_, index) => `$${index + 1}`).join(", ");
-      const [allocationResult, offsetResult] = await Promise.all([
+      const [allocationResult, offsetResult, walletCreditResult] = await Promise.all([
         q(
           `SELECT id, transaction_id, invoice_id, branch_id, amount_cents, cross_branch_authorized, status, allocated_by_name, allocated_at
              FROM kopokopo_allocations
@@ -1149,6 +1473,15 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
              FROM kopokopo_offsets
             WHERE transaction_id IN (${transactionPlaceholders})
             ORDER BY offset_at, id`,
+          transactionIds
+        ),
+        q(
+          `SELECT id, batch_idempotency_key, cashier_id, cashier_name, branch_id, amount_cents, entry_type,
+                  kopokopo_transaction_id, note, created_by, created_by_name, created_at
+             FROM cashier_wallet_entries
+            WHERE kopokopo_transaction_id IN (${transactionPlaceholders})
+              AND entry_type = 'tip_credit'
+            ORDER BY created_at, id`,
           transactionIds
         ),
       ]);
@@ -1182,6 +1515,12 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
         current.push(publicOffset(offsetRow, invoicePayloadById.get(invoiceId)));
         offsetsByTransaction.set(transactionId, current);
       }
+      for (const walletCredit of walletCreditResult.rows) {
+        const transactionId = walletCredit.kopokopo_transaction_id ?? walletCredit.kopokopoTransactionId;
+        const current = walletCreditsByTransaction.get(transactionId) || [];
+        current.push(publicWalletEntry(walletCredit));
+        walletCreditsByTransaction.set(transactionId, current);
+      }
     }
     const totals = summary.rows[0] || {};
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
@@ -1195,6 +1534,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
         ...publicTransaction(row),
         allocations: allocationsByTransaction.get(row.id) || [],
         offsets: offsetsByTransaction.get(row.id) || [],
+        walletCredits: walletCreditsByTransaction.get(row.id) || [],
       })),
       page: {
         total: Number(totals.page_count ?? totals.pageCount ?? 0),
@@ -1446,6 +1786,151 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
   } catch (error) {
     console.error("Kopo Kopo lookup failed:", error);
     return res.status(500).json({ error: "kopokopo_lookup_failed" });
+  }
+});
+
+router.get("/wallet", requireKopokopoViewer, async (req, res) => {
+  try {
+    const role = accountRole(req.account);
+    const cashierViewer = role === "cashier";
+    const cashierId = cashierViewer ? identifier(req.account?.id) : identifier(req.query.cashierId);
+    const branchId = cashierViewer ? identifier(req.account?.branchId) : identifier(req.query.branchId);
+    const limit = Math.max(1, ledgerInteger(req.query.limit, 50, 100));
+    const offset = ledgerInteger(req.query.offset, 0, 100000);
+    if (!cashierId || !branchId) return res.status(400).json({ error: "invalid_cashier_wallet_filters" });
+    if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+
+    const cashier = await activeCashier({ query: q }, cashierId, branchId);
+    if (!cashier) return res.status(404).json({ error: "cashier_not_active_in_branch" });
+    const [summary, entries] = await Promise.all([
+      q(
+        `SELECT COUNT(*) AS entry_count, COALESCE(SUM(amount_cents), 0) AS balance_cents
+           FROM cashier_wallet_entries
+          WHERE cashier_id = $1 AND branch_id = $2`,
+        [cashierId, branchId]
+      ),
+      q(
+        `SELECT *
+           FROM cashier_wallet_entries
+          WHERE cashier_id = $1 AND branch_id = $2
+          ORDER BY created_at DESC, id DESC
+          LIMIT $3 OFFSET $4`,
+        [cashierId, branchId, limit, offset]
+      ),
+    ]);
+    const totals = summary.rows[0] || {};
+    return res.json({
+      wallet: {
+        cashierId,
+        cashierName: cashier.name,
+        branchId,
+        balanceCents: Number(totals.balance_cents ?? totals.balanceCents ?? 0),
+      },
+      entries: entries.rows.map(publicWalletEntry),
+      page: { total: Number(totals.entry_count ?? totals.entryCount ?? 0), limit, offset },
+    });
+  } catch (error) {
+    console.error("Cashier wallet lookup failed:", error);
+    return res.status(500).json({ error: "cashier_wallet_lookup_failed" });
+  }
+});
+
+router.post("/wallet/credits", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    if (!kopokopoEnabled()) return res.status(409).json({ error: "kopokopo_disabled" });
+    const transactionId = identifier(req.body?.transactionId);
+    const cashierId = identifier(req.body?.cashierId);
+    const branchId = identifier(req.body?.branchId);
+    const idempotencyKey = identifier(req.body?.idempotencyKey);
+    const amountCents = integerCents(req.body?.amountCents);
+    const note = String(req.body?.note || "").trim();
+    if (!transactionId || !cashierId || !branchId || !idempotencyKey || !amountCents || note.length > 500) {
+      return res.status(400).json({ error: "invalid_cashier_wallet_credit" });
+    }
+    if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const result = await fundCashierWallet({
+      transactionId,
+      cashierId,
+      branchId,
+      amountCents,
+      note,
+      idempotencyKey,
+      account: req.account,
+    });
+    if (result.conflict) {
+      return res.status(409).json({ error: result.conflict, remainingCents: result.remainingCents });
+    }
+    if (!result.duplicate) {
+      publishRealtimeEvent("kopokopo", {
+        source: "cashier-wallet",
+        branchId,
+        accepted: 1,
+        types: ["cashierWalletCredit", "kopokopoAllocation"],
+      });
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("Cashier wallet credit failed:", error);
+    return res.status(500).json({ error: "cashier_wallet_credit_failed" });
+  }
+});
+
+router.post("/wallet/debt-payments", requireAdminOrSupervisor, async (req, res) => {
+  try {
+    const cashierId = identifier(req.body?.cashierId);
+    const branchId = identifier(req.body?.branchId);
+    const idempotencyKey = identifier(req.body?.idempotencyKey);
+    const note = String(req.body?.note || "").trim();
+    const requestedTargets = Array.isArray(req.body?.targets) ? req.body.targets : [];
+    const targets = requestedTargets.map((target) => ({
+      type: String(target?.type || "").trim().toLowerCase(),
+      id: identifier(target?.id),
+      amountCents: integerCents(target?.amountCents),
+    }));
+    const uniqueTargets = new Set(targets.map(walletTargetKey));
+    const totalCents = targets.reduce((sum, target) => sum + target.amountCents, 0);
+    if (!cashierId || !branchId || !idempotencyKey || note.length > 500
+      || targets.length < 1 || targets.length > 50
+      || targets.some((target) => !["invoice", "inventory"].includes(target.type) || !target.id || !target.amountCents)
+      || uniqueTargets.size !== targets.length
+      || !Number.isSafeInteger(totalCents) || totalCents <= 0) {
+      return res.status(400).json({ error: "invalid_cashier_wallet_debt_payment" });
+    }
+    if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    const result = await payCashierDebtsFromWallet({
+      cashierId,
+      branchId,
+      targets,
+      note,
+      idempotencyKey,
+      account: req.account,
+    });
+    if (result.conflict) {
+      return res.status(409).json({
+        error: result.conflict,
+        balanceCents: result.balanceCents,
+        remainingCents: result.remainingCents,
+        targetId: result.targetId,
+      });
+    }
+    if (!result.duplicate) {
+      publishRealtimeEvent("sync", {
+        source: "cashier-wallet",
+        branchId,
+        accepted: result.paymentEvents.length,
+        types: [...new Set(result.paymentEvents.map((event) => event.type))],
+      });
+      publishRealtimeEvent("kopokopo", {
+        source: "cashier-wallet",
+        branchId,
+        accepted: result.entries.length,
+        types: ["cashierWalletDebtPayment"],
+      });
+    }
+    return res.json(result);
+  } catch (error) {
+    console.error("Cashier wallet debt payment failed:", error);
+    return res.status(500).json({ error: "cashier_wallet_debt_payment_failed" });
   }
 });
 

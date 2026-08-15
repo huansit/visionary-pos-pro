@@ -693,6 +693,113 @@ test("stores incoming till and bank payments as allocatable customer transfers",
   assert.equal(updatedLedger.body.transactions[0].remainingCents, 89900);
 });
 
+test("funds a branch cashier wallet from verified M-Pesa balance and settles only that cashier's debt", async () => {
+  const transactionId = "txn-cashier-wallet";
+  const invoiceId = "inv-cashier-wallet-debt";
+  const reference = "TGH7WAL9LET";
+  const creditKey = "wallet-credit-test";
+  const paymentKey = "wallet-payment-test";
+  await signedWebhook(webhookPayload({
+    eventId: "evt-cashier-wallet",
+    resourceId: transactionId,
+    reference,
+  })).expect(200);
+  await pool.query(
+    `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+     VALUES ($1, 'invoice', 'b_sip', NULL, 1, $2, $3::jsonb)`,
+    [invoiceId, Date.now(), JSON.stringify({
+      id: invoiceId,
+      number: "RCP-SIP-WALLET",
+      branchId: "b_sip",
+      cashierId: "kopokopo-cashier",
+      cashierName: "SIP Cashier",
+      totalCents: 30000,
+      paidCents: 0,
+      carriedOver: true,
+      status: "debt",
+    })]
+  );
+
+  try {
+    await request(app)
+      .post("/api/integrations/kopokopo/wallet/credits")
+      .set("X-Session-Token", cashierSessionToken)
+      .send({ transactionId, cashierId: "kopokopo-cashier", branchId: "b_sip", amountCents: 40000, idempotencyKey: creditKey })
+      .expect(403);
+
+    const credited = await request(app)
+      .post("/api/integrations/kopokopo/wallet/credits")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send({ transactionId, cashierId: "kopokopo-cashier", branchId: "b_sip", amountCents: 40000, idempotencyKey: creditKey })
+      .expect(200);
+    assert.equal(credited.body.duplicate, false);
+    assert.equal(credited.body.wallet.balanceCents, 40000);
+    assert.equal(credited.body.entry.entryType, "tip_credit");
+
+    const duplicate = await request(app)
+      .post("/api/integrations/kopokopo/wallet/credits")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send({ transactionId, cashierId: "kopokopo-cashier", branchId: "b_sip", amountCents: 40000, idempotencyKey: creditKey })
+      .expect(200);
+    assert.equal(duplicate.body.duplicate, true);
+    assert.equal(duplicate.body.wallet.balanceCents, 40000);
+
+    const overCredit = await request(app)
+      .post("/api/integrations/kopokopo/wallet/credits")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send({
+        transactionId,
+        cashierId: "kopokopo-cashier",
+        branchId: "b_sip",
+        amountCents: 70000,
+        idempotencyKey: "wallet-credit-over-balance-test",
+      })
+      .expect(409);
+    assert.equal(overCredit.body.error, "kopokopo_amount_exceeds_balance");
+    assert.equal(overCredit.body.remainingCents, 60000);
+
+    const ownWallet = await request(app)
+      .get("/api/integrations/kopokopo/wallet?cashierId=another-cashier&branchId=b_cpt")
+      .set("X-Session-Token", cashierSessionToken)
+      .expect(200);
+    assert.equal(ownWallet.body.wallet.cashierId, "kopokopo-cashier");
+    assert.equal(ownWallet.body.wallet.branchId, "b_sip");
+    assert.equal(ownWallet.body.wallet.balanceCents, 40000);
+
+    const settled = await request(app)
+      .post("/api/integrations/kopokopo/wallet/debt-payments")
+      .set("X-Session-Token", supervisorSessionToken)
+      .send({
+        cashierId: "kopokopo-cashier",
+        branchId: "b_sip",
+        targets: [{ type: "invoice", id: invoiceId, amountCents: 15000 }],
+        note: "Apply cashier tip wallet",
+        idempotencyKey: paymentKey,
+      })
+      .expect(200);
+    assert.equal(settled.body.wallet.balanceCents, 25000);
+    assert.equal(settled.body.paymentEvents.length, 1);
+    assert.equal(settled.body.paymentEvents[0].payload.method, "cashier-wallet");
+    assert.equal(settled.body.paymentEvents[0].payload.amountCents, 15000);
+
+    const ledger = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=9LET")
+      .set("X-Session-Token", supervisorSessionToken)
+      .expect(200);
+    assert.equal(ledger.body.transactions.length, 1);
+    assert.equal(ledger.body.transactions[0].allocatedCents, 40000);
+    assert.equal(ledger.body.transactions[0].remainingCents, 60000);
+    assert.equal(ledger.body.transactions[0].walletCredits.length, 1);
+    assert.equal(ledger.body.transactions[0].walletCredits[0].cashierId, "kopokopo-cashier");
+  } finally {
+    await pool.query("DELETE FROM cashier_wallet_entries WHERE batch_idempotency_key IN ($1, $2)", [creditKey, paymentKey]);
+    await pool.query("DELETE FROM cashier_wallet_batches WHERE idempotency_key IN ($1, $2)", [creditKey, paymentKey]);
+    await pool.query("DELETE FROM events WHERE id = $1 OR (type = 'payment' AND payload->>'walletBatchId' = $2)", [invoiceId, paymentKey]);
+    await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+    await pool.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", ["evt-cashier-wallet"]);
+  }
+});
+
 test("keeps owner stock funding visible but out of sales totals and invoice settlement", async () => {
   const transactionId = "stock-funding-classification";
   const payload = {

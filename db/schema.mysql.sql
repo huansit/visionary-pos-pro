@@ -370,3 +370,45 @@ CREATE INDEX kopokopo_offsets_transaction_idx
   ON kopokopo_offsets (transaction_id, offset_at);
 CREATE INDEX kopokopo_offsets_invoice_idx
   ON kopokopo_offsets (invoice_id, offset_at);
+
+CREATE TABLE IF NOT EXISTS cashier_wallet_batches (
+  idempotency_key      varchar(191) PRIMARY KEY,
+  operation            varchar(40) NOT NULL,
+  cashier_id           varchar(191) NOT NULL,
+  branch_id            varchar(191) NOT NULL,
+  transaction_id       varchar(191),
+  request_fingerprint  varchar(64) NOT NULL,
+  total_cents          bigint NOT NULL,
+  created_by           varchar(191),
+  created_by_name      varchar(255),
+  created_at           datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT cashier_wallet_batches_transaction_fk FOREIGN KEY (transaction_id) REFERENCES kopokopo_transactions(id)
+);
+
+CREATE INDEX cashier_wallet_batches_cashier_idx
+  ON cashier_wallet_batches (cashier_id, created_at);
+
+CREATE TABLE IF NOT EXISTS cashier_wallet_entries (
+  id                       varchar(191) PRIMARY KEY,
+  batch_idempotency_key    varchar(191) NOT NULL,
+  cashier_id               varchar(191) NOT NULL,
+  cashier_name             varchar(255) NOT NULL,
+  branch_id                varchar(191) NOT NULL,
+  amount_cents             bigint NOT NULL,
+  entry_type               varchar(40) NOT NULL,
+  kopokopo_transaction_id  varchar(191),
+  related_invoice_id       varchar(191),
+  related_debt_id          varchar(191),
+  related_payment_id       varchar(191),
+  note                     varchar(500),
+  created_by               varchar(191),
+  created_by_name          varchar(255),
+  created_at               datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT cashier_wallet_entries_batch_fk FOREIGN KEY (batch_idempotency_key) REFERENCES cashier_wallet_batches(idempotency_key),
+  CONSTRAINT cashier_wallet_entries_transaction_fk FOREIGN KEY (kopokopo_transaction_id) REFERENCES kopokopo_transactions(id)
+);
+
+CREATE INDEX cashier_wallet_entries_cashier_idx
+  ON cashier_wallet_entries (cashier_id, created_at);
+CREATE INDEX cashier_wallet_entries_transaction_idx
+  ON cashier_wallet_entries (kopokopo_transaction_id, created_at);

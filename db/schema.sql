@@ -405,3 +405,42 @@ CREATE INDEX IF NOT EXISTS kopokopo_offsets_transaction_idx
   ON kopokopo_offsets (transaction_id, offset_at DESC);
 CREATE INDEX IF NOT EXISTS kopokopo_offsets_invoice_idx
   ON kopokopo_offsets (invoice_id, offset_at DESC);
+
+CREATE TABLE IF NOT EXISTS cashier_wallet_batches (
+  idempotency_key      text PRIMARY KEY,
+  operation            text NOT NULL CHECK (operation IN ('tip_credit', 'debt_payment')),
+  cashier_id           text NOT NULL,
+  branch_id            text NOT NULL,
+  transaction_id       text REFERENCES kopokopo_transactions(id),
+  request_fingerprint  text NOT NULL,
+  total_cents          bigint NOT NULL CHECK (total_cents > 0),
+  created_by           text,
+  created_by_name      text,
+  created_at           timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS cashier_wallet_batches_cashier_idx
+  ON cashier_wallet_batches (cashier_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cashier_wallet_entries (
+  id                       text PRIMARY KEY,
+  batch_idempotency_key    text NOT NULL REFERENCES cashier_wallet_batches(idempotency_key),
+  cashier_id               text NOT NULL,
+  cashier_name             text NOT NULL,
+  branch_id                text NOT NULL,
+  amount_cents             bigint NOT NULL CHECK (amount_cents <> 0),
+  entry_type               text NOT NULL CHECK (entry_type IN ('tip_credit', 'invoice_debt_payment', 'inventory_debt_payment')),
+  kopokopo_transaction_id  text REFERENCES kopokopo_transactions(id),
+  related_invoice_id       text,
+  related_debt_id          text,
+  related_payment_id       text,
+  note                     text,
+  created_by               text,
+  created_by_name          text,
+  created_at               timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS cashier_wallet_entries_cashier_idx
+  ON cashier_wallet_entries (cashier_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS cashier_wallet_entries_transaction_idx
+  ON cashier_wallet_entries (kopokopo_transaction_id, created_at DESC);

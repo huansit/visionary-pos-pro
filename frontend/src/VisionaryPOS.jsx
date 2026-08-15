@@ -1268,6 +1268,21 @@ async function listKopokopoTransactions(filters = {}) {
   if (filters.branchPeriods && Object.keys(filters.branchPeriods).length) query.set("branchPeriods", JSON.stringify(filters.branchPeriods));
   return await authGet(`/api/integrations/kopokopo/transactions?${query}`, { session: true });
 }
+async function getCashierWallet(filters = {}) {
+  const query = new URLSearchParams({
+    cashierId: String(filters.cashierId || ""),
+    branchId: String(filters.branchId || ""),
+    limit: String(filters.limit || 20),
+    offset: String(filters.offset || 0),
+  });
+  return await authGet(`/api/integrations/kopokopo/wallet?${query}`, { session: true });
+}
+async function creditCashierWallet(payload) {
+  return await authApi("/api/integrations/kopokopo/wallet/credits", payload, { session: true });
+}
+async function payCashierDebtsWithWallet(payload) {
+  return await authApi("/api/integrations/kopokopo/wallet/debt-payments", payload, { session: true });
+}
 async function setKopokopoTransactionPurpose(transactionId, purpose) {
   return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/purpose`, { purpose }, { session: true });
 }
@@ -7095,6 +7110,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const [holds, setHolds] = useState([]);
   const [exp, setExp] = useState(null); // {categoryId, amount, note}
   const [debtsOpen, setDebtsOpen] = useState(false);
+  const [cashierWallet, setCashierWallet] = useState({ balanceCents: 0, entries: [], loading: true, error: "" });
   const [flash, setFlash] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [ptab, setPtab] = useState("products");
@@ -7141,6 +7157,26 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const missingInventoryDebtTotal = myMissingInventoryDebts.reduce((s, entry) => s + entry.outstandingCents, 0);
   const debtTotal = invoiceDebtTotal + missingInventoryDebtTotal;
   const shownList = openOnly;
+
+  useEffect(() => {
+    let active = true;
+    setCashierWallet((current) => ({ ...current, loading: true, error: "" }));
+    getCashierWallet({ cashierId: employee.id, branchId: branch.id, limit: 20 })
+      .then((result) => {
+        if (!active) return;
+        setCashierWallet({
+          balanceCents: Number(result.wallet?.balanceCents || 0),
+          entries: Array.isArray(result.entries) ? result.entries : [],
+          loading: false,
+          error: "",
+        });
+      })
+      .catch((error) => {
+        if (!active) return;
+        setCashierWallet((current) => ({ ...current, loading: false, error: error.message || "wallet_unavailable" }));
+      });
+    return () => { active = false; };
+  }, [employee.id, branch.id]);
 
   const add = (p) => {
     if (!p) return false;
@@ -7488,6 +7524,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
             </div>
             <div className="debtbig"><span>Invoice debt</span><span className="v">{fmt(invoiceDebtTotal, cur)}</span></div>
             <div className="debtbig"><span>Inventory debt</span><span className="v">{fmt(missingInventoryDebtTotal, cur)}</span></div>
+            <div className="debtbig wallet-balance"><span>Tip wallet</span><span className="v">{cashierWallet.loading ? "..." : fmt(cashierWallet.balanceCents, cur)}</span></div>
             <div className={"debtbig" + (debtTotal > 0 ? " has" : "")}><span>Total cashier debt</span><span className="v">{fmt(debtTotal, cur)}</span></div>
             <div className="cust-meta" style={{ margin: "-4px 2px 8px" }}>Assigned {fmt(missingInventoryAssignedTotal, cur)} · paid {fmt(missingInventoryPaidTotal, cur)}</div>
             <div className="cust-meta" style={{ margin: "2px 2px 8px" }}>{myDebts.length} carried-over invoice debt{myDebts.length === 1 ? "" : "s"} · {myMissingInventoryDebts.length} missing inventory count{myMissingInventoryDebts.length === 1 ? "" : "s"}</div>
@@ -7604,6 +7641,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <div className="ctile warn"><div className="ic"><AlertCircle /></div><div><div className="cl">Total cashier debt</div><div className="cv">{fmt(debtTotal, cur)}</div><div className="cs">Invoice + inventory debt</div></div></div>
               <div className={"ctile" + (invoiceDebtTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Invoice debt</div><div className="cv">{fmt(invoiceDebtTotal, cur)}</div><div className="cs">{myDebts.length} carried over</div></div></div>
               <div className={"ctile" + (missingInventoryDebtTotal > 0 ? " warn" : "")}><div className="ic"><Boxes /></div><div><div className="cl">Missing inventory</div><div className="cv">{fmt(missingInventoryDebtTotal, cur)}</div><div className="cs">Paid {fmt(missingInventoryPaidTotal, cur)} of {fmt(missingInventoryAssignedTotal, cur)}</div></div></div>
+              <div className="ctile wallet"><div className="ic"><Wallet /></div><div><div className="cl">Tip wallet</div><div className="cv">{cashierWallet.loading ? "..." : fmt(cashierWallet.balanceCents, cur)}</div><div className="cs">Verified M-Pesa tips available for debt settlement</div></div></div>
               <div className={"ctile" + (openOnlyTotal > 0 ? " warn" : "")}><div className="ic"><FileText /></div><div><div className="cl">Open invoices</div><div className="cv">{fmt(openOnlyTotal, cur)}</div><div className="cs">Not included in cashier debt</div></div></div>
             </div>
             {myOpen.length === 0 && myDebts.length === 0 && myMissingInventoryDebts.length === 0 ? (
@@ -8230,7 +8268,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canOffset={["owner", "admin", "manager", "supervisor"].includes(accountRole)} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
@@ -8777,6 +8815,8 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [walletState, setWalletState] = useState({ balanceCents: 0, loading: false, error: "" });
+  const [submitting, setSubmitting] = useState(false);
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
@@ -8795,6 +8835,24 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
     setNote("");
     setError("");
   }, [selectedCashierId, openDebtKey]);
+  useEffect(() => {
+    let active = true;
+    if (!selectedCashierId) {
+      setWalletState({ balanceCents: 0, loading: false, error: "" });
+      return () => { active = false; };
+    }
+    setWalletState((current) => ({ ...current, loading: true, error: "" }));
+    getCashierWallet({ cashierId: selectedCashierId, branchId: branch.id, limit: 5 })
+      .then((result) => {
+        if (!active) return;
+        setWalletState({ balanceCents: Number(result.wallet?.balanceCents || 0), loading: false, error: "" });
+      })
+      .catch((walletError) => {
+        if (!active) return;
+        setWalletState({ balanceCents: 0, loading: false, error: walletError.message || "wallet_unavailable" });
+      });
+    return () => { active = false; };
+  }, [selectedCashierId, branch.id]);
 
   const replaceDebtSelection = (nextIds) => {
     const nextTotal = openDebtAllocations
@@ -8813,7 +8871,7 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
   const selectAllDebts = () => replaceDebtSelection(new Set(openDebtAllocations.map((allocation) => allocation.debt.id)));
   const clearDebtSelection = () => replaceDebtSelection(new Set());
 
-  const recordPayment = () => {
+  const recordPayment = async () => {
     if (!selected || selected.outstandingCents <= 0) return;
     if (selectedAllocations.length === 0) {
       setError("Select at least one inventory debt to clear.");
@@ -8821,6 +8879,10 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
     }
     if (paymentCents <= 0) {
       setError("Enter a payment amount greater than zero.");
+      return;
+    }
+    if (method === "cashier-wallet" && paymentCents > walletState.balanceCents) {
+      setError(`Only ${fmt(walletState.balanceCents, cur)} is available in this cashier wallet.`);
       return;
     }
     let remaining = paymentCents;
@@ -8854,6 +8916,36 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
       setError("The payment could not be allocated exactly. Refresh the balances and retry.");
       return;
     }
+    if (method === "cashier-wallet") {
+      setSubmitting(true);
+      try {
+        const result = await payCashierDebtsWithWallet({
+          cashierId: selected.cashierId,
+          branchId: branch.id,
+          targets: payments.map((payment) => ({ type: "inventory", id: payment.debtId, amountCents: payment.amountCents })),
+          note: note.trim(),
+          idempotencyKey: paymentBatchId,
+        });
+        const syncedPayments = (result.paymentEvents || [])
+          .filter((event) => event.type === "cashierJointDebtPayment")
+          .map((event) => ({ ...(event.payload || event), synced: true }));
+        update((current) => ({
+          ...current,
+          cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...syncedPayments],
+        }));
+        setWalletState((current) => ({ ...current, balanceCents: Number(result.wallet?.balanceCents || 0), error: "" }));
+        setMessage(`${fmt(paymentCents, cur)} paid from ${selected.cashierName}'s wallet against ${syncedPayments.length} inventory debt${syncedPayments.length === 1 ? "" : "s"}.`);
+        setError("");
+        onSettled?.();
+      } catch (walletError) {
+        setError(walletError.message === "cashier_wallet_balance_exceeded"
+          ? "The wallet balance changed before payment. Refresh and try again."
+          : "The wallet payment was not recorded. No debt was changed.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     update((current) => ({
       ...current,
       cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...payments],
@@ -8866,6 +8958,7 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
   const paymentMethods = [
     { id: "m-pesa", label: "M-Pesa", Icon: Smartphone },
     { id: "payroll", label: "Payroll", Icon: Wallet },
+    { id: "cashier-wallet", label: "Wallet", Icon: Wallet },
   ];
 
   return (
@@ -8918,11 +9011,16 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
                   <div className="inventory-payment-form">
                     <div className="inventory-payment-form-head"><b>Record payment</b><span>{selectedAllocations.length} debt{selectedAllocations.length === 1 ? "" : "s"} selected</span></div>
                     <div className="inventory-payment-methods" role="radiogroup" aria-label="Payment method">
-                      {paymentMethods.map(({ id, label, Icon }) => <button type="button" key={id} role="radio" aria-checked={method === id} className={"invoice-method" + (method === id ? " on" : "")} onClick={() => setMethod(id)}><Icon />{label}</button>)}
+                      {paymentMethods.map(({ id, label, Icon }) => <button type="button" key={id} role="radio" aria-checked={method === id} className={"invoice-method" + (method === id ? " on" : "")} onClick={() => {
+                        setMethod(id);
+                        if (id === "cashier-wallet") setAmount(moneyInputValue(Math.min(selectedDebtTotal, walletState.balanceCents)));
+                        setError("");
+                      }}><Icon />{label}</button>)}
                     </div>
+                    {method === "cashier-wallet" ? <div className="notice compact-notice wallet-payment-balance"><Wallet /> Available wallet balance: <b>{walletState.loading ? "Loading..." : fmt(walletState.balanceCents, cur)}</b></div> : null}
                     <div className="inventory-payment-entry">
                       <label><span>Amount to pay ({cur})</span><input className="input" inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value.replace(/[^\d.]/g, "")); setError(""); }} placeholder="0.00" /></label>
-                      <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(selectedDebtTotal))} disabled={selectedDebtTotal <= 0}>Full</button>
+                      <button type="button" className="btn sm btn-ghost" onClick={() => setAmount(moneyInputValue(method === "cashier-wallet" ? Math.min(selectedDebtTotal, walletState.balanceCents) : selectedDebtTotal))} disabled={selectedDebtTotal <= 0}>Full</button>
                     </div>
                     <details className="invoice-detail-disclosure inventory-payment-options">
                       <summary><span>Add reference or note</span><ChevronDown /></summary>
@@ -8932,7 +9030,7 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
                       </div>
                     </details>
                     {error ? <div className="formerr" style={{ marginTop: 10 }}>{error}</div> : null}
-                    <button className="btn btn-primary inventory-payment-action" disabled={selectedAllocations.length === 0 || paymentCents <= 0} onClick={recordPayment}><Check /> Record {fmt(paymentCents, cur)}</button>
+                    <button className="btn btn-primary inventory-payment-action" disabled={submitting || selectedAllocations.length === 0 || paymentCents <= 0 || (method === "cashier-wallet" && (walletState.loading || paymentCents > walletState.balanceCents))} onClick={recordPayment}><Check /> {submitting ? "Recording..." : `Record ${fmt(paymentCents, cur)}`}</button>
                   </div>
                 </>
               )}
@@ -9717,6 +9815,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const [mpesaAmount, setMpesaAmount] = useState("");
   const [settlementMethod, setSettlementMethod] = useState("standard");
   const [payrollAmount, setPayrollAmount] = useState("");
+  const [walletAmount, setWalletAmount] = useState("");
+  const [invoiceWallet, setInvoiceWallet] = useState({ balanceCents: 0, loading: false, error: "" });
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [providerTransactionId, setProviderTransactionId] = useState("");
@@ -9737,6 +9837,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setMpesaAmount("");
     setSettlementMethod("standard");
     setPayrollAmount("");
+    setWalletAmount("");
+    setInvoiceWallet({ balanceCents: 0, loading: false, error: "" });
     setPaymentError("");
     setProviderTransactionId("");
     setStkPhone("");
@@ -9811,12 +9913,28 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const payrollEligible = out > 0 && invoiceWasCarriedOver(data, live);
   const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
   const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
+  const walletCents = settlementMethod === "wallet" ? clampPaymentCents(walletAmount, out) : 0;
+  useEffect(() => {
+    if (!payrollEligible || !live.cashierId || !live.branchId) return undefined;
+    let cancelled = false;
+    setInvoiceWallet((current) => ({ ...current, loading: true, error: "" }));
+    getCashierWallet({ cashierId: live.cashierId, branchId: live.branchId, limit: 1 })
+      .then((result) => {
+        if (cancelled) return;
+        setInvoiceWallet({ balanceCents: Number(result.wallet?.balanceCents || 0), loading: false, error: "" });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInvoiceWallet({ balanceCents: 0, loading: false, error: "Cashier wallet could not be loaded." });
+      });
+    return () => { cancelled = true; };
+  }, [payrollEligible, live.cashierId, live.branchId]);
   useEffect(() => {
     if (normalizedMpesaCode.length !== 4 || receiptAvailableCents <= 0) return;
     const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, out));
     if (nextMpesaAmount !== mpesaAmount) setMpesaAmount(nextMpesaAmount);
   }, [normalizedMpesaCode, receiptAvailableCents, out, mpesaAmount]);
-  const paymentCents = mpesaCents + payrollCents;
+  const paymentCents = mpesaCents + payrollCents + walletCents;
   const providerSelectionError = mpesaProviderSelectionError({
     amountCents: mpesaCents,
     loading: providerLookup.loading,
@@ -9825,8 +9943,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   });
   let paymentValidationError = "";
   if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only for carried-over debt invoices.";
-  else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : "Enter an M-Pesa code and amount.";
+  else if (settlementMethod === "wallet" && !payrollEligible) paymentValidationError = "The cashier wallet can settle only carried-over debt invoices.";
+  else if (settlementMethod === "wallet" && invoiceWallet.loading) paymentValidationError = "Loading cashier wallet balance.";
+  else if (settlementMethod === "wallet" && invoiceWallet.error) paymentValidationError = invoiceWallet.error;
+  else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : settlementMethod === "wallet" ? "Enter the wallet amount to apply." : "Enter an M-Pesa code and amount.";
   else if (paymentCents > out) paymentValidationError = `The payment cannot exceed ${fmt(out, cur)}.`;
+  else if (walletCents > invoiceWallet.balanceCents) paymentValidationError = `Only ${fmt(invoiceWallet.balanceCents, cur)} is available in this cashier wallet.`;
   else if (mpesaCents > 0 && normalizedMpesaCode.length !== 4) paymentValidationError = "Enter the last 4 characters of the M-Pesa code.";
   else if (providerSelectionError) paymentValidationError = providerSelectionError;
   else if (mpesaCents > 0 && providerLookup.providerRequired !== false && !verifiedReceipt) paymentValidationError = "This branch requires a verified Kopo Kopo transaction. Manual M-Pesa amounts are disabled.";
@@ -9897,6 +10019,63 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     }
     setRecordingPayment(true);
     setPaymentError("");
+    if (settlementMethod === "wallet") {
+      const ts = now();
+      try {
+        const result = await payCashierDebtsWithWallet({
+          cashierId: live.cashierId,
+          branchId: live.branchId,
+          targets: [{ type: "invoice", id: live.id, amountCents: walletCents }],
+          note: `Invoice ${live.number || live.receiptNo || live.id}`,
+          idempotencyKey: settlementBatchIdRef.current,
+        });
+        const walletPayments = (result.paymentEvents || [])
+          .filter((event) => event.type === "payment" && event.payload)
+          .map((event) => ({
+            ...event.payload,
+            id: event.id || event.payload.id,
+            ts: event.payload.ts || event.serverTs || ts,
+            synced: true,
+          }));
+        update((d) => ({
+          ...d,
+          invoices: d.invoices.map((x) => {
+            if (x.id !== live.id) return x;
+            const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + walletCents);
+            const cleared = paidCents >= x.totalCents;
+            return {
+              ...x,
+              paidCents,
+              carriedOver: cleared ? false : x.carriedOver,
+              method: "Cashier wallet",
+              lastSettledBy: user,
+              lastSettledByName: actorName,
+              lastSettledAt: ts,
+              settledBy: cleared ? user : x.settledBy,
+              settledByName: cleared ? actorName : x.settledByName,
+              settledAt: cleared ? ts : x.settledAt,
+              status: cleared ? "paid" : "open",
+              synced: true,
+            };
+          }),
+          payments: [...(d.payments || []), ...walletPayments],
+        }));
+        setInvoiceWallet((current) => ({ ...current, balanceCents: Number(result.wallet?.balanceCents || 0) }));
+        setWalletAmount("");
+        setRecordingPayment(false);
+        if (walletCents === out) onClose();
+      } catch (walletError) {
+        setRecordingPayment(false);
+        const messages = {
+          cashier_wallet_balance_exceeded: `Only ${fmt(invoiceWallet.balanceCents, cur)} is available in this cashier wallet.`,
+          cashier_wallet_invoice_not_debt: "This invoice is no longer an eligible carried-over debt.",
+          cashier_wallet_invoice_cashier_mismatch: "This invoice does not belong to the selected cashier wallet.",
+          cashier_wallet_invoice_branch_mismatch: "The cashier wallet and invoice belong to different branches.",
+        };
+        setPaymentError(messages[walletError.message] || "The wallet payment could not be recorded. No invoice was changed.");
+      }
+      return;
+    }
     const ts = now();
     const batchId = settlementBatchIdRef.current;
     const receipt = mpesaCents > 0 ? (existingReceipt || {
@@ -10063,7 +10242,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               <div className="inventory-payment-methods" role="radiogroup" aria-label="Cashier debt settlement method">
                 <button type="button" role="radio" aria-checked={settlementMethod === "standard"}
                   className={"invoice-method" + (settlementMethod === "standard" ? " on" : "")}
-                  onClick={() => { setSettlementMethod("standard"); setPayrollAmount(""); setPaymentError(""); }}>
+                  onClick={() => { setSettlementMethod("standard"); setPayrollAmount(""); setWalletAmount(""); setPaymentError(""); }}>
                   <Smartphone /> M-Pesa code
                 </button>
                 <button type="button" role="radio" aria-checked={settlementMethod === "payroll"}
@@ -10075,9 +10254,24 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                     setMpesaAmount("");
                     setProviderTransactionId("");
                     setPayrollAmount(moneyInputValue(out));
+                    setWalletAmount("");
                     setPaymentError("");
                   }}>
                   <Wallet /> Payroll
+                </button>
+                <button type="button" role="radio" aria-checked={settlementMethod === "wallet"}
+                  className={"invoice-method" + (settlementMethod === "wallet" ? " on" : "")}
+                  onClick={() => {
+                    setSettlementMethod("wallet");
+                    setMpesaCode("");
+                    setMpesaReceiptAmount("");
+                    setMpesaAmount("");
+                    setProviderTransactionId("");
+                    setPayrollAmount("");
+                    setWalletAmount(moneyInputValue(Math.min(out, invoiceWallet.balanceCents)));
+                    setPaymentError("");
+                  }}>
+                  <Wallet /> Tip wallet
                 </button>
               </div>
             ) : null}
@@ -10161,13 +10355,22 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
                 {existingReceipt.providerVerified ? <div className="provider-detail"><span>Transaction time</span><b>{kopokopoTransactionTime(existingReceipt.originationTime)}</b></div> : null}
               </div>
             ) : normalizedMpesaCode.length === 4 ? <div className="notice compact-notice">New receipt. Save its full M-Pesa amount once, then reuse this code until the balance is depleted.</div> : null}
-            </> : (
+            </> : settlementMethod === "payroll" ? (
               <div className="invoice-payroll-entry">
                 <label><span>Payroll deduction</span>
                   <input className="input" inputMode="decimal" value={payrollAmount}
                     onChange={(event) => { setPayrollAmount(event.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
                 </label>
                 <div className="notice compact-notice">Records this cashier debt as recovered through payroll. Partial deductions are allowed and remain in the payment audit history.</div>
+              </div>
+            ) : (
+              <div className="invoice-payroll-entry">
+                <div className="notice compact-notice"><Wallet /> {invoiceCashierName(live) || "Cashier"} wallet balance: <b>{invoiceWallet.loading ? "Loading..." : fmt(invoiceWallet.balanceCents, cur)}</b></div>
+                <label><span>Wallet amount to apply</span>
+                  <input className="input" inputMode="decimal" value={walletAmount}
+                    onChange={(event) => { setWalletAmount(event.target.value.replace(/[^\d.]/g, "")); setPaymentError(""); }} />
+                </label>
+                <div className="notice compact-notice">Uses verified M-Pesa tips already credited to this cashier. The deduction remains in the wallet and invoice audit history.</div>
               </div>
             )}
             <div className="invoice-payment-entry">
@@ -16959,18 +17162,22 @@ function MpesaReference({ value, tone = "" }) {
   return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
-function MpesaAllocationList({ allocations, offsets, customerTransfer = false, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
+function MpesaAllocationList({ allocations, offsets, walletCredits, customerTransfer = false, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   const invoiceAllocations = Array.isArray(allocations) ? allocations : [];
   const cashOffsets = Array.isArray(offsets) ? offsets : [];
+  const tipCredits = Array.isArray(walletCredits) ? walletCredits : [];
   if (funding) return <span className="mpesa-no-allocation funding">Excluded from sales and invoice settlement</span>;
-  if (invoiceAllocations.length === 0 && cashOffsets.length === 0) {
+  if (invoiceAllocations.length === 0 && cashOffsets.length === 0 && tipCredits.length === 0) {
     return <span className="mpesa-no-allocation">{customerTransfer ? "Till/Bank payment - not allocated to an invoice" : "Not allocated to an invoice"}</span>;
   }
-  const allocatedTotal = [...invoiceAllocations, ...cashOffsets].reduce((sum, entry) => sum + Number(entry.amountCents || 0), 0);
-  const usageLabel = cashOffsets.length > 0 && invoiceAllocations.length === 0
+  const allocatedTotal = [...invoiceAllocations, ...cashOffsets, ...tipCredits].reduce((sum, entry) => sum + Number(entry.amountCents || 0), 0);
+  const usageCount = invoiceAllocations.length + cashOffsets.length + tipCredits.length;
+  const usageLabel = tipCredits.length > 0 && invoiceAllocations.length === 0 && cashOffsets.length === 0
+    ? (tipCredits.length === 1 ? "Cashier wallet tip" : `${tipCredits.length} wallet tips`)
+    : cashOffsets.length > 0 && invoiceAllocations.length === 0 && tipCredits.length === 0
     ? (cashOffsets.length === 1 ? "Cash deposit offset" : `${cashOffsets.length} cash offsets`)
-    : cashOffsets.length > 0
-      ? `${invoiceAllocations.length + cashOffsets.length} uses`
+    : cashOffsets.length > 0 || tipCredits.length > 0
+      ? `${usageCount} uses`
       : `${invoiceAllocations.length} ${invoiceAllocations.length === 1 ? "invoice" : "invoices"}`;
   return <details className="mpesa-allocation-menu">
     <summary>
@@ -16993,6 +17200,14 @@ function MpesaAllocationList({ allocations, offsets, customerTransfer = false, f
         <b title={entry.invoiceId}>Cash deposit offset - {entry.invoiceNumber || entry.invoiceId || "Unknown invoice"}</b>
         <span className="amount">{fmt(entry.amountCents || 0, currency)}</span>
         <small>{actor} / {when}{entry.note ? ` / ${entry.note}` : ""}{String(entry.status || "active").toLowerCase() !== "active" ? ` / ${entry.status}` : ""}</small>
+      </div>;
+    })}{tipCredits.map((entry) => {
+      const when = entry.createdAt ? formatBusinessDateTime(entry.createdAt, timeZone) : "Time not supplied";
+      const actor = entry.createdByName || "Unknown user";
+      return <div className="mpesa-allocation mpesa-wallet-credit" key={entry.id || `${entry.cashierId}:${entry.amountCents}`}>
+        <b>Tip wallet - {entry.cashierName || "Cashier"}</b>
+        <span className="amount">{fmt(entry.amountCents || 0, currency)}</span>
+        <small>{actor} / {when}{entry.note ? ` / ${entry.note}` : ""}</small>
       </div>;
     })}</div>
   </details>;
@@ -17102,7 +17317,72 @@ function MpesaCashOffsetModal({ transaction, data, timeZone, onClose, onSaved })
   </div>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false, canWhitelistCrossBranch = false }) {
+function CashierWalletCreditModal({ transaction, data, timeZone, onClose, onSaved }) {
+  const cashiers = useMemo(() => branchCashiers(data, transaction.branchId), [data, transaction.branchId]);
+  const [cashierId, setCashierId] = useState(() => cashiers[0]?.id || "");
+  const [amount, setAmount] = useState(() => moneyInputValue(transaction.remainingCents || 0));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const attemptRef = useRef({ signature: "", key: "" });
+  const amountCents = centsFromInput(amount);
+  const remainingCents = Math.max(0, Number(transaction.remainingCents || 0));
+  const cashier = cashiers.find((entry) => entry.id === cashierId);
+  const valid = !!cashier && amountCents > 0 && amountCents <= remainingCents;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError("");
+    const signature = `${transaction.id}:${cashierId}:${amountCents}:${note.trim()}`;
+    if (attemptRef.current.signature !== signature) attemptRef.current = { signature, key: uid("wallet_credit") };
+    try {
+      const result = await creditCashierWallet({
+        transactionId: transaction.id,
+        cashierId,
+        branchId: transaction.branchId,
+        amountCents,
+        note: note.trim(),
+        idempotencyKey: attemptRef.current.key,
+      });
+      onSaved(result);
+    } catch (requestError) {
+      const messages = {
+        kopokopo_transaction_not_found: "This M-Pesa transaction no longer exists.",
+        kopokopo_transaction_not_allocatable: "Only an active customer payment can fund a cashier wallet.",
+        kopokopo_branch_mismatch: "The M-Pesa transaction belongs to a different branch.",
+        kopokopo_transaction_unavailable: "This M-Pesa transaction is no longer available.",
+        kopokopo_amount_exceeds_balance: "The tip exceeds the transaction's current available balance.",
+        kopokopo_currency_unsupported: "Cashier wallets currently accept KES payments only.",
+        cashier_not_active_in_branch: "Select an active cashier assigned to this branch.",
+        idempotency_key_reused: "The request changed while it was being saved. Close this dialog and try again.",
+      };
+      setError(messages[requestError.message] || "The wallet credit could not be recorded. No funds were moved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className="scrim mpesa-offset-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section className="modal settlement-modal inventory-payment-modal" role="dialog" aria-modal="true" aria-labelledby="cashier-wallet-credit-title">
+      <div className="modal-head"><div><span className="eyebrow">Verified M-Pesa tip</span><h3 id="cashier-wallet-credit-title"><Wallet /> Fund cashier wallet</h3></div><button type="button" className="iconbtn" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
+      <div className="mpesa-offset-transaction"><span><small>M-Pesa code</small><b>{transaction.referenceMasked}</b></span><span><small>Available</small><b>{fmt(remainingCents, transaction.currency || "KES")}</b></span></div>
+      <p className="mpesa-offset-help">The amount is deducted from this verified payment's available balance immediately and credited to one cashier in {data?.branches?.find((entry) => entry.id === transaction.branchId)?.name || "this branch"}.</p>
+      <div className="inventory-payment-fields">
+        <label><span>Cashier</span><select className="select" value={cashierId} onChange={(event) => { setCashierId(event.target.value); setError(""); }} disabled={busy || cashiers.length === 0}><option value="" disabled>Select cashier</option>{cashiers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name || entry.id}</option>)}</select></label>
+        <label><span>Tip amount (KES)</span><input className="input" type="number" inputMode="decimal" min="0.01" max={(remainingCents / 100).toFixed(2)} step="0.01" value={amount} onChange={(event) => { setAmount(event.target.value); setError(""); }} disabled={busy} /></label>
+      </div>
+      <label className="mpesa-offset-note"><span>Note (optional)</span><input className="input" value={note} maxLength={500} onChange={(event) => { setNote(event.target.value); setError(""); }} placeholder="Customer tip" disabled={busy} /></label>
+      {cashiers.length === 0 ? <div className="errorbox">There is no active cashier assigned to this branch.</div> : null}
+      {amountCents > remainingCents ? <div className="errorbox">The tip exceeds the available M-Pesa balance.</div> : null}
+      {error ? <div className="errorbox">{error}</div> : null}
+      <div className="notice compact-notice"><Wallet /> The cashier can later use this balance only against their own recorded invoice or inventory debts.</div>
+      <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Wallet /> {busy ? "Crediting..." : `Credit ${fmt(amountCents, "KES")}`}</button></div>
+    </section>
+  </div>;
+}
+
+function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffset = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -17117,6 +17397,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [offsetTarget, setOffsetTarget] = useState(null);
+  const [walletCreditTarget, setWalletCreditTarget] = useState(null);
   const [purposeBusyId, setPurposeBusyId] = useState("");
   const [purposeError, setPurposeError] = useState("");
   const [crossBranchBusyId, setCrossBranchBusyId] = useState("");
@@ -17353,7 +17634,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
       && transaction.allocatable !== false
       && !transaction.reversedAt
       && (transaction.crossBranchAllowed || Number(transaction.remainingCents || 0) > 0);
-    if (!cashDepositAvailable && !purposeChangeAvailable && !crossBranchChangeAvailable) return null;
+    const walletFundingAvailable = canFundWallet
+      && transaction.allocatable !== false
+      && !transaction.reversedAt
+      && transaction.purpose !== "stock_funding"
+      && Number(transaction.remainingCents || 0) > 0;
+    if (!cashDepositAvailable && !purposeChangeAvailable && !crossBranchChangeAvailable && !walletFundingAvailable) return null;
     const busy = purposeBusyId === transaction.id || crossBranchBusyId === transaction.id;
     return <label className={`mpesa-transaction-actions${mobile ? " mobile" : ""}`}>
       <MoreVertical aria-hidden="true" />
@@ -17364,12 +17650,14 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
         onChange={(event) => {
           const action = event.target.value;
           if (action === "cash_deposit") setOffsetTarget(transaction);
+          if (action === "wallet_tip") setWalletCreditTarget(transaction);
           if (action === "stock_funding") void changeTransactionPurpose(transaction);
           if (action === "cross_branch") void changeCrossBranchAccess(transaction);
         }}
       >
         <option value="" disabled>{busy ? "Saving..." : "Actions"}</option>
         {cashDepositAvailable ? <option value="cash_deposit">Cash deposit</option> : null}
+        {walletFundingAvailable ? <option value="wallet_tip">Fund cashier wallet</option> : null}
         {purposeChangeAvailable ? <option value="stock_funding">{transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark stock funding"}</option> : null}
         {crossBranchChangeAvailable ? <option value="cross_branch">{transaction.crossBranchAllowed ? "Restrict to receiving branch" : "Allow cross-branch invoices"}</option> : null}
       </select>
@@ -17428,7 +17716,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                   <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction)}</div></td>
                 </tr>); })}</tbody>
@@ -17438,7 +17726,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction, true)}</div>
-              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
         </> : null}
 
@@ -17448,6 +17736,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canOffse
         </div>
       </div>
       {offsetTarget ? <MpesaCashOffsetModal transaction={offsetTarget} data={data} timeZone={timeZone} onClose={() => setOffsetTarget(null)} onSaved={() => { setOffsetTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
+      {walletCreditTarget ? <CashierWalletCreditModal transaction={walletCreditTarget} data={data} timeZone={timeZone} onClose={() => setWalletCreditTarget(null)} onSaved={() => { setWalletCreditTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
     </div>
   );
 }
