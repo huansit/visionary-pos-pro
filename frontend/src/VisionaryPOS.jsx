@@ -4412,8 +4412,14 @@ body{overscroll-behavior:none}
 .audit-summary-heading{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:14px 0 6px}
 .audit-summary-heading strong{font-size:13px}
 .audit-summary-heading span{color:var(--muted);font-size:10px}
+.audit-summary-heading.invoice-heading strong{color:#3b82f6}
+.audit-summary-heading.mpesa-heading strong{color:#16a36a}
 .audit-summary.invoice-totals{grid-template-columns:repeat(4,minmax(0,1fr))}
 .audit-summary>div{display:grid;gap:3px;padding:12px;background:var(--surface)}
+.audit-summary.invoice-card{border-color:rgba(59,130,246,.42);background:rgba(59,130,246,.18);box-shadow:inset 3px 0 0 #3b82f6}
+.audit-summary.invoice-card>div{background:linear-gradient(180deg,rgba(59,130,246,.09),rgba(59,130,246,.035)),var(--surface)}
+.audit-summary.mpesa-card{border-color:rgba(22,163,106,.42);background:rgba(22,163,106,.18);box-shadow:inset 3px 0 0 #16a36a}
+.audit-summary.mpesa-card>div{background:linear-gradient(180deg,rgba(22,163,106,.09),rgba(22,163,106,.035)),var(--surface)}
 .audit-summary span{color:var(--muted-2);font-size:9px;font-weight:850;text-transform:uppercase}
 .audit-summary b{font:850 17px var(--font-mono)}
 .audit-summary small{color:var(--muted);font-size:9.5px}
@@ -17966,7 +17972,7 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   };
 
   return <div className="mpesa-audit-page">
-    <PageHead title="M-Pesa & Invoice Audit" sub="Trace verified money from receipt through invoice settlement, cash offset, funding, or reversal."
+    <PageHead title="M-Pesa & Invoice Audit" sub="Reconcile verified M-Pesa receipts across invoice payments, older-debt recovery, cashier wallets, stock funding, available balances, and reversals."
       right={<div className="audit-readonly"><ShieldCheck /> Read only</div>} />
 
     <section className="audit-controls" aria-label="Audit scope">
@@ -17992,8 +17998,8 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     {!ledger.loading && !ledger.error ? <div className="notice"><ShieldCheck /> Audit begins at the first verified Kopo Kopo transaction for each branch: {integrationStartText}. Earlier invoices and transactions are excluded.</div> : null}
     {ledger.truncated ? <div className="notice warn"><AlertCircle /> This scope contains more than {maxTransactions.toLocaleString()} M-Pesa records. Narrow the date range for a complete audit.</div> : null}
 
-    <div className="audit-summary-heading"><strong>Invoice reconciliation</strong><span>Voided invoices are excluded from value and balance</span></div>
-    <section className="audit-summary invoice-totals" aria-label="Invoice audit totals">
+    <div className="audit-summary-heading invoice-heading"><strong>Invoice reconciliation</strong><span>Voided invoices are excluded from value and balance</span></div>
+    <section className="audit-summary invoice-totals invoice-card" aria-label="Invoice audit totals">
       <div><span>Total invoices</span><b>{audit.summary.invoiceCount}</b><small>{audit.summary.voidedInvoiceCount} voided excluded</small></div>
       <div><span>Invoice total</span><b>{fmt(audit.summary.invoiceValueCents, "KES")}</b><small>Value of active invoices</small></div>
       <div className="paid"><span>Paid on invoices</span><b>{fmt(audit.summary.invoicePaidCents, "KES")}</b><small>All captured payment methods</small></div>
@@ -18001,8 +18007,8 @@ function MpesaInvoiceAuditTab({ data, branch }) {
     </section>
     <div className={`audit-comment ${audit.summary.untracedPaidCents > 0 || audit.summary.excessCapturedPaymentCents > 0 ? "warn" : ""}`}><Receipt /><div><strong>Invoice equation</strong><span>{audit.invoiceComment}</span></div></div>
 
-    <div className="audit-summary-heading"><strong>M-Pesa reconciliation</strong><span>Received money is separate from invoice value until allocated</span></div>
-    <section className="audit-summary" aria-label="M-Pesa audit totals">
+    <div className="audit-summary-heading mpesa-heading"><strong>M-Pesa reconciliation</strong><span>Received money is separate from invoice value until allocated</span></div>
+    <section className="audit-summary mpesa-card" aria-label="M-Pesa audit totals">
       <div><span>M-Pesa received</span><b>{fmt(audit.summary.receivedCents, "KES")}</b><small>{audit.summary.transactionCount} customer payments</small></div>
       <div><span>Current-period invoices</span><b>{fmt(audit.summary.selectedPeriodInvoiceAllocationCents, "KES")}</b><small>Invoices issued in this audit period</small></div>
       <div className="recovery"><span>Older debt recovered</span><b>{fmt(audit.summary.olderInvoiceRecoveryCents, "KES")}</b><small>{audit.summary.recoveryTransactionCount} M-Pesa receipt{audit.summary.recoveryTransactionCount === 1 ? "" : "s"} used</small></div>
