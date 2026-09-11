@@ -338,6 +338,22 @@ CREATE INDEX kopokopo_allocations_transaction_idx
 CREATE INDEX kopokopo_allocations_invoice_idx
   ON kopokopo_allocations (invoice_id, allocated_at);
 
+CREATE TABLE IF NOT EXISTS kopokopo_stock_funding_allocations (
+  id                      varchar(191) PRIMARY KEY,
+  transaction_id          varchar(191) NOT NULL,
+  branch_id               varchar(191) NOT NULL,
+  amount_cents            bigint NOT NULL,
+  note                    varchar(500),
+  allocated_by            varchar(191),
+  allocated_by_name       varchar(255),
+  idempotency_key         varchar(191) NOT NULL UNIQUE,
+  allocated_at            datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT kopokopo_stock_funding_transaction_fk FOREIGN KEY (transaction_id) REFERENCES kopokopo_transactions(id)
+);
+
+CREATE INDEX kopokopo_stock_funding_transaction_idx
+  ON kopokopo_stock_funding_allocations (transaction_id, allocated_at);
+
 CREATE TABLE IF NOT EXISTS kopokopo_offset_batches (
   idempotency_key     varchar(191) PRIMARY KEY,
   transaction_id     varchar(191) NOT NULL,

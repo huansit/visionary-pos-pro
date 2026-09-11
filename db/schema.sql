@@ -375,6 +375,24 @@ CREATE INDEX IF NOT EXISTS kopokopo_allocations_transaction_idx
 CREATE INDEX IF NOT EXISTS kopokopo_allocations_invoice_idx
   ON kopokopo_allocations (invoice_id, allocated_at DESC);
 
+-- A verified M-Pesa payment can be split between customer invoices and stock.
+-- Keep stock funding as its own immutable allocation instead of changing the
+-- purpose of the whole payment (which would hide the invoice allocation).
+CREATE TABLE IF NOT EXISTS kopokopo_stock_funding_allocations (
+  id                      text PRIMARY KEY,
+  transaction_id          text NOT NULL REFERENCES kopokopo_transactions(id),
+  branch_id               text NOT NULL,
+  amount_cents            bigint NOT NULL CHECK (amount_cents > 0),
+  note                    text,
+  allocated_by            text,
+  allocated_by_name       text,
+  idempotency_key         text NOT NULL UNIQUE,
+  allocated_at            timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS kopokopo_stock_funding_transaction_idx
+  ON kopokopo_stock_funding_allocations (transaction_id, allocated_at DESC);
+
 CREATE TABLE IF NOT EXISTS kopokopo_offset_batches (
   idempotency_key     text PRIMARY KEY,
   transaction_id     text NOT NULL REFERENCES kopokopo_transactions(id),

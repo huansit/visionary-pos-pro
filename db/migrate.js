@@ -127,12 +127,29 @@ async function ensureKopokopoTransactionColumns() {
     await pool.query("ALTER TABLE kopokopo_allocations ADD COLUMN cross_branch_authorized boolean NOT NULL DEFAULT false");
   }
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS kopokopo_stock_funding_allocations (
+      id text PRIMARY KEY,
+      transaction_id text NOT NULL REFERENCES kopokopo_transactions(id),
+      branch_id text NOT NULL,
+      amount_cents bigint NOT NULL CHECK (amount_cents > 0),
+      note text,
+      allocated_by text,
+      allocated_by_name text,
+      idempotency_key text NOT NULL UNIQUE,
+      allocated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS kopokopo_transactions_phone_lookup_idx
     ON kopokopo_transactions (branch_id, payer_phone_last4, origination_time DESC)
   `);
   await pool.query(`
     CREATE INDEX IF NOT EXISTS kopokopo_transactions_purpose_idx
     ON kopokopo_transactions (branch_id, purpose, origination_time DESC)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kopokopo_stock_funding_transaction_idx
+    ON kopokopo_stock_funding_allocations (transaction_id, allocated_at DESC)
   `);
 }
 

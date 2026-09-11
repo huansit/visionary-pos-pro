@@ -110,6 +110,19 @@ function publicWalletEntry(row) {
   };
 }
 
+function publicStockFundingAllocation(row) {
+  return {
+    id: row.id,
+    transactionId: row.transaction_id ?? row.transactionId,
+    branchId: row.branch_id ?? row.branchId,
+    amountCents: Number(row.amount_cents ?? row.amountCents ?? 0),
+    note: row.note || "",
+    allocatedBy: row.allocated_by ?? row.allocatedBy ?? null,
+    allocatedByName: row.allocated_by_name ?? row.allocatedByName ?? null,
+    allocatedAt: row.allocated_at ?? row.allocatedAt ?? null,
+  };
+}
+
 async function activeCashier(client, cashierId, branchId, lock = false) {
   const result = await client.query(
     `SELECT id, name, kind, branch_id, rights, status
@@ -1457,10 +1470,11 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const allocationsByTransaction = new Map();
     const offsetsByTransaction = new Map();
     const walletCreditsByTransaction = new Map();
+    const stockFundingByTransaction = new Map();
     if (transactionRows.length) {
       const transactionIds = transactionRows.map((row) => row.id);
       const transactionPlaceholders = transactionIds.map((_, index) => `$${index + 1}`).join(", ");
-      const [allocationResult, offsetResult, walletCreditResult] = await Promise.all([
+      const [allocationResult, offsetResult, walletCreditResult, stockFundingResult] = await Promise.all([
         q(
           `SELECT id, transaction_id, invoice_id, branch_id, amount_cents, cross_branch_authorized, status, allocated_by_name, allocated_at
              FROM kopokopo_allocations
@@ -1482,6 +1496,13 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
             WHERE kopokopo_transaction_id IN (${transactionPlaceholders})
               AND entry_type = 'tip_credit'
             ORDER BY created_at, id`,
+          transactionIds
+        ),
+        q(
+          `SELECT id, transaction_id, branch_id, amount_cents, note, allocated_by, allocated_by_name, allocated_at
+             FROM kopokopo_stock_funding_allocations
+            WHERE transaction_id IN (${transactionPlaceholders})
+            ORDER BY allocated_at, id`,
           transactionIds
         ),
       ]);
@@ -1521,6 +1542,12 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
         current.push(publicWalletEntry(walletCredit));
         walletCreditsByTransaction.set(transactionId, current);
       }
+      for (const funding of stockFundingResult.rows) {
+        const transactionId = funding.transaction_id ?? funding.transactionId;
+        const current = stockFundingByTransaction.get(transactionId) || [];
+        current.push(publicStockFundingAllocation(funding));
+        stockFundingByTransaction.set(transactionId, current);
+      }
     }
     const totals = summary.rows[0] || {};
     const amountCents = Number(totals.total_amount_cents ?? totals.totalAmountCents ?? 0);
@@ -1535,6 +1562,7 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
         allocations: allocationsByTransaction.get(row.id) || [],
         offsets: offsetsByTransaction.get(row.id) || [],
         walletCredits: walletCreditsByTransaction.get(row.id) || [],
+        stockFunding: stockFundingByTransaction.get(row.id) || [],
       })),
       page: {
         total: Number(totals.page_count ?? totals.pageCount ?? 0),
@@ -1680,6 +1708,71 @@ router.post("/transactions/:id/purpose", requireOwnerOrAdmin, async (req, res) =
   } catch (error) {
     console.error("Kopo Kopo transaction classification failed:", error);
     return res.status(500).json({ error: "kopokopo_transaction_classification_failed" });
+  }
+});
+
+// Reserve only part of an incoming M-Pesa payment for stock. This deliberately
+// uses an allocation row (rather than changing `purpose`) so any invoice
+// allocation already made from the same receipt remains visible and immutable.
+router.post("/transactions/:id/stock-funding", requireOwnerOrAdmin, async (req, res) => {
+  try {
+    const transactionId = identifier(req.params.id);
+    const branchId = identifier(req.body?.branchId);
+    const amountCents = integerCents(req.body?.amountCents);
+    const note = String(req.body?.note || "").trim();
+    const idempotencyKey = identifier(req.body?.idempotencyKey);
+    if (!transactionId || !branchId || !amountCents || !idempotencyKey || note.length > 500) {
+      return res.status(400).json({ error: "invalid_kopokopo_stock_funding_allocation" });
+    }
+    const result = await tx(async (client) => {
+      const prior = await client.query(
+        "SELECT * FROM kopokopo_stock_funding_allocations WHERE idempotency_key = $1 LIMIT 1",
+        [idempotencyKey]
+      );
+      if (prior.rows[0]) {
+        const entry = prior.rows[0];
+        if ((entry.transaction_id ?? entry.transactionId) !== transactionId
+          || (entry.branch_id ?? entry.branchId) !== branchId
+          || Number(entry.amount_cents ?? entry.amountCents) !== amountCents) return { conflict: "idempotency_key_reused" };
+        const transaction = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+        if (!transaction.rows[0]) return { conflict: "idempotency_key_reused" };
+        return { duplicate: true, branchId, transaction: publicTransaction(transaction.rows[0]), allocation: publicStockFundingAllocation(entry) };
+      }
+      const locked = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
+      const transaction = locked.rows[0];
+      if (!transaction) return { notFound: true };
+      if (!accountCanAccessBranch(req.account, branchId) || !await repairTransactionBranch(client, transaction, branchId)) return { forbidden: true };
+      await attachProviderTopic(client, transaction);
+      if (transactionPurpose(transaction) === "stock_funding") return { conflict: "kopokopo_transaction_is_stock_funding" };
+      if (!transactionCanAllocate(transaction) || !transactionStatusAvailable(transaction)) return { conflict: "kopokopo_transaction_unavailable" };
+      if (String(transaction.currency || "").toUpperCase() !== "KES") return { conflict: "kopokopo_currency_unsupported" };
+      const remainingCents = Math.max(0, Number(transaction.amount_cents ?? transaction.amountCents ?? 0) - Number(transaction.allocated_cents ?? transaction.allocatedCents ?? 0));
+      if (amountCents > remainingCents) return { conflict: "kopokopo_amount_exceeds_balance", remainingCents };
+      const id = `kpsf_${crypto.randomUUID()}`;
+      await client.query(
+        `INSERT INTO kopokopo_stock_funding_allocations
+          (id, transaction_id, branch_id, amount_cents, note, allocated_by, allocated_by_name, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [id, transactionId, branchId, amountCents, note || null, req.account?.id || null, req.account?.name || null, idempotencyKey]
+      );
+      await client.query(
+        `UPDATE kopokopo_transactions
+            SET allocated_cents = allocated_cents + $2, updated_at = ${isMySql ? "NOW()" : "now()"}
+          WHERE id = $1`,
+        [transactionId, amountCents]
+      );
+      const updated = await client.query("SELECT * FROM kopokopo_transactions WHERE id = $1", [transactionId]);
+      const allocation = await client.query("SELECT * FROM kopokopo_stock_funding_allocations WHERE id = $1", [id]);
+      return { duplicate: false, branchId, transaction: publicTransaction(updated.rows[0]), allocation: publicStockFundingAllocation(allocation.rows[0]) };
+    });
+    if (result.notFound) return res.status(404).json({ error: "kopokopo_transaction_not_found" });
+    if (result.forbidden) return res.status(403).json({ error: "branch_not_authorized" });
+    if (result.conflict) return res.status(409).json({ error: result.conflict, remainingCents: result.remainingCents });
+    if (!result.duplicate) publishRealtimeEvent("kopokopo", { source: "kopokopo", branchId: result.branchId, accepted: 1, types: ["kopokopoStockFunding"] });
+    return res.json(result);
+  } catch (error) {
+    console.error("Kopo Kopo stock funding allocation failed:", error);
+    return res.status(500).json({ error: "kopokopo_stock_funding_allocation_failed" });
   }
 });
 

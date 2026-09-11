@@ -605,6 +605,8 @@ const SEED = () => {
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
+    invoiceLineVoidRequests: [],
+    invoiceLineVoidDecisions: [],
     stockTransferRequests: [],
     stockTransferDecisions: [],
     purchases: [],
@@ -641,6 +643,8 @@ const CLEAN_SETUP = () => {
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
+    invoiceLineVoidRequests: [],
+    invoiceLineVoidDecisions: [],
     stockTransferRequests: [],
     stockTransferDecisions: [],
     purchases: [],
@@ -840,6 +844,8 @@ function normalizeLoadedData(data) {
     invoices: Array.isArray(data.invoices) ? data.invoices : [],
     invoiceVoidRequests: Array.isArray(data.invoiceVoidRequests) ? data.invoiceVoidRequests : [],
     invoiceVoidDecisions: Array.isArray(data.invoiceVoidDecisions) ? data.invoiceVoidDecisions : [],
+    invoiceLineVoidRequests: Array.isArray(data.invoiceLineVoidRequests) ? data.invoiceLineVoidRequests : [],
+    invoiceLineVoidDecisions: Array.isArray(data.invoiceLineVoidDecisions) ? data.invoiceLineVoidDecisions : [],
     stockTransferRequests: Array.isArray(data.stockTransferRequests) ? data.stockTransferRequests : [],
     stockTransferDecisions: Array.isArray(data.stockTransferDecisions) ? data.stockTransferDecisions : [],
     purchases: Array.isArray(data.purchases) ? data.purchases : [],
@@ -1034,6 +1040,8 @@ const SYNC_APPEND = new Map([
   ["invoices", "invoice"],
   ["invoiceVoidRequests", "invoiceVoidRequest"],
   ["invoiceVoidDecisions", "invoiceVoidDecision"],
+  ["invoiceLineVoidRequests", "invoiceLineVoidRequest"],
+  ["invoiceLineVoidDecisions", "invoiceLineVoidDecision"],
   ["stockTransferRequests", "stockTransferRequest"],
   ["stockTransferDecisions", "stockTransferDecision"],
   ["payments", "payment"],
@@ -1308,6 +1316,9 @@ async function payCashierDebtsWithWallet(payload) {
 }
 async function setKopokopoTransactionPurpose(transactionId, purpose) {
   return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/purpose`, { purpose }, { session: true });
+}
+async function allocateKopokopoStockFunding(payload) {
+  return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(payload.transactionId)}/stock-funding`, payload, { session: true });
 }
 async function setKopokopoCrossBranchAccess(transactionId, allowed) {
   return await authApi(`/api/integrations/kopokopo/transactions/${encodeURIComponent(transactionId)}/cross-branch`, { allowed }, { session: true });
@@ -2029,15 +2040,58 @@ function invoicePaymentTotals(data) {
   });
   return totals;
 }
+function applyApprovedInvoiceLineVoids(data) {
+  const requests = new Map((data?.invoiceLineVoidRequests || []).map((entry) => [String(entry.id), entry]));
+  const voidedByInvoice = new Map();
+  (data?.invoiceLineVoidDecisions || []).forEach((decision) => {
+    if (String(decision?.decision || "").toLowerCase() !== "approved") return;
+    const request = requests.get(String(decision.requestId || ""));
+    const invoiceId = String(decision.invoiceId || request?.invoiceId || "");
+    const lineIndex = Number(decision.lineIndex ?? request?.lineIndex);
+    const qty = Number(decision.qty ?? request?.qty);
+    if (!invoiceId || !Number.isInteger(lineIndex) || lineIndex < 0 || !Number.isFinite(qty) || qty <= 0) return;
+    const byLine = voidedByInvoice.get(invoiceId) || new Map();
+    byLine.set(lineIndex, (byLine.get(lineIndex) || 0) + qty);
+    voidedByInvoice.set(invoiceId, byLine);
+  });
+  if (!voidedByInvoice.size) return data?.invoices || [];
+  return (data?.invoices || []).map((invoice) => {
+    const lineVoids = voidedByInvoice.get(String(invoice.id));
+    if (!lineVoids) return invoice;
+    const baseItems = Array.isArray(invoice._lineVoidBaseItems) ? invoice._lineVoidBaseItems : (Array.isArray(invoice.items) ? invoice.items : []);
+    const baseTotalCents = Number.isFinite(Number(invoice._lineVoidBaseTotalCents))
+      ? Number(invoice._lineVoidBaseTotalCents)
+      : Math.max(0, Number(invoice.totalCents || 0));
+    let voidedCents = 0;
+    const items = baseItems.map((item, index) => {
+      const originalQty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+      const qty = Math.max(0, originalQty - Math.min(originalQty, Number(lineVoids.get(index) || 0)));
+      const priceCents = Math.max(0, Number(item?.priceCents ?? item?.unitPriceCents ?? 0));
+      voidedCents += Math.round((originalQty - qty) * priceCents);
+      return { ...item, qty };
+    }).filter((item) => Number(item.qty || 0) > 0);
+    const totalCents = Math.max(0, baseTotalCents - voidedCents);
+    return {
+      ...invoice,
+      _lineVoidBaseItems: baseItems,
+      _lineVoidBaseTotalCents: baseTotalCents,
+      items,
+      totalCents,
+      lineVoidCents: voidedCents,
+      lineVoided: true,
+    };
+  });
+}
 function reconcileInvoicePayments(data) {
+  const withLineVoids = { ...data, invoices: applyApprovedInvoiceLineVoids(data) };
   const totals = invoicePaymentTotals(data);
   return {
-    ...data,
-    invoices: (data?.invoices || []).map((inv) => {
+    ...withLineVoids,
+    invoices: (withLineVoids.invoices || []).map((inv) => {
       const reconciled = reconcileInvoicePaymentState(inv, totals[inv.id] || 0, {
-        voided: invoiceIsVoided(data, inv),
+        voided: invoiceIsVoided(withLineVoids, inv),
       });
-      return { ...reconciled, carriedOver: invoiceWasCarriedOver(data, reconciled) };
+      return { ...reconciled, carriedOver: invoiceWasCarriedOver(withLineVoids, reconciled) };
     }),
   };
 }
@@ -3247,7 +3301,7 @@ function invoiceCashierName(invoice) {
 function invoiceSoldLines(data, invoice, branchId) {
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const invoiceTotal = Math.max(0, Math.round(Number(invoice?.totalCents || 0)));
-  const captured = items.map((item) => {
+  const captured = items.map((item, index) => {
     const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
     const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
     const product = (item?.productId ? (data.products || []).find((entry) => entry.id === item.productId) : null)
@@ -3264,6 +3318,7 @@ function invoiceSoldLines(data, invoice, branchId) {
       qty,
       priceCents,
       totalCents: qty * priceCents,
+      __invoiceLineIndex: Number.isInteger(Number(item?.__invoiceLineIndex)) ? Number(item.__invoiceLineIndex) : index,
     };
   }).filter((line) => line.qty > 0);
   if (captured.length > 0) {
@@ -3512,6 +3567,15 @@ function invoiceVoidState(data, invoiceId) {
 function invoiceIsVoided(data, invoiceOrId) {
   return invoiceIsVoidedFromData(data, invoiceOrId);
 }
+function invoiceLineVoidState(data, invoiceId, lineIndex) {
+  const requests = (data?.invoiceLineVoidRequests || []).filter((entry) => String(entry?.invoiceId || "") === String(invoiceId || "") && Number(entry?.lineIndex) === Number(lineIndex));
+  const decisions = (data?.invoiceLineVoidDecisions || []).filter((entry) => String(entry?.invoiceId || "") === String(invoiceId || "") && Number(entry?.lineIndex) === Number(lineIndex));
+  const decided = new Set(decisions.map((entry) => String(entry?.requestId || "")));
+  const pending = requests.find((entry) => !decided.has(String(entry.id))) || null;
+  const approvedQty = decisions.filter((entry) => String(entry?.decision || "").toLowerCase() === "approved")
+    .reduce((sum, entry) => sum + Number(entry?.qty || 0), 0);
+  return { pending, decisions, approvedQty };
+}
 function operationalInvoices(data) {
   return (data?.invoices || [])
     .filter((invoice) => !invoiceIsVoided(data, invoice))
@@ -3574,14 +3638,14 @@ function countPending(data) {
   const u = (a) => (a || []).filter((x) => x && x.synced === false).length;
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
-    + u(data.invoiceVoidRequests) + u(data.invoiceVoidDecisions) + u(data.cashMovements) + u(data.borrowings)
+    + u(data.invoiceVoidRequests) + u(data.invoiceVoidDecisions) + u(data.invoiceLineVoidRequests) + u(data.invoiceLineVoidDecisions) + u(data.cashMovements) + u(data.borrowings)
     + u(data.branches) + u(data.endOfDays) + u(data.stockCountSessions) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
   return { ...data, orders: m(data.orders), payments: m(data.payments), stockMovements: m(data.stockMovements),
     products: m(data.products), employees: m(data.employees), invoices: m(data.invoices),
-    invoiceVoidRequests: m(data.invoiceVoidRequests), invoiceVoidDecisions: m(data.invoiceVoidDecisions), customers: m(data.customers),
+    invoiceVoidRequests: m(data.invoiceVoidRequests), invoiceVoidDecisions: m(data.invoiceVoidDecisions), invoiceLineVoidRequests: m(data.invoiceLineVoidRequests), invoiceLineVoidDecisions: m(data.invoiceLineVoidDecisions), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
     borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
     stockCountSessions: m(data.stockCountSessions), countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
@@ -10317,12 +10381,17 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   const isFullPayment = out > 0 && paymentCents === out;
   const [decisionReason, setDecisionReason] = useState("");
   const [voidError, setVoidError] = useState("");
+  const [lineVoidIndex, setLineVoidIndex] = useState("");
+  const [lineVoidQty, setLineVoidQty] = useState("1");
+  const [lineVoidReason, setLineVoidReason] = useState("");
+  const [lineVoidError, setLineVoidError] = useState("");
   const paymentActorName = (payment) => payment.recordedByName || payment.settledByName
     || (typeof payment.recordedBy === "string" ? payment.recordedBy : payment.recordedBy?.name || payment.recordedBy?.displayName || payment.recordedBy?.email)
     || (typeof payment.settledBy === "string" ? payment.settledBy : payment.settledBy?.name || payment.settledBy?.displayName || payment.settledBy?.email)
     || "Supervisor";
   const items = invoiceSoldLines(data, live, live.branchId).map((item, index) => ({
     ...item,
+    lineIndex: Number(item.__invoiceLineIndex ?? index),
     key: item.productId || `${item.name}-${index}`,
   }));
   const pays = data.payments.filter((p) => p.orderId === live.id || p.invoiceId === live.id);
@@ -10536,6 +10605,42 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
       invoiceVoidDecisions: [entry, ...(d.invoiceVoidDecisions || [])],
     }));
     setVoidError("");
+  };
+  const selectedLine = items.find((item) => String(item.lineIndex) === String(lineVoidIndex));
+  const selectedLineState = selectedLine ? invoiceLineVoidState(data, live.id, selectedLine.lineIndex) : null;
+  const requestLineVoid = () => {
+    const qty = Math.floor(Number(lineVoidQty || 0));
+    if (!selectedLine || qty <= 0 || qty > Number(selectedLine.qty || 0)) {
+      setLineVoidError("Choose an item and a quantity available on this invoice.");
+      return;
+    }
+    if (lineVoidReason.trim().length < 3) {
+      setLineVoidError("Enter a short reason for the item void.");
+      return;
+    }
+    if (selectedLineState?.pending) {
+      setLineVoidError("This item already has a pending void request.");
+      return;
+    }
+    const ts = now();
+    update((d) => ({ ...d, invoiceLineVoidRequests: [{
+      id: uid("line-void-request"), invoiceId: live.id, branchId: live.branchId,
+      lineIndex: selectedLine.lineIndex, qty, reason: lineVoidReason.trim(), requestedAt: ts, ts, synced: false,
+    }, ...(d.invoiceLineVoidRequests || [])] }));
+    setLineVoidIndex(""); setLineVoidQty("1"); setLineVoidReason(""); setLineVoidError("");
+  };
+  const decideLineVoid = (request, decision) => {
+    const reason = lineVoidReason.trim();
+    if (decision === "rejected" && !reason) {
+      setLineVoidError("Enter a reason before rejecting the item void.");
+      return;
+    }
+    const ts = now();
+    update((d) => ({ ...d, invoiceLineVoidDecisions: [{
+      id: uid("line-void-decision"), invoiceId: live.id, requestId: request.id, branchId: live.branchId,
+      lineIndex: request.lineIndex, qty: request.qty, decision, reason, decidedBy: actorName, decidedByName: actorName, decidedAt: ts, ts, synced: false,
+    }, ...(d.invoiceLineVoidDecisions || [])] }));
+    setLineVoidReason(""); setLineVoidError("");
   };
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
@@ -10755,6 +10860,22 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
               </div>))}</div>
           ) : <div className="invoice-detail-empty">No itemised lines recorded.</div>}
         </details>
+
+        {!voidApproved && items.length ? <details className="invoice-detail-disclosure">
+          <summary><span>Void one invoice item <b>Restores stock</b></span><ChevronDown /></summary>
+          <div className="invoice-detail-note-form">
+            <div className="notice compact-notice">Select only the returned or cancelled item. The request needs supervisor approval; once approved, only that quantity is restored to stock and the invoice balance is reduced.</div>
+            <label><span>Item</span><select className="select" value={lineVoidIndex} onChange={(event) => { const line = items.find((item) => String(item.lineIndex) === event.target.value); setLineVoidIndex(event.target.value); setLineVoidQty(line ? String(Math.min(1, Number(line.qty || 1))) : "1"); setLineVoidError(""); }}>
+              <option value="">Select item to void</option>
+              {items.map((item) => <option value={item.lineIndex} key={item.key}>{item.name} — {item.qty} available — {fmt(item.totalCents, cur)}</option>)}
+            </select></label>
+            {selectedLine ? <label><span>Quantity to void</span><input className="input" type="number" min="1" max={selectedLine.qty} step="1" value={lineVoidQty} onChange={(event) => { setLineVoidQty(event.target.value); setLineVoidError(""); }} /></label> : null}
+            <label><span>Reason</span><textarea className="input" placeholder="Returned, cancelled, or incorrect item" value={lineVoidReason} onChange={(event) => { setLineVoidReason(event.target.value); setLineVoidError(""); }} /></label>
+            {selectedLineState?.pending ? <div className="void-review-box"><b>Item void awaiting approval</b><span>{selectedLine.name} × {selectedLineState.pending.qty} — {selectedLineState.pending.reason}</span><div className="grid2"><button className="btn btn-ghost" onClick={() => decideLineVoid(selectedLineState.pending, "rejected")}><X /> Reject</button><button className="btn btn-primary" onClick={() => decideLineVoid(selectedLineState.pending, "approved")}><Check /> Approve item void</button></div></div> : null}
+            {lineVoidError ? <div className="formerr">{lineVoidError}</div> : null}
+            <button className="btn btn-ghost" disabled={!selectedLine || Boolean(selectedLineState?.pending)} onClick={requestLineVoid}><AlertCircle /> Request item void</button>
+          </div>
+        </details> : null}
 
         {live.note ? <div className="invoice-detail-sale-note"><b>Sale note</b><span>{live.note}</span></div> : null}
 
@@ -17559,17 +17680,20 @@ function MpesaReference({ value, tone = "" }) {
   return <button type="button" className={`mpesa-reference ${tone}`.trim()} aria-label={copied ? `Copied ${suffix}` : label} title={copied ? "Copied" : label} onClick={copySuffix}><span className="masked" aria-hidden="true">{prefix}</span><strong aria-hidden="true">{suffix}</strong>{copied ? <span className="copy-state" aria-live="polite">Copied</span> : null}</button>;
 }
 
-function MpesaAllocationList({ allocations, offsets, walletCredits, customerTransfer = false, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
+function MpesaAllocationList({ allocations, offsets, walletCredits, stockFunding, customerTransfer = false, funding = false, currency = "KES", timeZone = DEFAULT_BUSINESS_TIME_ZONE }) {
   const invoiceAllocations = Array.isArray(allocations) ? allocations : [];
   const cashOffsets = Array.isArray(offsets) ? offsets : [];
   const tipCredits = Array.isArray(walletCredits) ? walletCredits : [];
+  const stockFundingAllocations = Array.isArray(stockFunding) ? stockFunding : [];
   if (funding) return <span className="mpesa-no-allocation funding">Excluded from sales and invoice settlement</span>;
-  if (invoiceAllocations.length === 0 && cashOffsets.length === 0 && tipCredits.length === 0) {
+  if (invoiceAllocations.length === 0 && cashOffsets.length === 0 && tipCredits.length === 0 && stockFundingAllocations.length === 0) {
     return <span className="mpesa-no-allocation">{customerTransfer ? "Till/Bank payment - not allocated to an invoice" : "Not allocated to an invoice"}</span>;
   }
-  const allocatedTotal = [...invoiceAllocations, ...cashOffsets, ...tipCredits].reduce((sum, entry) => sum + Number(entry.amountCents || 0), 0);
-  const usageCount = invoiceAllocations.length + cashOffsets.length + tipCredits.length;
-  const usageLabel = tipCredits.length > 0 && invoiceAllocations.length === 0 && cashOffsets.length === 0
+  const allocatedTotal = [...invoiceAllocations, ...cashOffsets, ...tipCredits, ...stockFundingAllocations].reduce((sum, entry) => sum + Number(entry.amountCents || 0), 0);
+  const usageCount = invoiceAllocations.length + cashOffsets.length + tipCredits.length + stockFundingAllocations.length;
+  const usageLabel = stockFundingAllocations.length > 0 && invoiceAllocations.length === 0 && cashOffsets.length === 0 && tipCredits.length === 0
+    ? (stockFundingAllocations.length === 1 ? "Stock funding" : `${stockFundingAllocations.length} stock funding allocations`)
+    : tipCredits.length > 0 && invoiceAllocations.length === 0 && cashOffsets.length === 0
     ? (tipCredits.length === 1 ? "Cashier wallet tip" : `${tipCredits.length} wallet tips`)
     : cashOffsets.length > 0 && invoiceAllocations.length === 0 && tipCredits.length === 0
     ? (cashOffsets.length === 1 ? "Cash deposit offset" : `${cashOffsets.length} cash offsets`)
@@ -17603,6 +17727,14 @@ function MpesaAllocationList({ allocations, offsets, walletCredits, customerTran
       const actor = entry.createdByName || "Unknown user";
       return <div className="mpesa-allocation mpesa-wallet-credit" key={entry.id || `${entry.cashierId}:${entry.amountCents}`}>
         <b>Tip wallet - {entry.cashierName || "Cashier"}</b>
+        <span className="amount">{fmt(entry.amountCents || 0, currency)}</span>
+        <small>{actor} / {when}{entry.note ? ` / ${entry.note}` : ""}</small>
+      </div>;
+    })}{stockFundingAllocations.map((entry) => {
+      const when = entry.allocatedAt ? formatBusinessDateTime(entry.allocatedAt, timeZone) : "Time not supplied";
+      const actor = entry.allocatedByName || "Unknown user";
+      return <div className="mpesa-allocation mpesa-stock-funding" key={entry.id || `${entry.branchId}:${entry.amountCents}`}>
+        <b>Stock funding</b>
         <span className="amount">{fmt(entry.amountCents || 0, currency)}</span>
         <small>{actor} / {when}{entry.note ? ` / ${entry.note}` : ""}</small>
       </div>;
@@ -17779,6 +17911,60 @@ function CashierWalletCreditModal({ transaction, data, timeZone, onClose, onSave
   </div>;
 }
 
+function StockFundingAllocationModal({ transaction, data, onClose, onSaved }) {
+  const [amount, setAmount] = useState(() => moneyInputValue(transaction.remainingCents || 0));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const attemptRef = useRef({ signature: "", key: "" });
+  const amountCents = centsFromInput(amount);
+  const remainingCents = Math.max(0, Number(transaction.remainingCents || 0));
+  const valid = amountCents > 0 && amountCents <= remainingCents;
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError("");
+    const signature = `${transaction.id}:${amountCents}:${note.trim()}`;
+    if (attemptRef.current.signature !== signature) attemptRef.current = { signature, key: uid("stock_funding") };
+    try {
+      await allocateKopokopoStockFunding({
+        transactionId: transaction.id,
+        branchId: transaction.branchId,
+        amountCents,
+        note: note.trim(),
+        idempotencyKey: attemptRef.current.key,
+      });
+      onSaved();
+    } catch (requestError) {
+      const messages = {
+        kopokopo_transaction_not_found: "This M-Pesa transaction no longer exists.",
+        kopokopo_transaction_is_stock_funding: "This entire payment is already marked as stock funding.",
+        kopokopo_transaction_unavailable: "This M-Pesa transaction is no longer available.",
+        kopokopo_amount_exceeds_balance: "The amount exceeds the transaction's current available balance.",
+        kopokopo_currency_unsupported: "Stock funding allocations currently accept KES payments only.",
+        branch_not_authorized: "Your account cannot allocate this transaction for this branch.",
+        idempotency_key_reused: "The request changed while it was being saved. Close this dialog and try again.",
+      };
+      setError(messages[requestError.message] || "Stock funding could not be recorded. No funds were moved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="scrim mpesa-offset-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <section className="modal settlement-modal inventory-payment-modal" role="dialog" aria-modal="true" aria-labelledby="stock-funding-title">
+      <div className="modal-head"><div><span className="eyebrow">Verified M-Pesa payment</span><h3 id="stock-funding-title"><Banknote /> Allocate stock funding</h3></div><button type="button" className="iconbtn" onClick={onClose} disabled={busy} aria-label="Close"><X /></button></div>
+      <div className="mpesa-offset-transaction"><span><small>M-Pesa code</small><b>{transaction.referenceMasked}</b></span><span><small>Available</small><b>{fmt(remainingCents, transaction.currency || "KES")}</b></span></div>
+      <p className="mpesa-offset-help">Reserve only part of this verified payment for stock. Any invoice payments already allocated from this code remain unchanged and visible in the audit trail.</p>
+      <label className="mpesa-offset-note"><span>Stock funding amount (KES)</span><input className="input" type="number" inputMode="decimal" min="0.01" max={(remainingCents / 100).toFixed(2)} step="0.01" value={amount} onChange={(event) => { setAmount(event.target.value); setError(""); }} disabled={busy} /></label>
+      <label className="mpesa-offset-note"><span>Note (optional)</span><input className="input" value={note} maxLength={500} onChange={(event) => { setNote(event.target.value); setError(""); }} placeholder="Stock purchase funding" disabled={busy} /></label>
+      {amountCents > remainingCents ? <div className="errorbox">The amount exceeds the available M-Pesa balance.</div> : null}
+      {error ? <div className="errorbox">{error}</div> : null}
+      <div className="notice compact-notice"><Banknote /> This amount is reserved for stock and can no longer be applied to invoices or a cashier wallet.</div>
+      <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Banknote /> {busy ? "Recording..." : `Fund stock with ${fmt(amountCents, "KES")}`}</button></div>
+    </section>
+  </div>;
+}
+
 function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
@@ -17794,6 +17980,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
   const [offset, setOffset] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [walletCreditTarget, setWalletCreditTarget] = useState(null);
+  const [stockFundingTarget, setStockFundingTarget] = useState(null);
   const [purposeBusyId, setPurposeBusyId] = useState("");
   const [purposeError, setPurposeError] = useState("");
   const [crossBranchBusyId, setCrossBranchBusyId] = useState("");
@@ -17901,7 +18088,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
     const onRealtime = (event) => {
       const detail = event.detail || {};
       const types = Array.isArray(detail.types) ? detail.types : [];
-      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation" || type === "kopokopoOffset" || type === "kopokopoCrossBranchAccess")) return;
+      if (!types.some((type) => type === "kopokopoTransaction" || type === "kopokopoAllocation" || type === "kopokopoOffset" || type === "kopokopoCrossBranchAccess" || type === "kopokopoStockFunding")) return;
       if (detail.branchId && detail.branchId !== selectedBranchId) return;
       refresh();
     };
@@ -18031,7 +18218,12 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
       && !transaction.reversedAt
       && transaction.purpose !== "stock_funding"
       && Number(transaction.remainingCents || 0) > 0;
-    if (!purposeChangeAvailable && !crossBranchChangeAvailable && !walletFundingAvailable) return null;
+    const partialStockFundingAvailable = canClassifyFunding
+      && transaction.allocatable !== false
+      && !transaction.reversedAt
+      && transaction.purpose !== "stock_funding"
+      && Number(transaction.remainingCents || 0) > 0;
+    if (!purposeChangeAvailable && !crossBranchChangeAvailable && !walletFundingAvailable && !partialStockFundingAvailable) return null;
     const busy = purposeBusyId === transaction.id || crossBranchBusyId === transaction.id;
     return <label className={`mpesa-transaction-actions${mobile ? " mobile" : ""}`}>
       <MoreVertical aria-hidden="true" />
@@ -18042,12 +18234,14 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
         onChange={(event) => {
           const action = event.target.value;
           if (action === "wallet_tip") setWalletCreditTarget(transaction);
+          if (action === "partial_stock_funding") setStockFundingTarget(transaction);
           if (action === "stock_funding") void changeTransactionPurpose(transaction);
           if (action === "cross_branch") void changeCrossBranchAccess(transaction);
         }}
       >
         <option value="" disabled>{busy ? "Saving..." : "Actions"}</option>
         {walletFundingAvailable ? <option value="wallet_tip">Fund cashier wallet</option> : null}
+        {partialStockFundingAvailable ? <option value="partial_stock_funding">Allocate part for stock</option> : null}
         {purposeChangeAvailable ? <option value="stock_funding">{transaction.purpose === "stock_funding" ? "Restore customer payment" : "Mark stock funding"}</option> : null}
         {crossBranchChangeAvailable ? <option value="cross_branch">{transaction.crossBranchAllowed ? "Restrict to receiving branch" : "Allow cross-branch invoices"}</option> : null}
       </select>
@@ -18106,7 +18300,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
                   <td className="payer"><span>{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}</td>
                   <td className="innum">{transaction.tillNumber || "-"}</td>
                   <td className="amt mpesa-state-amount">{fmt(transaction.amountCents, transaction.currency || "KES")}</td>
-                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
+                  <td><MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} stockFunding={transaction.stockFunding} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} /></td>
                   <td className="amt available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")}</td>
                   <td><div className="mpesa-ledger-status-cell"><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction)}</div></td>
                 </tr>); })}</tbody>
@@ -18116,7 +18310,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
             <div className={`mpesa-ledger-mobile-row ${transactionStatus.key}`} key={transaction.id}>
               <div><span className="payer">{transaction.payerName || "Not supplied"}</span>{transaction.payerPhoneLast4 ? <small className="mpesa-payer-phone">Phone ending {transaction.payerPhoneLast4}</small> : null}<small><MpesaReference value={transaction.referenceMasked} tone={transactionStatus.key} /> / {transactionTime(transaction) ? formatBusinessDateTime(transactionTime(transaction), timeZone) : "Time not supplied"}</small><small>{fmt(transaction.allocatedCents, transaction.currency || "KES")} allocated / <span className="available-amount">{fmt(transaction.remainingCents, transaction.currency || "KES")} available</span></small></div>
               <div className="money"><b>{fmt(transaction.amountCents, transaction.currency || "KES")}</b><span className={`mpesa-ledger-status ${transactionStatus.key}`}>{transactionStatus.label}</span>{transaction.crossBranchAllowed ? <span className="mpesa-ledger-status partial">Cross-branch</span> : null}{transactionActionMenu(transaction, true)}</div>
-              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
+              <MpesaAllocationList allocations={transaction.allocations} offsets={transaction.offsets} walletCredits={transaction.walletCredits} stockFunding={transaction.stockFunding} customerTransfer={transaction.transactionKind === "customer_transfer"} funding={transaction.purpose === "stock_funding"} currency={transaction.currency || "KES"} timeZone={timeZone} />
             </div>); })}</div>
         </> : null}
 
@@ -18126,6 +18320,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
         </div>
       </div>
       {walletCreditTarget ? <CashierWalletCreditModal transaction={walletCreditTarget} data={data} timeZone={timeZone} onClose={() => setWalletCreditTarget(null)} onSaved={() => { setWalletCreditTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
+      {stockFundingTarget ? <StockFundingAllocationModal transaction={stockFundingTarget} data={data} onClose={() => setStockFundingTarget(null)} onSaved={() => { setStockFundingTarget(null); setRefreshNonce((value) => value + 1); }} /> : null}
     </div>
   );
 }

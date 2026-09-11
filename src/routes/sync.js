@@ -731,6 +731,8 @@ const EVENT_TYPES = new Set([
   "invoiceNote",
   "invoiceVoidRequest",
   "invoiceVoidDecision",
+  "invoiceLineVoidRequest",
+  "invoiceLineVoidDecision",
   "stockTransferRequest",
   "stockTransferDecision",
   "stockMovement",
@@ -792,6 +794,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "invoiceSettlement",
   "purchase",
   "invoiceVoidDecision",
+  "invoiceLineVoidDecision",
   "stockTransferDecision",
   "cashierJointDebt",
   "cashierJointDebtPayment",
@@ -1111,6 +1114,91 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
   return { id: decisionEvent.id, ts: acceptedTs };
 }
 
+async function processInvoiceLineVoidEvent(client, ev, type, req, deviceId, ts) {
+  const duplicate = await existingEvent(client, ev.id);
+  if (duplicate) {
+    if (duplicate.type !== type) throw syncEventError("event_id_conflict");
+    return { id: duplicate.id, ts: duplicate.server_ts };
+  }
+  const payload = { ...(ev.payload || {}) };
+  const invoiceId = String(payload.invoiceId || "").trim();
+  const lineIndex = Number(payload.lineIndex);
+  const qty = Number(payload.qty);
+  if (!invoiceId || !Number.isInteger(lineIndex) || lineIndex < 0 || !Number.isFinite(qty) || qty <= 0) {
+    throw syncEventError("invalid_invoice_line_void");
+  }
+  const invoiceResult = await client.query("SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1", [invoiceId]);
+  const invoice = invoiceResult.rows[0];
+  if (!invoice) throw syncEventError("invoice_not_found");
+  const invoiceBranchId = invoice.branch_id || invoice.payload?.branchId || null;
+  const line = Array.isArray(invoice.payload?.items) ? invoice.payload.items[lineIndex] : null;
+  const lineQty = Number(line?.qty ?? line?.quantity ?? 0);
+  const productId = String(line?.productId || "").trim();
+  if (!line || !productId || !Number.isFinite(lineQty) || lineQty <= 0 || qty > lineQty) throw syncEventError("invalid_invoice_line_void");
+  const existing = await client.query(
+    `SELECT id, type, payload FROM events
+      WHERE type IN ('invoiceLineVoidRequest', 'invoiceLineVoidDecision')
+      ORDER BY server_ts, id`
+  );
+  const requests = existing.rows.filter((row) => row.type === "invoiceLineVoidRequest" && row.payload?.invoiceId === invoiceId && Number(row.payload?.lineIndex) === lineIndex);
+  const decisions = existing.rows.filter((row) => row.type === "invoiceLineVoidDecision" && row.payload?.invoiceId === invoiceId && Number(row.payload?.lineIndex) === lineIndex);
+  const decidedRequestIds = new Set(decisions.map((row) => row.payload?.requestId).filter(Boolean));
+  const alreadyVoided = decisions
+    .filter((row) => String(row.payload?.decision || "").toLowerCase() === "approved")
+    .reduce((sum, row) => sum + Number(row.payload?.qty || 0), 0);
+  if (alreadyVoided + qty > lineQty) throw syncEventError("invoice_line_already_voided");
+  if (type === "invoiceLineVoidRequest") {
+    const reason = String(payload.reason || "").trim();
+    if (reason.length < 3) throw syncEventError("void_reason_required");
+    if (requests.some((row) => !decidedRequestIds.has(row.id))) throw syncEventError("invoice_line_void_already_pending");
+    const unitPrice = Number(line?.priceCents ?? line?.unitPriceCents ?? 0);
+    const lineValue = Math.max(0, Math.round(unitPrice * qty));
+    const totalCents = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
+    const paidCents = Math.max(centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0), await invoicePaymentTotal(client, invoiceId));
+    if (paidCents > Math.max(0, totalCents - lineValue)) throw syncEventError("invoice_line_void_requires_refund");
+    const requestEvent = {
+      ...ev,
+      branchId: invoiceBranchId,
+      payload: {
+        ...payload, invoiceId, lineIndex, qty, branchId: invoiceBranchId, reason, status: "pending",
+        requestedBy: req.account?.id || req.deviceId || "unknown",
+        requestedByName: req.account?.name || payload.requestedByName || "Cashier",
+        requestedByRole: syncRole(req.account) || (req.terminalUuid ? "cashier" : "unknown"),
+        requestedAt: Date.now(),
+      },
+    };
+    const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
+    return { id: requestEvent.id, ts: acceptedTs };
+  }
+  const requestId = String(payload.requestId || "").trim();
+  const decision = String(payload.decision || "").trim().toLowerCase();
+  if (!requestId || !["approved", "rejected"].includes(decision)) throw syncEventError("void_decision_invalid");
+  if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) throw syncEventError("supervisor_authorization_required");
+  const request = requests.find((row) => row.id === requestId);
+  if (!request || decidedRequestIds.has(requestId)) throw syncEventError("invoice_line_void_already_decided");
+  const requestQty = Number(request.payload?.qty || 0);
+  const decisionEvent = {
+    ...ev,
+    branchId: invoiceBranchId,
+    payload: {
+      ...payload, invoiceId, requestId, lineIndex, qty: requestQty, branchId: invoiceBranchId, decision,
+      decidedBy: req.account.id, decidedByName: req.account.name || req.account.email || "Supervisor",
+      decidedByRole: syncRole(req.account), decidedAt: Date.now(),
+    },
+  };
+  const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
+  if (decision === "approved") {
+    await insertAppendOnlyEvent(client, {
+      id: `void-line-stock:${invoiceId}:${lineIndex}:${requestId}`,
+      branchId: invoiceBranchId,
+      clientTs: Date.now(),
+      payload: { productId, branchId: invoiceBranchId, qty: requestQty, reason: `Line void ${invoice.payload?.number || invoiceId}`,
+        invoiceId, voidRequestId: requestId, source: "invoice_line_void", ts: Date.now() },
+    }, "stockMovement", deviceId, ts + 1);
+  }
+  return { id: decisionEvent.id, ts: acceptedTs };
+}
+
 async function validateApprovedStockTransferEvent(client, ev, type) {
   const payload = ev.payload || {};
   const requestId = String(payload.cashierRequestId || payload.transferRequestId || "").trim();
@@ -1217,6 +1305,10 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             recordDeviceId,
             nextServerTs()
           );
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+        } else if (type === "invoiceLineVoidRequest" || type === "invoiceLineVoidDecision") {
+          const result = await processInvoiceLineVoidEvent(client, guardedEvent, type, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
           acceptedId = result.id;
         } else if (type === "stockTransferRequest" || type === "stockTransferDecision") {
