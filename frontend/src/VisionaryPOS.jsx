@@ -80,6 +80,8 @@ const CURSOR_KEY = "visionary:pos:sync:cursor:v1";
 const RESET_EPOCH_KEY = "visionary:pos:sync:reset-epoch:v1";
 const INVOICE_SYNC_REPAIR_KEY = "visionary:pos:sync:invoice-repair:v1";
 const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
+const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
+const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -92,7 +94,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 const REALTIME_SYNC_MS = 30000;
@@ -2185,7 +2187,10 @@ async function cloudBootstrapData(localData, options = {}) {
     const localHasBranches = Array.isArray(base.branches) && base.branches.length > 0;
     const localHasProducts = Array.isArray(base.products) && base.products.length > 0;
     const invoiceRepairPending = await kvGet(INVOICE_SYNC_REPAIR_KEY) !== INVOICE_SYNC_REPAIR_VERSION;
-    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || !localHasBranches || !localHasProducts);
+    // Re-read the complete event stream once after the dashboard parity repair.
+    // A previously advanced cursor may have skipped a historical supervisor close.
+    const dashboardRepairPending = await kvGet(DASHBOARD_SYNC_REPAIR_KEY) !== DASHBOARD_SYNC_REPAIR_VERSION;
+    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || dashboardRepairPending || !localHasBranches || !localHasProducts);
     if (needsFullBootstrap) await saveCursor(0);
     const first = (await runSyncClient(base, { ...options, forceFullPull: needsFullBootstrap })).data;
     if (!Array.isArray(first.branches) || first.branches.length === 0 || !Array.isArray(first.products) || first.products.length === 0) {
@@ -2194,10 +2199,12 @@ async function cloudBootstrapData(localData, options = {}) {
       const retried = (await runSyncClient(retryBase, { ...options, forceFullPull: true })).data;
       if (Array.isArray(retried.branches) && retried.branches.length > 0 && Array.isArray(retried.products) && retried.products.length > 0) {
         await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
+        await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
       }
       return retried;
     }
     if (invoiceRepairPending) await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
+    if (dashboardRepairPending) await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
     return first;
   } catch (error) {
     return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };
@@ -10520,6 +10527,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
 /* ---- Dashboard ---- */
 function DashboardTab({ data, update, branch, onOpenPayments }) {
   const cur = data.settings.currency;
+  const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [detail, setDetail] = useState(null);
   const [summary, setSummary] = useState("");
 
@@ -10558,8 +10566,18 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   })();
 
   const days = [];
-  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); const start = d.getTime(); const end = start + 864e5;
-    days.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 2), total: branchInvoices.filter((inv) => inv.ts >= start && inv.ts < end).reduce((s, inv) => s + inv.totalCents, 0) }); }
+  const businessToday = businessDateValue(Date.now(), timeZone);
+  for (let i = 6; i >= 0; i--) {
+    // Work from calendar dates in the store timezone, never the viewing device's
+    // clock. This keeps an iPhone and Windows dashboard in the same day bucket.
+    const calendarDay = new Date(`${businessToday}T12:00:00Z`);
+    calendarDay.setUTCDate(calendarDay.getUTCDate() - i);
+    const businessDate = calendarDay.toISOString().slice(0, 10);
+    const start = Date.parse(businessDateTimeBoundary(`${businessDate}T00:00`, timeZone, "start"));
+    const end = Date.parse(businessDateTimeBoundary(`${businessDate}T23:59`, timeZone, "end"));
+    const label = new Intl.DateTimeFormat("en-KE", { timeZone, weekday: "short" }).format(new Date(start)).slice(0, 2);
+    days.push({ label, total: branchInvoices.filter((inv) => inv.ts >= start && inv.ts <= end).reduce((s, inv) => s + inv.totalCents, 0) });
+  }
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
   const since7 = Date.now() - 7 * 864e5; const catRev = {};
