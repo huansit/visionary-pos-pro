@@ -37,6 +37,20 @@ test("purchase stamp disappears after all units from the lot leave stock", () =>
   assert.equal(formatPurchaseLotStamp(trace.referencesForMovement("sale")), "PO-0043 (2)");
 });
 
+test("an item void returns the consumed purchase lot to stock", () => {
+  const trace = buildPurchaseLotTrace({
+    purchases: [purchase("po1", "PO-0043", 2)],
+    invoices: [{ id: "inv-1", number: "RCP-001" }],
+    stockMovements: [
+      movement("receive", 2, { purchaseId: "po1" }),
+      movement("sale", -2, { reason: "Sale RCP-001", ts: 200 }),
+      movement("void", 1, { invoiceId: "inv-1", source: "invoice_line_void", reason: "Line void RCP-001", ts: 300 }),
+    ],
+  });
+  assert.equal(formatPurchaseLotStamp(trace.activeLotsFor("p1", "b1")), "PO-0043 (1)");
+  assert.equal(formatPurchaseLotStamp(trace.referencesForMovement("void")), "PO-0043 (1)");
+});
+
 test("branch transfers preserve the originating purchase order", () => {
   const trace = buildPurchaseLotTrace({
     purchases: [purchase("po1", "PO-0043", 4)],

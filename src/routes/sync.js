@@ -1188,11 +1188,12 @@ async function processInvoiceLineVoidEvent(client, ev, type, req, deviceId, ts) 
   };
   const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
   if (decision === "approved") {
+    const unitCostCents = Math.max(0, Number(line?.unitCostCents ?? line?.costCents ?? 0) || 0);
     await insertAppendOnlyEvent(client, {
       id: `void-line-stock:${invoiceId}:${lineIndex}:${requestId}`,
       branchId: invoiceBranchId,
       clientTs: Date.now(),
-      payload: { productId, branchId: invoiceBranchId, qty: requestQty, reason: `Line void ${invoice.payload?.number || invoiceId}`,
+      payload: { productId, branchId: invoiceBranchId, qty: requestQty, unitCostCents, reason: `Line void ${invoice.payload?.number || invoiceId}`,
         invoiceId, voidRequestId: requestId, source: "invoice_line_void", ts: Date.now() },
     }, "stockMovement", deviceId, ts + 1);
   }

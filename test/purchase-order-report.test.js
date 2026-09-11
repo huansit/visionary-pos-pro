@@ -89,6 +89,25 @@ test("voided invoice stock is flagged and excluded from profit", () => {
   assert.match(report.issues[0], /voided invoices/i);
 });
 
+test("an item void nets sales, COGS, and demand while keeping its purchase lot available", () => {
+  const data = baseData();
+  data.invoices.push({
+    id: "part-void", number: "RCP-PART", branchId: "cpt", totalCents: 15000, paidCents: 15000,
+    ts: referenceTime - DAY, items: [{ productId: "p1", qty: 1, priceCents: 15000 }],
+    _lineVoidBaseItems: [{ productId: "p1", qty: 2, priceCents: 15000 }],
+  });
+  data.stockMovements.push(
+    { id: "part-sale", productId: "p1", branchId: "cpt", qty: -2, reason: "Sale RCP-PART", ts: referenceTime - DAY },
+    { id: "part-void-return", productId: "p1", branchId: "cpt", qty: 1, source: "invoice_line_void", invoiceId: "part-void", reason: "Line void RCP-PART", ts: referenceTime },
+  );
+  const [report] = buildPurchaseOrderReports(data, { referenceTime });
+  assert.equal(report.soldUnits, 1);
+  assert.equal(report.availableUnits, 9);
+  assert.equal(report.recognizedRevenueCents, 15000);
+  assert.equal(report.recognizedCogsCents, 10000);
+  assert.equal(report.lines[0].voidedSoldQty, 1);
+});
+
 test("purchase reports search PO number, product, supplier, branch, and export details", () => {
   const reports = buildPurchaseOrderReports(baseData(), { referenceTime });
   assert.equal(searchPurchaseOrderReports(reports, "0043").length, 1);

@@ -40,7 +40,7 @@ function latestVoidStatus(data, invoiceId) {
 }
 
 function invoiceUnitRevenueCents(invoice, productId) {
-  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const items = Array.isArray(invoice?._lineVoidBaseItems) ? invoice._lineVoidBaseItems : (Array.isArray(invoice?.items) ? invoice.items : []);
   const matching = items.filter((item) => String(item?.productId || "") === String(productId || ""));
   const matchingQty = matching.reduce((sum, item) => sum + positive(item?.qty ?? item?.quantity), 0);
   if (matchingQty > 0) {
@@ -57,6 +57,7 @@ function invoiceUnitRevenueCents(invoice, productId) {
 function movementKind(movement) {
   const reason = String(movement?.reason || "").trim();
   const quantity = number(movement?.qty);
+  if (movement?.source === "invoice_line_void" && quantity > 0) return "void_return";
   if (movement?.purchaseId && quantity > 0) return "received";
   if (movement?.transferId) return quantity < 0 ? "transfer_out" : "transfer_in";
   if (/^sale\s+/i.test(reason) && quantity < 0) return "sale";
@@ -73,6 +74,7 @@ function displayMovementKind(kind, voided = false) {
     transfer_out: "Transfer out",
     transfer_in: "Transfer in",
     sale: "Sale",
+    void_return: "Voided item return",
     loss: "Loss / damage",
     shrinkage: "Count shortage",
     count_gain: "Count gain",
@@ -194,10 +196,12 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
   const currentSales = new Map();
   const velocityCutoff = referenceTime - lookbackDays * DAY_MS;
   movements.forEach((movement) => {
-    if (number(movement.qty) >= 0 || number(movement.ts) < velocityCutoff || movementKind(movement) !== "sale") return;
+    const kind = movementKind(movement);
+    if (!["sale", "void_return"].includes(kind)) return;
     const invoice = saleInvoice(data, movement, invoiceByNumber);
-    if (!invoice || latestVoidStatus(data, invoice.id) === "approved") return;
-    currentSales.set(movement.productId, (currentSales.get(movement.productId) || 0) + Math.abs(number(movement.qty)));
+    const accountingTs = number(invoice?.ts || invoice?.issuedAt || movement.ts);
+    if (!invoice || accountingTs < velocityCutoff || latestVoidStatus(data, invoice.id) === "approved") return;
+    currentSales.set(movement.productId, (currentSales.get(movement.productId) || 0) - number(movement.qty));
   });
   const velocityRows = [...new Set(purchases.map((purchase) => purchase.productId).filter(Boolean))].map((productId) => ({
     id: productId,
@@ -256,7 +260,7 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
       const quantity = allocation.qty;
       const unitCostCents = allocation.unitCostCents || line.unitCostCents;
       const costValueCents = quantity * unitCostCents;
-      const invoice = kind === "sale" ? saleInvoice(data, movement, invoiceByNumber) : null;
+      const invoice = ["sale", "void_return"].includes(kind) ? saleInvoice(data, movement, invoiceByNumber) : null;
       const voided = invoice ? latestVoidStatus(data, invoice.id) === "approved" : false;
       const recognized = Boolean(invoice && !voided && invoiceOutstanding(invoice) <= 0
         && number(invoice.ts || invoice.issuedAt) <= lastBranchClose(data, invoice.branchId));
@@ -273,6 +277,18 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
           line.pendingSoldQty += quantity;
           line.pendingRevenueCents += revenueCents;
           line.pendingCogsCents += costValueCents;
+        }
+      } else if (kind === "void_return") {
+        line.soldQty = Math.max(0, line.soldQty - quantity);
+        line.voidedSoldQty += quantity;
+        if (recognized) {
+          line.recognizedSoldQty = Math.max(0, line.recognizedSoldQty - quantity);
+          line.recognizedRevenueCents = Math.max(0, line.recognizedRevenueCents - revenueCents);
+          line.recognizedCogsCents = Math.max(0, line.recognizedCogsCents - costValueCents);
+        } else {
+          line.pendingSoldQty = Math.max(0, line.pendingSoldQty - quantity);
+          line.pendingRevenueCents = Math.max(0, line.pendingRevenueCents - revenueCents);
+          line.pendingCogsCents = Math.max(0, line.pendingCogsCents - costValueCents);
         }
       } else if (kind === "transfer_out") line.transferOutQty += quantity;
       else if (kind === "transfer_in") line.transferInQty += quantity;
@@ -295,12 +311,12 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
         branchId: movement.branchId,
         branchName: branchById.get(movement.branchId)?.name || "Unknown branch",
         qty: quantity,
-        valueCents: kind === "sale" ? revenueCents : costValueCents,
+        valueCents: ["sale", "void_return"].includes(kind) ? revenueCents : costValueCents,
         costValueCents,
         reference: movementReference(movement, invoice),
         customerName: invoice?.customerName || "",
         cashierName: invoice?.cashier || invoice?.cashierName || "",
-        accountingStatus: voided ? "voided" : kind === "sale" ? (recognized ? "recognized" : "pending") : "stock",
+        accountingStatus: voided || kind === "void_return" ? "voided" : kind === "sale" ? (recognized ? "recognized" : "pending") : "stock",
       };
       line.movements.push(row);
       report.movements.push(row);

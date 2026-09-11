@@ -61,9 +61,12 @@ function consumeLots(queue, requestedQty) {
 
 export function buildPurchaseLotTrace(data = {}) {
   const purchases = new Map((data.purchases || []).map((purchase) => [purchase.id, purchase]));
+  const invoiceByNumber = new Map((data.invoices || []).flatMap((invoice) => [invoice.number, invoice.receiptNo]
+    .filter(Boolean).map((reference) => [String(reference), invoice])));
   const queues = new Map();
   const allocations = new Map();
   const transferCargo = new Map();
+  const saleConsumptions = new Map();
   const movements = (data.stockMovements || [])
     .map((movement, index) => ({ movement, index }))
     .sort((a, b) => Number(a.movement.ts || 0) - Number(b.movement.ts || 0)
@@ -75,6 +78,13 @@ export function buildPurchaseLotTrace(data = {}) {
     if (!queues.has(key)) queues.set(key, []);
     return queues.get(key);
   };
+  const saleConsumptionKey = (movement) => {
+    const explicitInvoiceId = String(movement?.invoiceId || "").trim();
+    if (explicitInvoiceId) return `${explicitInvoiceId}::${movement?.productId || ""}`;
+    const match = /^sale\s+(.+)$/i.exec(String(movement?.reason || "").trim());
+    const invoice = match ? invoiceByNumber.get(match[1].trim()) : null;
+    return invoice?.id ? `${invoice.id}::${movement?.productId || ""}` : "";
+  };
 
   for (const { movement } of movements) {
     const qty = Number(movement.qty || 0);
@@ -84,9 +94,37 @@ export function buildPurchaseLotTrace(data = {}) {
     if (qty < 0) {
       const consumed = consumeLots(queue, Math.abs(qty));
       allocations.set(movement.id, consumed);
+      if (/^sale\s+/i.test(String(movement.reason || ""))) {
+        const key = saleConsumptionKey(movement);
+        if (key) saleConsumptions.set(key, [...(saleConsumptions.get(key) || []), ...consumed.map((lot) => ({ ...lot, qtyRemaining: lot.qty }))]);
+      }
       if (movement.transferId) {
         transferCargo.set(transferKey(movement.transferId, movement.productId), consumed.map((lot) => cloneLot(lot, lot.qty)));
       }
+      continue;
+    }
+
+    if (String(movement?.source || "") === "invoice_line_void") {
+      const key = saleConsumptionKey(movement);
+      const available = key ? saleConsumptions.get(key) || [] : [];
+      let remaining = qty;
+      const restored = [];
+      for (let index = available.length - 1; index >= 0 && remaining > 0; index -= 1) {
+        const consumed = available[index];
+        const amount = Math.min(positiveNumber(consumed.qtyRemaining), remaining);
+        if (!(amount > 0)) continue;
+        consumed.qtyRemaining -= amount;
+        const lot = { ...consumed, qty: amount, qtyReceived: amount, qtyRemaining: amount, returnedAt: movement.ts };
+        queue.push(lot);
+        restored.push({ ...lot });
+        remaining -= amount;
+      }
+      if (remaining > 0) {
+        const lot = { tracked: false, reference: "Legacy/untracked stock", qty: remaining, qtyReceived: remaining, qtyRemaining: remaining, receivedAt: movement.ts };
+        queue.push(lot);
+        restored.push({ ...lot });
+      }
+      allocations.set(movement.id, restored);
       continue;
     }
 

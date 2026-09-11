@@ -2063,18 +2063,22 @@ function applyApprovedInvoiceLineVoids(data) {
       ? Number(invoice._lineVoidBaseTotalCents)
       : Math.max(0, Number(invoice.totalCents || 0));
     let voidedCents = 0;
-    const items = baseItems.map((item, index) => {
+    const auditItems = baseItems.map((item, index) => {
       const originalQty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
-      const qty = Math.max(0, originalQty - Math.min(originalQty, Number(lineVoids.get(index) || 0)));
+      const voidedQty = Math.min(originalQty, Number(lineVoids.get(index) || 0));
+      const qty = Math.max(0, originalQty - voidedQty);
       const priceCents = Math.max(0, Number(item?.priceCents ?? item?.unitPriceCents ?? 0));
-      voidedCents += Math.round((originalQty - qty) * priceCents);
-      return { ...item, qty };
-    }).filter((item) => Number(item.qty || 0) > 0);
+      voidedCents += Math.round(voidedQty * priceCents);
+      return { ...item, qty: originalQty, remainingQty: qty, voidedQty, voided: voidedQty > 0 };
+    });
+    const items = auditItems.map((item) => ({ ...item, qty: item.remainingQty }))
+      .filter((item) => Number(item.qty || 0) > 0);
     const totalCents = Math.max(0, baseTotalCents - voidedCents);
     return {
       ...invoice,
       _lineVoidBaseItems: baseItems,
       _lineVoidBaseTotalCents: baseTotalCents,
+      _lineVoidAuditItems: auditItems,
       items,
       totalCents,
       lineVoidCents: voidedCents,
@@ -3299,10 +3303,12 @@ function invoiceCashierName(invoice) {
   return String(invoice?.cashier || invoice?.cashierName || invoice?.soldBy || "Cashier").trim() || "Cashier";
 }
 function invoiceSoldLines(data, invoice, branchId) {
-  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const items = Array.isArray(invoice?._lineVoidAuditItems) ? invoice._lineVoidAuditItems : (Array.isArray(invoice?.items) ? invoice.items : []);
   const invoiceTotal = Math.max(0, Math.round(Number(invoice?.totalCents || 0)));
   const captured = items.map((item, index) => {
-    const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+    const originalQty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+    const voidedQty = Math.min(originalQty, Math.max(0, Number(item?.voidedQty || 0)));
+    const qty = Math.max(0, Number(item?.remainingQty ?? originalQty - voidedQty));
     const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
     const product = (item?.productId ? (data.products || []).find((entry) => entry.id === item.productId) : null)
       || findProductByBarcode(data, item?.barcode || item?.sku, branchId)
@@ -3316,11 +3322,14 @@ function invoiceSoldLines(data, invoice, branchId) {
       barcode: String(item?.barcode || product?.barcode || "").trim(),
       category: String(item?.category || product?.category || "").trim(),
       qty,
+      originalQty,
+      voidedQty,
+      voided: voidedQty > 0,
       priceCents,
       totalCents: qty * priceCents,
       __invoiceLineIndex: Number.isInteger(Number(item?.__invoiceLineIndex)) ? Number(item.__invoiceLineIndex) : index,
     };
-  }).filter((line) => line.qty > 0);
+  }).filter((line) => line.qty > 0 || line.voidedQty > 0);
   if (captured.length > 0) {
     const capturedTotal = captured.reduce((sum, line) => sum + line.totalCents, 0);
     if (capturedTotal > 0 || invoiceTotal === 0) return captured;
@@ -3462,11 +3471,22 @@ function invIsOverdue(inv, referenceTs = now()) {
   const issuedTs = invoiceIssuedTimestamp(inv);
   return issuedTs > 0 && Number(referenceTs) - issuedTs >= 86400000;
 }
+function isInvoiceSaleMovement(move) {
+  const reason = String(move?.reason || "");
+  return reason.startsWith("Sale ") || String(move?.source || "") === "invoice_line_void";
+}
 function saleMoveInvoice(data, move) {
+  if (!isInvoiceSaleMovement(move)) return null;
+  const invoiceId = String(move?.invoiceId || "").trim();
+  if (invoiceId) return (data?.invoices || []).find((i) => i.id === invoiceId) || null;
   const reason = String(move?.reason || "");
   if (!reason.startsWith("Sale ")) return null;
   const invoiceNo = reason.slice(5).trim();
   return (data?.invoices || []).find((i) => i.number === invoiceNo) || null;
+}
+function saleMoveAccountingTs(data, move) {
+  const invoice = saleMoveInvoice(data, move);
+  return invoice ? invoiceIssuedTimestamp(invoice) : Number(move?.ts || 0);
 }
 function saleMoveOperational(data, move) {
   const inv = saleMoveInvoice(data, move);
@@ -3489,11 +3509,11 @@ function buildStockMovementAnalysis(data, analysisDays = 28, options = {}) {
     .filter(Boolean));
 
   (data.stockMovements || []).forEach((movement) => {
-    if (Number(movement.ts || 0) < cutoff || Number(movement.qty || 0) >= 0 || !saleMoveOperational(data, movement)) return;
+    if (saleMoveAccountingTs(data, movement) < cutoff || !isInvoiceSaleMovement(movement) || !saleMoveOperational(data, movement)) return;
     const product = productById.get(movement.productId);
     if (!product) return;
     const key = `${productDedupeKey(product)}:${movement.branchId}`;
-    soldByKey.set(key, (soldByKey.get(key) || 0) + Math.abs(Number(movement.qty || 0)));
+    soldByKey.set(key, (soldByKey.get(key) || 0) - Number(movement.qty || 0));
   });
 
   (data.stockTransferRequests || []).forEach((request) => {
@@ -4981,6 +5001,8 @@ body{overscroll-behavior:none}
 .invoice-detail-item b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .invoice-detail-item span{color:var(--muted-2);font-size:11.5px}
 .invoice-detail-item strong{font-family:var(--font-mono);font-size:12.5px}
+.invoice-detail-item.line-voided{opacity:.72}
+.invoice-detail-item.line-voided b{color:var(--warn)}
 .invoice-detail-empty{padding:10px 0;color:var(--muted-2);font-size:12px}
 .invoice-payment-panel{margin:8px 0 0;padding:14px 0;border-width:1px 0 0;border-radius:0;background:transparent}
 .invoice-payment-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;margin-bottom:8px;font-size:13px}
@@ -8186,21 +8208,28 @@ function escapeReceiptHtml(value) {
   }[char]));
 }
 function normalizedReceiptItems(inv) {
-  return (Array.isArray(inv?.items) ? inv.items : []).map((item) => {
-    const qty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+  const sourceItems = Array.isArray(inv?._lineVoidAuditItems) ? inv._lineVoidAuditItems : (Array.isArray(inv?.items) ? inv.items : []);
+  return sourceItems.map((item) => {
+    const originalQty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
+    const voidedQty = Math.min(originalQty, Math.max(0, Number(item?.voidedQty || 0)));
+    const qty = Math.max(0, Number(item?.remainingQty ?? originalQty - voidedQty));
     const priceCents = Math.max(0, Math.round(Number(item?.priceCents ?? item?.unitPriceCents ?? 0)));
     return {
       name: String(item?.name || item?.productName || "Product").trim() || "Product",
       qty,
+      originalQty,
+      voidedQty,
+      voided: voidedQty > 0,
       priceCents,
-      totalCents: Math.max(0, Math.round(Number(item?.totalCents ?? qty * priceCents))),
+      totalCents: voidedQty > 0 ? qty * priceCents : Math.max(0, Math.round(Number(item?.totalCents ?? qty * priceCents))),
     };
-  }).filter((item) => item.qty > 0);
+  }).filter((item) => item.qty > 0 || item.voidedQty > 0);
 }
 function invoiceReceiptStatus(inv, cur) {
   const status = String(inv?.status || "").toLowerCase();
   if (status.includes("void")) return "Invoice voided.";
   const outstanding = invOutstanding(inv);
+  if (inv?.lineVoided && outstanding <= 0) return "Item voided — balance is zero.";
   if (outstanding <= 0) return "Paid in full.";
   if (Number(inv?.paidCents || 0) > 0) return `Part paid - balance ${fmt(outstanding, cur)}.`;
   return "Open invoice - not paid at checkout.";
@@ -8278,7 +8307,7 @@ function cashDepositAuditPrintHtml(inv, cur) {
 function invoiceReceiptPrintHtml(receipts, cur) {
   const sections = receipts.map(({ inv, store }, index) => {
     const items = normalizedReceiptItems(inv);
-    const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.qty)} x ${escapeReceiptHtml(fmt(item.priceCents, cur))}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
+    const itemRows = items.map((item) => `<div class="line"><strong>${escapeReceiptHtml(item.name)}${item.voided ? " — VOIDED" : ""}</strong><div class="line-detail"><span>${escapeReceiptHtml(item.voided ? `${item.originalQty} x ${fmt(item.priceCents, cur)}${item.qty > 0 ? ` (${item.qty} remaining)` : ""}` : `${item.qty} x ${fmt(item.priceCents, cur)}`)}</span><b>${escapeReceiptHtml(fmt(item.totalCents, cur))}</b></div></div>`).join("");
     return `<main class="receipt receipt-${index}"><h1>${escapeReceiptHtml(store)}</h1><p>${escapeReceiptHtml(formatBusinessDateTime(inv.ts))}</p><p>Receipt: ${escapeReceiptHtml(inv.number || inv.receiptNo)}</p><p>Cashier: ${escapeReceiptHtml(invoiceCashierName(inv))}</p><p>Customer: ${escapeReceiptHtml(inv.customerName || "Walk-in")}</p>${inv.note ? `<p>Note: ${escapeReceiptHtml(inv.note)}</p>` : ""}<hr/>${itemRows || '<div class="line"><strong>No items recorded</strong></div>'}<hr/><div class="total"><span>Total</span><b>${escapeReceiptHtml(fmt(inv.totalCents, cur))}</b></div><p>${escapeReceiptHtml(invoiceReceiptStatus(inv, cur))}</p>${cashDepositAuditPrintHtml(inv, cur)}<p>Thank you.</p></main>`;
   }).join("");
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice receipts</title><style id="receipt-page-rules"></style><style>
@@ -8343,7 +8372,7 @@ function InvoiceReceipt({ inv, cur, store, onClose }) {
             {items.length === 0 ? <div className="rrow"><span>No items recorded</span><span /></div> : items.map((item, index) => (
               <div key={index} style={{ paddingBottom: 4, marginBottom: 4, borderBottom: index < items.length - 1 ? "1px dotted var(--border)" : "none" }}>
                 <div style={{ fontWeight: 700 }}>{item.name}</div>
-                <div className="rrow" style={{ borderBottom: "none" }}><span>{item.qty} x {fmt(item.priceCents, cur)}</span><span>{fmt(item.totalCents, cur)}</span></div>
+                <div className="rrow" style={{ borderBottom: "none" }}><span>{item.voided ? <><b>VOIDED</b> {item.originalQty} x {fmt(item.priceCents, cur)}{item.qty > 0 ? ` (${item.qty} remaining)` : ""}</> : <>{item.qty} x {fmt(item.priceCents, cur)}</>}</span><span>{fmt(item.totalCents, cur)}</span></div>
               </div>))}
           </div>
           <div className="rrow t" style={{ fontSize: 16, borderTop: "none", paddingBottom: 8 }}><span>Total</span><span>{fmt(inv.totalCents, cur)}</span></div>
@@ -8482,7 +8511,7 @@ function InsightsTab({ data, online }) {
     if (Q.includes("top 5 products") || Q.includes("top products") || Q.includes("fast-moving")) {
       const by = {};
       data.stockMovements.forEach((movement) => {
-        if (typeof movement.reason !== "string" || !movement.reason.startsWith("Sale") || !saleMoveRecognized(data, movement)) return;
+        if (!isInvoiceSaleMovement(movement) || !saleMoveRecognized(data, movement)) return;
         const product = data.products.find((item) => item.id === movement.productId);
         if (!product) return;
         const key = `${product.id}:${movement.branchId || ""}`;
@@ -10848,8 +10877,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <summary><span>Invoice items <b>{items.length}</b></span><ChevronDown /></summary>
           {items.length ? (
             <div className="invoice-detail-items">{items.map((it) => (
-              <div className="invoice-detail-item" key={it.key}>
-                <div><b>{it.name}</b><span>{it.qty} x {fmt(it.priceCents, cur)}</span></div>
+              <div className={"invoice-detail-item" + (it.voided ? " line-voided" : "")} key={it.key}>
+                <div><b>{it.name}{it.voided ? " — VOIDED" : ""}</b><span>{it.voided ? `${it.originalQty} x ${fmt(it.priceCents, cur)}${it.qty > 0 ? ` (${it.qty} remaining)` : ""}` : `${it.qty} x ${fmt(it.priceCents, cur)}`}</span></div>
                 <strong>{fmt(it.totalCents, cur)}</strong>
               </div>))}</div>
           ) : <div className="invoice-detail-empty">No itemised lines recorded.</div>}
@@ -10860,7 +10889,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <div className="invoice-detail-note-form">
             <label><span>Item</span><select className="select" value={lineVoidIndex} onChange={(event) => { const line = items.find((item) => String(item.lineIndex) === event.target.value); setLineVoidIndex(event.target.value); setLineVoidQty(line ? String(Math.min(1, Number(line.qty || 1))) : "1"); setLineVoidError(""); }}>
               <option value="">Select item to void</option>
-              {items.map((item) => <option value={item.lineIndex} key={item.key}>{item.name} — {item.qty} available — {fmt(item.totalCents, cur)}</option>)}
+              {items.filter((item) => item.qty > 0).map((item) => <option value={item.lineIndex} key={item.key}>{item.name} — {item.qty} available — {fmt(item.totalCents, cur)}</option>)}
             </select></label>
             {selectedLine ? <label><span>Quantity to void</span><input className="input" type="number" min="1" max={selectedLine.qty} step="1" value={lineVoidQty} onChange={(event) => { setLineVoidQty(event.target.value); setLineVoidError(""); }} /></label> : null}
             <label><span>Reason</span><textarea className="input" value={lineVoidReason} onChange={(event) => { setLineVoidReason(event.target.value); setLineVoidError(""); }} /></label>
@@ -10928,7 +10957,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const todayInv = branchInvoices.filter((invoice) => Number(invoice.ts || 0) > businessPeriodStart);
   const todaySales = todayInv.reduce((s, i) => s + i.totalCents, 0);
   const currentSaleMoves = data.stockMovements.filter((movement) => {
-    if (movement.branchId !== branch.id || Number(movement.ts || 0) <= businessPeriodStart || !String(movement.reason || "").startsWith("Sale")) return false;
+    if (movement.branchId !== branch.id || saleMoveAccountingTs(data, movement) <= businessPeriodStart || !isInvoiceSaleMovement(movement)) return false;
     const invoice = saleMoveInvoice(data, movement);
     return Boolean(invoice && !invoiceIsVoided(data, invoice));
   });
@@ -10945,7 +10974,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const fastReorders = (() => {
     const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
     const start = Date.now() - WEEKS_LOOKBACK * weekMs;
-    const moves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= start && m.branchId === branch.id);
+    const moves = data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && saleMoveAccountingTs(data, m) >= start && m.branchId === branch.id && saleMoveOperational(data, m));
     const sold = {}; let earliest = Date.now();
     moves.forEach((m) => { sold[m.productId] = (sold[m.productId] || 0) + (-m.qty); if (m.ts < earliest) earliest = m.ts; });
     const weeksObs = moves.length ? Math.max(1, Math.min(WEEKS_LOOKBACK, (Date.now() - earliest) / weekMs)) : 1;
@@ -10972,7 +11001,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
   const since7 = Date.now() - 7 * 864e5; const catRev = {};
-  data.stockMovements.forEach((m) => { if (m.branchId === branch.id && typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
+  data.stockMovements.forEach((m) => { if (m.branchId === branch.id && isInvoiceSaleMovement(m) && saleMoveAccountingTs(data, m) >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
   const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
 
@@ -14071,7 +14100,7 @@ function BranchesTab({ data, update }) {
     // Profit (recognized in P&L): gross sales − COGS − expenses for this branch
     const recInvs = operationalInvoices(data).filter((i) => i.branchId === b.id && invRecognized(i, data));
     const grossSales = recInvs.reduce((s, i) => s + i.totalCents, 0);
-    const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.branchId === b.id && saleMoveRecognized(data, m));
+    const saleMoves = data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && m.branchId === b.id && saleMoveRecognized(data, m));
     const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
     const expenses = data.expenses.filter((e) => (!e.status || e.status === "approved") && e.branchId === b.id).reduce((s, e) => s + e.amountCents, 0);
     const losses = data.stockMovements.filter((movement) => movement.branchId === b.id && String(movement.reason || "").startsWith("Loss/Damage"));
@@ -15276,22 +15305,22 @@ function aiDigest(data) {
   const activeInvoices = operationalInvoices(data);
   const prod = (id) => data.products.find((p) => p.id === id);
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
-  const saleMv = (pred) => data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && pred(m));
+  const saleMv = (pred) => data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && pred(m));
   const branches = data.branches.map((b) => {
     const it = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= startToday);
     const iy = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= startYest && i.ts < startToday);
     const i7 = activeInvoices.filter((i) => i.branchId === b.id && i.ts >= start7);
     const salesToday = it.reduce((s, i) => s + i.totalCents, 0);
     const recognizedSalesToday = it.filter((i) => invRecognized(i, data)).reduce((s, i) => s + i.totalCents, 0);
-    const mv = saleMv((m) => m.branchId === b.id && m.ts >= startToday && saleMoveOperational(data, m));
+    const mv = saleMv((m) => m.branchId === b.id && saleMoveAccountingTs(data, m) >= startToday && saleMoveOperational(data, m));
     const cogs = mv.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
     return { branch: b.name, salesTodayKES: k(salesToday), recognizedSalesTodayKES: k(recognizedSalesToday), salesYesterdayKES: k(iy.reduce((s, i) => s + i.totalCents, 0)), transactionsToday: it.length, transactionsYesterday: iy.length, itemsSoldToday: mv.reduce((s, m) => s + (-m.qty), 0), cogsKES: k(cogs), grossProfitKES: k(salesToday - cogs), marginPct: salesToday > 0 ? Math.round((salesToday - cogs) / salesToday * 100) : 0, last7SalesKES: k(i7.reduce((s, i) => s + i.totalCents, 0)) };
   });
-  const byProd = {}; saleMv((m) => m.ts >= startToday && saleMoveOperational(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
+  const byProd = {}; saleMv((m) => saleMoveAccountingTs(data, m) >= startToday && saleMoveOperational(data, m)).forEach((m) => { byProd[m.productId] = (byProd[m.productId] || 0) + (-m.qty); });
   const topProducts = Object.entries(byProd).map(([id, u]) => {
     const p = prod(id);
     if (!p) return null;
-    const revenue = saleMv((m) => m.productId === id && m.ts >= startToday && saleMoveOperational(data, m))
+    const revenue = saleMv((m) => m.productId === id && saleMoveAccountingTs(data, m) >= startToday && saleMoveOperational(data, m))
       .reduce((sum, movement) => sum + (-movement.qty) * branchProductPriceCents(p, movement.branchId), 0);
     return { product: p.name, sku: p.sku, units: u, revenueKES: k(revenue) };
   }).filter(Boolean).sort((a, b) => b.revenueKES - a.revenueKES).slice(0, 10);
@@ -15693,7 +15722,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
   const invs = activeInvoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
   const recInvs = invs.filter((i) => invRecognized(i, data)); // counted in P&L only after payment and end-of-day
-  const saleMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && inRange(m.ts) && inBranch(m.branchId) && saleMoveRecognized(data, m));
+  const saleMoves = data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && inRange(saleMoveAccountingTs(data, m)) && inBranch(m.branchId) && saleMoveRecognized(data, m));
   const invById = {}; data.invoices.forEach((i) => { invById[i.id] = i; });
   const paymentTs = (payment) => Number(
     payment?.ts || payment?.createdAt || payment?.updatedAt || payment?.serverTs || 0
@@ -15774,7 +15803,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const movementSoldQty = {};
   saleMoves.forEach((movement) => {
     const key = productKeyForId(movement.productId);
-    if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) + Math.max(0, -Number(movement.qty || 0));
+    if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) - Number(movement.qty || 0);
   });
   const invoiceSoldQty = {};
   invs.forEach((invoice) => (invoice.items || []).forEach((item) => {
@@ -16042,7 +16071,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (sub === "inventory") return { name: "inventory", headers: ["Product", "SKU", "On hand", "Cost value", "Retail value"], rows: reportProducts.map((p) => { const valuation = productStockValuation(data, p, bId); return [p.name, p.sku, valuation.quantity, m(valuation.costValue), m(valuation.retailValue)]; }) };
     if (sub === "reorder") {
       const weekMs = 7 * 864e5, LB = 8; const lbStart = Date.now() - LB * weekMs;
-      const fm = data.stockMovements.filter((m2) => typeof m2.reason === "string" && m2.reason.startsWith("Sale") && m2.ts >= lbStart && inBranch(m2.branchId));
+      const fm = data.stockMovements.filter((m2) => isInvoiceSaleMovement(m2) && saleMoveAccountingTs(data, m2) >= lbStart && inBranch(m2.branchId) && saleMoveOperational(data, m2));
       const sbp = {}; let earliest = Date.now(); fm.forEach((m2) => { sbp[m2.productId] = (sbp[m2.productId] || 0) + (-m2.qty); if (m2.ts < earliest) earliest = m2.ts; });
       const wkObs = fm.length ? Math.max(1, Math.min(LB, (Date.now() - earliest) / weekMs)) : 1;
       const rws = branchProductsUnique(data, bId).map((p) => { const wk = duplicateProductIds(data, p, bId).reduce((s, id) => s + (sbp[id] || 0), 0) / wkObs; if (wk <= 0) return null; const oh = productOnHand(data, p, bId); const lvl = p.reorderLevel ?? data.settings.reorderLevel; const cover = oh / wk; const need = Math.max(0, Math.ceil(wk * reorderWeeks - oh)); return { p, oh, lvl, wk, cover, need }; }).filter((r) => r && r.need > 0).sort((a, b) => a.cover - b.cover);
@@ -16477,7 +16506,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         // Weekly reorder forecast: demand is a weekly run-rate measured over a recent lookback window.
         const WEEKS_LOOKBACK = 8; const weekMs = 7 * 864e5;
         const lookbackStart = Date.now() - WEEKS_LOOKBACK * weekMs;
-        const fcMoves = data.stockMovements.filter((m) => typeof m.reason === "string" && m.reason.startsWith("Sale") && m.ts >= lookbackStart && inBranch(m.branchId));
+        const fcMoves = data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && saleMoveAccountingTs(data, m) >= lookbackStart && inBranch(m.branchId) && saleMoveOperational(data, m));
         const soldByProd = {}; let earliest = Date.now();
         fcMoves.forEach((m) => { soldByProd[m.productId] = (soldByProd[m.productId] || 0) + (-m.qty); if (m.ts < earliest) earliest = m.ts; });
         const weeksObserved = fcMoves.length ? Math.max(1, Math.min(WEEKS_LOOKBACK, (Date.now() - earliest) / weekMs)) : 1;
