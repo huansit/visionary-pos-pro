@@ -954,6 +954,42 @@ test("5. two devices sync a complete transaction sale across invoice, payment, a
     });
 });
 
+test("5aa. management invoice settlement events clear debt on every admin device", async () => {
+  const invoiceId = "inv-settlement-event-001";
+  const invoice = {
+    id: invoiceId,
+    type: "invoice",
+    branchId: "b_sip",
+    clientTs: 4000,
+    payload: { totalCents: 87500, paidCents: 0, status: "debt", customerName: "Settlement Test" },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [invoice] })
+    .expect(200);
+
+  const settlement = {
+    id: "invoiceSettlement:inv-settlement-event-001:5000",
+    type: "invoiceSettlement",
+    branchId: "b_sip",
+    clientTs: 5000,
+    payload: { invoiceId, branchId: "b_sip", paidCents: 87500, status: "paid", carriedOver: false },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [settlement] })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(settlement.id)));
+
+  await withAdminSession(request(app).get("/api/sync/pull?since=0"))
+    .expect(200)
+    .expect((res) => {
+      const received = res.body.events.find((event) => event.id === settlement.id);
+      assert.ok(received);
+      assert.equal(received.type, "invoiceSettlement");
+      assert.equal(received.payload.invoiceId, invoiceId);
+      assert.equal(received.payload.paidCents, 87500);
+    });
+});
+
 test("5a. admin stock corrections retain their audit details across devices", async () => {
   const correction = {
     id: "stock-correction-admin-001",

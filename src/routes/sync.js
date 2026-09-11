@@ -726,6 +726,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
 
 const EVENT_TYPES = new Set([
   "invoice",
+  "invoiceSettlement",
   "payment",
   "invoiceNote",
   "invoiceVoidRequest",
@@ -788,6 +789,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "cashMovement",
   "endOfDay",
   "payment",
+  "invoiceSettlement",
   "purchase",
   "invoiceVoidDecision",
   "stockTransferDecision",
@@ -1242,6 +1244,31 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             const numberedInvoice = await assignInvoiceNumber(client, eventToStore);
             eventToStore = numberedInvoice.event;
             invoiceNumbers[eventToStore.id] = numberedInvoice.number;
+          } else if (type === "invoiceSettlement") {
+            if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
+              throw syncEventError("supervisor_authorization_required");
+            }
+            const invoiceId = String(eventToStore.payload?.invoiceId || "").trim();
+            const invoice = invoiceId
+              ? await client.query("SELECT branch_id, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1", [invoiceId])
+              : { rows: [] };
+            const storedInvoice = invoice.rows[0];
+            if (!storedInvoice) throw syncEventError("invoice_not_found");
+            const invoiceBranchId = storedInvoice.branch_id || storedInvoice.branchId || "";
+            const paidCents = Math.max(0, Number(eventToStore.payload?.paidCents || 0));
+            const totalCents = Math.max(0, Number(storedInvoice.payload?.totalCents || 0));
+            if (!Number.isFinite(paidCents) || paidCents > totalCents) throw syncEventError("invoice_settlement_amount_invalid");
+            eventToStore = {
+              ...eventToStore,
+              branchId: invoiceBranchId,
+              payload: {
+                ...(eventToStore.payload || {}),
+                invoiceId,
+                branchId: invoiceBranchId,
+                paidCents,
+                recordedBy: req.account.name || req.account.email || "Supervisor",
+              },
+            };
           } else if (type === "borrowing") {
             const numberedTransfer = await assignTransferNumber(client, eventToStore);
             eventToStore = numberedTransfer.event;

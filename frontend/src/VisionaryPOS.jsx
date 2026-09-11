@@ -81,7 +81,9 @@ const RESET_EPOCH_KEY = "visionary:pos:sync:reset-epoch:v1";
 const INVOICE_SYNC_REPAIR_KEY = "visionary:pos:sync:invoice-repair:v1";
 const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
-const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v1";
+const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
+const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
+const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -94,7 +96,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 const REALTIME_SYNC_MS = 30000;
@@ -1859,6 +1861,41 @@ function eventFromRecord(collection, record, data) {
     payload: cleanPayload(type, record),
   };
 }
+function invoiceSettlementEvent(invoice, data, settledAt = now()) {
+  const invoiceId = String(invoice?.id || "");
+  const ts = Math.max(1, Number(settledAt) || now());
+  return {
+    id: `invoiceSettlement:${encodeURIComponent(invoiceId)}:${ts}`,
+    type: "invoiceSettlement",
+    branchId: branchIdFor(invoice, data),
+    clientTs: ts,
+    payload: {
+      invoiceId,
+      branchId: branchIdFor(invoice, data),
+      paidCents: Math.max(0, Number(invoice?.paidCents) || 0),
+      status: invoice?.status || "",
+      carriedOver: Boolean(invoice?.carriedOver),
+      lastSettledBy: invoice?.lastSettledBy || "",
+      lastSettledByName: invoice?.lastSettledByName || "",
+      lastSettledAt: Number(invoice?.lastSettledAt || ts),
+      settledBy: invoice?.settledBy || "",
+      settledByName: invoice?.settledByName || "",
+      settledAt: Number(invoice?.settledAt || 0),
+    },
+  };
+}
+function invoiceSettlementChanged(before, after) {
+  const wasPaid = Math.max(0, Number(before?.paidCents) || 0);
+  const isPaid = Math.max(0, Number(after?.paidCents) || 0);
+  return isPaid > wasPaid
+    || (before?.carriedOver && !after?.carriedOver)
+    || Number(after?.lastSettledAt || after?.settledAt || 0) > Number(before?.lastSettledAt || before?.settledAt || 0);
+}
+function invoiceSettlementRepairEvents(data) {
+  return (data?.invoices || [])
+    .filter((invoice) => Number(invoice?.lastSettledAt || invoice?.settledAt || 0) > 0)
+    .map((invoice) => invoiceSettlementEvent(invoice, data, invoice.lastSettledAt || invoice.settledAt));
+}
 function settingsEvent(data) {
   return {
     id: "settings",
@@ -1879,6 +1916,10 @@ function diffToSyncEvents(prev, next) {
       if (!record?.id) continue;
       const old = before.get(record.id);
       if (!old || recordChanged(old, record, type)) {
+        if (collection === "invoices" && old) {
+          if (invoiceSettlementChanged(old, record)) events.push(invoiceSettlementEvent(record, next));
+          continue;
+        }
         const ev = eventFromRecord(collection, { ...record, updatedAt: record.updatedAt || record.ts || now() }, next);
         if (ev) events.push(ev);
       }
@@ -1945,6 +1986,32 @@ function collectionForType(type) {
 function mergeSyncEvents(data, events) {
   let next = { ...data };
   for (const ev of events || []) {
+    if (ev.type === "invoiceSettlement") {
+      const settlement = ev.payload || {};
+      const invoiceId = String(settlement.invoiceId || "");
+      if (!invoiceId) continue;
+      next = {
+        ...next,
+        invoices: (next.invoices || []).map((invoice) => {
+          if (invoice.id !== invoiceId) return invoice;
+          const paidCents = Math.max(Number(invoice.paidCents || 0), Number(settlement.paidCents || 0));
+          const fullyPaid = paidCents >= Number(invoice.totalCents || 0) && Number(invoice.totalCents || 0) > 0;
+          return {
+            ...invoice,
+            paidCents,
+            status: fullyPaid ? "paid" : (settlement.status || invoice.status),
+            carriedOver: fullyPaid ? false : invoice.carriedOver,
+            lastSettledBy: settlement.lastSettledBy || invoice.lastSettledBy,
+            lastSettledByName: settlement.lastSettledByName || invoice.lastSettledByName,
+            lastSettledAt: Math.max(Number(invoice.lastSettledAt || 0), Number(settlement.lastSettledAt || 0)),
+            settledBy: settlement.settledBy || invoice.settledBy,
+            settledByName: settlement.settledByName || invoice.settledByName,
+            settledAt: Math.max(Number(invoice.settledAt || 0), Number(settlement.settledAt || 0)),
+          };
+        }),
+      };
+      continue;
+    }
     const collection = collectionForType(ev.type);
     if (!collection) continue;
     if (collection === "settings") {
@@ -2070,6 +2137,16 @@ async function runSyncClient(currentData, options = {}) {
   let dataChanged = false;
   const credentialProvision = { ok: 0, failed: 0 };
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
+  const settlementRepairPending = await kvGet(INVOICE_SETTLEMENT_REPAIR_KEY) !== INVOICE_SETTLEMENT_REPAIR_VERSION;
+  const settlementRepairs = settlementRepairPending ? invoiceSettlementRepairEvents(data) : [];
+  if (settlementRepairs.length) {
+    const knownIds = new Set(outbox.map((event) => event.id));
+    const newRepairs = settlementRepairs.filter((event) => !knownIds.has(event.id));
+    if (newRepairs.length) {
+      outbox = [...outbox, ...newRepairs];
+      await saveOutbox(outbox);
+    }
+  }
   let cursor = await loadCursor();
   let resetEpoch = await loadResetEpoch();
   if (options.forceFullPull) {
@@ -2156,6 +2233,9 @@ async function runSyncClient(currentData, options = {}) {
   const credentialText = "";
   const nextSyncError = outbox.length ? [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") : "";
   const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
+  if (settlementRepairPending && settlementRepairs.every((event) => !outbox.some((queued) => queued.id === event.id))) {
+    await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
+  }
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
     || previousStatus.cursor !== nextStatus.cursor
