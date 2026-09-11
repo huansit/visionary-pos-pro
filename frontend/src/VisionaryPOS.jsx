@@ -5796,18 +5796,18 @@ body{overscroll-behavior:none}
   .admin-mobile-nav select{height:38px;border-radius:11px;background:var(--surface);box-shadow:0 4px 14px rgba(9,20,33,.06)}
   .adminwrap{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
   .mobile-app-tabs{position:fixed;z-index:30;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:max(8px,env(safe-area-inset-bottom));padding:6px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 12px 36px rgba(9,20,33,.18);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-  .mobile-app-tabs button{display:grid;place-items:center;gap:2px;min-width:0;min-height:54px;padding:5px 2px;border:0;border-radius:13px;background:transparent;color:var(--muted-2);font:750 9px/1.1 var(--font-ui);cursor:pointer}
+  .mobile-app-tabs button{display:grid;place-items:center;gap:2px;min-width:0;min-height:54px;padding:5px 2px;border:0;border-radius:13px;background:transparent;color:var(--muted-2);font:750 9px/1.1 var(--font-ui);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
   .mobile-app-tabs button svg{width:19px;height:19px}
   .mobile-app-tabs button.on{background:color-mix(in srgb,var(--accent) 14%,var(--surface));color:var(--accent)}
   .mobile-app-tabs button.more-open{color:var(--accent)}
   .mobile-app-menu{position:fixed;z-index:29;display:block;left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:calc(76px + env(safe-area-inset-bottom));max-height:min(68dvh,540px);overflow:auto;padding:10px;background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 14px 40px rgba(9,20,33,.22);overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
   .mobile-app-menu-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 4px 9px;color:var(--text);font-size:14px;font-weight:850}
-  .mobile-app-menu-head button{width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:9px;background:var(--surface-2);color:var(--muted);cursor:pointer}
+  .mobile-app-menu-head button{width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:9px;background:var(--surface-2);color:var(--muted);cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   .mobile-app-menu-head button svg{width:17px;height:17px}
   .mobile-app-menu-group{display:grid;gap:3px;padding:8px 0;border-top:1px solid var(--border-soft)}
   .mobile-app-menu-group:first-of-type{border-top:0}
   .mobile-app-menu-group>strong{padding:2px 6px;color:var(--muted-2);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
-  .mobile-app-menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 9px;border:0;border-radius:10px;background:transparent;color:var(--text);font:700 13px var(--font-ui);text-align:left;cursor:pointer}
+  .mobile-app-menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 9px;border:0;border-radius:10px;background:transparent;color:var(--text);font:700 13px var(--font-ui);text-align:left;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   .mobile-app-menu-item svg{width:17px;height:17px;color:var(--accent)}
   .mobile-app-menu-item.on{background:color-mix(in srgb,var(--accent) 12%,var(--surface));color:var(--accent)}
 }
@@ -8624,14 +8624,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       openDebtPayments();
       return;
     }
+    // A delayed smooth scroll holds the visual response behind the page's
+    // momentum scroll, particularly on mobile Safari. Reset immediately so a
+    // tap always produces an instant workspace change.
+    const content = workspaceRootRef.current?.closest(".content");
+    if (content) content.scrollTop = 0;
     if (tabId === "invoices") {
       setInvoiceFocus(pendingVoidCount > 0 ? { filter: "void_pending", key: Date.now() } : null);
     }
     setTab(tabId);
-    window.requestAnimationFrame(() => {
-      const content = workspaceRootRef.current?.closest(".content");
-      content?.scrollTo?.({ top: 0, behavior: "smooth" });
-    });
   };
   const navBadgeCount = (itemId) => itemId === "expenses"
     ? pendingExpenseCount
