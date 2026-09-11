@@ -3987,6 +3987,13 @@ body{overscroll-behavior:none}
     .vpos.app .content{flex:1 0 auto;min-height:0;overflow:visible;-webkit-overflow-scrolling:auto}
     .vpos.app .navside,.vpos.app .navside.collapsed{position:static}
   }
+  @media (max-width:620px){
+    /* A blurred fixed layer makes Safari repaint the page beneath it while a
+       finger is moving. Keep the app-like navigation, but make it opaque. */
+    .vpos.app .mobile-app-tabs{background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:0 6px 18px rgba(9,20,33,.14)}
+    .vpos.app .content,.vpos.app .cashier-workstation{touch-action:pan-y pinch-zoom}
+    .vpos.app .cashier-product,.vpos.app .invoice-mobile-card{transition:none}
+  }
 }
 
 /* register 3-col */
@@ -6634,7 +6641,9 @@ export default function VisionPOS() {
         }
       } catch (_) {}
     };
-    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "scroll", "touchstart", "wheel"];
+    // Touch start already records a finger-driven scroll. Listening to every
+    // scroll frame adds work on iOS without improving session expiry accuracy.
+    const activityEvents = ["click", "keydown", "mousemove", "pointerdown", "touchstart", "wheel"];
     activityEvents.forEach((name) => window.addEventListener(name, recordActivity, { passive: true }));
     window.addEventListener("focus", verifyActiveSession);
     window.addEventListener("pageshow", verifyActiveSession);
@@ -7432,7 +7441,7 @@ function AdminLogin({ onBack, onSignedIn }) {
 function ProductImage({ src, alt, fit }) {
   const [bad, setBad] = useState(false);
   if (!src || bad) return <Wine />;
-  return <img src={src} alt={alt || ""} onError={() => setBad(true)} style={{ width: "100%", height: "100%", objectFit: fit || "contain", borderRadius: 10 }} />;
+  return <img src={src} alt={alt || ""} loading="lazy" decoding="async" onError={() => setBad(true)} style={{ width: "100%", height: "100%", objectFit: fit || "contain", borderRadius: 10 }} />;
 }
 function CashierCategoryButton({ label, count, active, onClick }) {
   return (
