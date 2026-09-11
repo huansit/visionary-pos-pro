@@ -9,7 +9,7 @@ import { isMySql, pool, serverNow } from "../src/db.js";
 
 function usage(message = "") {
   if (message) console.error(`ERROR: ${message}`);
-  console.log(`\nUsage (dry run by default):\n  node --env-file=.env db/reconcile-invoice-debts.js --branch b_sip --list\n  node --env-file=.env db/reconcile-invoice-debts.js --branch b_sip --method payroll --invoice RCP-SIP-000545=350 [--invoice RECEIPT=AMOUNT ...] --apply\n\nAmounts are Kenya shillings. --apply is required to write. The command only repairs fully cleared invoices and refuses an amount that does not exactly match the current outstanding balance.`);
+  console.log(`\nUsage (dry run by default):\n  node --env-file=.env db/reconcile-invoice-debts.js --branch b_sip --list\n  node --env-file=.env db/reconcile-invoice-debts.js --branch b_sip --method payroll --invoice RCP-SIP-000545=350 [--invoice RECEIPT=AMOUNT ...] --apply\n  node --env-file=.env db/reconcile-invoice-debts.js --branch b_sip --method m-pesa --mpesa-code ABCD1234 --receipt-total 1830 --invoice RCP-SIP-000545=350 [--invoice RECEIPT=AMOUNT ...] --apply\n\nAmounts are Kenya shillings. --apply is required to write. A historical M-Pesa receipt is stored once and allocated across the listed invoices; its total cannot be less than the allocations.`);
   process.exitCode = message ? 1 : 0;
 }
 
@@ -21,6 +21,8 @@ function parseArgs(argv) {
     else if (arg === "--list") result.list = true;
     else if (arg === "--branch") result.branchId = argv[++index];
     else if (arg === "--method") result.method = argv[++index];
+    else if (arg === "--mpesa-code") result.mpesaCode = argv[++index];
+    else if (arg === "--receipt-total") result.receiptTotal = argv[++index];
     else if (arg === "--invoice") result.invoices.push(argv[++index]);
     else if (arg === "--help" || arg === "-h") return { help: true };
     else throw new Error(`unknown option ${arg}`);
@@ -33,6 +35,9 @@ function centsFromShillings(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(?:\.\d{1,2})?$/.test(String(value))) return 0;
   return Math.round(amount * 100);
+}
+function mpesaCodeLast4(value) {
+  return text(value).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(-4);
 }
 function rowPayload(row) { return row?.payload && typeof row.payload === "object" ? row.payload : {}; }
 
@@ -116,6 +121,8 @@ async function main() {
   if (!branchId) throw new Error("--branch is required");
   if (!new Set(["payroll", "m-pesa", "cash"]).has(method)) throw new Error("--method must be payroll, m-pesa, or cash");
   if (!options.list && !options.invoices.length) throw new Error("at least one --invoice is required, or use --list");
+  const mpesaCodeLastFour = method === "m-pesa" ? mpesaCodeLast4(options.mpesaCode) : "";
+  if (method === "m-pesa" && mpesaCodeLastFour.length !== 4) throw new Error("--mpesa-code is required for a historical M-Pesa receipt");
   const requested = options.invoices.map(receiptAndCents);
   const receipts = new Set();
   for (const entry of requested) {
@@ -165,6 +172,15 @@ async function main() {
     }
 
     console.table(repairs.map((repair) => ({ receipt: repair.receipt, invoiceId: repair.invoice.id, amount: repair.cents / 100, method })));
+    const allocatedCents = repairs.reduce((sum, repair) => sum + repair.cents, 0);
+    const receiptTotalCents = method === "m-pesa" ? centsFromShillings(options.receiptTotal) : 0;
+    if (method === "m-pesa" && receiptTotalCents < allocatedCents) {
+      throw new Error(`the M-Pesa receipt total must be at least ${allocatedCents / 100}`);
+    }
+    const settlementBatchId = method === "m-pesa"
+      ? `historical-mpesa:${branchId}:${mpesaCodeLastFour}:${repairs.map((repair) => repair.invoice.id).sort().join(":")}`
+      : "";
+    const mpesaReceiptId = method === "m-pesa" ? `receipt:${settlementBatchId}` : "";
     if (!options.apply) {
       console.log("Dry run passed. Re-run with --apply to record these historical settlements.");
       await client.query("ROLLBACK");
@@ -194,6 +210,14 @@ async function main() {
           ts: timestamp,
           recoveryReason: recoveryNote,
           receiptNo: repair.receipt,
+          ...(method === "m-pesa" ? {
+            bulkSettlementId: settlementBatchId,
+            mpesaReceiptId,
+            mpesaCodeLast4: mpesaCodeLastFour,
+            mpesaReceiptTotalCents: receiptTotalCents,
+            mpesaReceiptRegisteredAt: timestamp,
+            mpesaReceiptRegisteredByName: "Historical settlement recovery",
+          } : {}),
         },
       };
       timestamp += 1;
