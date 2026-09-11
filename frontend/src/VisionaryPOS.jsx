@@ -4917,6 +4917,7 @@ body{overscroll-behavior:none}
 .ist.void-pending{background:rgba(220,38,38,.14);color:#DC2626}
 .ist.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .ist.paid{background:rgba(52,211,153,.16);color:var(--ok)}
+.ist.line-voided{background:rgba(217,138,28,.14);color:var(--warn)}
 .paycell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .paycell select{height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 6px}
 .paycell input{width:90px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 8px;font-family:var(--font-mono)}
@@ -10172,9 +10173,9 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
-    : voidStatus === "pending" ? "void pending" : status;
+    : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "void-pending" : status;
+    : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
   return (
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
@@ -10197,9 +10198,9 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
-    : voidStatus === "pending" ? "void pending" : status;
+    : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "void-pending" : status;
+    : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
   return (
     <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
       <header>
@@ -10608,39 +10609,31 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
   };
   const selectedLine = items.find((item) => String(item.lineIndex) === String(lineVoidIndex));
   const selectedLineState = selectedLine ? invoiceLineVoidState(data, live.id, selectedLine.lineIndex) : null;
-  const requestLineVoid = () => {
+  const voidLineItem = () => {
     const qty = Math.floor(Number(lineVoidQty || 0));
     if (!selectedLine || qty <= 0 || qty > Number(selectedLine.qty || 0)) {
       setLineVoidError("Choose an item and a quantity available on this invoice.");
       return;
     }
-    if (lineVoidReason.trim().length < 3) {
+    if (!selectedLineState?.pending && lineVoidReason.trim().length < 3) {
       setLineVoidError("Enter a short reason for the item void.");
       return;
     }
-    if (selectedLineState?.pending) {
-      setLineVoidError("This item already has a pending void request.");
-      return;
-    }
     const ts = now();
-    update((d) => ({ ...d, invoiceLineVoidRequests: [{
+    const request = selectedLineState?.pending || {
       id: uid("line-void-request"), invoiceId: live.id, branchId: live.branchId,
       lineIndex: selectedLine.lineIndex, qty, reason: lineVoidReason.trim(), requestedAt: ts, ts, synced: false,
-    }, ...(d.invoiceLineVoidRequests || [])] }));
-    setLineVoidIndex(""); setLineVoidQty("1"); setLineVoidReason(""); setLineVoidError("");
-  };
-  const decideLineVoid = (request, decision) => {
-    const reason = lineVoidReason.trim();
-    if (decision === "rejected" && !reason) {
-      setLineVoidError("Enter a reason before rejecting the item void.");
-      return;
-    }
-    const ts = now();
-    update((d) => ({ ...d, invoiceLineVoidDecisions: [{
+    };
+    const decision = {
       id: uid("line-void-decision"), invoiceId: live.id, requestId: request.id, branchId: live.branchId,
-      lineIndex: request.lineIndex, qty: request.qty, decision, reason, decidedBy: actorName, decidedByName: actorName, decidedAt: ts, ts, synced: false,
-    }, ...(d.invoiceLineVoidDecisions || [])] }));
-    setLineVoidReason(""); setLineVoidError("");
+      lineIndex: request.lineIndex, qty: request.qty, decision: "approved", reason: request.reason,
+      decidedBy: actorName, decidedByName: actorName, decidedAt: ts, ts, synced: false,
+    };
+    update((d) => reconcileInvoicePayments({ ...d,
+      invoiceLineVoidRequests: selectedLineState?.pending ? (d.invoiceLineVoidRequests || []) : [request, ...(d.invoiceLineVoidRequests || [])],
+      invoiceLineVoidDecisions: [decision, ...(d.invoiceLineVoidDecisions || [])],
+    }));
+    setLineVoidIndex(""); setLineVoidQty("1"); setLineVoidReason(""); setLineVoidError("");
   };
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
@@ -10669,6 +10662,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
           <div><span>Paid</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
           <div className="due"><span>Balance</span><b>{fmt(out, cur)}</b></div>
         </div>
+        {live.lineVoided ? <div className="notice void-decision approved"><b>Item voided</b></div> : null}
 
         {voidPending ? (
           <div className="void-review-box">
@@ -10862,18 +10856,16 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         </details>
 
         {!voidApproved && items.length ? <details className="invoice-detail-disclosure">
-          <summary><span>Void one invoice item <b>Restores stock</b></span><ChevronDown /></summary>
+          <summary><span>Void item</span><ChevronDown /></summary>
           <div className="invoice-detail-note-form">
-            <div className="notice compact-notice">Select only the returned or cancelled item. The request needs supervisor approval; once approved, only that quantity is restored to stock and the invoice balance is reduced.</div>
             <label><span>Item</span><select className="select" value={lineVoidIndex} onChange={(event) => { const line = items.find((item) => String(item.lineIndex) === event.target.value); setLineVoidIndex(event.target.value); setLineVoidQty(line ? String(Math.min(1, Number(line.qty || 1))) : "1"); setLineVoidError(""); }}>
               <option value="">Select item to void</option>
               {items.map((item) => <option value={item.lineIndex} key={item.key}>{item.name} — {item.qty} available — {fmt(item.totalCents, cur)}</option>)}
             </select></label>
             {selectedLine ? <label><span>Quantity to void</span><input className="input" type="number" min="1" max={selectedLine.qty} step="1" value={lineVoidQty} onChange={(event) => { setLineVoidQty(event.target.value); setLineVoidError(""); }} /></label> : null}
-            <label><span>Reason</span><textarea className="input" placeholder="Returned, cancelled, or incorrect item" value={lineVoidReason} onChange={(event) => { setLineVoidReason(event.target.value); setLineVoidError(""); }} /></label>
-            {selectedLineState?.pending ? <div className="void-review-box"><b>Item void awaiting approval</b><span>{selectedLine.name} × {selectedLineState.pending.qty} — {selectedLineState.pending.reason}</span><div className="grid2"><button className="btn btn-ghost" onClick={() => decideLineVoid(selectedLineState.pending, "rejected")}><X /> Reject</button><button className="btn btn-primary" onClick={() => decideLineVoid(selectedLineState.pending, "approved")}><Check /> Approve item void</button></div></div> : null}
+            <label><span>Reason</span><textarea className="input" value={lineVoidReason} onChange={(event) => { setLineVoidReason(event.target.value); setLineVoidError(""); }} /></label>
             {lineVoidError ? <div className="formerr">{lineVoidError}</div> : null}
-            <button className="btn btn-ghost" disabled={!selectedLine || Boolean(selectedLineState?.pending)} onClick={requestLineVoid}><AlertCircle /> Request item void</button>
+            <button className="btn btn-primary" disabled={!selectedLine} onClick={voidLineItem}><Check /> Void item</button>
           </div>
         </details> : null}
 
