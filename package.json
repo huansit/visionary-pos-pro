@@ -50,8 +50,8 @@
         "supertest": "^7.0.0"
     },
     "overrides": {
-        "body-parser": "1.20.6",
-        "immutable": "4.3.9"
+        "immutable": "4.3.9",
+        "qs": "6.16.0"
     },
     "engines": {
         "node": ">=20"

@@ -3703,6 +3703,14 @@ body{overscroll-behavior:none}
 .content{position:relative;flex:1;width:100%;min-width:0;min-height:0;padding:18px calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .env-watermark{position:fixed;inset:auto 32px 32px auto;font-size:110px;font-weight:950;letter-spacing:.14em;color:rgba(217,138,28,.08);pointer-events:none;z-index:0}
 
+/* WebKit can temporarily discard a filtered sibling while an inner momentum
+   scroller is moving. Keep the app header flat and let Safari use its native
+   scroll path so long admin lists do not flash blank on iPhone. */
+@supports (-webkit-touch-callout:none){
+  .vpos.app .topbar{position:relative;background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .vpos.app .content{-webkit-overflow-scrolling:auto}
+}
+
 /* register 3-col */
 .regwrap{display:grid;grid-template-columns:224px 1fr 336px;gap:16px;align-items:stretch;height:calc(100dvh - 112px);overflow:hidden}
 .side{display:flex;flex-direction:column;gap:14px;height:100%;overflow-y:auto;padding-right:2px}
