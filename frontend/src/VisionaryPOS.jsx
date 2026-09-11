@@ -3881,11 +3881,19 @@ body{overscroll-behavior:none}
 .env-watermark{position:fixed;inset:auto 32px 32px auto;font-size:110px;font-weight:950;letter-spacing:.14em;color:rgba(217,138,28,.08);pointer-events:none;z-index:0}
 
 /* WebKit can temporarily discard a filtered sibling while an inner momentum
-   scroller is moving. Keep the app header flat and let Safari use its native
-   scroll path so long admin lists do not flash blank on iPhone. */
+   scroller is moving. Keep the app header flat and, on the phone layout, use
+   the document scroller instead of a nested overflow container. The latter
+   can checkerboard (briefly show blank content) during a fast iPhone fling. */
 @supports (-webkit-touch-callout:none){
   .vpos.app .topbar{position:relative;background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none}
-  .vpos.app .content{-webkit-overflow-scrolling:auto}
+  @media (max-width:900px){
+    html,body,#root{height:auto;min-height:100%;overflow:visible}
+    body{overflow-x:hidden;overscroll-behavior-y:none}
+    .vpos.app{height:auto;min-height:100dvh;overflow:visible}
+    .vpos.app .shell{height:auto;min-height:100dvh;overflow:visible}
+    .vpos.app .content{flex:1 0 auto;min-height:0;overflow:visible;-webkit-overflow-scrolling:auto}
+    .vpos.app .navside,.vpos.app .navside.collapsed{position:static}
+  }
 }
 
 /* register 3-col */
