@@ -83,12 +83,12 @@ const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
 const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
-const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v3";
+const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v4";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only
 // in the device cache. Replay its original event once: stable IDs make this
 // idempotent on the server, so a historical payment cannot be charged twice.
 const CASHIER_DEBT_PAYMENT_REPAIR_KEY = "visionary:pos:sync:cashier-debt-payment-repair:v1";
-const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v2";
+const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v3";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -111,6 +111,7 @@ const SESSION_ACTIVITY_WRITE_MS = 5000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
 let activeSessionToken = "";
+let activeSessionRole = "";
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => businessDateValue(Date.now(), DEFAULT_BUSINESS_TIME_ZONE);
@@ -688,7 +689,7 @@ async function loadJson(key, fallback) {
 async function saveJson(key, value) { return await kvSet(key, JSON.stringify(value)); }
 async function loadSessionState() { return await loadJson(SESSION_KEY, null); }
 async function saveSessionState(value) { await saveJson(SESSION_KEY, value); }
-async function clearSessionState() { activeSessionToken = ""; await kvSet(SESSION_KEY, ""); }
+async function clearSessionState() { activeSessionToken = ""; activeSessionRole = ""; await kvSet(SESSION_KEY, ""); }
 
 function storageKeys() {
   try {
@@ -1467,16 +1468,24 @@ function storedSessionStateSync() {
 function storedSessionTokenSync() {
   return storedSessionStateSync()?.sessionToken || "";
 }
+function hasManagementSessionSync() {
+  const role = String(activeSessionRole || storedSessionStateSync()?.role || "").trim().toLowerCase();
+  return ["owner", "admin", "manager", "supervisor"].includes(role);
+}
 function syncUsesSessionAuth(tokenOverride = "") {
   const token = syncSessionToken(tokenOverride);
-  const terminalRuntime = typeof window !== "undefined" && Boolean(window.visionposTerminalAuth);
-  return Boolean(token && !terminalRuntime);
+  // A Windows workstation adds terminal headers to every request. When a
+  // manager is signed in, prefer that management session even on the desktop:
+  // terminal credentials are intentionally barred from financial settlements.
+  // Cashier sessions still use the terminal credential and remain branch-bound.
+  return Boolean(token && hasManagementSessionSync());
 }
 async function syncAuthHeaders(branchId = null, base = {}, tokenOverride = "") {
   return syncUsesSessionAuth(tokenOverride) ? sessionAuthHeaders(base, tokenOverride) : await deviceAuthHeaders(branchId, base);
 }
 function clearSessionStateSync() {
   activeSessionToken = "";
+  activeSessionRole = "";
   try {
     if (typeof window !== "undefined" && window.localStorage) window.localStorage.setItem(SESSION_KEY, "");
   } catch (_) {}
@@ -6397,14 +6406,17 @@ export default function VisionPOS() {
             return;
           }
           lastActivityAtRef.current = savedActivityAt;
+          activeSessionRole = restored.role || restored.kind || "";
           setSession({ ...restored, sessionToken: savedSession.sessionToken });
           setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
         } else {
           activeSessionToken = "";
+          activeSessionRole = "";
           await clearSessionState();
         }
       } catch (_) {
         activeSessionToken = "";
+        activeSessionRole = "";
         await clearSessionState();
       }
     }
@@ -6414,10 +6426,11 @@ export default function VisionPOS() {
     const signedIn = emp || null;
     const signedInAt = now();
     activeSessionToken = sessionToken || signedIn?.sessionToken || "";
+    activeSessionRole = signedIn?.role || signedIn?.kind || "";
     lastActivityAtRef.current = signedInAt;
     setSession(signedIn);
     setView(nextView);
-    saveSessionState({ view: nextView, employeeId: signedIn?.id || null, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: signedInAt, lastActivityAt: signedInAt });
+    saveSessionState({ view: nextView, employeeId: signedIn?.id || null, role: activeSessionRole, sessionToken: sessionToken || signedIn?.sessionToken || "", ts: signedInAt, lastActivityAt: signedInAt });
   };
   const signOutSession = (opts = {}) => {
     const options = opts?.type ? {} : opts;
