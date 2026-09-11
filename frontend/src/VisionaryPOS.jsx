@@ -93,7 +93,9 @@ const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
 const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
-const REALTIME_SYNC_MS = 5000;
+// Realtime events trigger an immediate sync. This timer is only a fallback
+// for devices that temporarily lose their EventSource connection.
+const REALTIME_SYNC_MS = 30000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_MS = 5000;
@@ -2062,6 +2064,7 @@ async function runSyncClient(currentData, options = {}) {
   const cfg = syncConfig();
   const branchId = currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null;
   let data = currentData;
+  let dataChanged = false;
   const credentialProvision = { ok: 0, failed: 0 };
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
   let cursor = await loadCursor();
@@ -2097,6 +2100,7 @@ async function runSyncClient(currentData, options = {}) {
             ? { ...invoice, number: body.invoiceNumbers[invoice.id], synced: true }
             : invoice),
         };
+        dataChanged = true;
       }
       if (body.transferNumbers && typeof body.transferNumbers === "object") {
         data = {
@@ -2105,12 +2109,14 @@ async function runSyncClient(currentData, options = {}) {
             ? { ...transfer, number: body.transferNumbers[transfer.id], synced: true }
             : transfer),
         };
+        dataChanged = true;
       }
       const done = new Set([...(body.accepted || []), ...rejected.map((item) => item.id).filter(Boolean)]);
       outbox = outbox.filter((ev) => !done.has(ev.id));
       await saveOutbox(outbox);
       data = removeRejectedTransferChanges(data, rejected);
       data = markAcceptedSynced(data, body.accepted || []);
+      dataChanged = dataChanged || (body.accepted || []).length > 0 || rejected.length > 0;
     } catch (error) {
       pushErrorText = error?.message || "push_failed";
     }
@@ -2132,7 +2138,11 @@ async function runSyncClient(currentData, options = {}) {
       await saveCursor(0);
       continue;
     }
-    data = mergeSyncEvents(data, body.events || []);
+    const events = body.events || [];
+    if (events.length) {
+      data = mergeSyncEvents(data, events);
+      dataChanged = true;
+    }
     const nextCursor = Number(body.cursor || cursor || 0);
     hasMore = !!body.hasMore && nextCursor > cursor;
     cursor = nextCursor;
@@ -2142,7 +2152,17 @@ async function runSyncClient(currentData, options = {}) {
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
   const nextSyncError = outbox.length ? [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") : "";
-  data = { ...data, lastSyncedAt: now(), _sync: { outboxLength: outbox.length, cursor, error: nextSyncError } };
+  const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
+  const previousStatus = currentData?._sync || {};
+  const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
+    || previousStatus.cursor !== nextStatus.cursor
+    || previousStatus.error !== nextStatus.error;
+  // A no-op fallback poll must not clone and write the whole POS cache. On
+  // lower-powered mobile devices that write was the primary source of UI jank.
+  if (!dataChanged && !syncStatusChanged) {
+    return { data: currentData, status: previousStatus };
+  }
+  data = { ...data, lastSyncedAt: now(), _sync: nextStatus };
   // Commit the cache before the cursor. If iOS rejects the larger cache write,
   // the next sync must replay these events instead of skipping them forever.
   await saveData(data, { required: true });
@@ -6124,6 +6144,7 @@ export default function VisionPOS() {
   const [environmentInfo, setEnvironmentInfo] = useState(null);
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
+  const syncInFlightRef = useRef(false);
   const cloudRecoveryAttemptRef = useRef("");
   const lastActivityAtRef = useRef(0);
   useEffect(() => { dataRef.current = data; }, [data]);
@@ -6342,7 +6363,8 @@ export default function VisionPOS() {
     saveOutbox([]); saveCursor(0); clearSessionState(); setData(empty); saveData(empty); setSession(null); setMenuOpen(false); setView("adminLogin");
   };
   const runSync = async (opts = {}) => {
-    if (!navigator.onLine || (!opts.force && syncing) || !dataRef.current) return;
+    if (!navigator.onLine || syncInFlightRef.current || !dataRef.current) return;
+    syncInFlightRef.current = true;
     syncRequestRef.current = false;
     setSyncing(true);
     try {
@@ -6356,6 +6378,7 @@ export default function VisionPOS() {
       }
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
     } finally {
+      syncInFlightRef.current = false;
       setSyncing(false);
     }
   };
