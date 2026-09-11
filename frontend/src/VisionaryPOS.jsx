@@ -84,6 +84,11 @@ const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
 const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
 const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v1";
+// Earlier desktop and mobile builds could retain an inventory-debt payment only
+// in the device cache. Replay its original event once: stable IDs make this
+// idempotent on the server, so a historical payment cannot be charged twice.
+const CASHIER_DEBT_PAYMENT_REPAIR_KEY = "visionary:pos:sync:cashier-debt-payment-repair:v1";
+const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -96,7 +101,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 const REALTIME_SYNC_MS = 30000;
@@ -1896,6 +1901,23 @@ function invoiceSettlementRepairEvents(data) {
     .filter((invoice) => Number(invoice?.lastSettledAt || invoice?.settledAt || 0) > 0)
     .map((invoice) => invoiceSettlementEvent(invoice, data, invoice.lastSettledAt || invoice.settledAt));
 }
+function cashierDebtPaymentRepairEvents(data) {
+  const debts = new Map((data?.cashierJointDebts || []).map((debt) => [String(debt?.id || ""), debt]));
+  return (data?.cashierJointDebtPayments || [])
+    .map((payment) => {
+      const debt = debts.get(String(payment?.debtId || ""));
+      // A missing payment branch in an old cache can safely inherit only from
+      // its own debt record. Never infer it from whichever branch is selected.
+      const branchId = payment?.branchId || debt?.branchId || null;
+      return branchId ? { ...payment, branchId } : null;
+    })
+    .filter((payment) => payment?.id
+      && payment?.debtId
+      && Math.max(0, Number(payment.amountCents) || 0) > 0
+      && (!payment.status || payment.status === "captured"))
+    .map((payment) => eventFromRecord("cashierJointDebtPayments", payment, data))
+    .filter(Boolean);
+}
 function settingsEvent(data) {
   return {
     id: "settings",
@@ -2130,6 +2152,27 @@ async function enqueueChanges(prev, next) {
   await saveOutbox(outbox);
   return { outboxLength: outbox.length, cursor: await loadCursor() };
 }
+async function publishSyncEvents(events, data) {
+  const list = (events || []).filter(Boolean);
+  if (!list.length) return { accepted: [], rejected: [] };
+  const cfg = syncConfig();
+  const branchId = data?.settings?.activeBranchId || data?.branches?.[0]?.id || null;
+  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
+  const response = await fetch(cfg.apiBaseUrl + "/api/sync/push", {
+    method: "POST",
+    headers,
+    cache: "no-store",
+    body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch() }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `push_failed_${response.status}`);
+  const rejected = Array.isArray(result.rejected) ? result.rejected : [];
+  const accepted = new Set(result.accepted || []);
+  if (rejected.length || list.some((event) => !accepted.has(event.id))) {
+    throw new Error(rejected[0]?.reason || "payment_not_accepted_by_server");
+  }
+  return result;
+}
 async function runSyncClient(currentData, options = {}) {
   const cfg = syncConfig();
   const branchId = currentData?.settings?.activeBranchId || currentData?.branches?.[0]?.id || null;
@@ -2139,9 +2182,12 @@ async function runSyncClient(currentData, options = {}) {
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
   const settlementRepairPending = await kvGet(INVOICE_SETTLEMENT_REPAIR_KEY) !== INVOICE_SETTLEMENT_REPAIR_VERSION;
   const settlementRepairs = settlementRepairPending ? invoiceSettlementRepairEvents(data) : [];
-  if (settlementRepairs.length) {
+  const cashierDebtPaymentRepairPending = await kvGet(CASHIER_DEBT_PAYMENT_REPAIR_KEY) !== CASHIER_DEBT_PAYMENT_REPAIR_VERSION;
+  const cashierDebtPaymentRepairs = cashierDebtPaymentRepairPending ? cashierDebtPaymentRepairEvents(data) : [];
+  const repairs = [...settlementRepairs, ...cashierDebtPaymentRepairs];
+  if (repairs.length) {
     const knownIds = new Set(outbox.map((event) => event.id));
-    const newRepairs = settlementRepairs.filter((event) => !knownIds.has(event.id));
+    const newRepairs = repairs.filter((event) => !knownIds.has(event.id));
     if (newRepairs.length) {
       outbox = [...outbox, ...newRepairs];
       await saveOutbox(outbox);
@@ -2235,6 +2281,9 @@ async function runSyncClient(currentData, options = {}) {
   const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
   if (settlementRepairPending && settlementRepairs.every((event) => !outbox.some((queued) => queued.id === event.id))) {
     await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
+  }
+  if (cashierDebtPaymentRepairPending && cashierDebtPaymentRepairs.every((event) => !outbox.some((queued) => queued.id === event.id))) {
+    await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
   }
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
@@ -9110,13 +9159,26 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
       }
       return;
     }
-    update((current) => ({
-      ...current,
-      cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...payments],
-    }));
-    setMessage(`${fmt(paymentCents, cur)} recorded against ${payments.length} selected inventory debt${payments.length === 1 ? "" : "s"} for ${selected.cashierName}.`);
-    setError("");
-    onSettled?.();
+    setSubmitting(true);
+    try {
+      // M-Pesa and payroll settlements are financial records. Persist their
+      // append-only events to the shared ledger before reporting success, so a
+      // Windows admin action cannot be lost if the browser closes or a later
+      // background sync is interrupted.
+      await publishSyncEvents(payments.map((payment) => eventFromRecord("cashierJointDebtPayments", payment, data)), data);
+      const committedPayments = payments.map((payment) => ({ ...payment, synced: true }));
+      update((current) => ({
+        ...current,
+        cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...committedPayments],
+      }));
+      setMessage(`${fmt(paymentCents, cur)} recorded against ${payments.length} selected inventory debt${payments.length === 1 ? "" : "s"} for ${selected.cashierName}.`);
+      setError("");
+      onSettled?.();
+    } catch (paymentError) {
+      setError("The payment was not saved to the shared ledger. Check the connection and retry; no debt was changed.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const paymentMethods = [

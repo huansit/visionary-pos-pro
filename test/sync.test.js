@@ -2314,6 +2314,19 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.ok(res.body.accepted.includes(paymentId));
     });
 
+  // A device that retained this completed payment locally may replay its
+  // original event after an app update. The stable event id must keep the
+  // ledger to one payment rather than recording the settlement twice.
+  await request(app)
+    .post("/api/sync/push")
+    .set("Authorization", `Bearer ${state.tokenA}`)
+    .send({ events: [jointDebtPayment] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(paymentId));
+    });
+
   await request(app)
     .get("/api/sync/pull?since=0")
     .set("Authorization", `Bearer ${state.tokenB}`)
@@ -2323,6 +2336,7 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.ok(payment);
       assert.equal(payment.payload.cashierId, "cashier-a");
       assert.equal(payment.payload.amountCents, 2500);
+      assert.equal(res.body.events.filter((event) => event.id === paymentId).length, 1);
     });
 
   await request(app)
