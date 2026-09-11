@@ -974,10 +974,20 @@ test("5aa. management invoice settlement events clear debt on every admin device
     clientTs: 5000,
     payload: { invoiceId, branchId: "b_sip", paidCents: 87500, status: "paid", carriedOver: false },
   };
+  const payrollPayment = {
+    id: "pay-settlement-event-001",
+    type: "payment",
+    branchId: "b_sip",
+    clientTs: 5000,
+    payload: { invoiceId, orderId: invoiceId, branchId: "b_sip", amountCents: 87500, method: "payroll", status: "captured" },
+  };
   await withAdminSession(request(app).post("/api/sync/push"))
-    .send({ events: [settlement] })
+    .send({ events: [payrollPayment, settlement] })
     .expect(200)
-    .expect((res) => assert.ok(res.body.accepted.includes(settlement.id)));
+    .expect((res) => {
+      assert.ok(res.body.accepted.includes(payrollPayment.id));
+      assert.ok(res.body.accepted.includes(settlement.id));
+    });
 
   await withAdminSession(request(app).get("/api/sync/pull?since=0"))
     .expect(200)
@@ -987,6 +997,7 @@ test("5aa. management invoice settlement events clear debt on every admin device
       assert.equal(received.type, "invoiceSettlement");
       assert.equal(received.payload.invoiceId, invoiceId);
       assert.equal(received.payload.paidCents, 87500);
+      assert.equal(res.body.events.find((event) => event.id === payrollPayment.id)?.payload.method, "payroll");
     });
 });
 

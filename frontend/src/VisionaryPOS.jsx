@@ -83,7 +83,7 @@ const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
 const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
-const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v1";
+const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v2";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only
 // in the device cache. Replay its original event once: stable IDs make this
 // idempotent on the server, so a historical payment cannot be charged twice.
@@ -1866,9 +1866,9 @@ function eventFromRecord(collection, record, data) {
     payload: cleanPayload(type, record),
   };
 }
-function invoiceSettlementEvent(invoice, data, settledAt = now()) {
+function invoiceSettlementEvent(invoice, data, settledAt = 0) {
   const invoiceId = String(invoice?.id || "");
-  const ts = Math.max(1, Number(settledAt) || now());
+  const ts = Math.max(1, Number(settledAt || invoice?.lastSettledAt || invoice?.settledAt) || now());
   return {
     id: `invoiceSettlement:${encodeURIComponent(invoiceId)}:${ts}`,
     type: "invoiceSettlement",
@@ -9488,29 +9488,41 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
           payment.kopokopoAllocationId = allocation?.id || "";
         });
       }
-      update((data) => ({
-        ...data,
-        invoices: data.invoices.map((invoice) => {
-        if (!invoiceIds.has(invoice.id) || !invoicePaidCents.has(invoice.id)) return invoice;
-        const paidCents = invoicePaidCents.get(invoice.id);
-        const cleared = paidCents >= Number(invoice.totalCents || 0);
-        return {
-          ...invoice,
-          paidCents,
-          carriedOver: cleared ? false : invoice.carriedOver,
-          method: invoiceMethods.get(invoice.id) || invoice.method,
-          lastSettledBy: user,
-          lastSettledByName: actorName,
-          lastSettledAt: ts,
-          settledBy: cleared ? user : invoice.settledBy,
-          settledByName: cleared ? actorName : invoice.settledByName,
-          settledAt: cleared ? ts : invoice.settledAt,
-          status: cleared ? "paid" : "open",
-          synced: false,
-          bulkSettlementId: batchId,
-        };
-        }),
-        payments: [...(data.payments || []), ...paymentRecords],
+      const settledInvoices = new Map(selectedInvoices
+        .filter((invoice) => invoiceIds.has(invoice.id) && invoicePaidCents.has(invoice.id))
+        .map((invoice) => {
+          const paidCents = invoicePaidCents.get(invoice.id);
+          const cleared = paidCents >= Number(invoice.totalCents || 0);
+          return [invoice.id, {
+            ...invoice,
+            paidCents,
+            carriedOver: cleared ? false : invoice.carriedOver,
+            method: invoiceMethods.get(invoice.id) || invoice.method,
+            lastSettledBy: user,
+            lastSettledByName: actorName,
+            lastSettledAt: ts,
+            settledBy: cleared ? user : invoice.settledBy,
+            settledByName: cleared ? actorName : invoice.settledByName,
+            settledAt: cleared ? ts : invoice.settledAt,
+            status: cleared ? "paid" : "open",
+            synced: true,
+            bulkSettlementId: batchId,
+          }];
+        }));
+      // The settlement is not complete until both its payment audit rows and
+      // invoice balances are accepted by the server. This is deliberately
+      // synchronous: a Windows close, refresh, or interrupted poll cannot
+      // leave the dashboard displaying the old debt.
+      await publishSyncEvents([
+        ...paymentRecords.map((payment) => eventFromRecord("payments", payment, data)),
+        ...[...settledInvoices.values()].map((invoice) => invoiceSettlementEvent(invoice, data, ts)),
+      ], data);
+      update((current) => ({
+        ...current,
+        invoices: current.invoices.map((invoice) => settledInvoices.has(invoice.id)
+          ? { ...invoice, ...settledInvoices.get(invoice.id) }
+          : invoice),
+        payments: [...(current.payments || []), ...paymentRecords.map((payment) => ({ ...payment, synced: true }))],
       }));
       onClose();
     } catch (allocationError) {
@@ -9518,7 +9530,9 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       setSubmitting(false);
       setError(allocationError.message === "kopokopo_amount_exceeds_balance"
         ? "The Kopo Kopo balance changed before settlement. Enter the code again to refresh it."
-        : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
+        : /(?:push_failed|payment_not_accepted|invoice_.*invalid|invoice_not_found)/.test(String(allocationError.message || ""))
+          ? "The payment was not saved to the shared ledger. No invoice was changed; check the connection and retry."
+          : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
     }
   };
 
@@ -10350,27 +10364,29 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
         mpesaPayment.kopokopoTransactionId = providerTransaction.id;
         mpesaPayment.kopokopoAllocationId = allocation?.id || "";
       }
-      update((d) => ({ ...d,
-        invoices: d.invoices.map((x) => {
-        if (x.id !== live.id) return x;
-        const paidCents = Math.min(x.totalCents, (Number(x.paidCents) || 0) + paymentCents);
-        const cleared = paidCents >= x.totalCents;
-        return {
-          ...x,
-          paidCents,
-          carriedOver: cleared ? false : x.carriedOver,
-          method: methods.join(" + ") || x.method,
-          lastSettledBy: user,
-          lastSettledByName: actorName,
-          lastSettledAt: ts,
-          settledBy: cleared ? user : x.settledBy,
-          settledByName: cleared ? actorName : x.settledByName,
-          settledAt: cleared ? ts : x.settledAt,
-          status: cleared ? "paid" : "open",
-          synced: false,
-        };
-        }),
-        payments: [...(d.payments || []), ...paymentRecords],
+      const paidCents = Math.min(live.totalCents, (Number(live.paidCents) || 0) + paymentCents);
+      const cleared = paidCents >= live.totalCents;
+      const settledInvoice = {
+        ...live,
+        paidCents,
+        carriedOver: cleared ? false : live.carriedOver,
+        method: methods.join(" + ") || live.method,
+        lastSettledBy: user,
+        lastSettledByName: actorName,
+        lastSettledAt: ts,
+        settledBy: cleared ? user : live.settledBy,
+        settledByName: cleared ? actorName : live.settledByName,
+        settledAt: cleared ? ts : live.settledAt,
+        status: cleared ? "paid" : "open",
+        synced: true,
+      };
+      await publishSyncEvents([
+        ...paymentRecords.map((payment) => eventFromRecord("payments", payment, data)),
+        invoiceSettlementEvent(settledInvoice, data, ts),
+      ], data);
+      update((current) => ({ ...current,
+        invoices: current.invoices.map((invoice) => invoice.id === live.id ? { ...invoice, ...settledInvoice } : invoice),
+        payments: [...(current.payments || []), ...paymentRecords.map((payment) => ({ ...payment, synced: true }))],
       }));
       setPaymentError("");
       setRecordingPayment(false);
@@ -10379,7 +10395,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
       setRecordingPayment(false);
       setPaymentError(allocationError.message === "kopokopo_amount_exceeds_balance"
         ? "The Kopo Kopo balance changed before settlement. Enter the code again to refresh it."
-        : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
+        : /(?:push_failed|payment_not_accepted|invoice_.*invalid|invoice_not_found)/.test(String(allocationError.message || ""))
+          ? "The payment was not saved to the shared ledger. No invoice was changed; check the connection and retry."
+          : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
     }
   };
   const decideVoid = (decision) => {
