@@ -83,12 +83,12 @@ const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
 const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
-const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v2";
+const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v3";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only
 // in the device cache. Replay its original event once: stable IDs make this
 // idempotent on the server, so a historical payment cannot be charged twice.
 const CASHIER_DEBT_PAYMENT_REPAIR_KEY = "visionary:pos:sync:cashier-debt-payment-repair:v1";
-const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v1";
+const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v2";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -1896,9 +1896,43 @@ function invoiceSettlementChanged(before, after) {
     || (before?.carriedOver && !after?.carriedOver)
     || Number(after?.lastSettledAt || after?.settledAt || 0) > Number(before?.lastSettledAt || before?.settledAt || 0);
 }
+function invoicePaymentRepairEvents(data) {
+  const invoices = new Map((data?.invoices || []).map((invoice) => [String(invoice?.id || ""), invoice]));
+  return (data?.payments || [])
+    .filter((payment) => payment?.id
+      && (!payment.status || payment.status === "captured")
+      && paymentInvoiceId(payment))
+    .filter((payment) => {
+      const invoice = invoices.get(String(paymentInvoiceId(payment)));
+      return invoice && (payment.bulkSettlementId || String(payment.method || "").toLowerCase() === "payroll"
+        || Number(invoice.lastSettledAt || invoice.settledAt || 0) > 0);
+    })
+    .map((payment) => eventFromRecord("payments", payment, data))
+    .filter(Boolean);
+}
 function invoiceSettlementRepairEvents(data) {
+  const paidByInvoice = invoicePaymentTotals(data);
   return (data?.invoices || [])
-    .filter((invoice) => Number(invoice?.lastSettledAt || invoice?.settledAt || 0) > 0)
+    .map((invoice) => {
+      const paymentCents = Math.max(0, Number(paidByInvoice[invoice?.id] || 0));
+      const paidCents = Math.max(Math.max(0, Number(invoice?.paidCents) || 0), paymentCents);
+      const settledAt = Math.max(
+        Number(invoice?.lastSettledAt || invoice?.settledAt || 0),
+        ...(data?.payments || []).filter((payment) => paymentInvoiceId(payment) === invoice?.id)
+          .map((payment) => Number(payment.ts || 0)),
+      );
+      if (settledAt <= 0 && paidCents <= Number(invoice?.paidCents || 0)) return null;
+      const totalCents = Math.max(0, Number(invoice?.totalCents) || 0);
+      const fullyPaid = totalCents > 0 && paidCents >= totalCents;
+      return {
+        ...invoice,
+        paidCents,
+        status: fullyPaid ? "paid" : invoice.status,
+        carriedOver: fullyPaid ? false : invoice.carriedOver,
+        lastSettledAt: settledAt || undefined,
+      };
+    })
+    .filter(Boolean)
     .map((invoice) => invoiceSettlementEvent(invoice, data, invoice.lastSettledAt || invoice.settledAt));
 }
 function cashierDebtPaymentRepairEvents(data) {
@@ -2152,12 +2186,16 @@ async function enqueueChanges(prev, next) {
   await saveOutbox(outbox);
   return { outboxLength: outbox.length, cursor: await loadCursor() };
 }
-async function publishSyncEvents(events, data) {
+async function publishSyncEvents(events, data, { management = false } = {}) {
   const list = (events || []).filter(Boolean);
   if (!list.length) return { accepted: [], rejected: [] };
   const cfg = syncConfig();
   const branchId = data?.settings?.activeBranchId || data?.branches?.[0]?.id || null;
-  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
+  const managementToken = management ? syncSessionToken() : "";
+  if (management && !managementToken) throw new Error("management_session_required");
+  const headers = management
+    ? sessionAuthHeaders({ "Content-Type": "application/json" }, managementToken)
+    : await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
   const response = await fetch(cfg.apiBaseUrl + "/api/sync/push", {
     method: "POST",
     headers,
@@ -2182,16 +2220,24 @@ async function runSyncClient(currentData, options = {}) {
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
   const settlementRepairPending = await kvGet(INVOICE_SETTLEMENT_REPAIR_KEY) !== INVOICE_SETTLEMENT_REPAIR_VERSION;
   const settlementRepairs = settlementRepairPending ? invoiceSettlementRepairEvents(data) : [];
+  const invoicePaymentRepairs = settlementRepairPending ? invoicePaymentRepairEvents(data) : [];
   const cashierDebtPaymentRepairPending = await kvGet(CASHIER_DEBT_PAYMENT_REPAIR_KEY) !== CASHIER_DEBT_PAYMENT_REPAIR_VERSION;
   const cashierDebtPaymentRepairs = cashierDebtPaymentRepairPending ? cashierDebtPaymentRepairEvents(data) : [];
-  const repairs = [...settlementRepairs, ...cashierDebtPaymentRepairs];
-  if (repairs.length) {
-    const knownIds = new Set(outbox.map((event) => event.id));
-    const newRepairs = repairs.filter((event) => !knownIds.has(event.id));
-    if (newRepairs.length) {
-      outbox = [...outbox, ...newRepairs];
-      await saveOutbox(outbox);
+  const managementRepairs = [...invoicePaymentRepairs, ...settlementRepairs, ...cashierDebtPaymentRepairs];
+  let managementRepairError = "";
+  if (managementRepairs.length) {
+    try {
+      const repaired = await publishSyncEvents(managementRepairs, data, { management: true });
+      data = markAcceptedSynced(data, repaired.accepted || []);
+      dataChanged = dataChanged || (repaired.accepted || []).length > 0;
+      if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
+      if (cashierDebtPaymentRepairPending) await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
+    } catch (error) {
+      managementRepairError = error?.message || "management_repair_failed";
     }
+  } else {
+    if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
+    if (cashierDebtPaymentRepairPending) await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
   }
   let cursor = await loadCursor();
   let resetEpoch = await loadResetEpoch();
@@ -2201,7 +2247,7 @@ async function runSyncClient(currentData, options = {}) {
   }
   const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" }, options.sessionToken || "");
   let rejected = [];
-  let pushErrorText = "";
+  let pushErrorText = managementRepairError;
   if (outbox.length) {
     try {
       const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox, resetEpoch }) });
@@ -2277,14 +2323,8 @@ async function runSyncClient(currentData, options = {}) {
   const rejectedText = visibleRejected.length ? `${visibleRejected.length} queued change(s) were rejected by the server: ${visibleRejected.map((item) => item.reason || "unknown").join(", ")}` : "";
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
-  const nextSyncError = outbox.length ? [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ") : "";
+  const nextSyncError = [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ");
   const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
-  if (settlementRepairPending && settlementRepairs.every((event) => !outbox.some((queued) => queued.id === event.id))) {
-    await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
-  }
-  if (cashierDebtPaymentRepairPending && cashierDebtPaymentRepairs.every((event) => !outbox.some((queued) => queued.id === event.id))) {
-    await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
-  }
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
     || previousStatus.cursor !== nextStatus.cursor
@@ -6493,9 +6533,14 @@ export default function VisionPOS() {
       window.removeEventListener("visionpos:desktop-closing", logoutBeforeClose);
     };
   }, [session?.id, session?.sessionToken]);
-  const update = (fn) => setData((prev) => {
+  const update = (fn, { skipSync = false } = {}) => setData((prev) => {
     const next = { ...fn(prev), _sync: prev?._sync || { outboxLength: 0, cursor: 0 } };
     saveData(next);
+    // Some financial actions are written synchronously with the management
+    // session before this UI state is updated. Do not send that same event
+    // again through a Windows terminal credential, which cannot write
+    // management-only records and would incorrectly surface a sync error.
+    if (skipSync) return next;
     enqueueChanges(prev, next).then((status) => {
       setData((cur) => cur ? { ...cur, _sync: { ...status, error: "" } } : cur);
       syncRequestRef.current = true;
@@ -9165,12 +9210,12 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
       // append-only events to the shared ledger before reporting success, so a
       // Windows admin action cannot be lost if the browser closes or a later
       // background sync is interrupted.
-      await publishSyncEvents(payments.map((payment) => eventFromRecord("cashierJointDebtPayments", payment, data)), data);
+      await publishSyncEvents(payments.map((payment) => eventFromRecord("cashierJointDebtPayments", payment, data)), data, { management: true });
       const committedPayments = payments.map((payment) => ({ ...payment, synced: true }));
       update((current) => ({
         ...current,
         cashierJointDebtPayments: [...(current.cashierJointDebtPayments || []), ...committedPayments],
-      }));
+      }), { skipSync: true });
       setMessage(`${fmt(paymentCents, cur)} recorded against ${payments.length} selected inventory debt${payments.length === 1 ? "" : "s"} for ${selected.cashierName}.`);
       setError("");
       onSettled?.();
@@ -9516,14 +9561,14 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
       await publishSyncEvents([
         ...paymentRecords.map((payment) => eventFromRecord("payments", payment, data)),
         ...[...settledInvoices.values()].map((invoice) => invoiceSettlementEvent(invoice, data, ts)),
-      ], data);
+      ], data, { management: true });
       update((current) => ({
         ...current,
         invoices: current.invoices.map((invoice) => settledInvoices.has(invoice.id)
           ? { ...invoice, ...settledInvoices.get(invoice.id) }
           : invoice),
         payments: [...(current.payments || []), ...paymentRecords.map((payment) => ({ ...payment, synced: true }))],
-      }));
+      }), { skipSync: true });
       onClose();
     } catch (allocationError) {
       submittingRef.current = false;
@@ -10383,11 +10428,11 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
       await publishSyncEvents([
         ...paymentRecords.map((payment) => eventFromRecord("payments", payment, data)),
         invoiceSettlementEvent(settledInvoice, data, ts),
-      ], data);
+      ], data, { management: true });
       update((current) => ({ ...current,
         invoices: current.invoices.map((invoice) => invoice.id === live.id ? { ...invoice, ...settledInvoice } : invoice),
         payments: [...(current.payments || []), ...paymentRecords.map((payment) => ({ ...payment, synced: true }))],
-      }));
+      }), { skipSync: true });
       setPaymentError("");
       setRecordingPayment(false);
       if (isFullPayment) onClose();
