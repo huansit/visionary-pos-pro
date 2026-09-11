@@ -8797,6 +8797,15 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const [printingInvoices, setPrintingInvoices] = useState(false);
   const [printAuditError, setPrintAuditError] = useState("");
+  const [visibleInvoiceCount, setVisibleInvoiceCount] = useState(40);
+  const [mobileInvoiceLayout, setMobileInvoiceLayout] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 620px)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 620px)");
+    const updateLayout = () => setMobileInvoiceLayout(media.matches);
+    updateLayout();
+    media.addEventListener?.("change", updateLayout);
+    return () => media.removeEventListener?.("change", updateLayout);
+  }, []);
   const invoices = operationalInvoices(data);
   const activeInvoices = invoices.filter((invoice) => invoice.branchId === branch.id);
   const voidedInvoices = (data.invoices || [])
@@ -8935,8 +8944,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     if (cashierFilter !== "all" && !cashierNames.includes(cashierFilter)) setCashierFilter("all");
   }, [cashierFilter, cashierNames.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const needle = query.trim().toLowerCase();
-  const invoiceProductLines = new Map(displayInvoices.map((invoice) => [invoice.id, invoiceSoldLines(data, invoice, invoice.branchId)]));
-  const invoiceProductSummary = (invoice) => Array.from(new Set((invoiceProductLines.get(invoice.id) || []).map((line) => line.name).filter(Boolean))).join(", ");
+  // Product lines are comparatively expensive to reconstruct from stock
+  // movements. Build them only for an invoice that is visible or being
+  // searched, instead of doing the work for every historical invoice on each
+  // navigation to this workspace.
+  const invoiceProductLines = useMemo(() => new Map(), [data.invoices, data.stockMovements, data.products]);
+  const linesForInvoice = (invoice) => {
+    if (!invoiceProductLines.has(invoice.id)) invoiceProductLines.set(invoice.id, invoiceSoldLines(data, invoice, invoice.branchId));
+    return invoiceProductLines.get(invoice.id);
+  };
+  const invoiceProductSummary = (invoice) => Array.from(new Set(linesForInvoice(invoice).map((line) => line.name).filter(Boolean))).join(", ");
   const filtered = (filter === "voided" ? periodVoidedInvoices : filter === "all" ? periodDisplayInvoices : periodActiveInvoices)
     .filter((i) => {
       const voidStatus = invoiceVoidState(data, i.id).status;
@@ -8955,17 +8972,22 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       if (!needle) return true;
       const invoiceMatch = [i.customerName, i.customerPhone, i.phone, i.number, i.receiptNo, invoiceCashierName(i)]
         .some((value) => String(value || "").toLowerCase().includes(needle));
-      const productMatch = (invoiceProductLines.get(i.id) || []).some((line) => [line.name, line.sku, line.barcode, line.category]
+      const productMatch = linesForInvoice(i).some((line) => [line.name, line.sku, line.barcode, line.category]
         .some((value) => String(value || "").toLowerCase().includes(needle)));
       return invoiceMatch || productMatch;
     })
     .sort((a, b) => sortMode === "oldest" ? (a.ts || 0) - (b.ts || 0) : (b.ts || 0) - (a.ts || 0));
+  useEffect(() => {
+    setVisibleInvoiceCount(40);
+  }, [branch.id, filter, query, cashierFilter, sortMode, businessDayFilter, dateFrom, dateTo]);
+  const visibleInvoices = filtered.slice(0, visibleInvoiceCount);
+  const hasMoreInvoices = visibleInvoices.length < filtered.length;
   const filteredBalanceDue = filtered.reduce(
     (sum, invoice) => sum + (invoiceIsVoided(data, invoice) ? 0 : invOutstanding(invoice)),
     0
   );
   const selectedInvoices = filtered.filter((invoice) => selectedInvoiceIds.has(invoice.id));
-  const allFilteredSelected = filtered.length > 0 && selectedInvoices.length === filtered.length;
+  const allVisibleSelected = visibleInvoices.length > 0 && visibleInvoices.every((invoice) => selectedInvoiceIds.has(invoice.id));
   const toggleInvoiceSelection = (invoiceId) => {
     setSelectedInvoiceIds((current) => {
       const next = new Set(current);
@@ -8974,11 +8996,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       return next;
     });
   };
-  const toggleAllFilteredInvoices = () => {
+  const toggleAllVisibleInvoices = () => {
     setSelectedInvoiceIds((current) => {
       const next = new Set(current);
-      filtered.forEach((invoice) => {
-        if (allFilteredSelected) next.delete(invoice.id);
+      visibleInvoices.forEach((invoice) => {
+        if (allVisibleSelected) next.delete(invoice.id);
         else next.add(invoice.id);
       });
       return next;
@@ -9151,11 +9173,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
         <div className="invoice-results-scroll">
           {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-            <><div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
-              <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allFilteredSelected} onChange={toggleAllFilteredInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
-              <tbody>{filtered.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
-            </table></div>
-            <div className="invoice-mobile-list">{filtered.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div></>
+            <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
+              <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allVisibleSelected} onChange={toggleAllVisibleInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
+              <tbody>{visibleInvoices.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+            </table></div>}
+            {hasMoreInvoices ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleInvoiceCount((count) => count + 40)}>Show 40 more invoices ({filtered.length - visibleInvoices.length} remaining)</button> : null}</>
           )}
         </div>
       </div>}
@@ -11091,6 +11113,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
   const [copyOpen, setCopyOpen] = useState(false);
   const [copyFrom, setCopyFrom] = useState(data.branches.find((b) => b.id !== branch.id)?.id || "");
   const [copyMsg, setCopyMsg] = useState("");
+  const [visibleProductCount, setVisibleProductCount] = useState(40);
   const barcodeInputRef = useRef(null);
   const editBarcodeInputRef = useRef(null);
   const [editId, setEditId] = useState(null);
@@ -11169,6 +11192,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     if (copyFrom && copyFrom !== branch.id) return;
     setCopyFrom(data.branches.find((b) => b.id !== branch.id)?.id || "");
   }, [branch.id, copyFrom, data.branches]);
+  useEffect(() => {
+    setVisibleProductCount(40);
+  }, [branch.id, q, catF, statusF, scannedProductId]);
   const printBarcodeLabel = () => {
     const code = cleanCode(f.barcode) || generateBarcodeValue();
     const w = window.open("", "_blank", "width=420,height=320");
@@ -11512,13 +11538,14 @@ function ProductsTab({ data, update, branch, isAdmin }) {
           : (statusF === "all" || (statusF === "enabled" ? productIsEnabled(p) : !productIsEnabled(p)))
             && (catF === "All" || p.category === catF)
             && (query === "" || p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.toLowerCase().includes(query.toLowerCase()) || productCodeMatch(p, query) || [p.barcode, ...(p.barcodes || [])].some((code) => cleanCode(code).toLowerCase().includes(cleanCode(query).toLowerCase())))));
+        const visibleProducts = list.slice(0, visibleProductCount);
         return (
-          <div className="ptblwrap products-scroll-region">
+          <><div className="ptblwrap products-scroll-region">
             <table className="ptbl">
               <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th>Status</th><th></th></tr></thead>
               <tbody>
                 {list.length === 0 && <tr><td colSpan={9} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
-                {list.map((p) => {
+                {visibleProducts.map((p) => {
                   const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
                   const branchCost = branchInventoryCostCents(data, p, branch.id);
@@ -11560,6 +11587,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
               </tbody>
             </table>
           </div>
+          {visibleProducts.length < list.length ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleProductCount((count) => count + 40)}>Show 40 more products ({list.length - visibleProducts.length} remaining)</button> : null}</>
         );
       })()}
       {cameraOpen && <CameraBarcodeScanner onClose={() => setCameraOpen(false)} onScan={(barcode) => { setCameraOpen(false); handleProductScan(barcode); }} />}
