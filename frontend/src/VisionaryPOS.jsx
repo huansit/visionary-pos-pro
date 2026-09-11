@@ -10209,7 +10209,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
         <div className="invoice-mobile-reference"><b>{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</b><span>{dt(inv.ts)} - {age === 0 ? "today" : `${age}d old`}</span></div>
         <div className="invoice-mobile-state">
           <span className={"ist " + displayClass}>{displayStatus}</span>
-          <span className="invoice-mobile-open" aria-label="View invoice details"><Eye /> View details <ChevronRight /></span>
+          <span className="invoice-mobile-open" aria-label="View invoice details" title="View invoice details"><Eye /></span>
         </div>
       </header>
       <div className="invoice-mobile-customer"><b>{inv.customerName || "Walk-in"}</b><span>{products || "No product details"}</span></div>
