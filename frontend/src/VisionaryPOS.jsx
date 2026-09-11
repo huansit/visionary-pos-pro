@@ -2437,7 +2437,19 @@ async function cloudBootstrapData(localData, options = {}) {
         await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
         await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
       }
-      return retried;
+      const bootstrapComplete = Array.isArray(retried.branches) && retried.branches.length > 0
+        && Array.isArray(retried.products) && retried.products.length > 0;
+      // Do not leave a newly signed-in device on an indefinite recovery screen
+      // without explaining that the server did not provide a usable catalog.
+      return bootstrapComplete
+        ? retried
+        : {
+          ...retried,
+          _sync: {
+            ...(retried._sync || {}),
+            error: retried?._sync?.error || "bootstrap_incomplete: the server returned no branch or product records",
+          },
+        };
     }
     if (invoiceRepairPending) await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
     if (dashboardRepairPending) await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
@@ -6463,7 +6475,6 @@ export default function VisionPOS() {
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
   const syncInFlightRef = useRef(false);
-  const cloudRecoveryAttemptRef = useRef("");
   const lastActivityAtRef = useRef(0);
   useEffect(() => { dataRef.current = data; }, [data]);
   const selectAdminBranch = (branchId) => {
@@ -6716,6 +6727,11 @@ export default function VisionPOS() {
     setSyncing(true);
     try {
       const recovered = await cloudBootstrapData({ ...dataRef.current, _sync: await syncStatus() }, { forceFullPull: true });
+      const recoveryError = String(recovered?._sync?.error || "");
+      if (session && /(?:pull|push)_failed_(?:401|403)|invalid_or_missing_user_session|session_(?:expired|revoked)/i.test(recoveryError)) {
+        signOutSession({ sessionToken: session.sessionToken });
+        return;
+      }
       setData(recovered);
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
@@ -6827,28 +6843,28 @@ export default function VisionPOS() {
     const products = Array.isArray(data.products) ? data.products : [];
     const hasCashierBranch = branches.some((b) => b.id === session.branchId);
     if (hasCashierBranch && products.length) return;
-    const recoveryKey = `register:${session.sessionToken || session.id || ""}`;
-    if (cloudRecoveryAttemptRef.current === recoveryKey) return;
-    cloudRecoveryAttemptRef.current = recoveryKey;
-    const id = setTimeout(recoverCloudData, 500);
+    // A bootstrap may fail transiently while the app starts or a network wakes
+    // up. Retry at a measured pace until the assigned branch is available.
+    const id = setTimeout(recoverCloudData, data?._sync?.error ? 6000 : 1500);
     return () => clearTimeout(id);
-  }, [data, view, session?.id, session?.branchId, syncing]); // eslint-disable-line
+  }, [data, view, session?.id, session?.branchId, syncing, data?._sync?.error]); // eslint-disable-line
   useEffect(() => {
     if (!data || view !== "admin" || !session || syncing || !navigator.onLine) return;
     const branches = Array.isArray(data.branches) ? data.branches : [];
     if (branches.length) return;
-    const recoveryKey = `admin:${session.sessionToken || session.id || ""}`;
-    if (cloudRecoveryAttemptRef.current === recoveryKey) return;
-    cloudRecoveryAttemptRef.current = recoveryKey;
-    const id = setTimeout(recoverCloudData, 500);
+    const id = setTimeout(recoverCloudData, data?._sync?.error ? 6000 : 1500);
     return () => clearTimeout(id);
-  }, [data, view, session?.sessionToken, syncing]); // eslint-disable-line
+  }, [data, view, session?.sessionToken, syncing, data?._sync?.error]); // eslint-disable-line
   if (!data) return (<div className="vpos"><style>{css}</style><div className="sub" style={{ color: "var(--muted-2)" }}>Loading…</div></div>);
   const routePath = typeof window !== "undefined" ? window.location.pathname.replace(/\/$/, "") || "/" : "/";
   if (routePath === "/downloads") return <DownloadsPage />;
   const pending = countPending(data);
   const themeCls = deviceTheme === "dark" ? " theme-dark" : "";
-  const syncError = pending > 0 ? (data?._sync?.error || "") : "";
+  // Bootstrap failures often occur before the device has queued a local
+  // change. Always surface them; hiding the error leaves the user stranded on
+  // the recovery page with no way to distinguish an expired session from a
+  // server-side catalog problem.
+  const syncError = data?._sync?.error || "";
   const syncState = !online || syncError ? "err" : syncing ? "syncing" : pending > 0 ? "pending" : "ok";
   const activeEnvironmentMode = normalizeEnvironmentMode(environmentInfo?.mode || data?.settings?.environmentMode || "test");
   const syncCls = syncState === "ok" ? "" : syncState === "err" ? " err" : " warn";
