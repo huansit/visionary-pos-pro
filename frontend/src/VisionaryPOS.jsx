@@ -110,8 +110,11 @@ const AUTO_LOGOUT_MS = 15 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_MS = 5000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
 const DEEP_MAINTENANCE_MS = 24 * 60 * 60 * 1000;
+const LOCAL_DATABASE_NAME = "visionary-pos-cache";
+const LOCAL_DATABASE_STORE = "values";
 let activeSessionToken = "";
 let activeSessionRole = "";
+let localDatabasePromise = null;
 const now = () => Date.now();
 const uid = (p = "id") => p + "_" + Math.random().toString(36).slice(2, 9);
 const todayStr = () => businessDateValue(Date.now(), DEFAULT_BUSINESS_TIME_ZONE);
@@ -659,6 +662,55 @@ const CLEAN_SETUP = () => {
   };
 };
 
+function prefersDurableDatabase(key) {
+  return key === STORE_KEY || key === OUTBOX_KEY || key === MAINTENANCE_LOG_KEY;
+}
+function openLocalDatabase() {
+  if (localDatabasePromise) return localDatabasePromise;
+  if (typeof window === "undefined" || !window.indexedDB) return null;
+  localDatabasePromise = new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(LOCAL_DATABASE_NAME, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(LOCAL_DATABASE_STORE)) database.createObjectStore(LOCAL_DATABASE_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("indexeddb_open_failed"));
+  }).catch(() => null);
+  return localDatabasePromise;
+}
+async function durableGet(key) {
+  const database = await openLocalDatabase();
+  if (!database) return null;
+  return await new Promise((resolve) => {
+    try {
+      const request = database.transaction(LOCAL_DATABASE_STORE, "readonly").objectStore(LOCAL_DATABASE_STORE).get(key);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => resolve(null);
+    } catch (_) { resolve(null); }
+  });
+}
+async function durableSet(key, value) {
+  const database = await openLocalDatabase();
+  if (!database) return false;
+  return await new Promise((resolve) => {
+    try {
+      const request = database.transaction(LOCAL_DATABASE_STORE, "readwrite").objectStore(LOCAL_DATABASE_STORE).put(value, key);
+      request.onsuccess = () => resolve(true);
+      request.onerror = () => resolve(false);
+    } catch (_) { resolve(false); }
+  });
+}
+async function durableRemove(key) {
+  const database = await openLocalDatabase();
+  if (!database) return;
+  await new Promise((resolve) => {
+    try {
+      const request = database.transaction(LOCAL_DATABASE_STORE, "readwrite").objectStore(LOCAL_DATABASE_STORE).delete(key);
+      request.onsuccess = request.onerror = () => resolve();
+    } catch (_) { resolve(); }
+  });
+}
 async function kvGet(key) {
   try {
     if (typeof window === "undefined") return null;
@@ -666,16 +718,34 @@ async function kvGet(key) {
       const r = await window.storage.get(key);
       return r && r.value != null ? r.value : null;
     }
-    return window.localStorage ? window.localStorage.getItem(key) : null;
+    if (prefersDurableDatabase(key)) {
+      const durableValue = await durableGet(key);
+      if (durableValue != null) return durableValue;
+    }
+    const localValue = window.localStorage ? window.localStorage.getItem(key) : null;
+    if (localValue != null) return localValue;
+    return prefersDurableDatabase(key) ? null : await durableGet(key);
   } catch (_) { return null; }
 }
 async function kvSet(key, value) {
   try {
     if (typeof window === "undefined") return false;
-    if (window.storage) await window.storage.set(key, value);
-    else if (window.localStorage) window.localStorage.setItem(key, value);
-    else return false;
-    return true;
+    if (window.storage) {
+      await window.storage.set(key, value);
+      return true;
+    }
+    // The full POS state can exceed a browser's localStorage allowance on an
+    // established shop. Keep it in IndexedDB and free the legacy copy once
+    // migration succeeds.
+    if (prefersDurableDatabase(key) && await durableSet(key, value)) {
+      try { window.localStorage?.removeItem(key); } catch (_) {}
+      return true;
+    }
+    if (window.localStorage) {
+      window.localStorage.setItem(key, value);
+      return true;
+    }
+    return await durableSet(key, value);
   } catch (_) { return false; }
 }
 async function kvRemove(key) {
@@ -683,6 +753,7 @@ async function kvRemove(key) {
     if (typeof window === "undefined") return;
     if (window.storage?.remove) await window.storage.remove(key);
     else if (window.localStorage) window.localStorage.removeItem(key);
+    await durableRemove(key);
   } catch (_) {}
 }
 async function loadJson(key, fallback) {
@@ -2404,7 +2475,14 @@ async function runSyncClient(currentData, options = {}) {
   data = { ...data, lastSyncedAt: now(), _sync: nextStatus };
   // Commit the cache before the cursor. If iOS rejects the larger cache write,
   // the next sync must replay these events instead of skipping them forever.
-  await saveData(data, { required: true });
+  const cached = await saveData(data);
+  if (!cached) {
+    // A browser with storage disabled must not strand an authenticated admin
+    // on the recovery page. Keep the fresh cloud state in memory, do not
+    // advance its cursor, and visibly warn that offline persistence is off.
+    data = { ...data, _sync: { ...nextStatus, error: [nextSyncError, "local_cache_write_failed"].filter(Boolean).join(" ") } };
+    return { data, status: data._sync };
+  }
   await saveCursor(cursor);
   return { data, status: data._sync };
 }
