@@ -65,7 +65,7 @@ import {
   AlertCircle, Search, Wifi, WifiOff, RefreshCw, X, Package, Users, BarChart3, Tag, Tags,
   Minus, CreditCard, Banknote, Receipt, Printer, ShoppingCart, FileText, LayoutDashboard,
   Boxes, Truck, Building2, ArrowLeftRight, Wallet, TrendingDown, Files, Settings as SettingsIcon,
-  Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, ChevronLeft, ChevronRight, ChevronDown,
+  Smartphone, ShoppingBag, Wine, Sparkles, Moon, Sun, ArrowUp, ArrowDown, MoreVertical, MoreHorizontal, ChevronLeft, ChevronRight, ChevronDown,
   Barcode, ClipboardCheck, Download, Fingerprint, MonitorDown,
   Wrench, Phone, Zap, Home, Circle, Camera, CalendarDays, Clock3, SlidersHorizontal,
 } from "lucide-react";
@@ -4419,6 +4419,7 @@ body{overscroll-behavior:none}
 .adminwrap{display:grid;width:100%;min-width:0;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;transition:grid-template-columns .18s ease}
 .adminwrap.nav-collapsed{grid-template-columns:66px 1fr}
 .admin-mobile-nav{display:none}
+.mobile-app-tabs,.mobile-app-menu{display:none}
 .navside{position:sticky;top:84px;display:flex;flex-direction:column;gap:3px;background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:11px;max-height:calc(100dvh - 104px);overflow-y:auto;overflow-x:hidden}
 .navcollapse{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border-radius:10px;border:none;background:none;color:var(--muted-2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:4px;transition:.13s}
 .navcollapse:hover{background:var(--surface-2);color:var(--text)}
@@ -5694,6 +5695,27 @@ body{overscroll-behavior:none}
   .admin-mobile-nav>span svg{width:15px;height:15px;color:var(--accent)}
   .admin-mobile-nav select{width:100%;height:42px;min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);padding:0 34px 0 12px;font:inherit;font-size:15px;font-weight:750}
   .navside,.navside.collapsed{display:none}
+}
+@media (max-width:620px){
+  .admin-mobile-nav{grid-template-columns:minmax(0,1fr);padding:0;border:0;background:transparent}
+  .admin-mobile-nav>span{display:none}
+  .admin-mobile-nav select{height:38px;border-radius:11px;background:var(--surface);box-shadow:0 4px 14px rgba(9,20,33,.06)}
+  .adminwrap{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+  .mobile-app-tabs{position:fixed;z-index:30;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:max(8px,env(safe-area-inset-bottom));padding:6px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 12px 36px rgba(9,20,33,.18);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+  .mobile-app-tabs button{display:grid;place-items:center;gap:2px;min-width:0;min-height:54px;padding:5px 2px;border:0;border-radius:13px;background:transparent;color:var(--muted-2);font:750 9px/1.1 var(--font-ui);cursor:pointer}
+  .mobile-app-tabs button svg{width:19px;height:19px}
+  .mobile-app-tabs button.on{background:color-mix(in srgb,var(--accent) 14%,var(--surface));color:var(--accent)}
+  .mobile-app-tabs button.more-open{color:var(--accent)}
+  .mobile-app-menu{position:fixed;z-index:29;display:block;left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));bottom:calc(76px + env(safe-area-inset-bottom));max-height:min(68dvh,540px);overflow:auto;padding:10px;background:var(--surface);border:1px solid var(--border-soft);border-radius:18px;box-shadow:0 14px 40px rgba(9,20,33,.22);overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .mobile-app-menu-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 4px 9px;color:var(--text);font-size:14px;font-weight:850}
+  .mobile-app-menu-head button{width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:9px;background:var(--surface-2);color:var(--muted);cursor:pointer}
+  .mobile-app-menu-head button svg{width:17px;height:17px}
+  .mobile-app-menu-group{display:grid;gap:3px;padding:8px 0;border-top:1px solid var(--border-soft)}
+  .mobile-app-menu-group:first-of-type{border-top:0}
+  .mobile-app-menu-group>strong{padding:2px 6px;color:var(--muted-2);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .mobile-app-menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:8px 9px;border:0;border-radius:10px;background:transparent;color:var(--text);font:700 13px var(--font-ui);text-align:left;cursor:pointer}
+  .mobile-app-menu-item svg{width:17px;height:17px;color:var(--accent)}
+  .mobile-app-menu-item.on{background:color-mix(in srgb,var(--accent) 12%,var(--surface));color:var(--accent)}
 }
 @media (max-width:720px), (hover:none) and (pointer:coarse) and (max-width:1100px){
   .mpesa-ledger-page{width:100%;max-width:100%;min-width:0;overflow-x:clip}
@@ -8449,6 +8471,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [debtPaymentsOpen, setDebtPaymentsOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const workspaceRootRef = useRef(null);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
@@ -8493,6 +8516,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     if (canAccess("payments")) setDebtPaymentsOpen(true);
   };
   const activateWorkspace = (tabId) => {
+    setMobileMoreOpen(false);
     if (tabId === "payments") {
       openDebtPayments();
       return;
@@ -8501,6 +8525,10 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       setInvoiceFocus(pendingVoidCount > 0 ? { filter: "void_pending", key: Date.now() } : null);
     }
     setTab(tabId);
+    window.requestAnimationFrame(() => {
+      const content = workspaceRootRef.current?.closest(".content");
+      content?.scrollTo?.({ top: 0, behavior: "smooth" });
+    });
   };
   const navBadgeCount = (itemId) => itemId === "expenses"
     ? pendingExpenseCount
@@ -8513,6 +8541,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     const badgeCount = navBadgeCount(item.id);
     return badgeCount > 0 ? `${item.label} (${badgeCount} pending)` : item.label;
   };
+  const mobilePrimaryItems = [
+    NAV_TOP.find((item) => item.id === "dashboard"),
+    NAV_GROUPS.find((group) => group.id === "salesgrp")?.items.find((item) => item.id === "invoices"),
+    NAV_GROUPS.find((group) => group.id === "invgrp")?.items.find((item) => item.id === "products"),
+    NAV_GROUPS.find((group) => group.id === "fingrp")?.items.find((item) => item.id === "cash"),
+  ].filter((item) => item && canAccess(item.id));
+  const mobileItemIsActive = (item) => item.id === "cash"
+    ? ["payments", "mpesa", "audit", "cash", "expenses"].includes(tab)
+    : tab === item.id;
   const NavBtn = ({ item, main }) => {
     const I = item.icon;
     const badgeCount = navBadgeCount(item.id);
@@ -8572,6 +8609,21 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
           {visibleGroups.map((group) => <optgroup key={group.id} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id}>{mobileNavLabel(item)}</option>)}</optgroup>)}
         </select>
       </label>
+      <nav className="mobile-app-tabs" aria-label="Primary workspace navigation">
+        {mobilePrimaryItems.map((item) => {
+          const I = item.icon;
+          const active = mobileItemIsActive(item);
+          return <button key={item.id} type="button" className={active ? "on" : ""} aria-current={active ? "page" : undefined} onClick={() => activateWorkspace(item.id)}><I /><span>{item.id === "cash" ? "Finance" : item.label}</span></button>;
+        })}
+        <button type="button" className={mobileMoreOpen ? "more-open" : ""} aria-expanded={mobileMoreOpen} onClick={() => setMobileMoreOpen((open) => !open)}><MoreHorizontal /><span>More</span></button>
+      </nav>
+      {mobileMoreOpen ? <aside className="mobile-app-menu" aria-label="All workspaces">
+        <div className="mobile-app-menu-head"><span>All workspaces</span><button type="button" aria-label="Close workspace menu" onClick={() => setMobileMoreOpen(false)}><X /></button></div>
+        <div className="mobile-app-menu-group">
+          {NAV_TOP.filter((item) => canAccess(item.id)).map((item) => { const I = item.icon; return <button key={item.id} type="button" className={tab === item.id ? "mobile-app-menu-item on" : "mobile-app-menu-item"} onClick={() => activateWorkspace(item.id)}><I />{mobileNavLabel(item)}</button>; })}
+        </div>
+        {visibleGroups.map((group) => <div className="mobile-app-menu-group" key={group.id}><strong>{group.label}</strong>{group.items.map((item) => { const I = item.icon; const active = mobileItemIsActive(item); return <button key={item.id} type="button" className={active ? "mobile-app-menu-item on" : "mobile-app-menu-item"} onClick={() => activateWorkspace(item.id)}><I />{mobileNavLabel(item)}</button>; })}</div>)}
+      </aside> : null}
       <nav className={"navside" + (navCollapsed ? " collapsed" : "")}>
         <button className="navcollapse" title={navCollapsed ? "Expand menu" : "Collapse menu"} onClick={() => setNavCollapsed((c) => !c)}>{navCollapsed ? <ChevronRight /> : <ChevronLeft />}<span className="navlabel">Collapse</span></button>
         {NAV_TOP.map((item) => <NavBtn key={item.id} item={item} main />)}
