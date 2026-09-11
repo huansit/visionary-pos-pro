@@ -8696,7 +8696,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
       case "insights": return <InsightsTab data={data} online={online} />;
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
-      case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} />;
+      case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} branch={branch} />;
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
       case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} deviceTheme={deviceTheme} onDeviceThemeChange={onDeviceThemeChange} />;
@@ -16987,12 +16987,17 @@ function PasswordRules({ password, confirm }) {
     </div>
   );
 }
-function TerminalsTab({ data, isAdmin }) {
+function TerminalsTab({ data, isAdmin, branch }) {
   const [terminals, setTerminals] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const bn = (id) => data.branches.find((b) => b.id === id)?.name || "—";
-  const currentBranch = data.branches.find((b) => b.id === data.settings?.activeBranchId) || data.branches[0] || null;
+  // The selector in the top bar is the owner's explicit working-branch choice.
+  // Activation codes must follow that choice, rather than a stale local default.
+  const currentBranch = data.branches.find((b) => b.id === branch?.id)
+    || data.branches.find((b) => b.id === data.settings?.activeBranchId)
+    || data.branches[0]
+    || null;
   const [activation, setActivation] = useState({ terminalName: "", code: "" });
   const loadTerminals = async (silent = false) => {
     if (!isAdmin) return;
@@ -17043,7 +17048,7 @@ function TerminalsTab({ data, isAdmin }) {
   if (!isAdmin) return <div><PageHead title="Terminals" sub="Only the owner admin can manage cashier terminals." /><div className="notice">Sign in as the owner admin to generate terminal activation codes.</div></div>;
   return (
     <div>
-      <PageHead title="Terminals" sub="Register cashier desktop apps for the current branch and revoke lost devices." />
+      <PageHead title="Terminals" sub="The branch selected in the top bar is used for new activation codes. Cashier terminals stay assigned to that branch." />
       <div className="addpanel fade" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ marginTop: 0 }}>Generate activation code</div>
         <div className="grid3">
