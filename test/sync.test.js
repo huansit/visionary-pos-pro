@@ -1600,6 +1600,33 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     });
 });
 
+test("6db. legacy supervisor day-close events remain visible to current admin clients", async () => {
+  const closedAt = Date.now();
+  const legacyCloseId = `legacy-supervisor-eod-${closedAt}`;
+  await pool.query(
+    `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [
+      legacyCloseId,
+      "day_closed",
+      "b_sip",
+      null,
+      closedAt,
+      closedAt + 10000000,
+      JSON.stringify({ branchId: "b_sip", closedBy: "Legacy Supervisor", closedAt, periodEndedAt: closedAt, ts: closedAt }),
+    ]
+  );
+
+  await withAdminSession(request(app).get("/api/sync/pull?since=0"))
+    .expect(200)
+    .expect((res) => {
+      const close = res.body.events.find((event) => event.id === legacyCloseId);
+      assert.ok(close);
+      assert.equal(close.type, "endOfDay");
+      assert.equal(close.payload.closedBy, "Legacy Supervisor");
+    });
+});
+
 test("6e. product branch maps isolate price and moving average cost by branch", async () => {
   const sipTerminal = await activateTestTerminal("Mapped Price SIP Till", "b_sip");
   const cptTerminal = await activateTestTerminal("Mapped Price CPT Till", "b_cpt");

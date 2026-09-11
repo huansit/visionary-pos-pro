@@ -1934,9 +1934,10 @@ function reconcileInvoicePayments(data) {
   };
 }
 function collectionForType(type) {
-  for (const [collection, t] of SYNC_APPEND) if (t === type) return collection;
-  for (const [collection, t] of SYNC_MUTABLE) if (t === type) return collection;
-  if (type === "setting") return "settings";
+  const canonicalType = ["day_closed", "end_of_day", "endofday"].includes(type) ? "endOfDay" : type;
+  for (const [collection, t] of SYNC_APPEND) if (t === canonicalType) return collection;
+  for (const [collection, t] of SYNC_MUTABLE) if (t === canonicalType) return collection;
+  if (canonicalType === "setting") return "settings";
   return null;
 }
 function mergeSyncEvents(data, events) {
@@ -6574,7 +6575,7 @@ export default function VisionPOS() {
               {menuOpen && (<>
                 <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
-                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ force: true }); }}>Sync now</button>}</div>
+                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ forceFullPull: true }); }}>Sync now</button>}</div>
                   <button className="topmenu-row" onClick={() => selectDeviceTheme(deviceTheme === "dark" ? "light" : "dark")}>{deviceTheme === "dark" ? <Sun /> : <Moon />}<span>{deviceTheme === "dark" ? "Light mode" : "Dark mode"}</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>

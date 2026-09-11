@@ -1590,9 +1590,14 @@ router.get("/pull", requireSyncRead, async (req, res) => {
     );
     const all = [...evs.rows, ...recs.rows].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
     const rawPage = all.slice(0, limit);
-    const page = rawPage.filter((event) => !["cashierJointDebt", "cashierJointDebtPayment"].includes(event.type)
-      || !req.deviceBranchId
-      || event.branchId === req.deviceBranchId);
+    const page = rawPage
+      .filter((event) => !["cashierJointDebt", "cashierJointDebtPayment"].includes(event.type)
+        || !req.deviceBranchId
+        || event.branchId === req.deviceBranchId)
+      // Older supervisor clients stored their close as `day_closed`. The
+      // admin UI consumes the canonical `endOfDay` stream type, so normalize
+      // historical rows on read instead of leaving them invisible forever.
+      .map((event) => ({ ...event, type: normalizeType(event.type) }));
     const cursor = rawPage.length ? rawPage[rawPage.length - 1].serverTs : since;
     const hasMore = all.length > limit || evs.rows.length === limit || recs.rows.length === limit;
     res.json({ events: page, cursor, hasMore, resetEpoch: await operationalResetEpoch() });
