@@ -5305,6 +5305,8 @@ body{overscroll-behavior:none}
 .invoice-table .invoice-ref,.invoice-table .invoice-customer{display:grid;gap:4px;min-width:0}
 .invoice-table .invoice-ref span,.invoice-table .invoice-customer span{max-width:300px;color:var(--muted-2);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .invoice-table .invoice-customer b{font-size:13px}
+.invoice-settle-action{display:inline-flex;align-items:center;gap:4px;margin-top:5px;padding:4px 7px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border-soft));border-radius:6px;background:rgba(14,165,181,.07);color:var(--accent);font:800 10px var(--font);cursor:pointer;touch-action:manipulation}.invoice-settle-action:hover,.invoice-settle-action:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.14);outline:none}.invoice-settle-action svg{width:12px;height:12px}
+.quick-settlement-modal{width:min(560px,calc(100vw - 24px))}.quick-settlement-modal .invoice-detail-meta{margin-top:6px}.quick-settlement-modal .invoice-payment-panel{margin-top:12px}
 .invoice-table-wrap{max-height:calc(100dvh - 320px);min-height:280px}
 .invoice-mobile-list{display:none}
 .debt-summary{margin-top:0}
@@ -9073,6 +9075,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [businessDayFilter, setBusinessDayFilter] = useState("current");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
+  const [quickSettlement, setQuickSettlement] = useState(null);
   const [readyMpesaCode, setReadyMpesaCode] = useState("");
   const [receipt, setReceipt] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -9461,9 +9464,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-settlement-layout">
         <div className="invoice-settlement-main invoice-results-scroll">
           {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-            <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
+            <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={() => setQuickSettlement(inv)} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
               <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allVisibleSelected} onChange={toggleAllVisibleInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
-              <tbody>{visibleInvoices.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</tbody>
+              <tbody>{visibleInvoices.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={() => setQuickSettlement(inv)} />)}</tbody>
             </table></div>}
             {hasMoreInvoices ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleInvoiceCount((count) => count + 40)}>Show 40 more invoices ({filtered.length - visibleInvoices.length} remaining)</button> : null}</>
           )}
@@ -9543,6 +9546,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>}
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
+      {quickSettlement && <InvoiceDetailModal inv={quickSettlement} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} settlementOnly onClose={() => setQuickSettlement(null)} />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
     </div>
@@ -10524,7 +10528,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     </div>
   );
 }
-function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }) {
+function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen, onSettle }) {
   const status = invStatus(inv);
   const out = voidInfo?.status === "approved" ? 0 : invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
@@ -10543,13 +10547,14 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen }
       <td className="amt">{fmt(out, cur)}</td>
       <td>
         <span className={"ist " + displayClass}>{displayStatus}</span>
+        {out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button> : null}
         {voidStatus === "rejected" ? <div className="mt2">Void request rejected</div> : null}
       </td>
     </tr>
   );
 }
 
-function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, onOpen }) {
+function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, onOpen, onSettle }) {
   const status = invStatus(inv);
   const out = voidInfo?.status === "approved" ? 0 : invOutstanding(inv);
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
@@ -10559,7 +10564,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
   const displayClass = voidStatus === "approved" ? "debt"
     : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
   return (
-    <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
+    <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
       <header>
         <label className="invoice-mobile-select" onClick={(event) => event.stopPropagation()}>
           <input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} />
@@ -10576,11 +10581,12 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
         <span className={out > 0 ? "due" : ""}><small>Balance</small><b>{fmt(out, cur)}</b></span>
         <span><small>Cashier</small><b>{invoiceCashierName(inv) || "Unknown"}</b></span>
       </div>
+      {out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <footer><button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button></footer> : null}
     </article>
   );
 }
 
-function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "", onReprint, onClose }) {
+function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "", settlementOnly = false, onReprint, onClose }) {
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
   const cashDepositAudit = useInvoiceCashDepositAudit(live);
   const [tnote, setTnote] = useState(live.trackingNote || "");
@@ -10999,21 +11005,21 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
     <div className="scrim" onClick={onClose}>
-      <div className="modal settlement-modal invoice-detail-modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal settlement-modal invoice-detail-modal${settlementOnly ? " quick-settlement-modal" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head invoice-detail-head">
           <div className="invoice-detail-heading">
-            <div className="sub">Invoice settlement</div>
+            <div className="sub">{settlementOnly ? "Quick settlement" : "Invoice settlement"}</div>
             <div className="invoice-detail-title-row">
               <div className="title">{live.number || live.receiptNo}</div>
               <span className={"ist " + status}>{status}</span>
               {live.carriedOver ? <span className="invoice-carried">Carried over</span> : null}
             </div>
-            <div className="invoice-detail-meta">
+            {!settlementOnly ? <div className="invoice-detail-meta">
               <span><small>Customer</small><b>{live.customerName || "Walk-in"}</b></span>
               <span><small>Cashier</small><b>{invoiceCashierName(live) || "Unknown cashier"}</b></span>
               <span><small>Issued</small><b>{dt(live.ts)}</b></span>
               {status === "paid" && clearedByName ? <span className="invoice-cleared-by"><small>Cleared by</small><b>{clearedByName}</b></span> : null}
-            </div>
+            </div> : null}
           </div>
           <button className="iconbtn" onClick={onClose} aria-label="Close invoice settlement"><X /></button>
         </div>
@@ -11023,9 +11029,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           <div><span>Paid</span><b>{fmt(live.paidCents || 0, cur)}</b></div>
           <div className="due"><span>Balance</span><b>{fmt(out, cur)}</b></div>
         </div>
-        {live.lineVoided ? <div className="notice void-decision approved"><b>Item voided</b></div> : null}
+        {!settlementOnly && live.lineVoided ? <div className="notice void-decision approved"><b>Item voided</b></div> : null}
 
-        {voidPending ? (
+        {!settlementOnly && voidPending ? (
           <div className="void-review-box">
             <div className="section-title" style={{ marginTop: 0 }}><AlertCircle /> Void approval required</div>
             <div className="void-review-meta">
@@ -11043,12 +11049,12 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
             </div>
             <div className="mt2">Approval voids the invoice and restores its item quantities. It does not create a payment.</div>
           </div>
-        ) : voidApproved ? (
+        ) : !settlementOnly && voidApproved ? (
           <div className="notice void-decision approved">
             <b>Invoice voided</b>
             <span>Approved by {voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"} on {dt(voidInfo.decision?.decidedAt || voidInfo.decision?.ts)}</span>
           </div>
-        ) : voidInfo.status === "rejected" ? (
+        ) : !settlementOnly && voidInfo.status === "rejected" ? (
           <div className="notice void-decision rejected">
             <b>Void request rejected</b>
             <span>{voidInfo.decision?.reason || "No decision note supplied."}</span>
@@ -11205,6 +11211,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           </div>
         ) : null}
 
+        {!settlementOnly && <>
         <details className="invoice-detail-disclosure invoice-items-disclosure">
           <summary><span>Invoice items <b>{items.length}</b></span><ChevronDown /></summary>
           {items.length ? (
@@ -11272,6 +11279,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
             cashDepositAuditLoaded: true,
           })}><Printer /> {cashDepositAudit.loading ? "Loading audit..." : "Reprint receipt"}</button>
         </div>
+        </>}
       </div>
     </div>
   );
