@@ -822,6 +822,7 @@ async function maintenanceSnapshot(data) {
     audit: Array.isArray(audit) ? audit.slice(0, 12) : [],
     syncStatus: syncError ? "error" : outbox.length ? "pending" : "ok",
     syncError,
+    cacheWarning: data?._sync?.cacheWarning || "",
     pendingUploads: outbox.length,
     lastSyncedAt: data?.lastSyncedAt || 0,
     deviceId: typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("visionary:sync:deviceId") || "" : "",
@@ -2477,7 +2478,7 @@ async function runSyncClient(currentData, options = {}) {
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
   const nextSyncError = [pushErrorText, credentialText].filter(Boolean).join(" ");
-  const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
+  const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError, cacheWarning: "" };
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
     || previousStatus.cursor !== nextStatus.cursor
@@ -2492,10 +2493,11 @@ async function runSyncClient(currentData, options = {}) {
   // the next sync must replay these events instead of skipping them forever.
   const cached = await saveData(data);
   if (!cached) {
-    // A browser with storage disabled must not strand an authenticated admin
-    // on the recovery page. Keep the fresh cloud state in memory, do not
-    // advance its cursor, and visibly warn that offline persistence is off.
-    data = { ...data, _sync: { ...nextStatus, error: [nextSyncError, "local_cache_write_failed"].filter(Boolean).join(" ") } };
+    // The cloud sync has already completed. On mobile browsers with restricted
+    // IndexedDB/localStorage, describe this as an offline-cache limitation,
+    // not as a false cloud-sync failure. Keep the cursor unchanged so a later
+    // successful cache write safely replays the same cloud events.
+    data = { ...data, _sync: { ...nextStatus, cacheWarning: "offline_cache_unavailable" } };
     return { data, status: data._sync };
   }
   await saveCursor(cursor);
@@ -17874,6 +17876,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
   const lastSync = data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "Not yet";
   const pendingUploads = Number(m.pendingUploads || 0);
   const syncError = pendingUploads > 0 ? (m.syncError || "") : "";
+  const cacheWarning = m.cacheWarning || "";
   const syncText = syncError ? "Sync error" : pendingUploads > 0 ? "Pending uploads" : "Synced";
   const run = async (mode) => {
     setBusy(mode);
@@ -17907,6 +17910,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
         Automatic maintenance runs at startup, hourly for lightweight cleanup, and daily for deep maintenance. It never deletes sales, payments, inventory transactions, user settings, authentication data, or the sync queue.
       </div>
       {syncError && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{syncError}</div>}
+      {cacheWarning && <div className="notice warn" style={{ marginTop: 12 }}><AlertCircle />Cloud sync is complete, but this browser could not update its offline cache. Keep browser storage enabled for offline use.</div>}
       <div className="grid2" style={{ marginTop: 14 }}>
         <div className="addpanel">
           <div className="section-title" style={{ marginTop: 0 }}>Maintenance Schedule</div>
