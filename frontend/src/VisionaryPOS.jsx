@@ -8581,7 +8581,7 @@ const TABS = [
   { id: "pricing", label: "Branch Pricing", icon: Tags, desc: "View product pricing and margins (prices set in Products)" },
   { id: "customers", label: "Customers", icon: Users, desc: "Customer records and outstanding balances" },
   { id: "cash", label: "Cash Management", icon: Wallet, desc: "Cash flow, pay-ins, and pay-outs" },
-  { id: "payments", label: "Payments", icon: CreditCard, desc: "Settle and audit cashier inventory-debt balances" },
+  { id: "payments", label: "Cashier Debt", icon: CreditCard, desc: "Settle cashier invoice and inventory debt from one workspace" },
   { id: "expenses", label: "Expenses", icon: TrendingDown, desc: "Daily costs, approvals, receipts, and analytics" },
   { id: "reports", label: "Reports", icon: BarChart3, desc: "Sales, profit and loss, exports" },
   { id: "documents", label: "Documents", icon: Files, desc: "Supplier invoices, damage/loss, inventory count reports" },
@@ -8739,7 +8739,6 @@ function InsightsTab({ data, online }) {
 function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
-  const [debtPaymentsOpen, setDebtPaymentsOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const workspaceRootRef = useRef(null);
@@ -8783,7 +8782,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     setTab("invoices");
   };
   const openDebtPayments = () => {
-    if (canAccess("payments")) setDebtPaymentsOpen(true);
+    if (canAccess("payments")) setTab("payments");
   };
   const activateWorkspace = (tabId) => {
     setMobileMoreOpen(false);
@@ -8858,6 +8857,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} onNavigate={activateWorkspace} />;
       case "cash": return <CashTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
+      case "payments": return <CashierDebtTab data={data} update={update} branch={branch} user={user} />;
       case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
@@ -8911,7 +8911,6 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       <div className="admincontent">
         {render()}
       </div>
-      {debtPaymentsOpen ? <InventoryDebtPaymentModal data={data} update={update} branch={branch} user={user} onClose={() => setDebtPaymentsOpen(false)} /> : null}
     </div>
   );
 }
@@ -9443,8 +9442,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           <div><span>Total cashier debt</span><b className={invoiceDebtOutstanding + inventoryDebtOutstanding > 0 ? "danger" : ""}>{fmt(invoiceDebtOutstanding + inventoryDebtOutstanding, cur)}</b></div>
         </div>
         <div className="invoice-section-head">
-          <div><div className="section-title">Cashier debt accounts</div><div className="muted">Carried-over invoices and audited inventory shortages are shown separately.</div></div>
-          <button className="btn sm btn-primary" disabled={branchJointDebts.length === 0} onClick={onOpenDebtPayments}><CreditCard /> Settle inventory debts</button>
+          <div><div className="section-title">Cashier debt accounts</div><div className="muted">Review balances here, then settle invoice and inventory debt together in one workspace.</div></div>
+          <button className="btn sm btn-primary" onClick={onOpenDebtPayments}><CreditCard /> Settle cashier debts</button>
         </div>
         <div className="invsummary debt-summary">
           <section>
@@ -9508,11 +9507,118 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   );
 }
 
-function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettled }) {
+function CashierDebtTab({ data, update, branch, user }) {
+  const cur = data.settings.currency;
+  const invoiceDebts = operationalInvoices(data)
+    .filter((invoice) => invoice.branchId === branch.id && invIsDebt(invoice))
+    .sort((left, right) => Number(left.ts || 0) - Number(right.ts || 0));
+  const inventoryBalances = cashierJointDebtCashierBalances(data, branch.id)
+    .filter((row) => row.outstandingCents > 0);
+  const cashiers = branchCashiers(data, branch.id);
+  const cashierById = new Map(cashiers.map((cashier) => [String(cashier.id || ""), cashier]));
+  const cashierByName = new Map(cashiers.map((cashier) => [String(cashier.name || "").trim().toLowerCase(), cashier]));
+  const rows = new Map();
+  const keyFor = (cashierId, cashierName) => {
+    const id = String(cashierId || "").trim();
+    const name = String(cashierName || "Cashier").trim() || "Cashier";
+    const known = cashierById.get(id) || cashierByName.get(name.toLowerCase());
+    return known?.id ? `cashier:${known.id}` : (id ? `cashier:${id}` : `name:${name.toLowerCase()}`);
+  };
+  const ensureRow = (cashierId, cashierName) => {
+    const id = String(cashierId || "").trim();
+    const name = String(cashierName || "Cashier").trim() || "Cashier";
+    const known = cashierById.get(id) || cashierByName.get(name.toLowerCase());
+    const key = keyFor(id, name);
+    if (!rows.has(key)) rows.set(key, {
+      key,
+      cashierId: known?.id || id || "",
+      cashierName: known?.name || name,
+      invoices: [],
+      invoiceCents: 0,
+      inventoryBalance: null,
+      inventoryCents: 0,
+    });
+    return rows.get(key);
+  };
+  invoiceDebts.forEach((invoice) => {
+    const row = ensureRow(invoice.cashierId, invoiceCashierName(invoice));
+    row.invoices.push(invoice);
+    row.invoiceCents += invOutstanding(invoice);
+  });
+  inventoryBalances.forEach((balance) => {
+    const row = ensureRow(balance.cashierId, balance.cashierName);
+    row.inventoryBalance = balance;
+    row.inventoryCents += balance.outstandingCents;
+  });
+  const debtRows = Array.from(rows.values())
+    .map((row) => ({ ...row, totalCents: row.invoiceCents + row.inventoryCents }))
+    .sort((left, right) => right.totalCents - left.totalCents || left.cashierName.localeCompare(right.cashierName));
+  const [selectedKey, setSelectedKey] = useState(() => debtRows[0]?.key || "");
+  const selected = debtRows.find((row) => row.key === selectedKey) || debtRows[0] || null;
+  const [invoiceSettlementOpen, setInvoiceSettlementOpen] = useState(false);
+  const invoiceTotal = invoiceDebts.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+  const inventoryTotal = inventoryBalances.reduce((sum, balance) => sum + balance.outstandingCents, 0);
+
+  useEffect(() => {
+    if (!selectedKey || debtRows.some((row) => row.key === selectedKey)) return;
+    setSelectedKey(debtRows[0]?.key || "");
+  }, [selectedKey, debtRows.map((row) => row.key).join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="invoice-workspace cashier-debt-workspace">
+      <PageHead title="Cashier Debt" sub={`${branch.name} - settle invoice and inventory balances in one place`} />
+      <div className="invoice-summary-strip three">
+        <div><span>Invoice debt</span><b className={invoiceTotal > 0 ? "danger" : ""}>{fmt(invoiceTotal, cur)}</b></div>
+        <div><span>Inventory debt</span><b className={inventoryTotal > 0 ? "danger" : ""}>{fmt(inventoryTotal, cur)}</b></div>
+        <div><span>Total cashier debt</span><b className={invoiceTotal + inventoryTotal > 0 ? "danger" : ""}>{fmt(invoiceTotal + inventoryTotal, cur)}</b></div>
+      </div>
+
+      {debtRows.length === 0 ? <div className="notice">No cashier invoice or inventory balances are outstanding at {branch.name}.</div> : (
+        <>
+          <section className="panel" style={{ padding: 14, marginBottom: 14 }}>
+            <label className="inventory-payment-cashier"><span>Cashier account</span>
+              <select className="select" value={selected?.key || ""} onChange={(event) => { setSelectedKey(event.target.value); setInvoiceSettlementOpen(false); }}>
+                {debtRows.map((row) => <option key={row.key} value={row.key}>{row.cashierName} - {fmt(row.totalCents, cur)} due</option>)}
+              </select>
+            </label>
+          </section>
+
+          {selected ? <>
+            <div className="inventory-selected-cashier" style={{ marginBottom: 14 }}>
+              <div className="avatar" style={{ background: "var(--accent)" }}>{selected.cashierName.charAt(0)}</div>
+              <div className="meta"><div className="nm">{selected.cashierName}</div><div className="mt2">{selected.invoices.length} invoice debt{selected.invoices.length === 1 ? "" : "s"} - {selected.inventoryBalance?.debtCount || 0} inventory debt{selected.inventoryBalance?.debtCount === 1 ? "" : "s"}</div></div>
+              <div className="metric due"><span>Total due</span><b>{fmt(selected.totalCents, cur)}</b></div>
+            </div>
+
+            <div className="invsummary debt-summary">
+              <section>
+                <div className="invoice-section-head">
+                  <div><div className="section-title">Invoice debt</div><div className="muted">{selected.invoices.length} carried-over invoice{selected.invoices.length === 1 ? "" : "s"}</div></div>
+                  <button type="button" className="btn sm btn-primary" disabled={selected.invoices.length === 0} onClick={() => setInvoiceSettlementOpen(true)}><CreditCard /> Settle invoices</button>
+                </div>
+                {selected.invoices.length === 0 ? <div className="notice compact-notice">No invoice debt for this cashier.</div> : (
+                  <div className="list mini">{selected.invoices.map((invoice) => <div className="row" key={invoice.id}><div className="meta"><div className="nm">{invoice.number || invoice.receiptNo || "Invoice"}</div><div className="mt2">{invoice.customerName || "Walk-in"} - {dt(invoice.ts)}</div></div><span className="pill plain" style={{ color: "#C23A56" }}>{fmt(invOutstanding(invoice), cur)}</span></div>)}</div>
+                )}
+              </section>
+              <section>
+                <div className="section-title">Inventory debt</div>
+                {selected.inventoryBalance ? <DebtPaymentsTab key={selected.inventoryBalance.cashierId} data={data} update={update} branch={branch} user={user} compact initialCashierId={selected.inventoryBalance.cashierId} hideCashierSelector /> : <div className="notice compact-notice">No inventory shortage debt for this cashier.</div>}
+              </section>
+            </div>
+          </> : null}
+        </>
+      )}
+
+      {invoiceSettlementOpen && selected ? <BulkSettleDayModal invoices={selected.invoices} activeCashierNames={[selected.cashierName]} initialCashier={selected.cashierName} branch={branch} data={data} update={update} cur={cur} user={user} onClose={() => setInvoiceSettlementOpen(false)} /> : null}
+    </div>
+  );
+}
+
+function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettled, initialCashierId = "", hideCashierSelector = false }) {
   const cur = data.settings.currency;
   const balances = cashierJointDebtCashierBalances(data, branch.id);
   const openBalances = balances.filter((row) => row.outstandingCents > 0);
-  const [selectedCashierId, setSelectedCashierId] = useState(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
+  const [selectedCashierId, setSelectedCashierId] = useState(() => initialCashierId || openBalances[0]?.cashierId || balances[0]?.cashierId || "");
   const selected = balances.find((row) => row.cashierId === selectedCashierId) || null;
   const openDebtAllocations = selected ? [...selected.allocations]
     .filter((allocation) => allocation.outstandingCents > 0)
@@ -9537,9 +9643,13 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
     .filter((payment) => payment.branchId === branch.id && (!payment.status || payment.status === "captured"))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   useEffect(() => {
+    if (initialCashierId && balances.some((row) => row.cashierId === initialCashierId) && selectedCashierId !== initialCashierId) {
+      setSelectedCashierId(initialCashierId);
+      return;
+    }
     if (selectedCashierId && balances.some((row) => row.cashierId === selectedCashierId)) return;
     setSelectedCashierId(openBalances[0]?.cashierId || balances[0]?.cashierId || "");
-  }, [balances, openBalances, selectedCashierId]);
+  }, [balances, initialCashierId, openBalances, selectedCashierId]);
   useEffect(() => {
     setSelectedDebtIds(new Set());
     setAmount("");
@@ -9694,12 +9804,12 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
       {balances.length === 0 ? <div className="notice">No inventory debt has been assigned at {branch.name}.</div> : (
         <section className={"inventory-payment-workspace" + (compact ? "" : " panel")}>
           <div className="inventory-payment-toolbar">
-            <span>{openBalances.length} cashier balance{openBalances.length === 1 ? "" : "s"} outstanding</span>
-            <label className="inventory-payment-cashier"><span>Cashier</span>
+            <span>{hideCashierSelector ? "Inventory shortage settlement" : `${openBalances.length} cashier balance${openBalances.length === 1 ? "" : "s"} outstanding`}</span>
+            {!hideCashierSelector ? <label className="inventory-payment-cashier"><span>Cashier</span>
               <select className="select" value={selectedCashierId} onChange={(event) => { setSelectedCashierId(event.target.value); setMessage(""); }}>
                 {balances.map((row) => <option key={row.cashierId} value={row.cashierId}>{row.cashierName} - {row.outstandingCents > 0 ? `${fmt(row.outstandingCents, cur)} due` : "paid"}</option>)}
               </select>
-            </label>
+            </label> : null}
           </div>
 
           {!selected ? <div className="notice">Select a cashier balance to continue.</div> : (
@@ -9772,20 +9882,6 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
           </table></div>
         )}
       </details> : null}
-    </div>
-  );
-}
-
-function InventoryDebtPaymentModal({ data, update, branch, user, onClose }) {
-  return (
-    <div className="scrim" onClick={onClose}>
-      <div className="modal inventory-payment-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-head">
-          <div><div className="title" style={{ fontSize: 18 }}>Settle inventory debt</div><div className="sub">{branch.name}</div></div>
-          <button type="button" className="iconbtn" aria-label="Close inventory debt payment" onClick={onClose}><X /></button>
-        </div>
-        <DebtPaymentsTab data={data} update={update} branch={branch} user={user} compact onSettled={onClose} />
-      </div>
     </div>
   );
 }
