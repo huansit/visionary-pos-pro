@@ -670,8 +670,6 @@ pub fn run() {
             let _ = start_secugen_client();
             Ok(())
         })
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             save_terminal_credentials,
             load_terminal_credentials,

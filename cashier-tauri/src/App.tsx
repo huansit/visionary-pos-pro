@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
 import {
   ArrowLeftRight,
   Barcode,
@@ -12,7 +10,6 @@ import {
   Check,
   Clock,
   Delete,
-  Download,
   FileText,
   Fingerprint,
   Grid2X2,
@@ -90,7 +87,6 @@ type UpdatePrompt = {
   version: string;
   currentVersion: string;
   releaseNotes: string[];
-  nativeUpdate: NonNullable<Awaited<ReturnType<typeof check>>>;
 };
 
 type CashierUpdateState = "idle" | "downloading" | "ready";
@@ -879,14 +875,7 @@ export default function App() {
   const canCompleteSale = cartLines.length > 0
     && Boolean(customerName.trim())
     && !creditLocked;
-  const updateStatusLabelRaw = updatePrompt
-    ? `v${updatePrompt.version} available`
-    : updateState === "downloading"
-      ? `v${APP_VERSION} · downloading`
-      : `v${APP_VERSION} · up to date`;
-  const updateStatusLabel = updateStatusLabelRaw
-    .replace("· downloading", "- checking")
-    .replace("· up to date", "- up to date");
+  const updateStatusLabel = `v${APP_VERSION} · manual updates`;
   const session = useMemo(() => ({
     businessName: "VisionPOS",
     cashierName: account?.name || "Cashier",
@@ -1077,60 +1066,16 @@ export default function App() {
   }, [updateState]);
 
   async function checkForUpdates(manual = false) {
-    if (updateCheckInFlight.current) return;
-    if (updateStateRef.current === "ready") {
-      if (manual && updatePrompt) setStatus(`Update ${updatePrompt.version} is available.`);
-      return;
-    }
-    updateCheckInFlight.current = true;
-    setUpdateState("downloading");
-    if (manual) setStatus("Checking for desktop updates...");
-    try {
-      logUpdateEvent("check_started", { manual, currentVersion: APP_VERSION });
-      const update = await check({ timeout: 5_000 });
-
-      if (!update) {
-        logUpdateEvent("already_current", { manual, currentVersion: APP_VERSION });
-        setUpdatePrompt(null);
-        setUpdateToastDismissed(false);
-        setUpdateState("idle");
-        if (manual) {
-          setStatus(`VISIONPOS Cashier ${APP_VERSION} is up to date.`);
-          setLatestUpdateNotice(true);
-        }
-        return;
-      }
-
-      logUpdateEvent("update_available", { currentVersion: APP_VERSION, version: update.version });
-      setUpdatePrompt({
-        version: update.version,
-        currentVersion: APP_VERSION,
-        releaseNotes: update.body ? update.body.split(/\r?\n/).filter(Boolean) : [],
-        nativeUpdate: update
-      });
-      setUpdateToastDismissed(false);
-      setUpdateState("ready");
-      setStatus(`Update ${update.version} is available. Install it when the cart is clear.`);
-    } catch (err) {
-      const message = String(err);
-      logUpdateEvent("check_failed", { manual, currentVersion: APP_VERSION, message });
-      setUpdateState("idle");
-      if (manual) setError(`Update check failed: ${message}`);
-    } finally {
-      updateCheckInFlight.current = false;
+    // Releases are manually approved and distributed after independent malware
+    // scanning. Do not fetch or install binaries from an in-app manifest.
+    setUpdatePrompt(null);
+    setUpdateState("idle");
+    setUpdateToastDismissed(false);
+    if (manual) {
+      setStatus("Desktop updates are installed manually by an administrator.");
+      setLatestUpdateNotice(true);
     }
   }
-
-  useEffect(() => {
-    checkForUpdates(false);
-    const intervalId = window.setInterval(() => checkForUpdates(false), 30 * 60 * 1000);
-    const onFocus = () => checkForUpdates(false);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, []);
 
   useEffect(() => {
     if (!account && updatePrompt && updateState === "ready") {
@@ -1532,18 +1477,8 @@ export default function App() {
   }
 
   function restartForUpdate() {
-    if (!updatePrompt) return;
-    if (cartLines.length > 0) {
-      setRestartWhenCartEmpty(true);
-      setUpdateToastDismissed(true);
-      setStatus("Finish or clear the current cart before installing the update.");
-      logUpdateEvent("install_waiting_for_empty_cart", { version: updatePrompt.version });
-      return;
-    }
-    setRestartWhenCartEmpty(false);
-    setUpdateToastDismissed(true);
-    setUpdateInstallOpen(true);
-    logUpdateEvent("install_prompt_opened", { version: updatePrompt.version });
+    setStatus("Desktop updates are installed manually by an administrator.");
+    setLatestUpdateNotice(true);
   }
 
   const updateModal = latestUpdateNotice
@@ -1825,8 +1760,8 @@ export default function App() {
 
           <footer className="rail-footer">
             <div className="rail-update-wrap">
-              <button className={"rail-update-status " + updateState} onClick={() => checkForUpdates(true)}>
-                {updateState === "ready" ? <Download size={14} /> : <Check size={14} />}
+              <button className="rail-update-status idle" onClick={() => checkForUpdates(true)}>
+                <Check size={14} />
                 {updateStatusLabel}
               </button>
               {updatePrompt && updateState === "ready" && (
@@ -3033,73 +2968,16 @@ function DebtsCenterView({
 }
 
 function UpdatePromptModal({ update, onClose }: { update: UpdatePrompt; onClose: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [downloaded, setDownloaded] = useState(0);
-  const [contentLength, setContentLength] = useState(0);
-  const [phase, setPhase] = useState("Ready to install");
-  const [failure, setFailure] = useState("");
-
-  async function installUpdate() {
-    setBusy(true);
-    setFailure("");
-    setDownloaded(0);
-    setContentLength(0);
-    setPhase("Preparing secure download...");
-    try {
-      logUpdateEvent("download_started", { version: update.version });
-      let received = 0;
-      await update.nativeUpdate.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          const total = Number(event.data.contentLength || 0);
-          setContentLength(total);
-          setPhase("Downloading update...");
-        }
-        if (event.event === "Progress") {
-          received += Number(event.data.chunkLength || 0);
-          setDownloaded(received);
-        }
-        if (event.event === "Finished") {
-          setPhase("Verifying and installing...");
-        }
-      });
-      logUpdateEvent("install_finished", { version: update.version });
-      setPhase("Restarting VISIONPOS...");
-      await relaunch();
-    } catch (err) {
-      const message = String(err);
-      logUpdateEvent("install_failed", { version: update.version, message });
-      setFailure(message);
-      setPhase("Update failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const progress = contentLength > 0 ? Math.min(100, Math.round((downloaded / contentLength) * 100)) : busy ? 12 : 0;
-
   return (
     <div className="update-backdrop">
       <section className="update-modal" role="dialog" aria-modal="true" aria-labelledby="update-title">
         <button className="update-close" onClick={onClose} aria-label="Remind me later"><X size={18} /></button>
-        <div className="update-icon"><Download size={28} /></div>
-        <span>Update available</span>
+        <div className="update-icon"><Check size={28} /></div>
+        <span>Manual update required</span>
         <h2 id="update-title">VISIONPOS Cashier {update.version}</h2>
-        <p>
-          You are using version {update.currentVersion}. The update will download, verify, install, and restart VISIONPOS automatically.
-        </p>
-        {update.releaseNotes.length > 0 && (
-          <ul>
-            {update.releaseNotes.slice(0, 5).map((note) => <li key={note}>{note}</li>)}
-          </ul>
-        )}
-        <div className="update-progress">
-          <div><b>{phase}</b><span>{contentLength > 0 ? `${progress}%` : busy ? "Starting" : "Idle"}</span></div>
-          <progress max={100} value={progress} />
-        </div>
-        {failure && <p className="update-error">Update failed: {failure}. You can retry the download.</p>}
+        <p>Automatic installer downloads are disabled. An administrator must approve, scan, and install every Cashier release.</p>
         <div className="update-actions">
-          <button onClick={installUpdate} disabled={busy}>{busy ? "Updating..." : failure ? "Retry update" : "Update now"}</button>
-          <button className="ghost" onClick={onClose}>Remind me later</button>
+          <button onClick={onClose}>OK</button>
         </div>
       </section>
     </div>
@@ -3139,7 +3017,7 @@ function UpdateReadyToast({
   return (
     <aside className="update-ready-toast" role="status">
       <button className="toast-close" onClick={onLater} aria-label="Dismiss update notice"><X size={16} /></button>
-      <div className="toast-icon"><Download size={18} /></div>
+      <div className="toast-icon"><Check size={18} /></div>
       <div className="toast-copy">
         <b>Update v{version} available</b>
         <span>Install inside VisionPOS when this terminal is idle.</span>
@@ -3895,7 +3773,7 @@ function PreLoginUpdateControl({
       </div>
       {updateVersion ? (
         <button type="button" onClick={onInstallUpdate}>
-          <Download size={16} />
+          <Check size={16} />
           Install v{updateVersion}
         </button>
       ) : (

@@ -4,7 +4,6 @@ param()
 $ErrorActionPreference = 'Stop'
 $expectedThumbprint = '49FE31D8D08CF9FEDC12454E64CC96FCF0BA2BFE'
 $cashierRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$updaterKeyPath = Join-Path $cashierRoot 'src-tauri\gen\visionpos-updater.key'
 $sevenZipPath = 'C:\Program Files\Lenovo\Lenovo AI Now\7Zip\7z.exe'
 $certificatePath = "Cert:\CurrentUser\My\$expectedThumbprint"
 
@@ -15,15 +14,7 @@ if (-not $certificate.HasPrivateKey) {
 if ($certificate.NotAfter -le (Get-Date)) {
     throw "Signing certificate $expectedThumbprint expired on $($certificate.NotAfter.ToString('u'))."
 }
-if (-not (Test-Path -LiteralPath $updaterKeyPath -PathType Leaf)) {
-    throw "Updater signing key is missing: $updaterKeyPath"
-}
-
-$environmentNames = @(
-    'TAURI_SIGNING_PRIVATE_KEY',
-    'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
-    'VISIONPOS_7ZIP_PATH'
-)
+$environmentNames = @('VISIONPOS_7ZIP_PATH')
 $previousEnvironment = @{}
 foreach ($name in $environmentNames) {
     $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -31,8 +22,6 @@ foreach ($name in $environmentNames) {
 
 $locationPushed = $false
 try {
-    $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -LiteralPath $updaterKeyPath -Raw
-    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ''
     if (Test-Path -LiteralPath $sevenZipPath -PathType Leaf) {
         $env:VISIONPOS_7ZIP_PATH = $sevenZipPath
     }
