@@ -1,7 +1,14 @@
 const apiVersion = process.env.WHATSAPP_API_VERSION || "v20.0";
 
 export function whatsappConfigured() {
-  return Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+  // Do not send outbound messages when inbound webhooks cannot be verified.
+  // This safely disables a partial optional integration rather than letting it
+  // affect the POS application's availability.
+  return Boolean(
+    process.env.WHATSAPP_ACCESS_TOKEN
+    && process.env.WHATSAPP_PHONE_NUMBER_ID
+    && process.env.WHATSAPP_APP_SECRET
+  );
 }
 
 export async function sendWhatsAppText(to, body) {

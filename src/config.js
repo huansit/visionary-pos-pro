@@ -73,10 +73,18 @@ export function assertStartupConfig() {
     }
   }
 
-  if (process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_PHONE_NUMBER_ID) {
-    if (!String(process.env.WHATSAPP_APP_SECRET || "").trim()) {
-      errors.push("WHATSAPP_APP_SECRET is required when WhatsApp is configured");
-    }
+  const whatsappSettings = [
+    process.env.WHATSAPP_ACCESS_TOKEN,
+    process.env.WHATSAPP_PHONE_NUMBER_ID,
+    process.env.WHATSAPP_APP_SECRET,
+  ].map((value) => String(value || "").trim());
+  const hasPartialWhatsAppConfiguration = whatsappSettings.some(Boolean)
+    && !whatsappSettings.every(Boolean);
+  if (hasPartialWhatsAppConfiguration) {
+    // WhatsApp is optional. A partial setup must not take tills, payments, and
+    // cashier sign-in offline; whatsappConfigured() disables that integration
+    // until all three credentials are present.
+    console.warn("WhatsApp integration is disabled: complete access token, phone ID, and app secret are required.");
   }
 
   if (process.env.KOPOKOPO_ENABLED === "1") {

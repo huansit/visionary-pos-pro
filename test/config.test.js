@@ -61,6 +61,23 @@ test("live startup accepts explicit secure configuration", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("partial optional WhatsApp configuration cannot take the POS offline", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    WHATSAPP_ACCESS_TOKEN: "configured-but-incomplete",
+    WHATSAPP_PHONE_NUMBER_ID: "123456789",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /WhatsApp integration is disabled/i);
+});
+
 test("sandbox startup does not require live-only setup and SMTP secrets", () => {
   const result = validateConfig({
     NODE_ENV: "sandbox",
