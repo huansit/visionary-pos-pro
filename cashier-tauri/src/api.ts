@@ -9,6 +9,8 @@ declare const __APP_VERSION__: string;
 export const APP_VERSION = __APP_VERSION__;
 
 const RESET_EPOCH_KEY_PREFIX = "visionpos:cashier:reset-epoch:v1:";
+const ACTIVE_SYNC_VERSION_POLL_MS = 10_000;
+const BACKGROUND_SYNC_VERSION_POLL_MS = 60_000;
 
 class ApiRequestError extends Error {
   status: number;
@@ -81,7 +83,11 @@ export function connectSyncStream(terminal: TerminalCredentials, onSync: (change
           lastVersion = nextVersion;
           onSync(data);
         }
-        await wait(3000);
+        // The desktop terminal uses authenticated request headers, while the
+        // browser EventSource API cannot attach those headers. Keep the
+        // lightweight version check, but do not wake a terminal every three
+        // seconds when no data has changed (especially while it is hidden).
+        await wait(document.hidden ? BACKGROUND_SYNC_VERSION_POLL_MS : ACTIVE_SYNC_VERSION_POLL_MS);
       } catch (_) {
         if (stopped) break;
         onState?.("reconnecting");

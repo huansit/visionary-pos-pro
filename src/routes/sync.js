@@ -101,6 +101,11 @@ router.use((req, res, next) => {
   res.set("Expires", "0");
   res.on("finish", () => {
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    // Healthy version probes are an internal keep-alive. Logging every one
+    // creates avoidable PM2 disk and stdout work as terminal count grows.
+    // Keep visibility for failed and slow requests, including a slow probe.
+    const quietVersionProbe = req.path === "/version" && res.statusCode < 400 && elapsedMs < 250;
+    if (quietVersionProbe) return;
     console.log(`[sync] ${req.method} ${req.path} ${res.statusCode} ${elapsedMs.toFixed(1)}ms actor=${req.deviceId || req.account?.id || "-"} branch=${req.deviceBranchId || req.account?.branchId || "-"}`);
   });
   next();

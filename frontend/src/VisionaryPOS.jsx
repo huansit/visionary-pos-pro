@@ -104,7 +104,10 @@ const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
 const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
-const REALTIME_SYNC_MS = 30000;
+// EventSource delivers normal changes immediately. This is only a recovery
+// poll for networks and proxies that drop long-lived connections.
+const REALTIME_SYNC_MS = 2 * 60 * 1000;
+const RESUME_SYNC_STALE_MS = 60 * 1000;
 const REALTIME_RECONNECT_MS = 4000;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_MS = 5000;
@@ -6845,7 +6848,12 @@ export default function VisionPOS() {
   useEffect(() => {
     const goOn = () => { setOnline(true); setTimeout(runSync, 400); };
     const goOff = () => setOnline(false);
-    const syncVisible = () => { if (!document.hidden && navigator.onLine) setTimeout(() => runSync({ force: true }), 150); };
+    const syncVisible = () => {
+      const lastSyncedAt = Number(dataRef.current?.lastSyncedAt || 0);
+      if (!document.hidden && navigator.onLine && Date.now() - lastSyncedAt >= RESUME_SYNC_STALE_MS) {
+        setTimeout(() => runSync({ force: true }), 150);
+      }
+    };
     window.addEventListener("online", goOn); window.addEventListener("offline", goOff);
     window.addEventListener("focus", syncVisible);
     document.addEventListener("visibilitychange", syncVisible);

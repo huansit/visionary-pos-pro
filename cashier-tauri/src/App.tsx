@@ -67,6 +67,13 @@ import { businessDateTimeBoundary, businessDateValue, formatBusinessDate, format
 import type { Account, Branch, BusinessDayPeriod, CartLine, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaOffset, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 const LAST_CATALOG_KEY = "visionpos:cashier:last-catalog:v2";
+// A full catalog refresh replays the branch history in order to keep the
+// offline checkout data authoritative. Replaying it on every focus event is
+// expensive on older terminals and mobile hardware, so resume events only
+// trigger a safety refresh when the cache has genuinely become stale. Live
+// sync-version changes and successful cashier actions still refresh at once.
+const CATALOG_RESUME_REFRESH_MS = 5 * 60 * 1000;
+const MPESA_BADGE_REFRESH_MS = 60 * 1000;
 const LAST_FINGERPRINT_USER_KEY_PREFIX = "visionpos:cashier:last-fingerprint-user:v1:";
 const UPDATE_LOG_KEY = "visionpos:cashier:update-log:v1";
 const LEFT_RAIL_COLLAPSED_KEY = "visionpos:cashier:left-rail-collapsed:v2";
@@ -798,6 +805,7 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const catalogSyncInFlight = useRef(false);
   const catalogSyncPending = useRef(false);
+  const catalogLastRefreshAt = useRef(0);
   const updateCheckInFlight = useRef(false);
   const updateStateRef = useRef<CashierUpdateState>("idle");
   const dayClosedAtRef = useRef<number | null>(null);
@@ -1093,6 +1101,11 @@ export default function App() {
   useEffect(() => {
     if (!terminal) return;
     const syncQuietly = () => refreshCatalog(terminal, { silent: true });
+    const syncIfCatalogIsStale = () => {
+      if (Date.now() - catalogLastRefreshAt.current >= CATALOG_RESUME_REFRESH_MS) {
+        syncQuietly();
+      }
+    };
     let realtimeTimer: number | undefined;
     const scheduleRealtimeSync = (_change?: SyncVersionChange) => {
       // Realtime versions are global and do not identify the branch whose day
@@ -1102,11 +1115,10 @@ export default function App() {
       setMpesaBadgeRefreshNonce((value) => value + 1);
     };
     const disconnectStream = connectSyncStream(terminal, scheduleRealtimeSync, setRealtimeState);
-    const intervalId = window.setInterval(syncQuietly, 30000);
-    const onFocus = () => syncQuietly();
+    const onFocus = () => syncIfCatalogIsStale();
     const onOnline = () => syncQuietly();
     const onVisibility = () => {
-      if (document.visibilityState === "visible") syncQuietly();
+      if (document.visibilityState === "visible") syncIfCatalogIsStale();
     };
     window.addEventListener("focus", onFocus);
     window.addEventListener("online", onOnline);
@@ -1114,7 +1126,6 @@ export default function App() {
     return () => {
       disconnectStream();
       window.clearTimeout(realtimeTimer);
-      window.clearInterval(intervalId);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisibility);
@@ -1149,7 +1160,10 @@ export default function App() {
       if (!document.hidden && navigator.onLine) void refreshBadge();
     };
     void refreshBadge();
-    const intervalId = window.setInterval(refreshVisible, 12000);
+    // New M-Pesa activity is also signalled by the sync-version stream. This
+    // fallback is deliberately infrequent so an unread badge cannot compete
+    // with the checkout screen for network and main-thread time.
+    const intervalId = window.setInterval(refreshVisible, MPESA_BADGE_REFRESH_MS);
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("online", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
@@ -1290,6 +1304,7 @@ export default function App() {
             pulled.businessDays,
             effectiveDayClosedAt
           ));
+          catalogLastRefreshAt.current = Date.now();
           setStatus(`Connected. Synced ${pulled.products.length} products, ${effectiveInvoices.length} invoices and ${pulled.stockTransferRequests.length} transfer requests.`);
           setError("");
         } catch (err) {
