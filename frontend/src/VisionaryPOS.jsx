@@ -9023,6 +9023,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
   const [workspaceView, setWorkspaceView] = useState("invoices");
+  const [closeSort, setCloseSort] = useState("newest");
   const [cashierFilter, setCashierFilter] = useState(initialCashier);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -9305,6 +9306,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       missingCount: missingDebtByCashier[name]?.count || 0,
     }));
   const closes = (data.endOfDays || []).filter((e) => e.branchId === branch.id);
+  const sortedCloses = [...closes].sort((left, right) => {
+    const leftTs = Number(left.closedAt || left.ts || 0);
+    const rightTs = Number(right.closedAt || right.ts || 0);
+    return closeSort === "oldest" ? leftTs - rightTs : rightTs - leftTs;
+  });
   const invoiceDebtOutstanding = debtInvoices.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryDebtOutstanding = branchJointDebts.reduce((sum, debt) => sum + cashierJointDebtOutstanding(data, debt), 0);
   const voidPendingCount = periodActiveInvoices.filter((invoice) => invoiceVoidState(data, invoice.id).status === "pending").length;
@@ -9324,11 +9330,12 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     setEod(null);
     setMobileFiltersOpen(false);
   };
+  const canCloseCurrentBusinessDay = workspaceView === "invoices" && businessDayFilter === "current" && !hasCustomDateRange;
 
   return (
     <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "") + (workspaceView === "invoices" && mobileFiltersOpen ? " mobile-filters-open" : "")}>
       <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
-        right={workspaceView === "closes" ? <button
+        right={canCloseCurrentBusinessDay ? <button
           className="btn sm btn-primary"
           disabled={sinceEndDay.length === 0}
           title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
@@ -9493,10 +9500,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
         <div className="invoice-section-head">
           <div><div className="section-title">End of Day history</div><div className="muted">Saved closing reports for {branch.name}.</div></div>
+          <label className="invoice-sort-filter" style={{ minWidth: 170 }}><span>Order</span><select className="select" value={closeSort} onChange={(event) => setCloseSort(event.target.value)} aria-label="Sort day close reports"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
         </div>
         {sinceEndDay.length === 0 ? <div className="notice compact-notice">No new invoice sales since the last End of Day close.</div> : <div className="notice compact-notice">{sinceEndDay.length} invoice(s) are ready for the next End of Day close.</div>}
         {closes.length === 0 ? <div className="notice">No End of Day closes saved yet for this branch.</div> : (
-          <div className="list day-close-list">{closes.map((e) => (
+          <div className="list day-close-list">{sortedCloses.map((e) => (
             <div className="row" key={e.id}><div className="avatar"><FileText style={{ width: 17, height: 17 }} /></div>
               <div className="meta"><div className="nm">{e.date} - {e.time}</div><div className="mt2">{e.transactions} sale(s) - closed by {e.closedBy}</div></div>
               <span className="pill plain">{fmt(e.totalSalesCents, cur)}</span>
