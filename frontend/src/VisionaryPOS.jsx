@@ -8971,14 +8971,13 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
   const [state, setState] = useState({ loading: true, error: "", transactions: [] });
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const businessDate = businessDateValue(Date.now(), timeZone);
-  const from = businessDateTimeBoundary(`${businessDate}T00:00`, timeZone, "start");
   useEffect(() => {
     let active = true;
-    // Show the full business-day receipt trail beside invoices. Only money
-    // that remains available can be selected for settlement, so a used
-    // receipt stays auditable without being selectable again.
-    listKopokopoTransactions({ branchId: branch.id, status: "received", from, sort: "desc", limit: 100, offset: 0 })
+    // Settling an invoice needs spendable balance, not just money received
+    // after midnight. A business day can cross midnight, so the rail must
+    // use the same available-funds view as the M-Pesa audit instead of a
+    // calendar-day cutoff.
+    listKopokopoTransactions({ branchId: branch.id, status: "available", sort: "desc", limit: 100, offset: 0 })
       .then((result) => {
         if (!active) return;
         setState({ loading: false, error: "", transactions: Array.isArray(result.transactions) ? result.transactions : [] });
@@ -8987,7 +8986,7 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
         if (active) setState({ loading: false, error: "M-Pesa receipts could not be loaded.", transactions: [] });
       });
     return () => { active = false; };
-  }, [branch.id, from, refreshNonce]);
+  }, [branch.id, refreshNonce]);
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
     const onRealtime = (event) => {
@@ -9006,15 +9005,15 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
     onUseCode(code);
     try { await navigator.clipboard?.writeText(code); } catch (_) {}
   };
-  return <aside className="mpesa-settlement-rail" aria-label="Today's M-Pesa receipts">
+  return <aside className="mpesa-settlement-rail" aria-label="Available M-Pesa funds">
     <div className="mpesa-settlement-rail-head">
-      <div><b><Smartphone /> M-Pesa receipts</b><span>Received today</span></div>
+      <div><b><Smartphone /> M-Pesa funds</b><span>Available to clear invoices</span></div>
       <button type="button" className="iconbtn" onClick={() => setRefreshNonce((value) => value + 1)} aria-label="Refresh M-Pesa receipts" title="Refresh"><RefreshCw /></button>
     </div>
     {readyCode ? <div className="notice compact-notice"><Check /> <b>{readyCode}</b> copied — open an invoice to settle it.</div> : null}
     {state.loading ? <div className="mpesa-settlement-empty">Loading verified receipts…</div> : null}
     {!state.loading && state.error ? <div className="mpesa-settlement-empty">{state.error}</div> : null}
-    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No verified M-Pesa receipts received today.</div> : null}
+    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No available M-Pesa funds for this branch.</div> : null}
     <div className="mpesa-settlement-receipts">
       {state.transactions.map((transaction) => {
         const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
@@ -9027,7 +9026,7 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
         </article>;
       })}
     </div>
-    <div className="mpesa-settlement-note">Tap an available receipt reference to copy it and prepare settlement. Settled receipts remain visible for the day’s audit trail.</div>
+    <div className="mpesa-settlement-note">Tap a receipt reference to copy it and prepare settlement. Showing up to 100 available balances for this branch.</div>
   </aside>;
 }
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
