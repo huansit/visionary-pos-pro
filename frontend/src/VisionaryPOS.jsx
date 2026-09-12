@@ -9047,9 +9047,14 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [printingInvoices, setPrintingInvoices] = useState(false);
   const [printAuditError, setPrintAuditError] = useState("");
   const [visibleInvoiceCount, setVisibleInvoiceCount] = useState(40);
-  const [mobileInvoiceLayout, setMobileInvoiceLayout] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 620px)").matches);
+  // Foldables can expose a tablet-width CSS viewport even when operated by
+  // touch. The stylesheet switches invoice tables to cards for that range;
+  // use the identical media query here so there is never a gap where both
+  // the desktop table and the card list are absent.
+  const invoiceCardLayoutQuery = "(max-width: 620px), (hover: none) and (pointer: coarse) and (max-width: 1100px)";
+  const [mobileInvoiceLayout, setMobileInvoiceLayout] = useState(() => typeof window !== "undefined" && window.matchMedia(invoiceCardLayoutQuery).matches);
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 620px)");
+    const media = window.matchMedia(invoiceCardLayoutQuery);
     const updateLayout = () => setMobileInvoiceLayout(media.matches);
     updateLayout();
     media.addEventListener?.("change", updateLayout);
