@@ -4399,6 +4399,13 @@ body{overscroll-behavior:none}
 .bcard .bkv .v{font-family:var(--font-mono);font-weight:800;color:var(--text)}
 .ptools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .ptools .possearch{height:42px;flex:1;min-width:200px}
+.workspace-quick-nav{display:flex;align-items:center;gap:12px;min-height:44px;margin:-4px 0 14px;padding:7px 10px;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--surface) 88%,var(--accent) 12%)}
+.workspace-quick-nav>span{flex:none;font-size:10px;font-weight:850;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.workspace-quick-nav>div{display:flex;align-items:center;gap:5px;min-width:0;overflow:auto;scrollbar-width:none}
+.workspace-quick-nav>div::-webkit-scrollbar{display:none}
+.workspace-quick-nav button{display:inline-flex;align-items:center;gap:6px;flex:none;min-height:30px;padding:5px 8px;border:0;border-radius:8px;background:transparent;color:var(--text);font:700 12px var(--font);white-space:nowrap;cursor:pointer}
+.workspace-quick-nav button:hover{background:var(--surface-2);color:var(--accent)}
+.workspace-quick-nav button svg{width:14px;height:14px;color:var(--accent)}
 .ptblwrap{overflow:auto;max-height:calc(100dvh - 300px);border:1px solid var(--border-soft);border-radius:16px;background:var(--surface)}
 .ptbl{width:100%;border-collapse:collapse;font-size:13px;min-width:720px}
 .ptbl thead th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);font-weight:700;padding:12px 14px;border-bottom:1px solid var(--border-soft);background:var(--surface);white-space:nowrap;position:sticky;top:0;z-index:2}
@@ -5839,6 +5846,9 @@ body{overscroll-behavior:none}
   .admincontent .grid2,.admincontent .grid3{grid-template-columns:1fr}
   .admincontent .addpanel{padding:14px;border-radius:14px;margin-bottom:12px}
   .admincontent .ptools{align-items:stretch;gap:8px}
+  .workspace-quick-nav{margin:-2px 0 12px;padding:6px 8px;gap:8px;border-radius:10px}
+  .workspace-quick-nav>span{font-size:9.5px}
+  .workspace-quick-nav button{min-height:34px;padding:6px 8px;font-size:11.5px}
   .admincontent .ptools .possearch{min-width:100%;width:100%;height:44px}
   .admincontent .ptools .select{width:100%!important;min-width:100%}
   .admincontent .ptblwrap{max-height:none;border-radius:12px}
@@ -8579,19 +8589,19 @@ const NAV_GROUPS = [
     { id: "customers", label: "Customers", icon: Users },
   ] },
   { id: "invgrp", label: "Inventory", icon: Boxes, tone: "#218c63", items: [
-    { id: "products", label: "Products", icon: Tag },
-    { id: "pricing", label: "Pricing", icon: Tags },
-    { id: "stock", label: "Stock", icon: Boxes },
-    { id: "purchases", label: "Purchasing", icon: ShoppingBag },
-    { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+    { id: "products", label: "Catalog & Pricing", mobileLabel: "Catalog", icon: Tag },
+    { id: "stock", label: "Stock Control", mobileLabel: "Stock", icon: Boxes },
+    { id: "purchases", label: "Purchase Orders", mobileLabel: "Purchases", icon: ShoppingBag },
     { id: "suppliers", label: "Suppliers", icon: Truck },
+    { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+    { id: "pricing", label: "Pricing & Margins", mobileLabel: "Pricing", icon: Tags },
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
-    { id: "payments", label: "Payments", icon: CreditCard },
-    { id: "mpesa", label: "M-Pesa & Settlement", icon: Smartphone },
-    { id: "audit", label: "Reconciliation Audit", icon: ClipboardCheck },
-    { id: "cash", label: "Cash Management", icon: Wallet },
+    { id: "mpesa", label: "M-Pesa Settlement", mobileLabel: "M-Pesa", icon: Smartphone },
+    { id: "payments", label: "Cashier Debt", mobileLabel: "Debt", icon: CreditCard },
+    { id: "cash", label: "Daily Cash", mobileLabel: "Cash", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
+    { id: "audit", label: "Reconciliation Audit", mobileLabel: "Audit", icon: ClipboardCheck },
   ] },
   { id: "opsgrp", label: "Branch Operations", icon: Building2, tone: "#c77b20", items: [
     { id: "branches", label: "Branches", icon: Building2 },
@@ -8806,15 +8816,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
-      case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} />;
-      case "stock": return <StockTab data={data} update={update} branch={branch} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} />;
+      case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
+      case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
-      case "suppliers": return <SuppliersTab data={data} update={update} />;
-      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
-      case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} />;
-      case "cash": return <CashTab data={data} update={update} branch={branch} />;
-      case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} />;
+      case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
+      case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
+      case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} onNavigate={activateWorkspace} />;
+      case "cash": return <CashTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
+      case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
@@ -8840,7 +8850,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
         {mobilePrimaryItems.map((item) => {
           const I = item.icon;
           const active = mobileItemIsActive(item);
-          return <button key={item.id} type="button" className={active ? "on" : ""} aria-current={active ? "page" : undefined} onClick={() => activateWorkspace(item.id)}><I /><span>{item.id === "cash" ? "Finance" : item.label}</span></button>;
+          return <button key={item.id} type="button" className={active ? "on" : ""} aria-current={active ? "page" : undefined} onClick={() => activateWorkspace(item.id)}><I /><span>{item.id === "cash" ? "Finance" : (item.mobileLabel || item.label)}</span></button>;
         })}
         <button type="button" className={mobileMoreOpen ? "more-open" : ""} aria-expanded={mobileMoreOpen} onClick={() => setMobileMoreOpen((open) => !open)}><MoreHorizontal /><span>More</span></button>
       </nav>
@@ -8872,6 +8882,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   );
 }
 function PageHead({ title, sub, right }) { return (<div className="page-h"><div><div className="title" style={{ fontSize: 19 }}>{title}</div>{sub && <div className="sub">{sub}</div>}</div>{right}</div>); }
+function WorkspaceQuickNav({ label, items, onNavigate }) {
+  return <nav className="workspace-quick-nav" aria-label={`${label} quick access`}>
+    <span>{label}</span>
+    <div>{items.map((item) => {
+      const Icon = item.icon;
+      return <button type="button" key={item.id} onClick={() => onNavigate(item.id)}><Icon />{item.label}</button>;
+    })}</div>
+  </nav>;
+}
 function DocumentFile({ title, count = 0, meta, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -11282,7 +11301,7 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
 
 /* ---- Products ---- */
 const CATS = ["Whisky", "Gin", "Vodka", "Rum", "Cognac", "Wine", "Beer", "Spirits", "Other"];
-function ProductsTab({ data, update, branch, isAdmin }) {
+function ProductsTab({ data, update, branch, isAdmin, onNavigate }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false);
   const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4) });
@@ -11602,6 +11621,13 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             </div>
           </details>
         </div>} />
+      <WorkspaceQuickNav label="Inventory" onNavigate={onNavigate} items={[
+        { id: "pricing", label: "Pricing & margins", icon: Tags },
+        { id: "stock", label: "Stock control", icon: Boxes },
+        { id: "purchases", label: "Purchase orders", icon: ShoppingBag },
+        { id: "suppliers", label: "Suppliers", icon: Truck },
+        { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+      ]} />
       <input id="prodimport" type="file" accept=".csv,.txt" style={{ display: "none" }} onChange={onImport} />
       {copyOpen && (
         <div className="addpanel fade">
@@ -11781,7 +11807,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
 }
 
 /* ---- Stock ---- */
-function StockTab({ data, update, branch }) {
+function StockTab({ data, update, branch, onNavigate }) {
   const cur = data.settings.currency;
   const countInputRefs = useRef(new Map());
   const [bId, setBId] = useState(branch.id);
@@ -12260,6 +12286,12 @@ function StockTab({ data, update, branch }) {
   return (
     <div>
       <PageHead title="Stock" sub={"Locked stock count sessions & levels - " + bname} />
+      <WorkspaceQuickNav label="Inventory" onNavigate={onNavigate} items={[
+        { id: "products", label: "Catalog", icon: Tag },
+        { id: "purchases", label: "Purchase orders", icon: ShoppingBag },
+        { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+        { id: "pricing", label: "Pricing", icon: Tags },
+      ]} />
       <div className="ptools">
         <select className="select" style={{ width: 180 }} value={bId} onChange={(e) => { setBId(e.target.value); setReport(null); setTemplateOpen(false); setTemplateSelectedIds([]); }}>
           {data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -13120,7 +13152,7 @@ function StockTabLegacy({ data, update, branch }) {
     </div>
   );
 }
-function PurchasesTab({ data, update, branch, isAdmin, actor }) {
+function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
   const [receiptCorrection, setReceiptCorrection] = useState(null);
@@ -13598,6 +13630,12 @@ function PurchasesTab({ data, update, branch, isAdmin, actor }) {
   return (
     <div className="purchase-workspace">
       <PageHead title="Purchases" sub="Receiving a purchase order adds stock to the branch." />
+      <WorkspaceQuickNav label="Inventory" onNavigate={onNavigate} items={[
+        { id: "suppliers", label: "Suppliers", icon: Truck },
+        { id: "products", label: "Catalog", icon: Tag },
+        { id: "stock", label: "Stock control", icon: Boxes },
+        { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+      ]} />
       {!adding ? (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button className="btn btn-primary" onClick={() => setAdding(true)}><Plus /> New purchase order</button>
@@ -14022,7 +14060,7 @@ function PurchaseOrderPerformanceModal({ report, currency, onClose }) {
   );
 }
 
-function SuppliersTab({ data, update }) {
+function SuppliersTab({ data, update, onNavigate }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false); const [f, setF] = useState({ name: "", contact: "", phone: "" });
   const [q, setQ] = useState(""); const [cmpProd, setCmpProd] = useState("");
@@ -14044,6 +14082,11 @@ function SuppliersTab({ data, update }) {
   const removeQuote = (supplierId) => update((d) => ({ ...d, supplierPrices: (d.supplierPrices || []).filter((x) => !(x.supplierId === supplierId && x.productId === cmpProd)) }));
   return (
     <div><PageHead title="Suppliers" sub={data.suppliers.length + " suppliers · compare prices per product"} />
+      <WorkspaceQuickNav label="Inventory" onNavigate={onNavigate} items={[
+        { id: "purchases", label: "Purchase orders", icon: ShoppingBag },
+        { id: "products", label: "Catalog", icon: Tag },
+        { id: "pricing", label: "Pricing", icon: Tags },
+      ]} />
       {!adding ? <button className="row-add" onClick={() => setAdding(true)}><Plus /> Add supplier</button> : (
         <div className="addpanel fade"><div className="grid3">
           <div><label className="label">Name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Supplier" /></div>
@@ -15140,7 +15183,7 @@ function PricingTab({ data, update, branch }) {
 }
 
 /* ---- Cash / Expenses ---- */
-function CashTab({ data, update, branch }) {
+function CashTab({ data, update, branch, onNavigate }) {
   const cur = data.settings.currency;
   const [branchFilter, setBranchFilter] = useState(branch?.id || "all");
   const [dateFrom, setDateFrom] = useState(todayStr());
@@ -15215,6 +15258,12 @@ function CashTab({ data, update, branch }) {
       title="Cash Management"
       sub={`${rangeLabel} money flow and closings · ${selectedBranchName}`}
     />
+      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+        { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
+        { id: "payments", label: "Cashier debt", icon: CreditCard },
+        { id: "expenses", label: "Expenses", icon: TrendingDown },
+        { id: "audit", label: "Reconciliation audit", icon: ClipboardCheck },
+      ]} />
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div>
           <label className="label" htmlFor="cash-branch-filter">Branch</label>
@@ -15262,7 +15311,7 @@ function CashTab({ data, update, branch }) {
     </div>
   );
 }
-function ExpensesTab({ data, update, branch, user }) {
+function ExpensesTab({ data, update, branch, user, onNavigate }) {
   const cur = data.settings.currency;
   const allExpenseCategories = expenseCategories(data);
   const recordExpenseCategories = adminExpenseCategories(data);
@@ -15372,6 +15421,12 @@ function ExpensesTab({ data, update, branch, user }) {
         <button className={"btn sm " + (showCategoryManager ? "btn-primary" : "btn-ghost")} onClick={() => { setShowCategoryManager((open) => !open); setShowRecordExpense(false); }}><Tags /> Categories</button>
       </div>}
     />
+      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+        { id: "cash", label: "Daily cash", icon: Wallet },
+        { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
+        { id: "payments", label: "Cashier debt", icon: CreditCard },
+        { id: "audit", label: "Reconciliation audit", icon: ClipboardCheck },
+      ]} />
       <div className="expense-tabs" role="tablist" aria-label="Expense views">
         <button type="button" role="tab" aria-selected={view === "overview"} className={"expense-tab" + (view === "overview" ? " on" : "")} onClick={() => setView("overview")}><BarChart3 /> Overview</button>
         <button type="button" role="tab" aria-selected={view === "approvals"} className={"expense-tab" + (view === "approvals" ? " on" : "")} onClick={() => setView("approvals")}><AlertCircle /> Approvals {visiblePending.length > 0 ? <span className="count">{visiblePending.length}</span> : null}</button>
@@ -18214,7 +18269,7 @@ function StockFundingAllocationModal({ transaction, data, onClose, onSaved }) {
   </div>;
 }
 
-function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
+function MpesaTransactionsTab({ data, branch, onNavigate, allowAllBranches = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
   const pageSize = 50;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [branchScope, setBranchScope] = useState(() => branch?.id || data?.branches?.[0]?.id || "");
@@ -18501,6 +18556,13 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
     <div className="mpesa-ledger-page">
       <PageHead title="M-Pesa Transactions" sub={`Verified Kopo Kopo payments - ${selectedBranchName}`}
         right={<div className="mpesa-page-actions"><span className="mpesa-live">Live</span><button type="button" aria-pressed={businessDayFilterActive} className={businessDayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyBusinessDayFilter}><Clock3 /> Business day</button><button type="button" aria-pressed={todayFilterActive} className={todayFilterActive ? "btn sm btn-primary" : "btn sm"} onClick={applyTodayFilter}><CalendarDays /> Today</button><button type="button" className="btn sm" disabled={ledger.loading || ledger.refreshing} onClick={() => setRefreshNonce((value) => value + 1)}><RefreshCw className={ledger.refreshing ? "spin" : ""} /> Refresh</button></div>} />
+      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+        { id: "invoices", label: "Clear invoice", icon: FileText },
+        { id: "payments", label: "Cashier debt", icon: CreditCard },
+        { id: "cash", label: "Daily cash", icon: Wallet },
+        { id: "expenses", label: "Expenses", icon: TrendingDown },
+        { id: "audit", label: "Audit", icon: ClipboardCheck },
+      ]} />
 
       {!ledger.enabled ? <div className="notice warn"><AlertCircle /> Kopo Kopo is not enabled on this server.</div> : null}
       {ledger.enabled && ledger.providerRequired === false ? <div className="notice">This branch is not mapped to a live Kopo Kopo till yet. Existing verified records are still shown.</div> : null}
@@ -18574,7 +18636,7 @@ function MpesaTransactionsTab({ data, branch, allowAllBranches = false, canClass
   );
 }
 
-function MpesaInvoiceAuditTab({ data, branch }) {
+function MpesaInvoiceAuditTab({ data, branch, onNavigate }) {
   const pageSize = 100;
   const maxTransactions = 5000;
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
@@ -18806,6 +18868,12 @@ function MpesaInvoiceAuditTab({ data, branch }) {
   return <div className="mpesa-audit-page">
     <PageHead title="M-Pesa & Invoice Audit" sub="Reconcile verified M-Pesa receipts across invoice payments, older-debt recovery, cashier wallets, stock funding, available balances, and reversals."
       right={<div className="audit-readonly"><ShieldCheck /> Read only</div>} />
+    <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+      { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
+      { id: "invoices", label: "Clear invoice", icon: FileText },
+      { id: "payments", label: "Cashier debt", icon: CreditCard },
+      { id: "cash", label: "Daily cash", icon: Wallet },
+    ]} />
 
     <section className="audit-controls" aria-label="Audit scope">
       <label><span>Branch</span><select className="select" value={branchScope} onChange={(event) => { setBranchScope(event.target.value); setBusinessDaySelection("current"); }}>
