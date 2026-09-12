@@ -2470,10 +2470,13 @@ async function runSyncClient(currentData, options = {}) {
     cursor = nextCursor;
   }
   const visibleRejected = rejected.filter((item) => item?.reason !== "auth_records_do_not_sync");
-  const rejectedText = visibleRejected.length ? `${visibleRejected.length} queued change(s) were rejected by the server: ${visibleRejected.map((item) => item.reason || "unknown").join(", ")}` : "";
+  // Rejected events are removed from the queue above, so they are not an
+  // outstanding sync failure. Keeping their old message in `_sync.error`
+  // made a fully current device appear broken even after a successful pull.
+  if (visibleRejected.length) console.warn("discarded non-retryable sync events", visibleRejected);
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
-  const nextSyncError = [pushErrorText, rejectedText, credentialText].filter(Boolean).join(" ");
+  const nextSyncError = [pushErrorText, credentialText].filter(Boolean).join(" ");
   const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError };
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
