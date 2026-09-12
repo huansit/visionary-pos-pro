@@ -41,7 +41,7 @@ const {
   reconcilePendingKopokopoIncomingPayments,
 } = await import("../src/services/kopokopoIncomingPayments.js");
 const { ingestKopokopoPollingTransactions } = await import("../src/services/kopokopoReconciler.js");
-const { getLatestRealtimeEvent, publishRealtimeEvent } = await import("../src/realtime.js");
+const { getLatestRealtimeChange, getLatestRealtimeEvent, publishRealtimeEvent } = await import("../src/realtime.js");
 
 beforeEach(() => clearKopokopoAccessTokenCache());
 
@@ -590,6 +590,9 @@ test("stores signed Buygoods and customer-transfer polling callbacks", async () 
     duplicates: 0,
     ignored: 0,
   });
+  const cashierSyncChange = getLatestRealtimeChange();
+  assert.equal(cashierSyncChange?.branchId, "b_sip");
+  assert.deepEqual(cashierSyncChange?.types, ["kopokopoTransaction"]);
   await signedWebhook(payload).expect(200).expect((result) => {
     assert.equal(result.body.stored, 0);
     assert.equal(result.body.duplicates, 2);

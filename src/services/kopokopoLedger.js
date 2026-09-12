@@ -1,5 +1,5 @@
 import { isMySql, tx } from "../db.js";
-import { publishRealtimeEvent } from "../realtime.js";
+import { publishRealtimeEvent, publishSyncChange } from "../realtime.js";
 import { redactKopokopoPayload } from "./kopokopo.js";
 
 async function insertProviderEvent(client, parsed, body) {
@@ -140,12 +140,17 @@ export async function storeKopokopoEvent(parsed, body) {
     return { duplicate: false, enriched: false };
   });
   if (!result.duplicate || result.enriched) {
-    publishRealtimeEvent("kopokopo", {
+    const change = {
       source: "kopokopo",
       branchId: parsed.branchId || null,
       accepted: result.duplicate ? 0 : 1,
       types: ["kopokopoTransaction"],
-    });
+    };
+    // The Cashier terminal's secure native bridge observes sync versions.
+    // Advance that channel as well as the browser-specific Kopo Kopo stream,
+    // otherwise a new payment can remain invisible until fallback polling.
+    publishRealtimeEvent("kopokopo", change);
+    publishSyncChange(change);
   }
   return result;
 }
