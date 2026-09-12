@@ -41,7 +41,8 @@ app.use(express.json({
   limit: "5mb",
   verify(req, _res, buffer) {
     if (req.originalUrl.startsWith("/api/integrations/kopokopo/webhook")
-        || req.originalUrl.startsWith("/api/integrations/kopokopo/sandbox-test-webhook")) {
+        || req.originalUrl.startsWith("/api/integrations/kopokopo/sandbox-test-webhook")
+        || req.originalUrl.startsWith("/api/whatsapp/webhook")) {
       req.rawBody = Buffer.from(buffer);
     }
   },

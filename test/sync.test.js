@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { after, test } from "node:test";
 import bcrypt from "bcryptjs";
@@ -12,6 +13,7 @@ process.env.DEVICE_TOKEN_SECRET = "test-device-token-secret";
 process.env.DEVICE_SETUP_KEY = "test-setup-key";
 process.env.BCRYPT_ROUNDS = "10";
 process.env.ADMIN_EMAIL_CODE_REQUIRED = "0";
+process.env.WHATSAPP_APP_SECRET = "test-whatsapp-app-secret";
 
 const { pool } = await import("../src/db.js");
 const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8")
@@ -714,7 +716,7 @@ test("4a. cashier invoice void requests require management approval and sync to 
     .expect((res) => {
       assert.deepEqual(res.body.accepted, []);
       assert.equal(res.body.rejected[0]?.id, voidDecision.id);
-      assert.equal(res.body.rejected[0]?.reason, "supervisor_authorization_required");
+      assert.equal(res.body.rejected[0]?.reason, "terminal_write_not_allowed");
     });
 
   await withAdminSession(request(app).post("/api/sync/push"))
@@ -784,7 +786,7 @@ test("4b. cashier stock transfer requests require management approval", async ()
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.accepted, []);
-      assert.equal(res.body.rejected[0]?.reason, "supervisor_authorization_required");
+      assert.equal(res.body.rejected[0]?.reason, "terminal_write_not_allowed");
     });
 
   await withAdminSession(request(app).post("/api/sync/push"))
@@ -891,7 +893,73 @@ test("4b. cashier stock transfer requests require management approval", async ()
       assert.equal(decisionEvent?.payload?.requestId, transferRequest.id);
       assert.equal(decisionEvent?.payload?.decidedBy, "admin-owner");
       assert.equal(res.body.events.filter((event) => event.type === "borrowing" && event.payload?.cashierRequestId === transferRequest.id).length, 1);
-      assert.equal(res.body.events.filter((event) => event.type === "stockMovement" && event.payload?.transferRequestId === transferRequest.id).length, 2);
+      // A branch-bound device sees its source movement; the destination
+      // movement is delivered only to the Cape Town branch.
+      assert.equal(res.body.events.filter((event) => event.type === "stockMovement" && event.payload?.transferRequestId === transferRequest.id).length, 1);
+    });
+});
+
+test("1ad. supervisors cannot create or replace an administrator account", async () => {
+  await request(app)
+    .post("/api/auth/users")
+    .set("X-Session-Token", state.supervisorSessionToken)
+    .send({
+      id: "admin",
+      name: "Unauthorized Admin",
+      role: "Admin",
+      email: "unauthorized.admin@example.com",
+      password: "Unauthorized@123",
+    })
+    .expect(403)
+    .expect({ error: "admin_account_management_requires_owner_or_admin" });
+});
+
+test("1ae. a branch-bound manager cannot sync another branch's records", async () => {
+  const managerLogin = await request(app)
+    .post("/api/auth/login")
+    .send({ identifier: "manager.cape@example.com", password: "Manager@123" })
+    .expect(200);
+  const managerToken = managerLogin.body.sessionToken;
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("X-Session-Token", managerToken)
+    .send({
+      events: [{
+        id: "manager-cross-branch-customer",
+        type: "customer",
+        branchId: "b_sip",
+        updatedAt: 10001,
+        payload: { name: "Should not be written", branchId: "b_sip" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0]?.reason, "terminal_branch_mismatch"));
+
+  await request(app)
+    .post("/api/sync/push")
+    .set("X-Session-Token", managerToken)
+    .send({
+      events: [{
+        id: "manager-own-branch-customer",
+        type: "customer",
+        branchId: "b_cpt",
+        updatedAt: 10002,
+        payload: { name: "Cape Town customer", branchId: "b_cpt" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes("manager-own-branch-customer")));
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("X-Session-Token", managerToken)
+    .expect(200)
+    .expect((res) => {
+      for (const item of res.body.events) {
+        const sharedRecord = !item.branchId && ["product", "expenseCategory"].includes(item.type);
+        assert.ok(item.branchId === "b_cpt" || sharedRecord, JSON.stringify(item));
+      }
     });
 });
 
@@ -920,10 +988,9 @@ test("5. two devices sync a complete transaction sale across invoice, payment, a
     },
   ];
 
-  const pushed = await request(app)
+  const pushed = await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: saleEvents })
+    .send({ events: saleEvents }))
     .expect(200);
   assert.deepEqual(pushed.body.accepted.sort(), saleEvents.map((event) => event.id).sort());
 
@@ -1077,9 +1144,8 @@ test("5b. Cape Town terminal invoice reaches admin sync feed", async () => {
   assert.equal(pushed.body.rejected.length, 0);
   assert.equal(pushed.body.invoiceNumbers["inv-cpt-terminal-001"], "RCP-CPT-000001");
 
-  await request(app)
-    .get("/api/sync/pull?since=0")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  await withAdminSession(request(app)
+    .get("/api/sync/pull?since=0"))
     .expect(200)
     .expect((res) => {
       const invoice = res.body.events.find((event) => event.id === "inv-cpt-terminal-001");
@@ -1973,11 +2039,9 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
     .post("/api/barcodes/resolve")
     .set("Authorization", `Bearer ${state.tokenA}`)
     .send({ branchId: "b_cpt", barcode: "3245990043300" })
-    .expect(200)
+    .expect(403)
     .expect((res) => {
-      assert.equal(res.body.found, true);
-      assert.equal(res.body.available, false);
-      assert.equal(res.body.message, "This product is not available in this branch.");
+      assert.equal(res.body.error, "branch_not_authorized");
     });
 
   await request(app)
@@ -1994,13 +2058,9 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
       stock: 3,
       reorderLevel: 2,
     })
-    .expect(200)
+    .expect(403)
     .expect((res) => {
-      assert.equal(res.body.product.branchId, "b_cpt");
-      assert.equal(res.body.product.name, "Hennessy VS 750ML Updated");
-      assert.equal(res.body.product.costPrice, 5100);
-      assert.equal(res.body.product.sellingPrice, 7200);
-      assert.equal(res.body.product.stock, 3);
+      assert.equal(res.body.error, "branch_not_authorized");
     });
 
   await request(app)
@@ -2010,8 +2070,8 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.available, true);
-      assert.equal(res.body.product.name, "Hennessy VS 750ML Updated");
-      assert.equal(res.body.product.costPrice, 5100);
+      assert.equal(res.body.product.name, "Hennessy VS 750ML");
+      assert.equal(res.body.product.costPrice, 4800);
       assert.equal(res.body.product.sellingPrice, 6500);
       assert.equal(res.body.product.stock, 12);
     });
@@ -2034,15 +2094,38 @@ test("7. barcode catalog resolves by branch and reports unavailable branch produ
   await request(app)
     .post("/api/barcodes/resolve")
     .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ branchId: "b_cpt", barcode: "3245990043300" })
+    .send({ branchId: "b_sip", barcode: "3245990043300" })
     .expect(200)
     .expect((res) => {
       assert.equal(res.body.available, true);
       assert.equal(res.body.product.name, "Hennessy VS 750ML Final");
       assert.equal(res.body.product.costPrice, 5200);
-      assert.equal(res.body.product.sellingPrice, 7200);
-      assert.equal(res.body.product.stock, 3);
+      assert.equal(res.body.product.sellingPrice, 6600);
+      assert.equal(res.body.product.stock, 9);
     });
+});
+
+test("7a. WhatsApp webhooks require a Meta HMAC signature", async () => {
+  const rawBody = JSON.stringify({ entry: [] });
+  const signature = `sha256=${crypto
+    .createHmac("sha256", process.env.WHATSAPP_APP_SECRET)
+    .update(rawBody)
+    .digest("hex")}`;
+
+  await request(app)
+    .post("/api/whatsapp/webhook")
+    .set("Content-Type", "application/json")
+    .send(rawBody)
+    .expect(401)
+    .expect({ error: "invalid_webhook_signature" });
+
+  await request(app)
+    .post("/api/whatsapp/webhook")
+    .set("Content-Type", "application/json")
+    .set("X-Hub-Signature-256", signature)
+    .send(rawBody)
+    .expect(200)
+    .expect({ ok: true, received: 0 });
 });
 
 test("8. AI endpoint reports missing server configuration without exposing provider calls", async () => {
@@ -2092,19 +2175,17 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
     },
   };
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: [openSession] })
+    .send({ events: [openSession] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
       assert.ok(res.body.accepted.includes(sessionId));
     });
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       events: [{
         ...openSession,
@@ -2113,7 +2194,7 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
         updatedAt: startedAt + 1,
         payload: { ...openSession.payload, code: "SC-TEST-2" },
       }],
-    })
+    }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.accepted, []);
@@ -2121,9 +2202,8 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
       assert.equal(res.body.rejected[0].sessionId, sessionId);
     });
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       events: [{
         ...openSession,
@@ -2134,7 +2214,7 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
           items: [{ productId: "prod-stock-count-1", expectedQty: 5, countedQty: 6, countedBy: "Admin", countedAt: startedAt + 2 }],
         },
       }],
-    })
+    }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
@@ -2160,24 +2240,22 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
       items: [{ productId: "prod-stock-count-1", countedQty: 4 }],
     },
   };
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: [quickDraft] })
+    .send({ events: [quickDraft] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
       assert.ok(res.body.accepted.includes(quickDraftId));
     });
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({ events: [{
       ...quickDraft,
       clientTs: startedAt + 3,
       updatedAt: startedAt + 3,
       payload: { ...quickDraft.payload, items: [{ productId: "prod-stock-count-1", countedQty: 8 }] },
-    }] })
+    }] }))
     .expect(200);
   const storedQuickDraft = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [quickDraftId]);
   assert.equal(storedQuickDraft.rows[0].payload.status, "draft");
@@ -2194,9 +2272,8 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
       assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
     .send({
       events: [
         {
@@ -2220,7 +2297,7 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
           payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 6, mode: "count", stockCountSessionId: sessionId },
         },
       ],
-    })
+    }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
@@ -2255,10 +2332,9 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
     },
   };
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: [jointDebt] })
+    .send({ events: [jointDebt] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
@@ -2315,10 +2391,9 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
     },
   };
 
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: [jointDebtPayment] })
+    .send({ events: [jointDebtPayment] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
@@ -2328,10 +2403,9 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
   // A device that retained this completed payment locally may replay its
   // original event after an app update. The stable event id must keep the
   // ledger to one payment rather than recording the settlement twice.
-  await request(app)
+  await withAdminSession(request(app)
     .post("/api/sync/push")
-    .set("Authorization", `Bearer ${state.tokenA}`)
-    .send({ events: [jointDebtPayment] })
+    .send({ events: [jointDebtPayment] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
@@ -2736,7 +2810,7 @@ test("12a. disabled users cannot log in and can be enabled again", async () => {
     .expect(200);
 });
 
-test("13. fingerprint templates are encrypted at rest and can issue cloud sessions", async () => {
+test("13. fingerprint templates are encrypted at rest and checkout requires an active session", async () => {
   const template = "SECUGEN_TEMPLATE_BASE64_SAMPLE";
   await withAdminSession(request(app)
     .post("/api/auth/fingerprints/enroll")
@@ -2759,15 +2833,12 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     .post("/api/auth/fingerprints/templates")
     .set("Authorization", `Bearer ${state.tokenA}`)
     .send({})
-    .expect(200)
-    .expect((res) => {
-      const hit = res.body.templates.find((row) => row.userId === state.cashierId);
-      assert.equal(hit.template, template);
-    });
+    .expect(401);
 
-  await request(app)
-    .post("/api/auth/fingerprints/templates")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  await withTerminalAuth(
+    request(app).post("/api/auth/fingerprints/templates"),
+    state.loginTerminal
+  )
     .send({ userId: state.cashierId })
     .expect(200)
     .expect((res) => {
@@ -2779,29 +2850,46 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
   await request(app)
     .post("/api/auth/fingerprints/login")
     .send({ userId: state.cashierId, deviceSerial: "HAMSTER-001" })
-    .expect(401);
+    .expect(503)
+    .expect({ error: "fingerprint_sign_in_unavailable" });
 
-  const login = await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
+  await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
     .send({ userId: state.cashierId, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+    .expect(503)
+    .expect({ error: "fingerprint_sign_in_unavailable" });
+
+  const cashierLogin = await withTerminalAuth(
+    request(app).post("/api/auth/login"),
+    state.loginTerminal
+  )
+    .send({ identifier: state.cashierId, pin: state.cashierPin, branchId: "b_sip" })
     .expect(200);
-  assert.ok(login.body.sessionToken);
 
-  await pool.query("UPDATE user_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1", [login.body.sessionId]);
+  await withTerminalAuth(
+    request(app).post("/api/auth/fingerprints/checkout"),
+    state.loginTerminal
+  )
+    .send({
+      sessionToken: cashierLogin.body.sessionToken,
+      userId: state.cashierId,
+      branchId: "b_sip",
+      deviceSerial: "HAMSTER-001",
+    })
+    .expect(200)
+    .expect({ ok: true });
 
-  await request(app)
-    .post("/api/auth/fingerprints/checkout")
-    .send({ userId: state.cashierId, sessionToken: login.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
+  await withTerminalAuth(
+    request(app).post("/api/auth/fingerprints/checkout"),
+    state.loginTerminal
+  )
+    .send({
+      sessionToken: "not-a-session",
+      userId: state.cashierId,
+      branchId: "b_sip",
+      deviceSerial: "HAMSTER-001",
+    })
     .expect(401)
-    .expect((res) => assert.equal(res.body.error, "invalid_session"));
-
-  const renewedLogin = await withTerminalAuth(request(app).post("/api/auth/fingerprints/login"), state.loginTerminal)
-    .send({ userId: state.cashierId, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
-    .expect(200);
-
-  await request(app)
-    .post("/api/auth/fingerprints/checkout")
-    .send({ userId: state.cashierId, sessionToken: renewedLogin.body.sessionToken, branchId: "b_sip", deviceSerial: "HAMSTER-001" })
-    .expect(200);
+    .expect({ error: "invalid_session" });
 
   await withAdminSession(request(app)
     .post("/api/auth/users")
@@ -2821,9 +2909,10 @@ test("13. fingerprint templates are encrypted at rest and can issue cloud sessio
     ["fp-unreadable", "unreadable-fingerprint", "v1:invalid", "invalid", "HAMSTER-BAD"]
   );
 
-  await request(app)
-    .post("/api/auth/fingerprints/templates")
-    .set("Authorization", `Bearer ${state.tokenA}`)
+  await withTerminalAuth(
+    request(app).post("/api/auth/fingerprints/templates"),
+    state.loginTerminal
+  )
     .send({})
     .expect(200)
     .expect((res) => {
@@ -2861,10 +2950,9 @@ test("15. sync stream notifies clients after a committed push", async () => {
 
   try {
     await readEvent("connected");
-    await request(app)
-      .post("/api/sync/push")
-      .set("Authorization", `Bearer ${state.tokenA}`)
-      .send({
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({
         events: [{
           id: "inv-stream-001",
           type: "invoice",
@@ -2872,7 +2960,7 @@ test("15. sync stream notifies clients after a committed push", async () => {
           clientTs: Date.now(),
           payload: { totalCents: 1000, status: "open" },
         }],
-      })
+    }))
       .expect(200);
     const block = await readEvent("sync");
     assert.match(block, /"types":\["invoice"\]/);

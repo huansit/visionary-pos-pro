@@ -44,7 +44,12 @@ function branchProductId(branchId, productId) {
 }
 
 function requestBranchId(req) {
-  return req.terminalUuid ? req.deviceBranchId : (req.body?.branchId || req.deviceBranchId);
+  return req.deviceBranchId || null;
+}
+
+function hasRequestedBranchMismatch(req) {
+  const requestedBranchId = String(req.body?.branchId || "").trim();
+  return Boolean(requestedBranchId && req.deviceBranchId && requestedBranchId !== req.deviceBranchId);
 }
 
 async function findProductByCatalog(client, barcodeCatalogId) {
@@ -128,6 +133,7 @@ router.post("/resolve", async (req, res, next) => {
     const branchId = requestBranchId(req);
     if (!validBarcode(barcode)) return res.status(400).json({ error: "invalid_barcode" });
     if (!branchId) return res.status(400).json({ error: "branch_required" });
+    if (hasRequestedBranchMismatch(req)) return res.status(403).json({ error: "branch_not_authorized" });
 
     const catalogResult = await q(
       "SELECT id, barcode, barcode_type, created_at FROM barcode_catalog WHERE lower(barcode) = lower($1) LIMIT 1",
@@ -200,6 +206,7 @@ router.post("/products", async (req, res, next) => {
     const branchId = requestBranchId(req);
     if (!validBarcode(barcode)) return res.status(400).json({ error: "invalid_barcode" });
     if (!branchId) return res.status(400).json({ error: "branch_required" });
+    if (hasRequestedBranchMismatch(req)) return res.status(403).json({ error: "branch_not_authorized" });
     if (!String(req.body?.name || "").trim()) return res.status(400).json({ error: "name_required" });
 
     const result = await tx(async (client) => {

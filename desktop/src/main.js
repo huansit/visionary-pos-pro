@@ -1,5 +1,4 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, session, shell } = require("electron");
-const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs");
 const path = require("node:path");
 const netSocket = require("node:net");
@@ -279,8 +278,6 @@ function createWindow() {
     }
   });
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.checkForUpdatesAndNotify().catch(() => {});
 }
 
 app.whenReady().then(() => {
@@ -391,18 +388,7 @@ ipcMain.handle("cashdrawer:open", async (_event, override = {}) => {
 });
 
 ipcMain.handle("updates:check", async () => {
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    return { ok: true, version: result?.updateInfo?.version || null };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
+  return { ok: false, error: "automatic_updates_disabled" };
 });
 
-ipcMain.handle("updates:restart", () => {
-  autoUpdater.quitAndInstall(false, true);
-});
-
-autoUpdater.on("update-available", (info) => mainWindow?.webContents.send("updates:available", info));
-autoUpdater.on("update-downloaded", (info) => mainWindow?.webContents.send("updates:ready", info));
-autoUpdater.on("error", (error) => mainWindow?.webContents.send("updates:error", error.message));
+ipcMain.handle("updates:restart", () => ({ ok: false, error: "automatic_updates_disabled" }));

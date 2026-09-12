@@ -73,6 +73,12 @@ export function assertStartupConfig() {
     }
   }
 
+  if (process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_PHONE_NUMBER_ID) {
+    if (!String(process.env.WHATSAPP_APP_SECRET || "").trim()) {
+      errors.push("WHATSAPP_APP_SECRET is required when WhatsApp is configured");
+    }
+  }
+
   if (process.env.KOPOKOPO_ENABLED === "1") {
     const kopokopoMode = String(process.env.KOPOKOPO_MODE || "").trim().toLowerCase();
     if (!new Set(["sandbox", "live"]).has(kopokopoMode)) {

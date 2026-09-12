@@ -504,7 +504,6 @@ type FingerprintTemplate = {
 const SECUGEN_TEMPLATE_FORMAT = "ISO";
 const SECUGEN_MATCH_THRESHOLD = 80;
 const FINGERPRINT_TEMPLATE_CACHE_MS = 5 * 60 * 1000;
-const FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS = 6000;
 const FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS = 3500;
 const fingerprintTemplateCache = new Map<string, { expiresAt: number; templates: FingerprintTemplate[] }>();
 
@@ -548,7 +547,7 @@ function fingerprintPerf(label: string, startedAt: number, details: Record<strin
   console.info("[visionpos:fingerprint]", label, { ms: Math.round(performance.now() - startedAt), ...details });
 }
 
-async function captureFingerprint(timeoutMs = FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS): Promise<FingerprintCapture> {
+async function captureFingerprint(timeoutMs = FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS): Promise<FingerprintCapture> {
   const startedAt = performance.now();
   try {
     const data = await secugenRequest("/SGIFPCapture", {
@@ -726,40 +725,12 @@ async function bestFingerprintMatch(capturedTemplate: string, templates: Fingerp
   return bestScore >= SECUGEN_MATCH_THRESHOLD ? best : null;
 }
 
-export async function loginCashierWithFingerprint(terminal: TerminalCredentials, preferredUserId?: string): Promise<{
-  account: Account;
-  sessionToken: string;
-}> {
-  const { capture, match } = await matchFingerprint(terminal, preferredUserId, {
-    fallbackToAll: true,
-    captureTimeoutMs: FINGERPRINT_LOGIN_CAPTURE_TIMEOUT_MS,
-    retryFresh: true
-  });
-  return issueFingerprintSession(terminal, match.userId, capture.deviceSerial);
-}
-
-function issueFingerprintSession(terminal: TerminalCredentials, userId: string, deviceSerial: string): Promise<{
-  account: Account;
-  sessionToken: string;
-}> {
-  return jsonFetch("/api/auth/fingerprints/login", {
-    method: "POST",
-    headers: terminalHeaders(terminal),
-    body: JSON.stringify({
-      userId,
-      branchId: terminal.branchId,
-      deviceSerial,
-      deviceName: terminal.terminalName
-    })
-  });
-}
-
 export async function verifyCashierFingerprint(
   terminal: TerminalCredentials,
   account: Account,
   sessionToken: string
 ): Promise<{ renewedSessionToken?: string; account?: Account }> {
-  const { capture, match } = await matchFingerprint(terminal, account.id, {
+  const { capture } = await matchFingerprint(terminal, account.id, {
     captureTimeoutMs: FINGERPRINT_CHECKOUT_CAPTURE_TIMEOUT_MS,
     retryFresh: false
   });
@@ -781,11 +752,9 @@ export async function verifyCashierFingerprint(
       && error.message === "invalid_session";
     if (!sessionExpired) throw error;
 
-    // The finger already matched this cashier locally. Reuse that proof to
-    // recover an expired overnight session without requiring a second scan.
-    const renewed = await issueFingerprintSession(terminal, match.userId, capture.deviceSerial);
-    if (renewed.account.id !== account.id) throw new Error("fingerprint_account_mismatch");
-    return { renewedSessionToken: renewed.sessionToken, account: renewed.account };
+    // A local fingerprint match can approve an existing checkout only; it must
+    // never create a replacement session. The cashier needs a PIN sign-in.
+    throw new Error("Your session expired. Sign in with your cashier PIN, then try checkout again.");
   }
 }
 

@@ -1130,6 +1130,9 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
   const allowedRoles = new Set(["Cashier", "Supervisor", "Manager", "Admin"]);
   if (!allowedRoles.has(role)) return res.status(400).json({ error: "invalid_role" });
   const isAdmin = role === "Admin" || id === "admin";
+  if (isAdmin && !["owner", "admin"].includes(credentialRole(req.account))) {
+    return res.status(403).json({ error: "admin_account_management_requires_owner_or_admin" });
+  }
   const isCashier = role === "Cashier" && !isAdmin;
   const hasEmergencyPin = !isCashier && String(pin || "").length > 0;
   if (isCashier && !/^\d{4}$/.test(String(pin || ""))) return res.status(400).json({ error: "cashier_pin_required" });
@@ -1358,10 +1361,13 @@ router.post("/fingerprints/remove", requireAdminOrSupervisor, async (req, res) =
   }
 });
 
-router.post("/fingerprints/templates", requireDevice, async (req, res) => {
+router.post("/fingerprints/templates", async (req, res) => {
   await ensureAuthSchema();
   const requestedUserId = String(req.body?.userId || "").trim();
   try {
+    const terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
+    if (terminal.error) return res.status(401).json({ error: terminal.error });
+    if (!terminal.branchId) return res.status(403).json({ error: "terminal_branch_required" });
     const userFilter = requestedUserId ? " AND f.user_id = $1" : "";
     const result = await q(
       isMySql
@@ -1379,10 +1385,7 @@ router.post("/fingerprints/templates", requireDevice, async (req, res) => {
               ${userFilter}`,
       requestedUserId ? [requestedUserId] : []
     );
-    const branchId = req.deviceBranchId || null;
-    const visibleRows = branchId
-      ? result.rows.filter((row) => row.kind === "admin" || (row.branchId || row.branch_id || null) === branchId)
-      : result.rows;
+    const visibleRows = result.rows.filter((row) => (row.branchId || row.branch_id || null) === terminal.branchId);
     const templates = visibleRows.flatMap((row) => {
       try {
         return [{
@@ -1406,47 +1409,12 @@ router.post("/fingerprints/templates", requireDevice, async (req, res) => {
   }
 });
 
-router.post("/fingerprints/login", async (req, res) => {
-  await ensureAuthSchema();
-  const userId = String(req.body?.userId || "").trim();
-  const requestedBranchId = req.body?.branchId || null;
-  const deviceSerial = String(req.body?.deviceSerial || "").trim().slice(0, 191) || null;
-  if (!userId) return res.status(400).json({ error: "user_required" });
-  try {
-    const result = await q(
-      `SELECT c.id, c.kind, c.name, c.email, c.phone, c.branch_id, c.rights, c.status
-         FROM credentials c
-         JOIN user_fingerprints f ON f.user_id = c.id
-        WHERE c.id = $1 AND c.status = 'active'
-        LIMIT 1`,
-      [userId]
-    );
-    const row = result.rows[0];
-    if (!row) {
-      await audit("fingerprint_failed", req, userId || null, { reason: "user_or_template_not_found", deviceSerial });
-      return res.status(401).json({ error: "fingerprint_not_recognized" });
-    }
-    let terminal = null;
-    if (row.kind !== "admin") {
-      terminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
-      if (terminal.error) {
-        await audit("fingerprint_failed", req, userId, { reason: terminal.error, deviceSerial });
-        return res.status(401).json({ error: terminal.error });
-      }
-      const rowBranchId = row.branch_id ?? row.branchId ?? null;
-      if (!terminal.branchId || rowBranchId !== terminal.branchId || (requestedBranchId && requestedBranchId !== terminal.branchId)) {
-        await audit("fingerprint_failed", req, userId, { reason: "terminal_branch_mismatch", deviceSerial, branchId: requestedBranchId || rowBranchId, terminalId: terminal.deviceId });
-        return res.status(403).json({ error: "terminal_branch_mismatch" });
-      }
-    }
-    const account = publicAccount(row);
-    const session = await issueSession(req, account, terminal);
-    await audit("fingerprint_login", req, account.id, { deviceSerial, sessionId: session.id });
-    res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
-  } catch (error) {
-    console.error("fingerprint login failed:", error);
-    res.status(500).json({ error: "fingerprint_login_failed" });
-  }
+router.post("/fingerprints/login", (_req, res) => {
+  // A fingerprint match currently happens in the client and cannot be verified
+  // by this API. Treating a claimed user ID as a biometric assertion allowed
+  // direct session minting, so fingerprint sign-in remains unavailable until a
+  // trusted, server-verifiable terminal assertion is introduced.
+  res.status(503).json({ error: "fingerprint_sign_in_unavailable" });
 });
 
 router.post("/fingerprints/checkout", async (req, res) => {

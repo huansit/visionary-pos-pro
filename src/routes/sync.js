@@ -52,6 +52,13 @@ async function trySessionSync(req, res, allowedRoles = MANAGEMENT_SYNC_ROLES) {
   req.sessionId = session.sessionId;
   req.account = session.account;
   req.syncActor = "session";
+  // Owners and organisation-wide administrators are intentionally global.
+  // A manager/supervisor assigned to one branch must receive and modify only
+  // that branch's operational data through the generic sync endpoint.
+  const accountBranchId = String(session.account.branchId || "").trim();
+  if (accountBranchId && !["owner", "admin"].includes(syncRole(session.account))) {
+    req.syncBranchId = accountBranchId;
+  }
   return "ok";
 }
 
@@ -827,27 +834,35 @@ function eventBranchId(ev) {
 }
 
 function enforceTerminalBranch(req, ev, type) {
-  if (!req.deviceBranchId) return { ok: true, event: ev };
-  if (type === "product") return { ok: true, event: { ...ev, branchId: null } };
+  const authorizedBranchId = req.deviceBranchId || req.syncBranchId || null;
+  if (!authorizedBranchId) return { ok: true, event: ev };
+  // Products are organization-wide records. A branch-bound manager may edit
+  // only branch-scoped records, never a product shared by other branches.
+  if (type === "product") {
+    if (req.syncBranchId) return { ok: false, reason: "branch_scoped_product_write_not_allowed" };
+    return { ok: true, event: { ...ev, branchId: null } };
+  }
   const submittedBranchId = eventBranchId(ev);
-  if (submittedBranchId && submittedBranchId !== req.deviceBranchId) {
+  if (submittedBranchId && submittedBranchId !== authorizedBranchId) {
     return { ok: false, reason: "terminal_branch_mismatch" };
   }
   const payload = { ...(ev.payload || {}) };
-  if (req.terminalUuid && (EVENT_TYPES.has(type) || payload.branchId)) payload.branchId = req.deviceBranchId;
-  if (!req.terminalUuid && payload.branchId) payload.branchId = req.deviceBranchId;
+  if (EVENT_TYPES.has(type) || payload.branchId) payload.branchId = authorizedBranchId;
   return {
     ok: true,
     event: {
       ...ev,
-      branchId: req.deviceBranchId,
+      branchId: authorizedBranchId,
       payload,
     },
   };
 }
 
 function enforceTerminalWritePolicy(req, type) {
-  if (!req.terminalUuid) return { ok: true };
+  // Device credentials (registered terminal headers and legacy bearer tokens)
+  // are deliberately low-privilege. Management sessions are the only way to
+  // submit cash, payment, approval, debt, and end-of-day state.
+  if (req.syncActor === "session") return { ok: true };
   if (TERMINAL_FORBIDDEN_RECORD_TYPES.has(type) || TERMINAL_FORBIDDEN_EVENT_TYPES.has(type)) {
     return { ok: false, reason: "terminal_write_not_allowed" };
   }
@@ -1710,10 +1725,15 @@ router.get("/pull", requireSyncRead, async (req, res) => {
     );
     const all = [...evs.rows, ...recs.rows].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
     const rawPage = all.slice(0, limit);
+    const branchScopeId = req.deviceBranchId || req.syncBranchId || null;
+    const branchScopedSharedRecordTypes = new Set(["product", "expenseCategory"]);
     const page = rawPage
       .filter((event) => !["cashierJointDebt", "cashierJointDebtPayment"].includes(event.type)
         || !req.deviceBranchId
         || event.branchId === req.deviceBranchId)
+      .filter((event) => !branchScopeId
+        || event.branchId === branchScopeId
+        || (!event.branchId && branchScopedSharedRecordTypes.has(event.type)))
       // Older supervisor clients stored their close as `day_closed`. The
       // admin UI consumes the canonical `endOfDay` stream type, so normalize
       // historical rows on read instead of leaving them invisible forever.

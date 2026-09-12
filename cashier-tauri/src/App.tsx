@@ -50,7 +50,6 @@ import {
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
-  loginCashierWithFingerprint,
   listInvoiceCashDepositOffsets,
   listMpesaTransactions,
   logout,
@@ -1591,24 +1590,6 @@ export default function App() {
             let result;
             try {
               result = await loginCashier(terminal, employeeNumber, pin);
-            } catch (err) {
-              if (isTerminalRegistrationError(err)) await resetInvalidTerminalRegistration();
-              throw err;
-            }
-            resetCashierSessionUi();
-            setAccount(result.account);
-            setSessionToken(result.sessionToken);
-            setStatus(`Signed in as ${result.account.name}.`);
-            writeLastFingerprintUserId(terminal, result.account.id);
-            void preloadCashierFingerprintTemplate(terminal, result.account.id);
-            await refreshCatalog(terminal);
-          }}
-          onFingerprintLogin={async (employeeNumber) => {
-            setError("");
-            const preferredUserId = String(employeeNumber || "").trim() || readLastFingerprintUserId(terminal);
-            let result;
-            try {
-              result = await loginCashierWithFingerprint(terminal, preferredUserId || undefined);
             } catch (err) {
               if (isTerminalRegistrationError(err)) await resetInvalidTerminalRegistration();
               throw err;
@@ -3993,8 +3974,7 @@ function LoginScreen({
   updateVersion,
   onCheckForUpdates,
   onInstallUpdate,
-  onLogin,
-  onFingerprintLogin
+  onLogin
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
@@ -4007,12 +3987,10 @@ function LoginScreen({
   onCheckForUpdates: () => Promise<void> | void;
   onInstallUpdate: () => void;
   onLogin: (employeeNumber: string, pin: string) => Promise<void>;
-  onFingerprintLogin: (employeeNumber?: string) => Promise<void>;
 }) {
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
-  const [fingerprintBusy, setFingerprintBusy] = useState(false);
   const [message, setMessage] = useState(error);
   const canSubmit = !busy && employeeNumber.trim().length > 0 && pin.length >= 4;
 
@@ -4029,19 +4007,6 @@ function LoginScreen({
     }
   }
 
-  async function scanFingerprint() {
-    if (busy || fingerprintBusy) return;
-    setFingerprintBusy(true);
-    setMessage("");
-    try {
-      await onFingerprintLogin(employeeNumber.trim());
-    } catch (err) {
-      setMessage(String(err).replace(/^Error:\s*/, ""));
-    } finally {
-      setFingerprintBusy(false);
-    }
-  }
-
   return (
     <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status} onClose={onClose}>
       <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
@@ -4055,12 +4020,7 @@ function LoginScreen({
         <label>PIN</label>
         <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" /></div>
         {message && <div className="error">{message}</div>}
-        <button className="premium-primary" disabled={!canSubmit || fingerprintBusy} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign in with PIN"}</button>
-        <div className="auth-choice"><span>or</span></div>
-        <button className="premium-secondary fingerprint-login-button" disabled={busy || fingerprintBusy} onClick={scanFingerprint}>
-          {fingerprintBusy ? <span className="spinner" /> : <Fingerprint size={22} />}
-          {fingerprintBusy ? "Place finger on reader..." : "Sign in with fingerprint"}
-        </button>
+        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign in with PIN"}</button>
         <PreLoginUpdateControl updateState={updateState} updateVersion={updateVersion} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
       </LoginCard>
     </AuthShell>

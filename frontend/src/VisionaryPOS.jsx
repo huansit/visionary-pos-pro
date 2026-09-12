@@ -1173,8 +1173,15 @@ function syncConfig() {
 function envValue(key, fallback = "") {
   try { return (typeof import.meta !== "undefined" && import.meta.env && import.meta.env[key]) || fallback; } catch (_) { return fallback; }
 }
+function cashierDownloadsQuarantined() {
+  const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
+  const configured = runtime.cashierDownloadsQuarantined;
+  if (typeof configured === "boolean") return configured;
+  return String(envValue("VITE_VISIONPOS_CASHIER_DOWNLOADS_QUARANTINED", "true")).toLowerCase() !== "false";
+}
 function desktopDownloadConfig() {
   const runtime = (typeof window !== "undefined" && (window.VISIONPOS_DOWNLOADS || window.VISIONARY_SYNC_CONFIG?.downloads)) || {};
+  const quarantined = cashierDownloadsQuarantined();
   const version = runtime.version || envValue("VITE_VISIONPOS_DESKTOP_VERSION", "Checking latest version...");
   const windowsUrl = runtime.windowsUrl || envValue("VITE_VISIONPOS_WINDOWS_DOWNLOAD_URL", "/downloads/VISIONPOS-Cashier-Setup.exe");
   const releaseNotes = runtime.releaseNotes || envValue("VITE_VISIONPOS_DESKTOP_RELEASE_NOTES", [
@@ -1185,15 +1192,16 @@ function desktopDownloadConfig() {
     "Designed for approved shop terminals only; downloading the app alone does not grant access.",
   ].join("|"));
   return {
-    version,
-    releaseNotes,
+    version: quarantined ? "Temporarily unavailable" : version,
+    releaseNotes: quarantined ? ["The Windows Cashier installer is temporarily unavailable while its security review is completed. Do not install a previously downloaded copy."] : releaseNotes,
     apps: [
       {
         platform: "Windows",
-        label: "Windows Installer (.exe)",
-        url: windowsUrl,
-        available: Boolean(windowsUrl),
-        instructions: "Download, run the installer, open VisionPOS, then enter the terminal activation code generated in the admin portal.",
+        label: quarantined ? "Windows Cashier installer" : "Windows Installer (.exe)",
+        url: quarantined ? "" : windowsUrl,
+        available: !quarantined && Boolean(windowsUrl),
+        unavailableMessage: quarantined ? "Temporarily unavailable for security review." : "Planned for a future release",
+        instructions: quarantined ? "Use the web POS while the desktop release is quarantined. A verified replacement will be published here." : "Download, run the installer, open VisionPOS, then enter the terminal activation code generated in the admin portal.",
       },
       {
         platform: "Mac",
@@ -1239,6 +1247,7 @@ function applyDesktopReleaseManifest(current, manifest) {
 function useDesktopDownloads() {
   const [downloads, setDownloads] = useState(() => desktopDownloadConfig());
   useEffect(() => {
+    if (cashierDownloadsQuarantined()) return undefined;
     let active = true;
     fetch("/downloads/latest.json?v=" + Date.now(), { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -7066,11 +7075,11 @@ function DesktopDownloadSection() {
       <div className="authdownload-icon"><MonitorDown /></div>
       <div className="authdownload-copy">
         <div className="authdownload-kicker">Need to setup a cashier terminal?</div>
-        <div className="authdownload-title">Download the VisionPOS Desktop App</div>
+        <div className="authdownload-title">{windows?.available ? "Download the VisionPOS Desktop App" : "Windows Cashier installer unavailable"}</div>
         <div className="authdownload-version">Windows cashier installer {downloads.version}</div>
       </div>
       <a className={"authdownload-btn" + (!windows?.available ? " disabled" : "")} href={windows?.available ? windows.url : "/downloads"} aria-disabled={!windows?.available}>
-        <Download /> Download for Windows
+        <Download /> {windows?.available ? "Download for Windows" : "Temporarily unavailable"}
       </a>
       <a className="authdownload-more" href="/downloads">View all downloads and instructions</a>
     </section>
@@ -7101,13 +7110,13 @@ function DownloadsPage() {
                 <div className="download-app-icon"><MonitorDown /></div>
                 <div className="download-app-meta">
                   <h3>{app.label}</h3>
-                  <p>{app.available ? "Ready to download" : "Planned for a future release"}</p>
+                  <p>{app.available ? "Ready to download" : (app.unavailableMessage || "Planned for a future release")}</p>
                   <p>{app.instructions}</p>
                 </div>
                 {app.available ? (
                   <a className="download-app-button" href={app.url}><Download /> Download</a>
                 ) : (
-                  <button className="download-app-button disabled" disabled>Coming soon</button>
+                  <button className="download-app-button disabled" disabled>{app.unavailableMessage ? "Temporarily unavailable" : "Coming soon"}</button>
                 )}
               </article>
             ))}

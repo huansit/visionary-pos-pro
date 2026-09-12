@@ -124,51 +124,26 @@
       </div>
       <section class="panel">
         <h1>Downloads</h1>
-        <p>Install the Windows desktop client on approved cashier computers. The app still requires a terminal activation code from the admin portal before any cashier can log in.</p>
+        <p>The Windows Cashier installer is temporarily unavailable while it undergoes a security review. Do not install a previously downloaded copy.</p>
         <div class="download">
           <div>
-            <div class="title">Windows Installer (.exe)</div>
-            <div class="meta" id="download-version">Checking latest version...</div>
+            <div class="title">Windows Cashier installer</div>
+            <div class="meta">Temporarily unavailable</div>
           </div>
-          <a class="btn" id="download-link" href="/downloads/VISIONPOS-Cashier-Setup.exe">Download</a>
+          <span class="btn" aria-disabled="true">Unavailable</span>
         </div>
         <div class="notes" id="release-notes" aria-label="Release notes">
-          <div class="note">Secure first-run terminal activation with admin-generated codes.</div>
-          <div class="note">Cashier-only desktop interface connected to the VisionPOS cloud backend.</div>
-          <div class="note">USB barcode scanner workflow with persistent search focus.</div>
-          <div class="note">Receipt printing support through installed Windows printers.</div>
-          <div class="note">Downloading the app alone does not grant access to your POS.</div>
+          <div class="note">Use the web POS while the desktop release is quarantined.</div>
+          <div class="note">A verified replacement will be published on this page after review.</div>
         </div>
         <div class="notes" aria-label="Installation instructions">
-          <div class="note">1. Download and run the Windows installer.</div>
-          <div class="note">2. In the admin portal, generate a terminal activation code for the correct branch.</div>
-          <div class="note">3. Open the desktop app and enter the activation code on the first-run activation screen.</div>
-          <div class="note">4. After activation, cashiers sign in with their employee number and PIN.</div>
+          <div class="note">Do not restore, whitelist, or run the quarantined Windows executable.</div>
         </div>
       </section>
     </main>
     <script>
       (function () {
-        var versionEl = document.getElementById("download-version");
-        var linkEl = document.getElementById("download-link");
-        var notesEl = document.getElementById("release-notes");
-        fetch("/downloads/latest.json?v=" + Date.now(), { cache: "no-store" })
-          .then(function (response) { return response.ok ? response.json() : null; })
-          .then(function (release) {
-            if (!release) return;
-            if (release.version && versionEl) versionEl.textContent = "Version " + release.version;
-            var windows = release.platforms && release.platforms["windows-x86_64"];
-            if (windows && windows.url && linkEl) linkEl.href = windows.url;
-            var releaseNotes = typeof release.notes === "string" ? release.notes.split(/\r?\n/).filter(Boolean) : release.releaseNotes;
-            if (Array.isArray(releaseNotes) && releaseNotes.length && notesEl) {
-              notesEl.innerHTML = releaseNotes.map(function (note) {
-                return '<div class="note">' + String(note).replace(/[&<>"]/g, function (ch) {
-                  return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch];
-                }) + "</div>";
-              }).join("");
-            }
-          })
-          .catch(function () {});
+        // Installers are deliberately quarantined until their release path is re-verified.
       })();
     </script>
   </body>

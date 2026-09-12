@@ -1,8 +1,28 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import fs from "node:fs";
+import path from "node:path";
+
+function quarantineCashierArtifacts() {
+  let downloadsDirectory = "";
+  return {
+    name: "quarantine-cashier-artifacts",
+    configResolved(config) {
+      downloadsDirectory = path.resolve(config.root, config.build.outDir, "downloads");
+    },
+    closeBundle() {
+      if (!fs.existsSync(downloadsDirectory)) return;
+      for (const name of fs.readdirSync(downloadsDirectory)) {
+        if (/^VISIONPOS-(?:Cashier(?:_[\w.-]+)?(?:-setup)?|Setup(?:-[\w.-]+)?)\.exe(?:\.sig)?$/i.test(name)) {
+          fs.rmSync(path.join(downloadsDirectory, name), { force: true });
+        }
+      }
+    }
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), quarantineCashierArtifacts()],
   build: {
     rollupOptions: {
       output: {
