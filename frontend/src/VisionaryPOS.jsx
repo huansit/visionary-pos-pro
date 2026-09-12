@@ -5451,6 +5451,37 @@ body{overscroll-behavior:none}
   .invoice-list-active .invoice-filter-clear svg{width:15px;height:15px;margin:0}
 }
 
+/* Compact the desktop sales workspace so the working lists remain primary. */
+@media (min-width:1101px){
+  .invoice-workspace.invoice-list-active>.page-h{min-height:38px;margin:0 0 5px}
+  .invoice-workspace.invoice-list-active>.page-h .title{font-size:19px;line-height:1.15}
+  .invoice-workspace.invoice-list-active>.page-h .sub{display:none}
+  .invoice-workspace.invoice-list-active>.page-h>.btn{height:36px;min-height:36px;padding-inline:12px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs{margin:0 0 6px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs button{height:38px;padding:0 11px;font-size:12px}
+  .invoice-workspace.invoice-list-active>.invoice-workspace-tabs span{min-width:19px;height:19px;font-size:9px}
+  .invoice-list-active .invoice-compact-summary{margin-bottom:6px}
+  .invoice-list-active .invoice-compact-summary>div{min-height:46px;padding:5px 11px}
+  .invoice-list-active .invoice-compact-summary b{font-size:15px;line-height:1.1}
+  .invoice-list-active .invoice-compact-summary span{font-size:8.5px;line-height:1.15}
+  .invoice-list-active .invoice-compact-summary small{display:none}
+  .invoice-list-active .invoice-filter-toolbar{padding:5px 7px;margin-bottom:6px}
+  .invoice-list-active .invoice-primary-filters{gap:6px;margin-bottom:4px}
+  .invoice-list-active .invoice-primary-filters label>span,
+  .invoice-list-active .invoice-period-filter label>span,
+  .invoice-list-active .invoice-filter-grid.simple label>span{display:none}
+  .invoice-list-active .invoice-primary-filters .input,
+  .invoice-list-active .invoice-primary-filters .select,
+  .invoice-list-active .invoice-period-filter .input,
+  .invoice-list-active .invoice-period-filter .select,
+  .invoice-list-active .invoice-filter-grid.simple .select{height:34px;min-height:34px}
+  .invoice-list-active .invoice-period-filter{gap:6px}
+  .invoice-list-active .invoice-period-filter .btn,
+  .invoice-list-active .invoice-filter-clear{height:34px;min-height:34px}
+  .invoice-list-active .invoice-table-wrap{max-height:calc(100dvh - 230px)}
+  .invoice-list-active .mpesa-settlement-receipts{max-height:calc(100dvh - 190px)}
+}
+
 /* Wide desktops keep every payment filter in one shallow toolbar. */
 @media (min-width:1400px){
   .mpesa-ledger-toolbar{grid-template-columns:minmax(240px,1.4fr) 145px 145px 190px minmax(165px,1fr) minmax(165px,1fr) auto;grid-template-rows:auto;column-gap:8px}
