@@ -2970,6 +2970,76 @@ test("15. sync stream notifies clients after a committed push", async () => {
   }
 });
 
+test("15a. an approved partial item void restores stock once and reaches every branch device", async () => {
+  const suffix = crypto.randomUUID();
+  const invoiceId = `partial-void-invoice-${suffix}`;
+  const requestId = `partial-void-request-${suffix}`;
+  const decisionId = `partial-void-decision-${suffix}`;
+  const branchId = "b_sip";
+  const productId = `partial-void-product-${suffix}`;
+  const issuedAt = Date.now();
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: invoiceId,
+        type: "invoice",
+        branchId,
+        clientTs: issuedAt,
+        payload: {
+          branchId,
+          totalCents: 30000,
+          paidCents: 0,
+          items: [{ productId, name: "Partial void test item", qty: 3, priceCents: 10000, unitCostCents: 4500 }],
+        },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(invoiceId)));
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: requestId,
+        type: "invoiceLineVoidRequest",
+        branchId,
+        clientTs: issuedAt + 1,
+        payload: { invoiceId, branchId, lineIndex: 0, qty: 1, reason: "Customer returned one item" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(requestId)));
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: decisionId,
+        type: "invoiceLineVoidDecision",
+        branchId,
+        clientTs: issuedAt + 2,
+        payload: { invoiceId, branchId, requestId, lineIndex: 0, qty: 1, decision: "approved" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(decisionId)));
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const returns = res.body.events.filter((event) => event.type === "stockMovement"
+        && event.payload?.source === "invoice_line_void"
+        && event.payload?.voidRequestId === requestId);
+      assert.equal(returns.length, 1);
+      assert.equal(returns[0].branchId, branchId);
+      assert.equal(returns[0].payload.productId, productId);
+      assert.equal(returns[0].payload.qty, 1);
+      assert.equal(returns[0].payload.unitCostCents, 4500);
+      assert.equal(returns[0].payload.invoiceId, invoiceId);
+    });
+});
+
 test("16. operational reset rejects stale terminal writes and exposes the new epoch", async () => {
   const terminal = await activateTestTerminal("Reset Epoch Till", "b_sip");
   const resetEpoch = `reset-${Date.now()}`;

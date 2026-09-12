@@ -15,6 +15,7 @@ import { invoiceRecoveryTimestamp, invoiceWasEverCarriedOver } from "./admin/cre
 import { buildMpesaInvoiceAudit } from "./admin/mpesaInvoiceAudit.js";
 import { reconcileInvoicePaymentState } from "./admin/invoicePaymentReconciliation.js";
 import { invoiceIsVoidedFromData, invoiceVoidStateFromData } from "./admin/invoiceVoidState.js";
+import { applyApprovedInvoiceLineVoids } from "./admin/invoiceLineVoidReconciliation.js";
 import {
   activeQuickInventoryDraft,
   createQuickInventoryDraft,
@@ -2124,52 +2125,6 @@ function invoicePaymentTotals(data) {
     totals[id] = (totals[id] || 0) + (Number(payment.amountCents) || 0);
   });
   return totals;
-}
-function applyApprovedInvoiceLineVoids(data) {
-  const requests = new Map((data?.invoiceLineVoidRequests || []).map((entry) => [String(entry.id), entry]));
-  const voidedByInvoice = new Map();
-  (data?.invoiceLineVoidDecisions || []).forEach((decision) => {
-    if (String(decision?.decision || "").toLowerCase() !== "approved") return;
-    const request = requests.get(String(decision.requestId || ""));
-    const invoiceId = String(decision.invoiceId || request?.invoiceId || "");
-    const lineIndex = Number(decision.lineIndex ?? request?.lineIndex);
-    const qty = Number(decision.qty ?? request?.qty);
-    if (!invoiceId || !Number.isInteger(lineIndex) || lineIndex < 0 || !Number.isFinite(qty) || qty <= 0) return;
-    const byLine = voidedByInvoice.get(invoiceId) || new Map();
-    byLine.set(lineIndex, (byLine.get(lineIndex) || 0) + qty);
-    voidedByInvoice.set(invoiceId, byLine);
-  });
-  if (!voidedByInvoice.size) return data?.invoices || [];
-  return (data?.invoices || []).map((invoice) => {
-    const lineVoids = voidedByInvoice.get(String(invoice.id));
-    if (!lineVoids) return invoice;
-    const baseItems = Array.isArray(invoice._lineVoidBaseItems) ? invoice._lineVoidBaseItems : (Array.isArray(invoice.items) ? invoice.items : []);
-    const baseTotalCents = Number.isFinite(Number(invoice._lineVoidBaseTotalCents))
-      ? Number(invoice._lineVoidBaseTotalCents)
-      : Math.max(0, Number(invoice.totalCents || 0));
-    let voidedCents = 0;
-    const auditItems = baseItems.map((item, index) => {
-      const originalQty = Math.max(0, Number(item?.qty ?? item?.quantity ?? 0));
-      const voidedQty = Math.min(originalQty, Number(lineVoids.get(index) || 0));
-      const qty = Math.max(0, originalQty - voidedQty);
-      const priceCents = Math.max(0, Number(item?.priceCents ?? item?.unitPriceCents ?? 0));
-      voidedCents += Math.round(voidedQty * priceCents);
-      return { ...item, qty: originalQty, remainingQty: qty, voidedQty, voided: voidedQty > 0 };
-    });
-    const items = auditItems.map((item) => ({ ...item, qty: item.remainingQty }))
-      .filter((item) => Number(item.qty || 0) > 0);
-    const totalCents = Math.max(0, baseTotalCents - voidedCents);
-    return {
-      ...invoice,
-      _lineVoidBaseItems: baseItems,
-      _lineVoidBaseTotalCents: baseTotalCents,
-      _lineVoidAuditItems: auditItems,
-      items,
-      totalCents,
-      lineVoidCents: voidedCents,
-      lineVoided: true,
-    };
-  });
 }
 function reconcileInvoicePayments(data) {
   const withLineVoids = { ...data, invoices: applyApprovedInvoiceLineVoids(data) };
@@ -10234,7 +10189,9 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   if (doc) {
     d = doc;
     if (Array.isArray(doc.invoiceSnapshots) && doc.invoiceSnapshots.length > 0) {
-      reportInvoices = doc.invoiceSnapshots;
+      // The close document is an audit snapshot, but a later approved item
+      // void must reduce its report values without deleting the original line.
+      reportInvoices = applyApprovedInvoiceLineVoids(data, doc.invoiceSnapshots);
     } else {
       const reportStart = Number(doc.periodStartedAt || 0);
       const reportEnd = Number(doc.periodEndedAt || doc.closedAt || doc.ts || Number.MAX_SAFE_INTEGER);
