@@ -5237,11 +5237,13 @@ body{overscroll-behavior:none}
 .mpesa-settlement-rail-head b{display:flex;align-items:center;gap:7px;font-size:14px}.mpesa-settlement-rail-head svg{width:17px;height:17px;color:var(--accent)}
 .mpesa-settlement-rail-head span,.mpesa-settlement-empty,.mpesa-settlement-note{color:var(--muted-2);font-size:11px;line-height:1.45}
 .mpesa-settlement-receipts{display:grid;gap:6px;max-height:calc(100dvh - 230px);overflow:auto;overscroll-behavior:contain}
-.mpesa-settlement-receipt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:9px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface-2);color:var(--text);text-align:left;cursor:pointer;touch-action:manipulation}
-.mpesa-settlement-receipt:hover,.mpesa-settlement-receipt:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.08);outline:none}
-.mpesa-settlement-receipt strong{display:block;font-family:var(--font-mono);font-size:12px}.mpesa-settlement-receipt small{display:block;margin-top:3px;color:var(--muted-2);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mpesa-settlement-receipt .receipt-amount{color:var(--ok);font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}.mpesa-settlement-receipt .receipt-action{display:block;margin-top:4px;color:var(--accent);font-size:9px;font-weight:850;text-transform:uppercase}
-@media(max-width:1040px){.invoice-settlement-layout{grid-template-columns:1fr}.mpesa-settlement-rail{position:static}.mpesa-settlement-receipts{max-height:280px}}
+.mpesa-settlement-receipt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:9px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface-2);color:var(--text);text-align:left}
+.mpesa-settlement-receipt strong{display:block;font-size:12px}.mpesa-settlement-receipt small{display:block;margin-top:3px;color:var(--muted-2);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-settlement-receipt .receipt-amount{color:var(--ok);font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}
+.mpesa-settlement-code{min-width:58px;min-height:34px;padding:5px 8px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border-soft));border-radius:7px;background:rgba(14,165,181,.08);color:var(--accent);font:850 13px var(--font-mono);letter-spacing:.06em;cursor:pointer;touch-action:manipulation}
+.mpesa-settlement-code:hover,.mpesa-settlement-code:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.16);outline:none}
+@media(max-width:1040px){.invoice-settlement-layout{grid-template-columns:1fr}.mpesa-settlement-rail{position:static;order:-1}.mpesa-settlement-receipts{max-height:none}}
+@media(max-width:720px){.invoice-settlement-rail{min-width:0}.mpesa-settlement-rail{gap:7px;padding:9px;border-radius:10px}.mpesa-settlement-rail-head b{font-size:12.5px}.mpesa-settlement-rail-head span{font-size:10px}.mpesa-settlement-receipts{grid-auto-flow:column;grid-auto-columns:minmax(178px,76vw);grid-template-columns:none;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.mpesa-settlement-receipt{min-height:72px;grid-template-columns:1fr;gap:5px;align-content:space-between;scroll-snap-align:start}.mpesa-settlement-receipt .receipt-amount{display:flex;align-items:center;justify-content:space-between;text-align:left}.mpesa-settlement-code{min-width:66px;min-height:38px;font-size:14px}.mpesa-settlement-note{display:none}.mpesa-settlement-rail .compact-notice{margin:0;font-size:10px}}
 .invoice-active-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
 .invoice-active-period-title{display:grid;gap:1px;min-width:0}
 .invoice-active-period-title b{font-size:12px}
@@ -6872,7 +6874,8 @@ export default function VisionPOS() {
     const goOff = () => setOnline(false);
     const syncVisible = () => {
       const lastSyncedAt = Number(dataRef.current?.lastSyncedAt || 0);
-      if (!document.hidden && navigator.onLine && Date.now() - lastSyncedAt >= RESUME_SYNC_STALE_MS) {
+      const needsRecovery = Boolean(dataRef.current?._sync?.error) || countPending(dataRef.current) > 0;
+      if (!document.hidden && navigator.onLine && (needsRecovery || Date.now() - lastSyncedAt >= RESUME_SYNC_STALE_MS)) {
         setTimeout(() => runSync({ force: true }), 150);
       }
     };
@@ -6954,6 +6957,14 @@ export default function VisionPOS() {
     const id = setTimeout(runSync, 300);
     return () => clearTimeout(id);
   }, [data, syncing]); // eslint-disable-line
+  useEffect(() => {
+    if (!data?._sync?.error || syncing || !navigator.onLine) return;
+    // Mobile Safari can surface a transient request failure as an error while
+    // the device is switching between Wi-Fi and cellular. Retry once shortly
+    // after the app is stable; persistent errors remain visible for action.
+    const id = setTimeout(() => runSync({ force: true, source: "sync-recovery" }), 1500);
+    return () => clearTimeout(id);
+  }, [data?._sync?.error, syncing, online]); // eslint-disable-line
   useEffect(() => {
     if (!data || view !== "register" || !session || syncing || !navigator.onLine) return;
     const branches = Array.isArray(data.branches) ? data.branches : [];
@@ -8959,10 +8970,10 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
   };
   return <aside className="mpesa-settlement-rail" aria-label="Available M-Pesa receipts">
     <div className="mpesa-settlement-rail-head">
-      <div><b><Smartphone /> M-Pesa receipts</b><span>Available today · select a code to prepare settlement</span></div>
+      <div><b><Smartphone /> M-Pesa receipts</b><span>Available today</span></div>
       <button type="button" className="iconbtn" onClick={() => setRefreshNonce((value) => value + 1)} aria-label="Refresh M-Pesa receipts" title="Refresh"><RefreshCw /></button>
     </div>
-    {readyCode ? <div className="notice compact-notice"><Check /> Code ending <b>{readyCode}</b> is ready. Open an invoice to apply it.</div> : null}
+    {readyCode ? <div className="notice compact-notice"><Check /> <b>{readyCode}</b> copied — open an invoice to settle it.</div> : null}
     {state.loading ? <div className="mpesa-settlement-empty">Loading verified receipts…</div> : null}
     {!state.loading && state.error ? <div className="mpesa-settlement-empty">{state.error}</div> : null}
     {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No available M-Pesa receipts received today.</div> : null}
@@ -8970,13 +8981,13 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
       {state.transactions.map((transaction) => {
         const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
         const receivedAt = transaction.originationTime || transaction.createdAt;
-        return <button type="button" className="mpesa-settlement-receipt" key={transaction.id} onClick={() => useReceipt(transaction)} disabled={code.length !== 4}>
-          <span><strong>Code ending {code || "—"}</strong><small>{transaction.payerName || "M-Pesa payer"} · {receivedAt ? formatBusinessDateTime(receivedAt, timeZone) : "time unavailable"}</small></span>
-          <span className="receipt-amount">{fmt(Number(transaction.remainingCents || 0), transaction.currency || "KES")}<span className="receipt-action">Use code</span></span>
-        </button>;
+        return <article className="mpesa-settlement-receipt" key={transaction.id}>
+          <span><strong>{transaction.payerName || "M-Pesa payer"}</strong><small>{receivedAt ? formatBusinessDateTime(receivedAt, timeZone) : "time unavailable"}</small></span>
+          <span className="receipt-amount"><span>{fmt(Number(transaction.remainingCents || 0), transaction.currency || "KES")}</span><button type="button" className="mpesa-settlement-code" onClick={() => useReceipt(transaction)} disabled={code.length !== 4} aria-label={code.length === 4 ? `Copy and use M-Pesa reference ending ${code}` : "M-Pesa reference unavailable"} title="Copy receipt reference">{code || "—"}</button></span>
+        </article>;
       })}
     </div>
-    <div className="mpesa-settlement-note">Selecting a receipt copies its last four characters and pre-fills the invoice settlement check. Available balance remains verified by Kopo Kopo before payment is saved.</div>
+    <div className="mpesa-settlement-note">Tap a receipt reference to copy it and prepare settlement. The amount is verified before payment is saved.</div>
   </aside>;
 }
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
