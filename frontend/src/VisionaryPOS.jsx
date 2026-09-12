@@ -9319,21 +9319,26 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     sortMode !== "oldest",
     hasCustomDateRange || businessDayFilter !== "current",
   ].filter(Boolean).length;
+  const switchInvoiceWorkspace = (nextView) => {
+    setWorkspaceView(nextView);
+    setEod(null);
+    setMobileFiltersOpen(false);
+  };
 
   return (
     <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "") + (workspaceView === "invoices" && mobileFiltersOpen ? " mobile-filters-open" : "")}>
       <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
-        right={<button
+        right={workspaceView === "closes" ? <button
           className="btn sm btn-primary"
           disabled={sinceEndDay.length === 0}
           title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
           onClick={() => setEod({ mode: "live" })}
-        ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button>} />
+        ><Check /> {sinceEndDay.length === 0 ? "Nothing to close" : "Close day"}</button> : null} />
 
       <div className="invoice-workspace-tabs" role="tablist" aria-label="Sales and invoicing sections">
-        <button type="button" role="tab" aria-selected={workspaceView === "invoices"} className={workspaceView === "invoices" ? "active" : ""} onClick={() => setWorkspaceView("invoices")}><Receipt /> Invoices <span>{displayInvoices.length}</span></button>
-        <button type="button" role="tab" aria-selected={workspaceView === "debts"} className={workspaceView === "debts" ? "active" : ""} onClick={() => setWorkspaceView("debts")}><CreditCard /> Debts <span>{debtRows.length}</span></button>
-        <button type="button" role="tab" aria-selected={workspaceView === "closes"} className={workspaceView === "closes" ? "active" : ""} onClick={() => setWorkspaceView("closes")}><FileText /> Day closes <span>{closes.length}</span></button>
+        <button type="button" role="tab" aria-selected={workspaceView === "invoices"} className={workspaceView === "invoices" ? "active" : ""} onClick={() => switchInvoiceWorkspace("invoices")}><Receipt /> Invoices <span>{displayInvoices.length}</span></button>
+        <button type="button" role="tab" aria-selected={workspaceView === "debts"} className={workspaceView === "debts" ? "active" : ""} onClick={() => switchInvoiceWorkspace("debts")}><CreditCard /> Debts <span>{debtRows.length}</span></button>
+        <button type="button" role="tab" aria-selected={workspaceView === "closes"} className={workspaceView === "closes" ? "active" : ""} onClick={() => switchInvoiceWorkspace("closes")}><FileText /> Day closes <span>{closes.length}</span></button>
       </div>
 
       {workspaceView === "invoices" && <div className="invoice-workspace-view">
