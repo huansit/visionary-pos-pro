@@ -125,7 +125,7 @@ window.addEventListener("load", () => {
       window.location.reload();
     });
 
-    navigator.serviceWorker.register("/sw.js?v=6", { updateViaCache: "none" })
+    navigator.serviceWorker.register("/sw.js?v=7", { updateViaCache: "none" })
       .then((registration) => {
         const activateWaitingWorker = () => {
           if (registration.waiting) registration.waiting.postMessage({ type: "SKIP_WAITING" });

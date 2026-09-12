@@ -823,6 +823,7 @@ async function maintenanceSnapshot(data) {
     syncStatus: syncError ? "error" : outbox.length ? "pending" : "ok",
     syncError,
     cacheWarning: data?._sync?.cacheWarning || "",
+    repairWarning: data?._sync?.repairWarning || "",
     pendingUploads: outbox.length,
     lastSyncedAt: data?.lastSyncedAt || 0,
     deviceId: typeof window !== "undefined" && window.localStorage ? window.localStorage.getItem("visionary:sync:deviceId") || "" : "",
@@ -2375,7 +2376,7 @@ async function runSyncClient(currentData, options = {}) {
   const cashierDebtPaymentRepairPending = await kvGet(CASHIER_DEBT_PAYMENT_REPAIR_KEY) !== CASHIER_DEBT_PAYMENT_REPAIR_VERSION;
   const cashierDebtPaymentRepairs = cashierDebtPaymentRepairPending ? cashierDebtPaymentRepairEvents(data) : [];
   const managementRepairs = [...invoicePaymentRepairs, ...settlementRepairs, ...cashierDebtPaymentRepairs];
-  let managementRepairError = "";
+  let managementRepairWarning = "";
   if (managementRepairs.length) {
     try {
       const repaired = await publishSyncEvents(managementRepairs, data, { management: true });
@@ -2384,7 +2385,11 @@ async function runSyncClient(currentData, options = {}) {
       if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
       if (cashierDebtPaymentRepairPending) await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
     } catch (error) {
-      managementRepairError = error?.message || "management_repair_failed";
+      // These are one-time historical repair events. A mobile browser can
+      // receive every normal cloud update while an older repair is waiting
+      // for an administrator session, so this must not turn the global sync
+      // indicator red or suggest that current sales are not syncing.
+      managementRepairWarning = error?.message || "management_repair_failed";
     }
   } else {
     if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
@@ -2398,7 +2403,7 @@ async function runSyncClient(currentData, options = {}) {
   }
   const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" }, options.sessionToken || "");
   let rejected = [];
-  let pushErrorText = managementRepairError;
+  let pushErrorText = "";
   if (outbox.length) {
     try {
       const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox, resetEpoch }) });
@@ -2478,11 +2483,19 @@ async function runSyncClient(currentData, options = {}) {
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
   const nextSyncError = [pushErrorText, credentialText].filter(Boolean).join(" ");
-  const nextStatus = { outboxLength: outbox.length, cursor, error: nextSyncError, cacheWarning: "" };
+  const nextStatus = {
+    outboxLength: outbox.length,
+    cursor,
+    error: nextSyncError,
+    cacheWarning: "",
+    repairWarning: managementRepairWarning,
+  };
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
     || previousStatus.cursor !== nextStatus.cursor
-    || previousStatus.error !== nextStatus.error;
+    || previousStatus.error !== nextStatus.error
+    || previousStatus.cacheWarning !== nextStatus.cacheWarning
+    || previousStatus.repairWarning !== nextStatus.repairWarning;
   // A no-op fallback poll must not clone and write the whole POS cache. On
   // lower-powered mobile devices that write was the primary source of UI jank.
   if (!dataChanged && !syncStatusChanged) {
@@ -5247,8 +5260,9 @@ body{overscroll-behavior:none}
 .mpesa-settlement-receipt .receipt-amount{color:var(--ok);font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}
 .mpesa-settlement-code{min-width:58px;min-height:34px;padding:5px 8px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border-soft));border-radius:7px;background:rgba(14,165,181,.08);color:var(--accent);font:850 13px var(--font-mono);letter-spacing:.06em;cursor:pointer;touch-action:manipulation}
 .mpesa-settlement-code:hover,.mpesa-settlement-code:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.16);outline:none}
+.mpesa-settlement-used{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:34px;padding:5px 8px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);color:var(--muted-2);font:800 10px var(--font);letter-spacing:.03em;text-transform:uppercase}
 @media(max-width:1040px){.invoice-settlement-layout{grid-template-columns:1fr}.mpesa-settlement-rail{position:static;order:-1}.mpesa-settlement-receipts{max-height:none}}
-@media(max-width:720px){.invoice-settlement-rail{min-width:0}.mpesa-settlement-rail{gap:7px;padding:9px;border-radius:10px}.mpesa-settlement-rail-head b{font-size:12.5px}.mpesa-settlement-rail-head span{font-size:10px}.mpesa-settlement-receipts{grid-auto-flow:column;grid-auto-columns:minmax(178px,76vw);grid-template-columns:none;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.mpesa-settlement-receipt{min-height:72px;grid-template-columns:1fr;gap:5px;align-content:space-between;scroll-snap-align:start}.mpesa-settlement-receipt .receipt-amount{display:flex;align-items:center;justify-content:space-between;text-align:left}.mpesa-settlement-code{min-width:66px;min-height:38px;font-size:14px}.mpesa-settlement-note{display:none}.mpesa-settlement-rail .compact-notice{margin:0;font-size:10px}}
+@media(max-width:720px){.invoice-settlement-rail{min-width:0}.mpesa-settlement-rail{gap:7px;padding:9px;border-radius:10px}.mpesa-settlement-rail-head b{font-size:12.5px}.mpesa-settlement-rail-head span{font-size:10px}.mpesa-settlement-receipts{grid-auto-flow:column;grid-auto-columns:minmax(178px,76vw);grid-template-columns:none;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.mpesa-settlement-receipt{min-height:72px;grid-template-columns:1fr;gap:5px;align-content:space-between;scroll-snap-align:start}.mpesa-settlement-receipt .receipt-amount{display:flex;align-items:center;justify-content:space-between;text-align:left}.mpesa-settlement-code,.mpesa-settlement-used{min-width:66px;min-height:38px}.mpesa-settlement-code{font-size:14px}.mpesa-settlement-note{display:none}.mpesa-settlement-rail .compact-notice{margin:0;font-size:10px}}
 .invoice-active-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
 .invoice-active-period-title{display:grid;gap:1px;min-width:0}
 .invoice-active-period-title b{font-size:12px}
@@ -6827,7 +6841,22 @@ export default function VisionPOS() {
     syncRequestRef.current = false;
     setSyncing(true);
     try {
-      const result = await runSyncClient(dataRef.current, opts);
+      const transientSyncFailure = (value) => /(?:failed to fetch|networkerror|load failed|network request failed|(?:push|pull)_failed_(?:408|425|429|5\d\d))/i.test(String(value || ""));
+      let result;
+      try {
+        result = await runSyncClient(dataRef.current, opts);
+      } catch (firstError) {
+        if (!transientSyncFailure(firstError?.message)) throw firstError;
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        result = await runSyncClient(dataRef.current, { ...opts, retry: true });
+      }
+      // Mobile Safari and Chrome frequently abort one request while moving
+      // between Wi-Fi and mobile data. Retry once before changing the visible
+      // status; a successful retry clears the old red indicator immediately.
+      if (transientSyncFailure(result?.status?.error)) {
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        result = await runSyncClient(dataRef.current, { ...opts, retry: true });
+      }
       setData(result.data);
     } catch (error) {
       const message = String(error?.message || "");
@@ -8946,7 +8975,10 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
   const from = businessDateTimeBoundary(`${businessDate}T00:00`, timeZone, "start");
   useEffect(() => {
     let active = true;
-    listKopokopoTransactions({ branchId: branch.id, status: "available", from, sort: "desc", limit: 20, offset: 0 })
+    // Show the full business-day receipt trail beside invoices. Only money
+    // that remains available can be selected for settlement, so a used
+    // receipt stays auditable without being selectable again.
+    listKopokopoTransactions({ branchId: branch.id, status: "received", from, sort: "desc", limit: 100, offset: 0 })
       .then((result) => {
         if (!active) return;
         setState({ loading: false, error: "", transactions: Array.isArray(result.transactions) ? result.transactions : [] });
@@ -8968,31 +9000,34 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
     return () => window.removeEventListener("visionpos:realtime", onRealtime);
   }, [branch.id]);
   const useReceipt = async (transaction) => {
+    if (!transaction.allocatable || Number(transaction.remainingCents || 0) <= 0) return;
     const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
     if (code.length !== 4) return;
     onUseCode(code);
     try { await navigator.clipboard?.writeText(code); } catch (_) {}
   };
-  return <aside className="mpesa-settlement-rail" aria-label="Available M-Pesa receipts">
+  return <aside className="mpesa-settlement-rail" aria-label="Today's M-Pesa receipts">
     <div className="mpesa-settlement-rail-head">
-      <div><b><Smartphone /> M-Pesa receipts</b><span>Available today</span></div>
+      <div><b><Smartphone /> M-Pesa receipts</b><span>Received today</span></div>
       <button type="button" className="iconbtn" onClick={() => setRefreshNonce((value) => value + 1)} aria-label="Refresh M-Pesa receipts" title="Refresh"><RefreshCw /></button>
     </div>
     {readyCode ? <div className="notice compact-notice"><Check /> <b>{readyCode}</b> copied — open an invoice to settle it.</div> : null}
     {state.loading ? <div className="mpesa-settlement-empty">Loading verified receipts…</div> : null}
     {!state.loading && state.error ? <div className="mpesa-settlement-empty">{state.error}</div> : null}
-    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No available M-Pesa receipts received today.</div> : null}
+    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No verified M-Pesa receipts received today.</div> : null}
     <div className="mpesa-settlement-receipts">
       {state.transactions.map((transaction) => {
         const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
         const receivedAt = transaction.originationTime || transaction.createdAt;
+        const remainingCents = Math.max(0, Number(transaction.remainingCents || 0));
+        const available = transaction.allocatable && remainingCents > 0;
         return <article className="mpesa-settlement-receipt" key={transaction.id}>
           <span><strong>{transaction.payerName || "M-Pesa payer"}</strong><small>{receivedAt ? formatBusinessDateTime(receivedAt, timeZone) : "time unavailable"}</small></span>
-          <span className="receipt-amount"><span>{fmt(Number(transaction.remainingCents || 0), transaction.currency || "KES")}</span><button type="button" className="mpesa-settlement-code" onClick={() => useReceipt(transaction)} disabled={code.length !== 4} aria-label={code.length === 4 ? `Copy and use M-Pesa reference ending ${code}` : "M-Pesa reference unavailable"} title="Copy receipt reference">{code || "—"}</button></span>
+          <span className="receipt-amount"><span>{available ? fmt(remainingCents, transaction.currency || "KES") : fmt(Number(transaction.amountCents || 0), transaction.currency || "KES")}</span>{available ? <button type="button" className="mpesa-settlement-code" onClick={() => useReceipt(transaction)} disabled={code.length !== 4} aria-label={code.length === 4 ? `Copy and use M-Pesa reference ending ${code}` : "M-Pesa reference unavailable"} title="Copy receipt reference">{code || "—"}</button> : <span className="mpesa-settlement-used" title="This receipt has no balance available for another invoice">Settled</span>}</span>
         </article>;
       })}
     </div>
-    <div className="mpesa-settlement-note">Tap a receipt reference to copy it and prepare settlement. The amount is verified before payment is saved.</div>
+    <div className="mpesa-settlement-note">Tap an available receipt reference to copy it and prepare settlement. Settled receipts remain visible for the day’s audit trail.</div>
   </aside>;
 }
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
@@ -17877,6 +17912,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
   const pendingUploads = Number(m.pendingUploads || 0);
   const syncError = pendingUploads > 0 ? (m.syncError || "") : "";
   const cacheWarning = m.cacheWarning || "";
+  const repairWarning = m.repairWarning || "";
   const syncText = syncError ? "Sync error" : pendingUploads > 0 ? "Pending uploads" : "Synced";
   const run = async (mode) => {
     setBusy(mode);
@@ -17911,6 +17947,7 @@ function SystemHealthTab({ data, online, maintenance, onRefresh, onRunMaintenanc
       </div>
       {syncError && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{syncError}</div>}
       {cacheWarning && <div className="notice warn" style={{ marginTop: 12 }}><AlertCircle />Cloud sync is complete, but this browser could not update its offline cache. Keep browser storage enabled for offline use.</div>}
+      {repairWarning && <div className="notice warn" style={{ marginTop: 12 }}><AlertCircle />Cloud sync is complete. A one-time historical repair will retry when this administrator session is available.</div>}
       <div className="grid2" style={{ marginTop: 14 }}>
         <div className="addpanel">
           <div className="section-title" style={{ marginTop: 0 }}>Maintenance Schedule</div>

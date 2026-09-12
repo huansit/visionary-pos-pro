@@ -1320,6 +1320,11 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     const branchStarts = ledgerBranchStarts(req.query.branchStarts);
     const branchPeriods = ledgerBranchPeriods(req.query.branchPeriods);
     const validStatuses = new Set(["all", "received", "available", "partial", "allocated", "reversed", "funding"]);
+    // Older Kopo Kopo rows predate the purpose column and some provider
+    // callbacks stored successful states as Complete/Success. Treat those as
+    // normal customer payments, matching publicTransaction() and lookup.
+    const successfulReceiptSql = "lower(status) IN ('received', 'complete', 'completed', 'success')";
+    const customerPaymentSql = "COALESCE(lower(purpose), 'customer_payment') <> 'stock_funding'";
 
     if (!requestedBranchId || search.length > 80 || !validStatuses.has(status)) {
       return res.status(400).json({ error: "invalid_kopokopo_transaction_filters" });
@@ -1402,30 +1407,30 @@ router.get("/transactions", requireKopokopoViewer, async (req, res) => {
     }
     if (from) clauses.push(`COALESCE(origination_time, created_at) >= ${addValue(from)}`);
     if (to) clauses.push(`COALESCE(origination_time, created_at) <= ${addValue(to)}`);
-    if (status === "received") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND purpose <> 'stock_funding'");
-    if (status === "available") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND purpose <> 'stock_funding' AND allocated_cents < amount_cents");
-    if (status === "partial") clauses.push("lower(status) = 'received' AND reversed_at IS NULL AND purpose <> 'stock_funding' AND allocated_cents > 0 AND allocated_cents < amount_cents");
-    if (status === "allocated") clauses.push("reversed_at IS NULL AND purpose <> 'stock_funding' AND allocated_cents >= amount_cents");
+    if (status === "received") clauses.push(`${successfulReceiptSql} AND reversed_at IS NULL AND ${customerPaymentSql}`);
+    if (status === "available") clauses.push(`${successfulReceiptSql} AND reversed_at IS NULL AND ${customerPaymentSql} AND allocated_cents < amount_cents`);
+    if (status === "partial") clauses.push(`${successfulReceiptSql} AND reversed_at IS NULL AND ${customerPaymentSql} AND allocated_cents > 0 AND allocated_cents < amount_cents`);
+    if (status === "allocated") clauses.push(`reversed_at IS NULL AND ${customerPaymentSql} AND allocated_cents >= amount_cents`);
     if (status === "reversed") clauses.push("reversed_at IS NOT NULL");
-    if (status === "funding") clauses.push("purpose = 'stock_funding' AND reversed_at IS NULL");
+    if (status === "funding") clauses.push("COALESCE(lower(purpose), 'customer_payment') = 'stock_funding' AND reversed_at IS NULL");
     const where = clauses.length ? clauses.join(" AND ") : "1 = 1";
 
     const summary = await q(
       `SELECT COUNT(*) AS page_count,
-              COALESCE(SUM(CASE WHEN purpose <> 'stock_funding' THEN 1 ELSE 0 END), 0) AS total_count,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN amount_cents ELSE 0 END), 0) AS total_amount_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN allocated_cents ELSE 0 END), 0) AS total_allocated_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS total_available_cents
+              COALESCE(SUM(CASE WHEN ${customerPaymentSql} THEN 1 ELSE 0 END), 0) AS total_count,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN amount_cents ELSE 0 END), 0) AS total_amount_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN allocated_cents ELSE 0 END), 0) AS total_allocated_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS total_available_cents
          FROM kopokopo_transactions
         WHERE ${where}`,
       values
     );
     const branchSummary = await q(
       `SELECT branch_id,
-              COALESCE(SUM(CASE WHEN purpose <> 'stock_funding' THEN 1 ELSE 0 END), 0) AS transaction_count,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN amount_cents ELSE 0 END), 0) AS amount_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN allocated_cents ELSE 0 END), 0) AS allocated_cents,
-              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND purpose <> 'stock_funding' THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS available_cents
+              COALESCE(SUM(CASE WHEN ${customerPaymentSql} THEN 1 ELSE 0 END), 0) AS transaction_count,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN amount_cents ELSE 0 END), 0) AS amount_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN allocated_cents ELSE 0 END), 0) AS allocated_cents,
+              COALESCE(SUM(CASE WHEN reversed_at IS NULL AND lower(status) <> 'reversed' AND ${customerPaymentSql} THEN GREATEST(amount_cents - allocated_cents, 0) ELSE 0 END), 0) AS available_cents
          FROM kopokopo_transactions
         WHERE ${where}
         GROUP BY branch_id
@@ -1857,7 +1862,7 @@ router.get("/transactions/lookup", requireAdminOrSupervisor, async (req, res) =>
         WHERE transaction_row.reference_last4 = $1
           AND lower(transaction_row.status) IN ('received', 'complete', 'completed', 'success')
           AND transaction_row.reversed_at IS NULL
-          AND transaction_row.purpose <> 'stock_funding'
+          AND COALESCE(lower(transaction_row.purpose), 'customer_payment') <> 'stock_funding'
           AND transaction_row.allocated_cents < transaction_row.amount_cents
         ORDER BY transaction_row.origination_time DESC, transaction_row.created_at DESC
         LIMIT 100`,

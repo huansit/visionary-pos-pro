@@ -351,6 +351,32 @@ test("lists a filtered, paginated, branch-scoped M-Pesa transaction ledger", asy
   assert.equal(phoneSearch.body.transactions.length, 1);
   assert.equal(phoneSearch.body.transactions[0].id, "txn-1");
 
+  const legacyBefore = await pool.query(
+    "SELECT status FROM kopokopo_transactions WHERE id = $1",
+    ["txn-1"]
+  );
+  await pool.query("UPDATE kopokopo_transactions SET status = 'Complete' WHERE id = $1", ["txn-1"]);
+  try {
+    const legacyAvailable = await request(app)
+      .get("/api/integrations/kopokopo/transactions?branchId=b_sip&status=available&search=12CD")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(legacyAvailable.body.transactions.length, 1);
+    assert.equal(legacyAvailable.body.transactions[0].id, "txn-1");
+    assert.equal(legacyAvailable.body.summary.remainingCents, 100000);
+
+    const legacyLookup = await request(app)
+      .get("/api/integrations/kopokopo/transactions/lookup?branchId=b_sip&last4=12CD")
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(legacyLookup.body.transactions.length, 1);
+  } finally {
+    await pool.query(
+      "UPDATE kopokopo_transactions SET status = $2 WHERE id = $1",
+      ["txn-1", legacyBefore.rows[0].status]
+    );
+  }
+
   await pool.query(
     `INSERT INTO kopokopo_transactions
       (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, till_number, branch_id, payer_name, origination_time, reversed_at)

@@ -1,4 +1,4 @@
-const CACHE_NAME = "visionpos-install-shell-v6";
+const CACHE_NAME = "visionpos-install-shell-v7";
 const INSTALL_ASSETS = [
   "/manifest.webmanifest",
   "/icons/visionpos-180.png",
