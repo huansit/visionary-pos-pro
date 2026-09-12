@@ -5255,14 +5255,16 @@ body{overscroll-behavior:none}
 .mpesa-settlement-rail-head b{display:flex;align-items:center;gap:7px;font-size:14px}.mpesa-settlement-rail-head svg{width:17px;height:17px;color:var(--accent)}
 .mpesa-settlement-rail-head span,.mpesa-settlement-empty,.mpesa-settlement-note{color:var(--muted-2);font-size:11px;line-height:1.45}
 .mpesa-settlement-receipts{display:grid;gap:6px;max-height:calc(100dvh - 230px);overflow:auto;overscroll-behavior:contain}
-.mpesa-settlement-receipt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:9px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface-2);color:var(--text);text-align:left}
+.mpesa-settlement-receipt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:9px;border:1px solid var(--border-soft);border-left-width:3px;border-radius:7px;background:var(--surface-2);color:var(--text);text-align:left}
+.mpesa-settlement-receipt.is-available{border-left-color:var(--ok)}.mpesa-settlement-receipt.is-partial{border-left-color:var(--warn)}.mpesa-settlement-receipt.is-used{border-left-color:var(--danger)}
 .mpesa-settlement-receipt strong{display:block;font-size:12px}.mpesa-settlement-receipt small{display:block;margin-top:3px;color:var(--muted-2);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mpesa-settlement-receipt .receipt-amount{color:var(--ok);font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}
+.mpesa-settlement-receipt .receipt-amount{display:grid;justify-items:end;gap:4px;font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}.mpesa-settlement-receipt.is-available .receipt-amount>span:first-child{color:var(--ok)}.mpesa-settlement-receipt.is-partial .receipt-amount>span:first-child{color:var(--warn)}.mpesa-settlement-receipt.is-used .receipt-amount>span:first-child{color:var(--danger)}
+.mpesa-settlement-state{display:inline-flex;align-items:center;justify-content:center;min-height:21px;padding:3px 6px;border-radius:999px;font:800 8.5px var(--font);letter-spacing:.04em;text-transform:uppercase}.mpesa-settlement-state.available{background:rgba(21,168,107,.13);color:var(--ok)}.mpesa-settlement-state.partial{background:rgba(217,138,28,.14);color:var(--warn)}.mpesa-settlement-state.used{background:rgba(229,72,77,.13);color:var(--danger)}
 .mpesa-settlement-code{min-width:58px;min-height:34px;padding:5px 8px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border-soft));border-radius:7px;background:rgba(14,165,181,.08);color:var(--accent);font:850 13px var(--font-mono);letter-spacing:.06em;cursor:pointer;touch-action:manipulation}
 .mpesa-settlement-code:hover,.mpesa-settlement-code:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.16);outline:none}
 .mpesa-settlement-used{display:inline-flex;align-items:center;justify-content:center;min-width:58px;min-height:34px;padding:5px 8px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);color:var(--muted-2);font:800 10px var(--font);letter-spacing:.03em;text-transform:uppercase}
 @media(max-width:1040px){.invoice-settlement-layout{grid-template-columns:1fr}.mpesa-settlement-rail{position:static;order:-1}.mpesa-settlement-receipts{max-height:none}}
-@media(max-width:720px){.invoice-settlement-rail{min-width:0}.mpesa-settlement-rail{gap:7px;padding:9px;border-radius:10px}.mpesa-settlement-rail-head b{font-size:12.5px}.mpesa-settlement-rail-head span{font-size:10px}.mpesa-settlement-receipts{grid-auto-flow:column;grid-auto-columns:minmax(178px,76vw);grid-template-columns:none;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.mpesa-settlement-receipt{min-height:72px;grid-template-columns:1fr;gap:5px;align-content:space-between;scroll-snap-align:start}.mpesa-settlement-receipt .receipt-amount{display:flex;align-items:center;justify-content:space-between;text-align:left}.mpesa-settlement-code,.mpesa-settlement-used{min-width:66px;min-height:38px}.mpesa-settlement-code{font-size:14px}.mpesa-settlement-note{display:none}.mpesa-settlement-rail .compact-notice{margin:0;font-size:10px}}
+@media(max-width:720px){.invoice-settlement-rail{min-width:0}.mpesa-settlement-rail{gap:7px;padding:9px;border-radius:10px}.mpesa-settlement-rail-head b{font-size:12.5px}.mpesa-settlement-rail-head span{font-size:10px}.mpesa-settlement-receipts{grid-auto-flow:column;grid-auto-columns:minmax(190px,76vw);grid-template-columns:none;overflow-x:auto;overflow-y:hidden;padding-bottom:2px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.mpesa-settlement-receipt{min-height:82px;grid-template-columns:1fr;gap:5px;align-content:space-between;scroll-snap-align:start}.mpesa-settlement-receipt .receipt-amount{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;align-items:center;justify-items:start;text-align:left}.mpesa-settlement-receipt .receipt-amount>span:first-child{grid-column:1}.mpesa-settlement-state{grid-column:1}.mpesa-settlement-code{grid-column:2;grid-row:1/3;align-self:stretch}.mpesa-settlement-code,.mpesa-settlement-used{min-width:66px;min-height:38px}.mpesa-settlement-code{font-size:14px}.mpesa-settlement-note{display:none}.mpesa-settlement-rail .compact-notice{margin:0;font-size:10px}}
 .invoice-active-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
 .invoice-active-period-title{display:grid;gap:1px;min-width:0}
 .invoice-active-period-title b{font-size:12px}
@@ -8968,16 +8970,15 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 }
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
-function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
+function MpesaSettlementRail({ branch, timeZone, businessDayStart, readyCode, onUseCode }) {
   const [state, setState] = useState({ loading: true, error: "", transactions: [] });
   const [refreshNonce, setRefreshNonce] = useState(0);
   useEffect(() => {
     let active = true;
-    // Settling an invoice needs spendable balance, not just money received
-    // after midnight. A business day can cross midnight, so the rail must
-    // use the same available-funds view as the M-Pesa audit instead of a
-    // calendar-day cutoff.
-    listKopokopoTransactions({ branchId: branch.id, status: "available", sort: "desc", limit: 100, offset: 0 })
+    // Keep every verified receipt from the current POS business day visible:
+    // available funds can be used, while partial and used funds remain a
+    // concise reconciliation trail beside the invoices.
+    listKopokopoTransactions({ branchId: branch.id, status: "received", from: businessDayStart, sort: "desc", limit: 100, offset: 0 })
       .then((result) => {
         if (!active) return;
         setState({ loading: false, error: "", transactions: Array.isArray(result.transactions) ? result.transactions : [] });
@@ -8986,7 +8987,7 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
         if (active) setState({ loading: false, error: "M-Pesa receipts could not be loaded.", transactions: [] });
       });
     return () => { active = false; };
-  }, [branch.id, refreshNonce]);
+  }, [branch.id, businessDayStart, refreshNonce]);
   useEffect(() => {
     const refresh = () => setRefreshNonce((value) => value + 1);
     const onRealtime = (event) => {
@@ -9005,28 +9006,31 @@ function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
     onUseCode(code);
     try { await navigator.clipboard?.writeText(code); } catch (_) {}
   };
-  return <aside className="mpesa-settlement-rail" aria-label="Available M-Pesa funds">
+  return <aside className="mpesa-settlement-rail" aria-label="Current business day M-Pesa receipts">
     <div className="mpesa-settlement-rail-head">
-      <div><b><Smartphone /> M-Pesa funds</b><span>Available to clear invoices</span></div>
+      <div><b><Smartphone /> M-Pesa receipts</b><span>Current business day</span></div>
       <button type="button" className="iconbtn" onClick={() => setRefreshNonce((value) => value + 1)} aria-label="Refresh M-Pesa receipts" title="Refresh"><RefreshCw /></button>
     </div>
     {readyCode ? <div className="notice compact-notice"><Check /> <b>{readyCode}</b> copied — open an invoice to settle it.</div> : null}
     {state.loading ? <div className="mpesa-settlement-empty">Loading verified receipts…</div> : null}
     {!state.loading && state.error ? <div className="mpesa-settlement-empty">{state.error}</div> : null}
-    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No available M-Pesa funds for this branch.</div> : null}
+    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No verified M-Pesa receipts in this business day.</div> : null}
     <div className="mpesa-settlement-receipts">
       {state.transactions.map((transaction) => {
         const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
         const receivedAt = transaction.originationTime || transaction.createdAt;
+        const amountCents = Math.max(0, Number(transaction.amountCents || 0));
         const remainingCents = Math.max(0, Number(transaction.remainingCents || 0));
         const available = transaction.allocatable && remainingCents > 0;
-        return <article className="mpesa-settlement-receipt" key={transaction.id}>
+        const settlementState = !available ? "used" : (remainingCents < amountCents ? "partial" : "available");
+        const stateLabel = settlementState === "available" ? "Available" : settlementState === "partial" ? "Partial" : "Used";
+        return <article className={`mpesa-settlement-receipt is-${settlementState}`} key={transaction.id}>
           <span><strong>{transaction.payerName || "M-Pesa payer"}</strong><small>{receivedAt ? formatBusinessDateTime(receivedAt, timeZone) : "time unavailable"}</small></span>
-          <span className="receipt-amount"><span>{available ? fmt(remainingCents, transaction.currency || "KES") : fmt(Number(transaction.amountCents || 0), transaction.currency || "KES")}</span>{available ? <button type="button" className="mpesa-settlement-code" onClick={() => useReceipt(transaction)} disabled={code.length !== 4} aria-label={code.length === 4 ? `Copy and use M-Pesa reference ending ${code}` : "M-Pesa reference unavailable"} title="Copy receipt reference">{code || "—"}</button> : <span className="mpesa-settlement-used" title="This receipt has no balance available for another invoice">Settled</span>}</span>
+          <span className="receipt-amount"><span>{available ? fmt(remainingCents, transaction.currency || "KES") : fmt(amountCents, transaction.currency || "KES")}</span><span className={`mpesa-settlement-state ${settlementState}`}>{stateLabel}</span>{available ? <button type="button" className="mpesa-settlement-code" onClick={() => useReceipt(transaction)} disabled={code.length !== 4} aria-label={code.length === 4 ? `Copy and use M-Pesa reference ending ${code}` : "M-Pesa reference unavailable"} title="Copy receipt reference">{code || "—"}</button> : null}</span>
         </article>;
       })}
     </div>
-    <div className="mpesa-settlement-note">Tap a receipt reference to copy it and prepare settlement. Showing up to 100 available balances for this branch.</div>
+    <div className="mpesa-settlement-note">Green is available, amber is partially used, and red is fully used. Tap an available reference to copy it for settlement.</div>
   </aside>;
 }
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
@@ -9435,7 +9439,13 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             {hasMoreInvoices ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleInvoiceCount((count) => count + 40)}>Show 40 more invoices ({filtered.length - visibleInvoices.length} remaining)</button> : null}</>
           )}
         </div>
-        <MpesaSettlementRail branch={branch} timeZone={timeZone} readyCode={readyMpesaCode} onUseCode={setReadyMpesaCode} />
+        <MpesaSettlementRail
+          branch={branch}
+          timeZone={timeZone}
+          businessDayStart={branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart}
+          readyCode={readyMpesaCode}
+          onUseCode={setReadyMpesaCode}
+        />
         </div>
       </div>}
 
