@@ -5223,6 +5223,18 @@ body{overscroll-behavior:none}
 .invoice-compact-summary .invoice-mpesa-total b{color:var(--ok)}
 .invoice-compact-summary .btn{justify-self:end}
 .invoice-active-period{display:grid;grid-template-columns:auto minmax(180px,auto) minmax(0,1fr);align-items:center;gap:10px;padding:8px 10px;margin:0 0 8px;border:1px solid rgba(14,165,181,.28);border-left:3px solid var(--accent);border-radius:7px;background:rgba(14,165,181,.06)}
+.invoice-settlement-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,340px);align-items:start;gap:14px}
+.invoice-settlement-main{min-width:0}
+.mpesa-settlement-rail{position:sticky;top:12px;display:grid;gap:8px;padding:12px;border:1px solid var(--border-soft);border-radius:9px;background:var(--surface)}
+.mpesa-settlement-rail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.mpesa-settlement-rail-head b{display:flex;align-items:center;gap:7px;font-size:14px}.mpesa-settlement-rail-head svg{width:17px;height:17px;color:var(--accent)}
+.mpesa-settlement-rail-head span,.mpesa-settlement-empty,.mpesa-settlement-note{color:var(--muted-2);font-size:11px;line-height:1.45}
+.mpesa-settlement-receipts{display:grid;gap:6px;max-height:calc(100dvh - 230px);overflow:auto;overscroll-behavior:contain}
+.mpesa-settlement-receipt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;width:100%;padding:9px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface-2);color:var(--text);text-align:left;cursor:pointer;touch-action:manipulation}
+.mpesa-settlement-receipt:hover,.mpesa-settlement-receipt:focus-visible{border-color:var(--accent);background:rgba(14,165,181,.08);outline:none}
+.mpesa-settlement-receipt strong{display:block;font-family:var(--font-mono);font-size:12px}.mpesa-settlement-receipt small{display:block;margin-top:3px;color:var(--muted-2);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mpesa-settlement-receipt .receipt-amount{color:var(--ok);font-family:var(--font-mono);font-size:12px;font-weight:850;text-align:right}.mpesa-settlement-receipt .receipt-action{display:block;margin-top:4px;color:var(--accent);font-size:9px;font-weight:850;text-transform:uppercase}
+@media(max-width:1040px){.invoice-settlement-layout{grid-template-columns:1fr}.mpesa-settlement-rail{position:static}.mpesa-settlement-receipts{max-height:280px}}
 .invoice-active-period>svg{width:18px;height:18px;color:var(--accent);flex:none}
 .invoice-active-period-title{display:grid;gap:1px;min-width:0}
 .invoice-active-period-title b{font-size:12px}
@@ -8516,7 +8528,7 @@ const TABS = [
   { id: "ai", label: "Ask My Business", icon: Sparkles, desc: "Ask anything — sales, stock, profit, risks, purchase orders" },
   { id: "invoices", label: "Invoices & Clearing", icon: FileText, desc: "Credit control, clearing, and cashier debts" },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, desc: "Today's sales, debts, and low stock at a glance" },
-  { id: "products", label: "Products", icon: Tag, desc: "Catalog, prices, cost, margins, images" },
+  { id: "products", label: "Products", icon: Tag, desc: "Catalog, prices, cost, margins, and stock" },
   { id: "stock", label: "Stock", icon: Boxes, desc: "Inventory count, variance, reorder status" },
   { id: "purchases", label: "Purchases", icon: ShoppingBag, desc: "Add stock, invoice verification, moving average cost" },
   { id: "suppliers", label: "Suppliers", icon: Truck, desc: "Supplier records and cost comparison" },
@@ -8576,8 +8588,8 @@ const NAV_GROUPS = [
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
     { id: "payments", label: "Payments", icon: CreditCard },
-    { id: "mpesa", label: "M-Pesa Transactions", icon: Smartphone },
-    { id: "audit", label: "M-Pesa & Invoice Audit", icon: ClipboardCheck },
+    { id: "mpesa", label: "M-Pesa & Settlement", icon: Smartphone },
+    { id: "audit", label: "Reconciliation Audit", icon: ClipboardCheck },
     { id: "cash", label: "Cash Management", icon: Wallet },
     { id: "expenses", label: "Expenses", icon: TrendingDown },
   ] },
@@ -8892,6 +8904,62 @@ function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
 }
 
 /* ---- Invoices & Clearing (admin/supervisor only) ---- */
+function MpesaSettlementRail({ branch, timeZone, readyCode, onUseCode }) {
+  const [state, setState] = useState({ loading: true, error: "", transactions: [] });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const businessDate = businessDateValue(Date.now(), timeZone);
+  const from = businessDateTimeBoundary(`${businessDate}T00:00`, timeZone, "start");
+  useEffect(() => {
+    let active = true;
+    listKopokopoTransactions({ branchId: branch.id, status: "available", from, sort: "desc", limit: 20, offset: 0 })
+      .then((result) => {
+        if (!active) return;
+        setState({ loading: false, error: "", transactions: Array.isArray(result.transactions) ? result.transactions : [] });
+      })
+      .catch(() => {
+        if (active) setState({ loading: false, error: "M-Pesa receipts could not be loaded.", transactions: [] });
+      });
+    return () => { active = false; };
+  }, [branch.id, from, refreshNonce]);
+  useEffect(() => {
+    const refresh = () => setRefreshNonce((value) => value + 1);
+    const onRealtime = (event) => {
+      const detail = event.detail || {};
+      if (!Array.isArray(detail.types) || !detail.types.includes("kopokopoTransaction")) return;
+      if (detail.branchId && detail.branchId !== branch.id) return;
+      refresh();
+    };
+    window.addEventListener("visionpos:realtime", onRealtime);
+    return () => window.removeEventListener("visionpos:realtime", onRealtime);
+  }, [branch.id]);
+  const useReceipt = async (transaction) => {
+    const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
+    if (code.length !== 4) return;
+    onUseCode(code);
+    try { await navigator.clipboard?.writeText(code); } catch (_) {}
+  };
+  return <aside className="mpesa-settlement-rail" aria-label="Available M-Pesa receipts">
+    <div className="mpesa-settlement-rail-head">
+      <div><b><Smartphone /> M-Pesa receipts</b><span>Available today · select a code to prepare settlement</span></div>
+      <button type="button" className="iconbtn" onClick={() => setRefreshNonce((value) => value + 1)} aria-label="Refresh M-Pesa receipts" title="Refresh"><RefreshCw /></button>
+    </div>
+    {readyCode ? <div className="notice compact-notice"><Check /> Code ending <b>{readyCode}</b> is ready. Open an invoice to apply it.</div> : null}
+    {state.loading ? <div className="mpesa-settlement-empty">Loading verified receipts…</div> : null}
+    {!state.loading && state.error ? <div className="mpesa-settlement-empty">{state.error}</div> : null}
+    {!state.loading && !state.error && state.transactions.length === 0 ? <div className="mpesa-settlement-empty">No available M-Pesa receipts received today.</div> : null}
+    <div className="mpesa-settlement-receipts">
+      {state.transactions.map((transaction) => {
+        const code = normalizeMpesaCodeLast4(transaction.referenceLast4 || transaction.referenceMasked || "");
+        const receivedAt = transaction.originationTime || transaction.createdAt;
+        return <button type="button" className="mpesa-settlement-receipt" key={transaction.id} onClick={() => useReceipt(transaction)} disabled={code.length !== 4}>
+          <span><strong>Code ending {code || "—"}</strong><small>{transaction.payerName || "M-Pesa payer"} · {receivedAt ? formatBusinessDateTime(receivedAt, timeZone) : "time unavailable"}</small></span>
+          <span className="receipt-amount">{fmt(Number(transaction.remainingCents || 0), transaction.currency || "KES")}<span className="receipt-action">Use code</span></span>
+        </button>;
+      })}
+    </div>
+    <div className="mpesa-settlement-note">Selecting a receipt copies its last four characters and pre-fills the invoice settlement check. Available balance remains verified by Kopo Kopo before payment is saved.</div>
+  </aside>;
+}
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
   const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
@@ -8903,6 +8971,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [businessDayFilter, setBusinessDayFilter] = useState("current");
   const [eod, setEod] = useState(null); // {mode:"live"} or {mode:"view", doc}
   const [detail, setDetail] = useState(null);
+  const [readyMpesaCode, setReadyMpesaCode] = useState("");
   const [receipt, setReceipt] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
@@ -9282,7 +9351,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>}
         {printAuditError ? <div className="formerr">{printAuditError}</div> : null}
 
-        <div className="invoice-results-scroll">
+        <div className="invoice-settlement-layout">
+        <div className="invoice-settlement-main invoice-results-scroll">
           {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
             <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
               <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allVisibleSelected} onChange={toggleAllVisibleInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
@@ -9290,6 +9360,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             </table></div>}
             {hasMoreInvoices ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleInvoiceCount((count) => count + 40)}>Show 40 more invoices ({filtered.length - visibleInvoices.length} remaining)</button> : null}</>
           )}
+        </div>
+        <MpesaSettlementRail branch={branch} timeZone={timeZone} readyCode={readyMpesaCode} onUseCode={setReadyMpesaCode} />
         </div>
       </div>}
 
@@ -9358,7 +9430,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       </div>}
 
       {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
-      {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
+      {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
     </div>
   );
@@ -10395,7 +10467,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
   );
 }
 
-function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }) {
+function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "", onReprint, onClose }) {
   const live = data.invoices.find((x) => x.id === inv.id) || inv;
   const cashDepositAudit = useInvoiceCashDepositAudit(live);
   const [tnote, setTnote] = useState(live.trackingNote || "");
@@ -10443,6 +10515,10 @@ function InvoiceDetailModal({ inv, data, update, cur, user, onReprint, onClose }
     setStkError("");
     stkIdempotencyKeyRef.current = "";
   }, [live.id, out]);
+  useEffect(() => {
+    const code = normalizeMpesaCodeLast4(initialMpesaCode);
+    if (code.length === 4) setMpesaCode(code);
+  }, [initialMpesaCode, live.id]);
   const normalizedMpesaCode = normalizeMpesaCodeLast4(mpesaCode);
   const savedReceipt = normalizedMpesaCode.length === 4
     ? findMpesaReceipt(data.payments, { branchId: live.branchId, codeLast4: normalizedMpesaCode })
@@ -11209,7 +11285,7 @@ const CATS = ["Whisky", "Gin", "Vodka", "Rum", "Cognac", "Wine", "Beer", "Spirit
 function ProductsTab({ data, update, branch, isAdmin }) {
   const cur = data.settings.currency;
   const [adding, setAdding] = useState(false);
-  const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4), imageUrl: "" });
+  const blankProductForm = () => ({ name: "", sku: "", barcode: "", extraBarcodes: "", size: "750 ML", category: CATS[0], price: "", tax: "0", supplierId: data.suppliers?.[0]?.id || "", unit: "bottle", initialStock: "0", lowStockAlert: String(data.settings.reorderLevel || 4) });
   const [f, setF] = useState(blankProductForm());
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
@@ -11336,7 +11412,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     const productId = uid("p");
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
-    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", imageUrl: f.imageUrl.trim(), reorderLevel, status: "active", synced: false, updatedAt: ts };
+    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", reorderLevel, status: "active", synced: false, updatedAt: ts };
     const product = withBranchProductCost(productBase, branch.id, 0);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
@@ -11460,11 +11536,11 @@ function ProductsTab({ data, update, branch, isAdmin }) {
     setCopyMsg(copied ? copied + " product(s) copied to " + branch.name + ". Buying cost, selling price, margin, and stock start at 0. Buying cost is recalculated from received purchases." : "No missing products to copy.");
   };
   const exportCSV = () => {
-    const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand", "Image URL"];
-    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, branchInventoryCostCents(data, p, branch.id) / 100, branchProductPriceCents(p, branch.id) / 100, productOnHand(data, p, branch.id), p.imageUrl || ""]);
+    const headers = ["Name", "SKU", "Size", "Category", "Cost", "Price", "On hand"];
+    const rows = visibleBranchProducts.map((p) => [p.name, p.sku, p.size, p.category, branchInventoryCostCents(data, p, branch.id) / 100, branchProductPriceCents(p, branch.id) / 100, productOnHand(data, p, branch.id)]);
     downloadFile("visionary-products.csv", [headers, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n"), "text/csv");
   };
-  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: branchInventoryCostCents(data, p, branch.id), priceCents: branchProductPriceCents(p, branch.id), onHand: productOnHand(data, p, branch.id), imageUrl: p.imageUrl || null })), null, 2), "application/json");
+  const downloadJSON = () => downloadFile("visionary-products.json", JSON.stringify(visibleBranchProducts.map((p) => ({ name: p.name, sku: p.sku, size: p.size, category: p.category, costCents: branchInventoryCostCents(data, p, branch.id), priceCents: branchProductPriceCents(p, branch.id), onHand: productOnHand(data, p, branch.id) })), null, 2), "application/json");
   const emailSummary = () => {
     const totalVal = visibleBranchProducts.reduce((s, p) => s + productOnHand(data, p, branch.id) * branchInventoryCostCents(data, p, branch.id), 0);
     const subject = encodeURIComponent("Product catalog · " + branch.name);
@@ -11590,7 +11666,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
             <div><label className="label">Initial stock</label><input className="input" inputMode="numeric" value={f.initialStock} onChange={(e) => setF({ ...f, initialStock: e.target.value.replace(/\D/g, "") })} placeholder="0" /></div>
             <div><label className="label">Low stock alert</label><input className="input" inputMode="numeric" value={f.lowStockAlert} onChange={(e) => setF({ ...f, lowStockAlert: e.target.value.replace(/\D/g, "") })} placeholder="4" /></div>
           </div>
-          <div className="field"><label className="label">Product image</label><input className="input" value={f.imageUrl} onChange={(e) => setF({ ...f, imageUrl: e.target.value })} placeholder="Image URL" /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset}>Cancel</button><button className="btn btn-primary" onClick={add}><Check /> Add product</button></div>
         </div>
@@ -11653,9 +11728,9 @@ function ProductsTab({ data, update, branch, isAdmin }) {
         return (
           <><div className="ptblwrap products-scroll-region">
             <table className="ptbl">
-              <thead><tr><th></th><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th>Status</th><th></th></tr></thead>
+              <thead><tr><th>Product</th><th>Category</th><th className="num">Stock</th><th className="num">Moving avg cost</th><th className="num">Selling price</th><th className="num">Margin</th><th>Status</th><th></th></tr></thead>
               <tbody>
-                {list.length === 0 && <tr><td colSpan={9} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
+                {list.length === 0 && <tr><td colSpan={8} style={{ color: "var(--muted-2)", textAlign: "center", padding: 22 }}>No products match.</td></tr>}
                 {visibleProducts.map((p) => {
                   const left = productOnHand(data, p, branch.id);
                   const cls = left <= 0 ? "out" : left <= (p.reorderLevel ?? reorder) ? "low" : "ok";
@@ -11665,7 +11740,7 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   const purchaseStamp = formatPurchaseLotStamp(purchaseLotTrace.activeLotsFor(p.id, branch.id));
                   if (editId === p.id) return (
                     <tr key={p.id}>
-                      <td colSpan={9}>
+                      <td colSpan={8}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <input className="input" style={{ width: 220, height: 38 }} value={ef.name} onChange={(e) => { setEf({ ...ef, name: e.target.value }); setErr(""); }} placeholder="Product name" aria-label="Product name" />
                           <input ref={editBarcodeInputRef} className="input" style={{ width: 180, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" value={ef.barcode} onChange={(e) => { setEf({ ...ef, barcode: cleanCode(e.target.value) }); setErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handleProductScan(e.currentTarget.value); } }} placeholder="Scan barcode" />
@@ -11681,7 +11756,6 @@ function ProductsTab({ data, update, branch, isAdmin }) {
                   );
                   return (
                     <tr key={p.id} className={productIsEnabled(p) ? "" : "product-row-disabled"}>
-                      <td><div className="ptimg"><ProductImage src={productDisplayImage(p)} alt="" fit="cover" /></div></td>
                       <td><div className="ptname">{p.name}</div><div className="ptsub">{p.sku} · {p.size}</div>{purchaseStamp && <div className="ptsub" style={{ color: "var(--accent)", fontWeight: 800 }}>PO stock · {purchaseStamp}</div>}</td>
                       <td><span className="ptcat">{p.category}</span></td>
                       <td className="num"><span className="ptstk"><span className={"dot " + cls} /> {left}</span></td>
