@@ -10537,6 +10537,7 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen, 
     : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
     : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
+  const showStatus = String(displayStatus || "").toLowerCase() !== "open";
   return (
     <tr className="clickable" onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select invoice ${inv.number || inv.receiptNo}`} checked={selected} onChange={onToggle} /></td>
@@ -10546,7 +10547,7 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen, 
       <td className="amt">{fmt(Number(inv.totalCents || 0), cur)}</td>
       <td className="amt">{fmt(out, cur)}</td>
       <td>
-        <span className={"ist " + displayClass}>{displayStatus}</span>
+        {showStatus ? <span className={"ist " + displayClass}>{displayStatus}</span> : null}
         {out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button> : null}
         {voidStatus === "rejected" ? <div className="mt2">Void request rejected</div> : null}
       </td>
@@ -10563,6 +10564,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
     : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
     : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
+  const showStatus = String(displayStatus || "").toLowerCase() !== "open";
   return (
     <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
       <header>
@@ -10571,7 +10573,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
         </label>
         <div className="invoice-mobile-reference"><b>{inv.number || inv.receiptNo}{inv.trackingNote ? <span className="noteflag" title={inv.trackingNote}>*</span> : null}</b><span>{dt(inv.ts)} - {age === 0 ? "today" : `${age}d old`}</span></div>
         <div className="invoice-mobile-state">
-          <span className={"ist " + displayClass}>{displayStatus}</span>
+          {showStatus ? <span className={"ist " + displayClass}>{displayStatus}</span> : null}
           <span className="invoice-mobile-open" aria-label="View invoice details" title="View invoice details"><Eye /></span>
         </div>
       </header>
