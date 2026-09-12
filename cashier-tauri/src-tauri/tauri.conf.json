@@ -36,7 +36,7 @@
     "windows": {
       "certificateThumbprint": "49FE31D8D08CF9FEDC12454E64CC96FCF0BA2BFE",
       "digestAlgorithm": "sha256",
-      "timestampUrl": "https://timestamp.digicert.com",
+      "timestampUrl": "http://timestamp.digicert.com",
       "tsp": true
     }
   }

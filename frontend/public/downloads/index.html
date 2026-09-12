@@ -124,47 +124,25 @@
       </div>
       <section class="panel">
         <h1>Downloads</h1>
-        <p>The Windows Cashier installer is temporarily unavailable while it undergoes a security review. Do not install a previously downloaded copy.</p>
+        <p>Download the current Windows Cashier installer. This is a manual installer; automatic desktop updates are disabled.</p>
         <div class="download">
           <div>
             <div class="title">Windows Cashier installer</div>
-            <div class="meta">Temporarily unavailable</div>
+            <div class="meta">Version 2.0.82 · signed and timestamped · 2.8 MB</div>
           </div>
-          <span class="btn" aria-disabled="true">Unavailable</span>
+          <a class="btn" href="/downloads/VISIONPOS-Cashier_2.0.82_x64-setup.exe">Download installer</a>
         </div>
         <div class="notes" id="release-notes" aria-label="Release notes">
-          <div class="note">Use the web POS while the desktop release is quarantined.</div>
-          <div class="note">A verified replacement will be published on this page after review.</div>
+          <div class="note">SHA-512: <code>1C93D694008534CF60AEF9BD3F07B670D2B60C88781223ED46F83B208E8AEACC4E846AF9CFA6FE66847F321BD1B12F5481A46BC7C722D662F8363EE5518C6E7E</code></div>
+          <div class="note">Install this version only. Older Cashier installers remain quarantined.</div>
         </div>
         <div class="notes" aria-label="Installation instructions">
-          <div class="note">Do not restore, whitelist, or run the quarantined Windows executable.</div>
+          <div class="note">Managed PCs using Windows Application Control may still require their administrator's approved-publisher policy.</div>
         </div>
       </section>
     </main>
     <script>
-      (function () {
-        return;
-        var versionEl = document.getElementById("download-version");
-        var linkEl = document.getElementById("download-link");
-        var notesEl = document.getElementById("release-notes");
-        fetch("/downloads/latest.json?v=" + Date.now(), { cache: "no-store" })
-          .then(function (response) { return response.ok ? response.json() : null; })
-          .then(function (release) {
-            if (!release) return;
-            if (release.version && versionEl) versionEl.textContent = "Version " + release.version;
-            var windows = release.platforms && release.platforms["windows-x86_64"];
-            if (windows && windows.url && linkEl) linkEl.href = windows.url;
-            var releaseNotes = typeof release.notes === "string" ? release.notes.split(/\r?\n/).filter(Boolean) : release.releaseNotes;
-            if (Array.isArray(releaseNotes) && releaseNotes.length && notesEl) {
-              notesEl.innerHTML = releaseNotes.map(function (note) {
-                return '<div class="note">' + String(note).replace(/[&<>"]/g, function (ch) {
-                  return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch];
-                }) + "</div>";
-              }).join("");
-            }
-          })
-          .catch(function () {});
-      })();
+      // This page intentionally uses a fixed manual-download link. The cashier app has no in-app updater.
     </script>
   </body>
 </html>

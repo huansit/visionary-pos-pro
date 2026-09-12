@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 function quarantineCashierArtifacts() {
+  const approvedInstaller = "VISIONPOS-Cashier_2.0.82_x64-setup.exe";
   let downloadsDirectory = "";
   return {
     name: "quarantine-cashier-artifacts",
@@ -13,7 +14,8 @@ function quarantineCashierArtifacts() {
     closeBundle() {
       if (!fs.existsSync(downloadsDirectory)) return;
       for (const name of fs.readdirSync(downloadsDirectory)) {
-        if (/^VISIONPOS-(?:Cashier(?:_[\w.-]+)?(?:-setup)?|Setup(?:-[\w.-]+)?)\.exe(?:\.sig)?$/i.test(name)) {
+        const isCashierInstaller = /^VISIONPOS-(?:Cashier(?:_[\w.-]+)?(?:-setup)?|Setup(?:-[\w.-]+)?)\.exe(?:\.sig)?$/i.test(name);
+        if (isCashierInstaller && name !== approvedInstaller) {
           fs.rmSync(path.join(downloadsDirectory, name), { force: true });
         }
       }
