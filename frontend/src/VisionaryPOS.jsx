@@ -16445,7 +16445,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   };
   const VLABEL = { fast: "Fast", medium: "Medium", slow: "Slow", none: "No sales" };
   const VCOLOR = { fast: "var(--ok)", medium: "var(--warn)", slow: "var(--danger)", none: "var(--muted-2)" };
-  const movementCounts = { fast: 0, medium: 0, slow: 0, none: 0 };
+  const movementCounts = { fast: 0, medium: 0, slow: 0, none: 0, voided: 0 };
   reportProducts.forEach((product) => { movementCounts[classOf(product)] += 1; });
   const productSearchNeedle = productSearch.trim().toLowerCase();
   const matchesProductSearch = (product) => !productSearchNeedle || [
@@ -16479,6 +16479,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       movement: classOf(p),
     };
   });
+  movementCounts.voided = allProductReportRows.filter((row) => row.voidedQty > 0).length;
 
   // Product P&L is built from the same recognized invoices and sale movements
   // as the summary above. This keeps every product row reconcilable to the
@@ -16613,7 +16614,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   }), { qty: 0, revenue: 0, cogs: 0, lossValue: 0, grossProductProfit: 0, productProfit: 0 });
   const productRows = allProductReportRows.filter((row) => row.qty > 0).sort((a, b) => b.revenue - a.revenue);
   const visibleProductRows = allProductReportRows
-    .filter((row) => (vel === "all" || row.movement === vel) && matchesProductSearch(row.p))
+    .filter((row) => (vel === "all" || (vel === "voided" ? row.voidedQty > 0 : row.movement === vel)) && matchesProductSearch(row.p))
     .sort((a, b) => b.qty - a.qty || String(a.p.name || "").localeCompare(String(b.p.name || "")));
   const topMax = Math.max(1, ...productRows.map((r) => r.qty));
 
@@ -16985,7 +16986,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             </div>
             {productScanMessage ? <div className="sub" role="status" style={{ margin: "-4px 0 10px", color: productScannerOn ? "var(--ok)" : "var(--muted)" }}>{productScanMessage}</div> : null}
             <div className="cfilter" style={{ marginBottom: 12 }}>
-              {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + movementCounts.fast + ")"], ["medium", "Medium (" + movementCounts.medium + ")"], ["slow", "Slow (" + movementCounts.slow + ")"], ["none", "No sales (" + movementCounts.none + ")"]].map(([k, l]) => (
+              {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + movementCounts.fast + ")"], ["medium", "Medium (" + movementCounts.medium + ")"], ["slow", "Slow (" + movementCounts.slow + ")"], ["none", "No sales (" + movementCounts.none + ")"], ["voided", "Voided (" + movementCounts.voided + ")"]].map(([k, l]) => (
                 <button key={k} className={"seg" + (vel === k ? " on" : "")} onClick={() => setVel(k)}>{l}</button>))}
             </div>
             <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Voided</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
