@@ -8695,12 +8695,12 @@ const NAV_GROUPS = [
     { id: "customers", label: "Customers", icon: Users },
   ] },
   { id: "invgrp", label: "Inventory", icon: Boxes, tone: "#218c63", items: [
-    { id: "products", label: "Catalog & Pricing", mobileLabel: "Catalog", icon: Tag },
+    { id: "products", label: "Product Catalog", mobileLabel: "Catalog", icon: Tag },
     { id: "stock", label: "Stock Control", mobileLabel: "Stock", icon: Boxes },
     { id: "purchases", label: "Purchase Orders", mobileLabel: "Purchases", icon: ShoppingBag },
     { id: "suppliers", label: "Suppliers", icon: Truck },
     { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
-    { id: "pricing", label: "Pricing & Margins", mobileLabel: "Pricing", icon: Tags },
+    { id: "pricing", label: "Branch Pricing", mobileLabel: "Pricing", icon: Tags },
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
     { id: "mpesa", label: "M-Pesa Settlement", mobileLabel: "M-Pesa", icon: Smartphone },
