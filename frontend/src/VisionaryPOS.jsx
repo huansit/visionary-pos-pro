@@ -4057,17 +4057,31 @@ body{overscroll-behavior:none}
   @media (max-width:900px){
     html,body,#root{height:auto;min-height:100%;overflow:visible}
     body{overflow-x:hidden;overscroll-behavior-y:none}
-    .vpos.app{height:auto;min-height:100dvh;overflow:visible}
-    .vpos.app .shell{height:auto;min-height:100dvh;overflow:visible}
-    .vpos.app .content{flex:1 0 auto;min-height:0;overflow:visible;-webkit-overflow-scrolling:auto}
+    .vpos.app{display:block;height:auto;min-height:100dvh;overflow:visible}
+    .vpos.app::before,.vpos.app .env-watermark{display:none}
+    .vpos.app .shell{display:block;height:auto;min-height:100dvh;overflow:visible}
+    .vpos.app .content{position:static;display:block;min-height:0;overflow:visible;overscroll-behavior:auto;-webkit-overflow-scrolling:auto}
     .vpos.app .navside,.vpos.app .navside.collapsed{position:static}
+    .vpos.app .fade{animation:none}
+    .vpos.app .cashier-workstation .pos,
+    .vpos.app .cashier-workstation .poscol.active,
+    .vpos.app .cashier-workstation .posgridwrap,
+    .vpos.app .cashier-workstation .posright,
+    .vpos.app .cashier-workstation .cartlines2,
+    .vpos.app .cashier-workstation .cashier-open-list{
+      flex:none;height:auto;max-height:none;min-height:0;overflow:visible;overscroll-behavior:auto;-webkit-overflow-scrolling:auto
+    }
+    .vpos.app .cashier-workstation .posgridwrap{padding-right:0}
+    .vpos.app.cashier-app .content{background:#eef5f6}
+    .vpos.app button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   }
   @media (max-width:620px){
     /* A blurred fixed layer makes Safari repaint the page beneath it while a
        finger is moving. Keep the app-like navigation, but make it opaque. */
     .vpos.app .mobile-app-tabs{background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:0 6px 18px rgba(9,20,33,.14)}
     .vpos.app .content,.vpos.app .cashier-workstation{touch-action:pan-y pinch-zoom}
-    .vpos.app .cashier-product,.vpos.app .invoice-mobile-card{transition:none}
+    .vpos.app .cashier-product,.vpos.app .invoice-mobile-card{transition:none;box-shadow:0 2px 8px rgba(9,20,33,.06)}
+    .vpos.app .cashier-product{background:#fff}
   }
 }
 
