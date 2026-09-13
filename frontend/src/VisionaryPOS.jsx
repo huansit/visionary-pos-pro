@@ -7350,6 +7350,7 @@ function AdminLogin({ onBack, onSignedIn }) {
   const [codeRequired, setCodeRequired] = useState(false);
   const [codeTarget, setCodeTarget] = useState("");
   const [code, setCode] = useState("");
+  const codeInputRef = useRef(null);
   const [emailVerifyRequired, setEmailVerifyRequired] = useState(false);
   const [emailVerifyEmail, setEmailVerifyEmail] = useState("");
   const [emailVerifyMasked, setEmailVerifyMasked] = useState("");
@@ -7376,6 +7377,11 @@ function AdminLogin({ onBack, onSignedIn }) {
     const id = setInterval(() => setResendCooldown((v) => Math.max(0, v - 1)), 1000);
     return () => clearInterval(id);
   }, [resendCooldown]);
+  useEffect(() => {
+    if (!codeRequired || busy) return undefined;
+    const frame = requestAnimationFrame(() => codeInputRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [codeRequired, busy]);
   const submit = async () => {
     if (!email.trim() || !pw) return setErr("Enter your email or phone and password.");
     if (codeRequired && !/^\d{6}$/.test(code.trim())) return setErr("Enter the 6-digit verification code.");
@@ -7597,13 +7603,14 @@ function AdminLogin({ onBack, onSignedIn }) {
         <div className="authpanel-title">Admin / Supervisor sign-in</div>
         <div className="authpanel-sub">Access the web portal for management, reports, inventory, and branch operations.</div>
         <div className="field" style={{ marginTop: 0 }}><label className="label">Email or phone</label><div className={"input-wrap" + (focusField === "email" ? " kbfocus" : "")}><Mail className="lead" />
-          <input className="input lead" type="text" placeholder="you@store.com or 0712345678" value={email} onFocus={() => setFocusField("email")} onChange={(e) => { setEmail(e.target.value); setErr(""); resetCodeStep(); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div></div>
+          <input className="input lead" type="text" placeholder="you@store.com or 0712345678" value={email} disabled={codeRequired} aria-readonly={codeRequired} tabIndex={codeRequired ? -1 : undefined} onFocus={() => setFocusField("email")} onChange={(e) => { setEmail(e.target.value); setErr(""); resetCodeStep(); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div></div>
         <div className="field"><label className="label">Password</label><div className={"input-wrap" + (focusField === "pw" ? " kbfocus" : "")}>
-          <input className="input" type={show ? "text" : "password"} placeholder="••••••••" value={pw} onFocus={() => setFocusField("pw")} onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} />
-          <button className="toggle-eye" onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
+          <input className="input" type={show ? "text" : "password"} placeholder="••••••••" value={pw} disabled={codeRequired} aria-readonly={codeRequired} tabIndex={codeRequired ? -1 : undefined} onFocus={() => setFocusField("pw")} onChange={(e) => { setPw(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <button className="toggle-eye" disabled={codeRequired} tabIndex={codeRequired ? -1 : undefined} onClick={() => setShow((s) => !s)}>{show ? <EyeOff /> : <Eye />}</button></div></div>
         {codeRequired && <div className="field"><label className="label">Email verification code</label><div className={"input-wrap" + (focusField === "code" ? " kbfocus" : "")}><ShieldCheck className="lead" />
-          <input className="input lead mono" inputMode="numeric" maxLength={6} placeholder="000000" value={code} onFocus={() => setFocusField("code")} onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
-          <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div></div>}
+          <input ref={codeInputRef} className="input lead mono" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={code} onFocus={() => setFocusField("code")} onChange={(e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} /></div>
+          <div className="authnote" style={{ marginTop: 8 }}>Code sent to {codeTarget || "your admin email"}.</div>
+          <button className="authback" type="button" style={{ marginTop: 10 }} disabled={busy} onClick={() => { resetCodeStep(); setErr(""); setFocusField("email"); }}>Use different sign-in details</button></div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
         <div className="auth-actions single">
           <div className="field"><button className="btn btn-primary" disabled={busy} onClick={submit}><ShieldCheck /> {busy ? "Please wait..." : codeRequired ? "Verify code" : "Sign in"}</button></div>
