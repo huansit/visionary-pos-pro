@@ -90,6 +90,13 @@ const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-
 // idempotent on the server, so a historical payment cannot be charged twice.
 const CASHIER_DEBT_PAYMENT_REPAIR_KEY = "visionary:pos:sync:cashier-debt-payment-repair:v1";
 const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-payments-v3";
+// Older builds approved item voids in the local admin cache, then attempted
+// to send the approval with a terminal credential. The cloud correctly
+// rejected that management-only action, leaving the item absent from both the
+// shared product report and the returned stock. Replay those records once
+// using the active management session; server event IDs make the replay safe.
+const INVOICE_LINE_VOID_REPAIR_KEY = "visionary:pos:sync:invoice-line-void-repair:v1";
+const INVOICE_LINE_VOID_REPAIR_VERSION = "2026-09-13-replay-management-line-voids-v1";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -102,7 +109,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 // EventSource delivers normal changes immediately. This is only a recovery
@@ -2058,6 +2065,33 @@ function cashierDebtPaymentRepairEvents(data) {
     .map((payment) => eventFromRecord("cashierJointDebtPayments", payment, data))
     .filter(Boolean);
 }
+function invoiceLineVoidRepairEvents(data) {
+  // Only recover records that never reached the cloud. Replaying a request
+  // before its decision preserves the server-side authorization audit and
+  // lets the server create the matching stock-return movement exactly once.
+  const requests = new Map((data?.invoiceLineVoidRequests || [])
+    .filter((request) => request?.id && request?.invoiceId)
+    .map((request) => [String(request.id), request]));
+  const events = [];
+  const includedRequestIds = new Set();
+  const includeRequest = (request) => {
+    if (!request || includedRequestIds.has(String(request.id))) return;
+    const event = eventFromRecord("invoiceLineVoidRequests", request, data);
+    if (event) events.push(event);
+    includedRequestIds.add(String(request.id));
+  };
+  (data?.invoiceLineVoidDecisions || [])
+    .filter((decision) => decision?.id && decision?.invoiceId && decision?.requestId && decision.synced === false)
+    .forEach((decision) => {
+      includeRequest(requests.get(String(decision.requestId)));
+      const event = eventFromRecord("invoiceLineVoidDecisions", decision, data);
+      if (event) events.push(event);
+    });
+  (data?.invoiceLineVoidRequests || [])
+    .filter((request) => request?.id && request?.invoiceId && request.synced === false)
+    .forEach(includeRequest);
+  return events;
+}
 function settingsEvent(data) {
   return {
     id: "settings",
@@ -2330,15 +2364,27 @@ async function runSyncClient(currentData, options = {}) {
   const invoicePaymentRepairs = settlementRepairPending ? invoicePaymentRepairEvents(data) : [];
   const cashierDebtPaymentRepairPending = await kvGet(CASHIER_DEBT_PAYMENT_REPAIR_KEY) !== CASHIER_DEBT_PAYMENT_REPAIR_VERSION;
   const cashierDebtPaymentRepairs = cashierDebtPaymentRepairPending ? cashierDebtPaymentRepairEvents(data) : [];
-  const managementRepairs = [...invoicePaymentRepairs, ...settlementRepairs, ...cashierDebtPaymentRepairs];
+  const invoiceLineVoidRepairPending = await kvGet(INVOICE_LINE_VOID_REPAIR_KEY) !== INVOICE_LINE_VOID_REPAIR_VERSION;
+  const invoiceLineVoidRepairs = invoiceLineVoidRepairPending ? invoiceLineVoidRepairEvents(data) : [];
+  const managementRepairs = [...invoicePaymentRepairs, ...settlementRepairs, ...cashierDebtPaymentRepairs, ...invoiceLineVoidRepairs];
   let managementRepairWarning = "";
   if (managementRepairs.length) {
     try {
       const repaired = await publishSyncEvents(managementRepairs, data, { management: true });
-      data = markAcceptedSynced(data, repaired.accepted || []);
-      dataChanged = dataChanged || (repaired.accepted || []).length > 0;
+      const acceptedIds = repaired.accepted || [];
+      data = markAcceptedSynced(data, acceptedIds);
+      dataChanged = dataChanged || acceptedIds.length > 0;
+      // Old local admin voids may still be queued with a terminal credential.
+      // The management replay above supersedes them; do not re-submit the
+      // same event through the normal terminal-authenticated outbox below.
+      const repairedIds = new Set(acceptedIds);
+      if (repairedIds.size) {
+        outbox = outbox.filter((event) => !repairedIds.has(event.id));
+        await saveOutbox(outbox);
+      }
       if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
       if (cashierDebtPaymentRepairPending) await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
+      if (invoiceLineVoidRepairPending) await kvSet(INVOICE_LINE_VOID_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_VERSION);
     } catch (error) {
       // These are one-time historical repair events. A mobile browser can
       // receive every normal cloud update while an older repair is waiting
@@ -2349,6 +2395,7 @@ async function runSyncClient(currentData, options = {}) {
   } else {
     if (settlementRepairPending) await kvSet(INVOICE_SETTLEMENT_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_VERSION);
     if (cashierDebtPaymentRepairPending) await kvSet(CASHIER_DEBT_PAYMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_VERSION);
+    if (invoiceLineVoidRepairPending) await kvSet(INVOICE_LINE_VOID_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_VERSION);
   }
   let cursor = await loadCursor();
   let resetEpoch = await loadResetEpoch();
