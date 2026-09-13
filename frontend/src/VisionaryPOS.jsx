@@ -15372,6 +15372,8 @@ function PricingTab({ data, update, branch }) {
   const [q, setQ] = useState("");
   const [priceDrafts, setPriceDrafts] = useState({});
   const [priceErr, setPriceErr] = useState("");
+  const [priceNotice, setPriceNotice] = useState("");
+  const [savingPriceId, setSavingPriceId] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scannerOn, setScannerOn] = useState(false);
   const [scanMessage, setScanMessage] = useState("");
@@ -15451,26 +15453,46 @@ function PricingTab({ data, update, branch }) {
     const price = branchProductPriceCents(p, bId);
     return priceDrafts[p.id] ?? (price > 0 ? String(price / 100) : "");
   };
-  const savePrice = (p) => {
+  const savePrice = async (p) => {
+    if (savingPriceId) return;
     const raw = draftFor(p).trim();
     const price = Math.round((parseFloat(raw) || 0) * 100);
     if (!price || price <= 0) return setPriceErr("Enter a valid selling price for " + p.name + ".");
     const cost = branchInventoryCostCents(data, p, bId);
     if (price < cost) return setPriceErr("Selling price for " + p.name + " cannot be below cost.");
     setPriceErr("");
-    setPriceDrafts((drafts) => {
-      const { [p.id]: _saved, ...rest } = drafts;
-      return rest;
-    });
-    update((d) => ({
-      ...d,
-      products: d.products.map((x) => pricingKey(x) === pricingKey(p) ? withBranchProductPrice(x, bId, price) : x)
-    }));
+    setPriceNotice("");
+    const nextProduct = withBranchProductPrice(p, bId, price);
+    const event = eventFromRecord("products", nextProduct, data);
+    if (!event) return setPriceErr("This product cannot be saved. Refresh the page and try again.");
+    setSavingPriceId(p.id);
+    try {
+      // Pricing is an admin action. Save directly through the active
+      // management session instead of the terminal queue.
+      await publishSyncEvents([event], data, { management: true });
+      setPriceDrafts((drafts) => {
+        const { [p.id]: _saved, ...rest } = drafts;
+        return rest;
+      });
+      update((d) => ({
+        ...d,
+        products: d.products.map((x) => x.id === p.id ? { ...nextProduct, synced: true } : x),
+      }), { skipSync: true });
+      setPriceNotice(p.name + " price saved for " + bname + ".");
+    } catch (error) {
+      const message = String(error?.message || "");
+      setPriceErr(message === "management_session_required" || /(?:invalid_or_missing_user_session|session_(?:expired|revoked))/.test(message)
+        ? "Your admin session has expired. Sign in again, then save the price."
+        : "The price was not saved to the shared system. Check the connection and try again.");
+    } finally {
+      setSavingPriceId("");
+    }
   };
   return (
     <div className="pricing-workspace">
       <PageHead title="Branch Pricing" sub="Edit selling prices by branch. Prices below cost are blocked." />
       {priceErr && <div className="alert error" style={{ marginBottom: 12 }}>{priceErr}</div>}
+      {priceNotice && <div className="notice" style={{ marginBottom: 12 }}>{priceNotice}</div>}
       <div className="pricing-toolbar">
         <div className="possearch pricing-search"><Search /><input placeholder="Search product name, SKU, or barcode" value={q} onChange={(e) => { setQ(e.target.value); setScannedPricingKey(""); setScanMessage(""); }} /></div>
         <select className="select pricing-branch-select" value={bId} onChange={(e) => { setBId(e.target.value); setQ(""); setScannedPricingKey(""); setScanMessage(""); }} aria-label="Pricing branch" title="Pricing branch">
@@ -15482,7 +15504,7 @@ function PricingTab({ data, update, branch }) {
         </div>
       </div>
       {scanMessage ? <div className="sub pricing-scan-message" role="status" style={{ color: scanMessage.startsWith("Selected") || scannerOn ? "var(--ok)" : "var(--muted)" }}>{scanMessage}</div> : null}
-      <div className="tablewrap tblscroll pricing-scroll-region"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th></tr></thead>
+      <div className="tablewrap tblscroll pricing-scroll-region"><table className="tbl"><thead><tr><th>Product</th><th>Cost</th><th>Selling Price</th><th>Margin</th><th>Markup</th><th></th></tr></thead>
         <tbody>{list.map((p) => {
           const price = branchProductPriceCents(p, bId); const cost = branchInventoryCostCents(data, p, bId);
           const margin = price > 0 ? Math.round((price - cost) / price * 100) : null;
@@ -15497,17 +15519,18 @@ function PricingTab({ data, update, branch }) {
                 style={{ width: 130, height: 38, textAlign: "right", fontFamily: "var(--font-mono)" }}
                 inputMode="decimal"
                 value={draftFor(p)}
-                onChange={(e) => { setPriceErr(""); setPriceDrafts((drafts) => ({ ...drafts, [p.id]: e.target.value.replace(/[^\d.]/g, "") })); }}
-                onBlur={() => savePrice(p)}
-                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                onChange={(e) => { setPriceErr(""); setPriceNotice(""); setPriceDrafts((drafts) => ({ ...drafts, [p.id]: e.target.value.replace(/[^\d.]/g, "") })); }}
+                disabled={savingPriceId === p.id}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); savePrice(p); } }}
                 aria-label={"Selling price for " + p.name}
               />
             </td>
             <td style={{ color: margin != null && margin < 0 ? "var(--danger)" : "var(--text)", fontWeight: 650 }}>{margin == null ? "—" : margin + "%"}</td>
             <td style={{ color: markup != null && markup < 0 ? "var(--danger)" : "var(--text)", fontWeight: 650 }}>{markup == null ? "—" : markup + "%"}</td>
+            <td><button type="button" className="btn sm btn-primary" disabled={!!savingPriceId} onClick={() => savePrice(p)}>{savingPriceId === p.id ? "Saving…" : "Save"}</button></td>
           </tr>);
         })}
-        {list.length === 0 && <tr><td colSpan="5"><div className="notice">No products match for {bname}.</div></td></tr>}</tbody></table></div>
+        {list.length === 0 && <tr><td colSpan="6"><div className="notice">No products match for {bname}.</div></td></tr>}</tbody></table></div>
       {cameraOpen && (
         <CameraBarcodeScanner
           eyebrow="Pricing"
