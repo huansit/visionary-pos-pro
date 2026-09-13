@@ -96,7 +96,7 @@ const CASHIER_DEBT_PAYMENT_REPAIR_VERSION = "2026-09-11-replay-cashier-debt-paym
 // shared product report and the returned stock. Replay those records once
 // using the active management session; server event IDs make the replay safe.
 const INVOICE_LINE_VOID_REPAIR_KEY = "visionary:pos:sync:invoice-line-void-repair:v1";
-const INVOICE_LINE_VOID_REPAIR_VERSION = "2026-09-13-replay-management-line-voids-v1";
+const INVOICE_LINE_VOID_REPAIR_VERSION = "2026-09-13-replay-management-line-voids-v2";
 const API_BASE_KEY = "visionary:sync:apiBaseUrl";
 const DEVICE_TOKEN_KEY = "visionary:sync:deviceToken";
 const BARCODE_CACHE_KEY = "visionary:pos:barcode-cache:v1";
@@ -2066,9 +2066,10 @@ function cashierDebtPaymentRepairEvents(data) {
     .filter(Boolean);
 }
 function invoiceLineVoidRepairEvents(data) {
-  // Only recover records that never reached the cloud. Replaying a request
-  // before its decision preserves the server-side authorization audit and
-  // lets the server create the matching stock-return movement exactly once.
+  // Some older clients incorrectly marked a rejected terminal-authenticated
+  // decision as synced. Replay every locally retained line-void audit record
+  // once. A request is always sent before its decision, and the server's
+  // event IDs make already-recorded events and stock returns idempotent.
   const requests = new Map((data?.invoiceLineVoidRequests || [])
     .filter((request) => request?.id && request?.invoiceId)
     .map((request) => [String(request.id), request]));
@@ -2081,14 +2082,14 @@ function invoiceLineVoidRepairEvents(data) {
     includedRequestIds.add(String(request.id));
   };
   (data?.invoiceLineVoidDecisions || [])
-    .filter((decision) => decision?.id && decision?.invoiceId && decision?.requestId && decision.synced === false)
+    .filter((decision) => decision?.id && decision?.invoiceId && decision?.requestId)
     .forEach((decision) => {
       includeRequest(requests.get(String(decision.requestId)));
       const event = eventFromRecord("invoiceLineVoidDecisions", decision, data);
       if (event) events.push(event);
     });
   (data?.invoiceLineVoidRequests || [])
-    .filter((request) => request?.id && request?.invoiceId && request.synced === false)
+    .filter((request) => request?.id && request?.invoiceId)
     .forEach(includeRequest);
   return events;
 }
