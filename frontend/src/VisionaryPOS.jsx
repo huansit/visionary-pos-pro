@@ -3672,7 +3672,11 @@ function invoiceLineVoidState(data, invoiceId, lineIndex) {
   return { pending, decisions, approvedQty };
 }
 function operationalInvoices(data) {
-  return (data?.invoices || [])
+  // Apply approved item voids at the read boundary as well as when data is
+  // written. A device can receive the invoice and its void decision in
+  // separate sync cycles; reports must never fall back to the original line
+  // quantity while that reconciliation is pending locally.
+  return applyApprovedInvoiceLineVoids(data, data?.invoices || [])
     .filter((invoice) => !invoiceIsVoided(data, invoice))
     .map((invoice) => ({ ...invoice, carriedOver: invoiceWasCarriedOver(data, invoice) }));
 }
@@ -11071,7 +11075,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   };
   const selectedLine = items.find((item) => String(item.lineIndex) === String(lineVoidIndex));
   const selectedLineState = selectedLine ? invoiceLineVoidState(data, live.id, selectedLine.lineIndex) : null;
-  const voidLineItem = () => {
+  const voidLineItem = async () => {
     const qty = Math.floor(Number(lineVoidQty || 0));
     if (!selectedLine || qty <= 0 || qty > Number(selectedLine.qty || 0)) {
       setLineVoidError("Choose an item and a quantity available on this invoice.");
@@ -11091,11 +11095,42 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
       lineIndex: request.lineIndex, qty: request.qty, decision: "approved", reason: request.reason,
       decidedBy: actorName, decidedByName: actorName, decidedAt: ts, ts, synced: false,
     };
-    update((d) => reconcileInvoicePayments({ ...d,
-      invoiceLineVoidRequests: selectedLineState?.pending ? (d.invoiceLineVoidRequests || []) : [request, ...(d.invoiceLineVoidRequests || [])],
-      invoiceLineVoidDecisions: [decision, ...(d.invoiceLineVoidDecisions || [])],
-    }));
-    setLineVoidIndex(""); setLineVoidQty("1"); setLineVoidReason(""); setLineVoidError("");
+    const product = (data.products || []).find((entry) => entry.id === selectedLine.productId);
+    const stockReturn = {
+      id: `void-line-stock:${live.id}:${request.lineIndex}:${request.id}`,
+      productId: selectedLine.productId,
+      branchId: live.branchId,
+      qty: request.qty,
+      unitCostCents: product ? branchInventoryCostCents(data, product, live.branchId) : 0,
+      reason: `Line void ${live.number || live.id}`,
+      invoiceId: live.id,
+      voidRequestId: request.id,
+      source: "invoice_line_void",
+      ts,
+      synced: true,
+    };
+    try {
+      const events = [
+        !selectedLineState?.pending ? eventFromRecord("invoiceLineVoidRequests", request, data) : null,
+        eventFromRecord("invoiceLineVoidDecisions", decision, data),
+      ];
+      await publishSyncEvents(events, data, { management: true });
+      update((d) => reconcileInvoicePayments({ ...d,
+        invoiceLineVoidRequests: selectedLineState?.pending ? (d.invoiceLineVoidRequests || []) : [{ ...request, synced: true }, ...(d.invoiceLineVoidRequests || [])],
+        invoiceLineVoidDecisions: [{ ...decision, synced: true }, ...(d.invoiceLineVoidDecisions || [])],
+        stockMovements: (d.stockMovements || []).some((movement) => movement.id === stockReturn.id)
+          ? (d.stockMovements || [])
+          : [...(d.stockMovements || []), stockReturn],
+      }), { skipSync: true });
+      setLineVoidIndex(""); setLineVoidQty("1"); setLineVoidReason(""); setLineVoidError("");
+    } catch (error) {
+      const message = String(error?.message || "");
+      setLineVoidError(message === "invoice_line_void_requires_refund"
+        ? "This invoice already has more payment than the remaining balance. Record the refund before voiding this item."
+        : message === "supervisor_authorization_required" || message === "management_session_required"
+          ? "A supervisor sign-in is required to void an item."
+          : "The item void was not saved to the shared ledger. Check the connection and try again.");
+    }
   };
   const saveNote = () => { update((d) => ({ ...d, invoices: d.invoices.map((x) => x.id === live.id ? { ...x, trackingNote: tnote.trim(), synced: false } : x) })); setSaved(true); };
   return (
@@ -16366,6 +16401,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     if (key) movementSoldQty[key] = (movementSoldQty[key] || 0) - Number(movement.qty || 0);
   });
   const invoiceSoldQty = {};
+  const invoiceVoidedQty = {};
   invs.forEach((invoice) => (invoice.items || []).forEach((item) => {
     const key = productKeyForValue(item.productId)
       || productKeyForValue(item.sku)
@@ -16373,6 +16409,14 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       || productKeyForValue(item.name || item.productName);
     const qty = Math.max(0, Number(item.qty ?? item.quantity ?? 0));
     if (key && qty > 0) invoiceSoldQty[key] = (invoiceSoldQty[key] || 0) + qty;
+  }));
+  invs.forEach((invoice) => invoiceSoldLines(data, invoice, invoice.branchId).forEach((line) => {
+    const key = productKeyForValue(line.productId)
+      || productKeyForValue(line.sku)
+      || productKeyForValue(line.barcode)
+      || productKeyForValue(line.name || line.productName);
+    const voidedQty = Math.max(0, Number(line.voidedQty || 0));
+    if (key && voidedQty > 0) invoiceVoidedQty[key] = (invoiceVoidedQty[key] || 0) + voidedQty;
   }));
   const lossQtyByProd = {};
   lossMoves.forEach((movement) => {
@@ -16424,6 +16468,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     return {
       p,
       qty,
+      voidedQty: invoiceVoidedQty[productDedupeKey(p)] || 0,
       revenue,
       cost,
       lossValue,
@@ -16619,8 +16664,8 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     const m = (c) => (c / 100);
     if (sub === "products") return {
       name: "product-report",
-      headers: ["Product", "SKU", "Category", "Units sold", "Revenue", "Profit", "Margin %", "On hand", "Movement"],
-      rows: visibleProductRows.map((r) => [r.p.name, r.p.sku, r.p.category || "", r.qty, m(r.revenue), m(r.netProfit), r.marg, r.stockOnHand, VLABEL[r.movement]]),
+      headers: ["Product", "SKU", "Category", "Units sold", "Voided units", "Revenue", "Profit", "Margin %", "On hand", "Movement"],
+      rows: visibleProductRows.map((r) => [r.p.name, r.p.sku, r.p.category || "", r.qty, r.voidedQty, m(r.revenue), m(r.netProfit), r.marg, r.stockOnHand, VLABEL[r.movement]]),
     };
     if (sub === "pnl") return {
       name: "profit-loss-by-product",
@@ -16943,18 +16988,18 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
               {[["all", "All (" + reportProducts.length + ")"], ["fast", "Fast (" + movementCounts.fast + ")"], ["medium", "Medium (" + movementCounts.medium + ")"], ["slow", "Slow (" + movementCounts.slow + ")"], ["none", "No sales (" + movementCounts.none + ")"]].map(([k, l]) => (
                 <button key={k} className={"seg" + (vel === k ? " on" : "")} onClick={() => setVel(k)}>{l}</button>))}
             </div>
-            <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
+            <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Units sold</th><th>Voided</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>On hand</th><th>Movement</th></tr></thead>
               <tbody>{visibleProductRows.map((row) => {
-                const { p, qty: q, revenue: rev, netProfit: net, marg, stockOnHand, movement: cls } = row;
+                const { p, qty: q, voidedQty, revenue: rev, netProfit: net, marg, stockOnHand, movement: cls } = row;
                 return (<tr key={p.id} style={{ cursor: "pointer" }} onClick={() => setProdSel(p.id)}>
                   <td><div className="nm">{p.name}</div><div className="mt2">{p.sku} · {p.category}</div></td>
-                  <td style={{ fontWeight: 700 }}>{q}</td><td className="amt">{fmt(rev, cur)}</td>
+                  <td style={{ fontWeight: 700 }}>{q}</td><td style={{ color: voidedQty > 0 ? "var(--danger)" : "var(--muted-2)", fontWeight: voidedQty > 0 ? 800 : 500 }}>{voidedQty || "-"}</td><td className="amt">{fmt(rev, cur)}</td>
                   <td className="amt" style={{ color: net < 0 ? "var(--danger)" : "var(--text)" }}>{fmt(net, cur)}</td>
                   <td>{marg}%</td><td>{stockOnHand}</td>
                   <td><span className="ist" style={{ background: "var(--surface-2)", color: VCOLOR[cls] }}>{VLABEL[cls]}</span></td></tr>);
               })}
-                {visibleProductRows.length === 0 && <tr><td colSpan="7"><div className="notice">No products match this search and movement filter.</div></td></tr>}</tbody></table></div>
-            <div className="sub" style={{ marginTop: 8 }}>Movement class is based on units sold in the selected period (top third = Fast, middle = Medium, rest = Slow). Tap any product for its full stock-movement ledger.</div>
+                {visibleProductRows.length === 0 && <tr><td colSpan="8"><div className="notice">No products match this search and movement filter.</div></td></tr>}</tbody></table></div>
+            <div className="sub" style={{ marginTop: 8 }}>Voided units are restored to inventory and excluded from units sold and revenue. Movement class is based on net units sold in the selected period. Tap any product for its full stock-movement ledger.</div>
           </>
         );
       })()}
