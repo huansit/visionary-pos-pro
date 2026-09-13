@@ -8580,9 +8580,8 @@ const TABS = [
   { id: "borrowing", label: "Stock Borrowing", icon: ArrowLeftRight, desc: "Move bottles between shops without sales, loss, or expense impact" },
   { id: "pricing", label: "Branch Pricing", icon: Tags, desc: "View product pricing and margins (prices set in Products)" },
   { id: "customers", label: "Customers", icon: Users, desc: "Customer records and outstanding balances" },
-  { id: "cash", label: "Cash Management", icon: Wallet, desc: "Cash flow, pay-ins, and pay-outs" },
+  { id: "cash", label: "Daily Cash & Expenses", icon: Wallet, desc: "Daily cash flow, expenses, approvals, and audit-ready records" },
   { id: "payments", label: "Cashier Debt", icon: CreditCard, desc: "Settle cashier invoice and inventory debt from one workspace" },
-  { id: "expenses", label: "Expenses", icon: TrendingDown, desc: "Daily costs, approvals, receipts, and analytics" },
   { id: "reports", label: "Reports", icon: BarChart3, desc: "Sales, profit and loss, exports" },
   { id: "documents", label: "Documents", icon: Files, desc: "Supplier invoices, damage/loss, inventory count reports" },
   { id: "users", label: "Users & Security", icon: ShieldCheck, desc: "Employees, branch assignment, and access control" },
@@ -8633,8 +8632,7 @@ const NAV_GROUPS = [
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
     { id: "mpesa", label: "M-Pesa Settlement", mobileLabel: "M-Pesa", icon: Smartphone },
     { id: "payments", label: "Cashier Debt", mobileLabel: "Debt", icon: CreditCard },
-    { id: "cash", label: "Daily Cash", mobileLabel: "Cash", icon: Wallet },
-    { id: "expenses", label: "Expenses", icon: TrendingDown },
+    { id: "cash", label: "Cash & Expenses", mobileLabel: "Cash", icon: Wallet },
     { id: "audit", label: "Reconciliation Audit", mobileLabel: "Audit", icon: ClipboardCheck },
   ] },
   { id: "opsgrp", label: "Branch Operations", icon: Building2, tone: "#c77b20", items: [
@@ -8745,7 +8743,15 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
-  const canAccess = (tabId) => { if (isAdmin) return true; if (tabId === "dashboard" || tabId === "ai") return true; if (["borrowing", "mpesa", "audit"].includes(tabId) && accountRole === "supervisor") return true; const req = TAB_RIGHT[tabId]; if (req === "__admin_only") return false; return !req || hasRight(rights, req); };
+  const canAccess = (tabId) => {
+    if (isAdmin) return true;
+    if (tabId === "dashboard" || tabId === "ai") return true;
+    if (["borrowing", "mpesa", "audit"].includes(tabId) && accountRole === "supervisor") return true;
+    if (tabId === "cash") return hasRight(rights, "cash") || hasRight(rights, "expenses");
+    const req = TAB_RIGHT[tabId];
+    if (req === "__admin_only") return false;
+    return !req || hasRight(rights, req);
+  };
   const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((it) => canAccess(it.id)) })).filter((g) => g.items.length > 0);
   const [openGroups, setOpenGroups] = useState(() => {
     const o = {}; NAV_GROUPS.forEach((g) => { o[g.id] = g.items.some((it) => it.id === "dashboard"); });
@@ -8800,7 +8806,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     }
     setTab(tabId);
   };
-  const navBadgeCount = (itemId) => itemId === "expenses"
+  const navBadgeCount = (itemId) => itemId === "cash"
     ? pendingExpenseCount
     : itemId === "invoices"
       ? pendingVoidCount
@@ -8856,9 +8862,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} onNavigate={activateWorkspace} />;
-      case "cash": return <CashTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
+      case "cash": return <FinanceCashWorkspace data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} canViewCash={isAdmin || hasRight(rights, "cash")} canViewExpenses={isAdmin || hasRight(rights, "expenses")} />;
       case "payments": return <CashierDebtTab data={data} update={update} branch={branch} user={user} />;
-      case "expenses": return <ExpensesTab data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} />;
+      case "expenses": return <FinanceCashWorkspace data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} initialView="expenses" canViewCash={isAdmin || hasRight(rights, "cash")} canViewExpenses={isAdmin || hasRight(rights, "expenses")} />;
       case "branches": return <BranchesTab data={data} update={update} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
@@ -15353,7 +15359,32 @@ function PricingTab({ data, update, branch }) {
 }
 
 /* ---- Cash / Expenses ---- */
-function CashTab({ data, update, branch, onNavigate }) {
+function FinanceCashWorkspace({ data, update, branch, user, onNavigate, initialView = "cash", canViewCash = true, canViewExpenses = true }) {
+  const defaultView = initialView === "expenses" && canViewExpenses ? "expenses" : (canViewCash ? "cash" : "expenses");
+  const [view, setView] = useState(defaultView);
+  const pendingExpenseCount = (data.expenses || []).filter((expense) => expense.status === "pending").length;
+  useEffect(() => {
+    setView(initialView === "expenses" && canViewExpenses ? "expenses" : (canViewCash ? "cash" : "expenses"));
+  }, [initialView, canViewCash, canViewExpenses]);
+  return (
+    <div className="cash-expense-workspace">
+      <PageHead title="Daily Cash & Expenses" sub={`${branch.name} daily money flow, operating costs, and approvals`} />
+      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+        { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
+        { id: "payments", label: "Cashier debt", icon: CreditCard },
+        { id: "audit", label: "Reconciliation audit", icon: ClipboardCheck },
+      ]} />
+      <div className="invoice-workspace-tabs" role="tablist" aria-label="Daily cash and expenses sections">
+        {canViewCash ? <button type="button" role="tab" aria-selected={view === "cash"} className={view === "cash" ? "active" : ""} onClick={() => setView("cash")}><Wallet /> Daily cash</button> : null}
+        {canViewExpenses ? <button type="button" role="tab" aria-selected={view === "expenses"} className={view === "expenses" ? "active" : ""} onClick={() => setView("expenses")}><TrendingDown /> Expenses {pendingExpenseCount > 0 ? <span>{pendingExpenseCount}</span> : null}</button> : null}
+      </div>
+      {view === "cash" && canViewCash ? <CashTab data={data} update={update} branch={branch} onNavigate={onNavigate} embedded /> : null}
+      {view === "expenses" && canViewExpenses ? <ExpensesTab data={data} update={update} branch={branch} user={user} onNavigate={onNavigate} embedded /> : null}
+    </div>
+  );
+}
+
+function CashTab({ data, update, branch, onNavigate, embedded = false }) {
   const cur = data.settings.currency;
   const [branchFilter, setBranchFilter] = useState(branch?.id || "all");
   const [dateFrom, setDateFrom] = useState(todayStr());
@@ -15424,16 +15455,16 @@ function CashTab({ data, update, branch, onNavigate }) {
     ? (dateFrom === todayStr() ? "Today" : new Date(`${dateFrom}T00:00:00`).toLocaleDateString())
     : `${new Date(`${dateFrom}T00:00:00`).toLocaleDateString()} - ${new Date(`${dateTo}T00:00:00`).toLocaleDateString()}`;
   return (
-    <div className="cash-page"><PageHead
+    <div className="cash-page">{!embedded ? <PageHead
       title="Cash Management"
       sub={`${rangeLabel} money flow and closings · ${selectedBranchName}`}
-    />
-      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+    /> : null}
+      {!embedded ? <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
         { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
         { id: "payments", label: "Cashier debt", icon: CreditCard },
-        { id: "expenses", label: "Expenses", icon: TrendingDown },
+        { id: "cash", label: "Cash & expenses", icon: Wallet },
         { id: "audit", label: "Reconciliation audit", icon: ClipboardCheck },
-      ]} />
+      ]} /> : null}
       <div className="repctrl" style={{ marginBottom: 16 }}>
         <div>
           <label className="label" htmlFor="cash-branch-filter">Branch</label>
@@ -15481,7 +15512,7 @@ function CashTab({ data, update, branch, onNavigate }) {
     </div>
   );
 }
-function ExpensesTab({ data, update, branch, user, onNavigate }) {
+function ExpensesTab({ data, update, branch, user, onNavigate, embedded = false }) {
   const cur = data.settings.currency;
   const allExpenseCategories = expenseCategories(data);
   const recordExpenseCategories = adminExpenseCategories(data);
@@ -15582,21 +15613,23 @@ function ExpensesTab({ data, update, branch, user, onNavigate }) {
     <div className="bars">{bd.rows.map(([label, val]) => (<div className="bar-row" key={label}><span className="bl">{label}</span>
       <div className="bar-track"><div className="bar-fill" style={{ width: (val / bd.max * 100) + "%" }} /></div><span className="bv">{fmt(val, cur)}</span></div>))}</div>
   );
+  const expenseActions = <div className="expense-head-actions">
+    <button className={"btn sm " + (showRecordExpense ? "btn-primary" : "btn-ghost")} onClick={() => { setShowRecordExpense((open) => !open); setShowCategoryManager(false); }}><Plus /> Record expense</button>
+    <button className={"btn sm " + (showCategoryManager ? "btn-primary" : "btn-ghost")} onClick={() => { setShowCategoryManager((open) => !open); setShowRecordExpense(false); }}><Tags /> Categories</button>
+  </div>;
   return (
-    <div className="expense-page"><PageHead
+    <div className="expense-page">{!embedded ? <PageHead
       title="Expenses"
       sub={`${fmt(total, cur)} approved in the selected period`}
-      right={<div className="expense-head-actions">
-        <button className={"btn sm " + (showRecordExpense ? "btn-primary" : "btn-ghost")} onClick={() => { setShowRecordExpense((open) => !open); setShowCategoryManager(false); }}><Plus /> Record expense</button>
-        <button className={"btn sm " + (showCategoryManager ? "btn-primary" : "btn-ghost")} onClick={() => { setShowCategoryManager((open) => !open); setShowRecordExpense(false); }}><Tags /> Categories</button>
-      </div>}
-    />
-      <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
-        { id: "cash", label: "Daily cash", icon: Wallet },
+      right={expenseActions}
+    /> : null}
+      {embedded ? <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>{expenseActions}</div> : null}
+      {!embedded ? <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
+        { id: "cash", label: "Cash & expenses", icon: Wallet },
         { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
         { id: "payments", label: "Cashier debt", icon: CreditCard },
         { id: "audit", label: "Reconciliation audit", icon: ClipboardCheck },
-      ]} />
+      ]} /> : null}
       <div className="expense-tabs" role="tablist" aria-label="Expense views">
         <button type="button" role="tab" aria-selected={view === "overview"} className={"expense-tab" + (view === "overview" ? " on" : "")} onClick={() => setView("overview")}><BarChart3 /> Overview</button>
         <button type="button" role="tab" aria-selected={view === "approvals"} className={"expense-tab" + (view === "approvals" ? " on" : "")} onClick={() => setView("approvals")}><AlertCircle /> Approvals {visiblePending.length > 0 ? <span className="count">{visiblePending.length}</span> : null}</button>
@@ -18733,8 +18766,7 @@ function MpesaTransactionsTab({ data, branch, onNavigate, allowAllBranches = fal
       <WorkspaceQuickNav label="Finance" onNavigate={onNavigate} items={[
         { id: "invoices", label: "Clear invoice", icon: FileText },
         { id: "payments", label: "Cashier debt", icon: CreditCard },
-        { id: "cash", label: "Daily cash", icon: Wallet },
-        { id: "expenses", label: "Expenses", icon: TrendingDown },
+        { id: "cash", label: "Cash & expenses", icon: Wallet },
         { id: "audit", label: "Audit", icon: ClipboardCheck },
       ]} />
 
@@ -19046,7 +19078,7 @@ function MpesaInvoiceAuditTab({ data, branch, onNavigate }) {
       { id: "mpesa", label: "M-Pesa settlement", icon: Smartphone },
       { id: "invoices", label: "Clear invoice", icon: FileText },
       { id: "payments", label: "Cashier debt", icon: CreditCard },
-      { id: "cash", label: "Daily cash", icon: Wallet },
+      { id: "cash", label: "Cash & expenses", icon: Wallet },
     ]} />
 
     <section className="audit-controls" aria-label="Audit scope">
