@@ -12033,6 +12033,7 @@ function StockTab({ data, update, branch, onNavigate }) {
   const [showAllAnalysis, setShowAllAnalysis] = useState(false);
   const [lf, setLf] = useState({ q: "", productId: "", qty: "", reason: "Theft", note: "" });
   const [cf, setCf] = useState({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
+  const [correctionItems, setCorrectionItems] = useState([]);
   const LOSS_REASONS = ["Theft", "Breakage", "Expiry", "Spillage", "Other"];
   const CORRECTION_REASONS = ["Incorrect quantity entered", "Wrong purchase quantity", "Duplicate stock entry", "Wrong opening stock", "Wrong stock count", "Other"];
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
@@ -12087,6 +12088,13 @@ function StockTab({ data, update, branch, onNavigate }) {
   const correctionCurrentQty = correctionProduct ? productOnHand(data, correctionProduct, bId) : null;
   const correctionQty = cf.correctedQty === "" ? null : parseInt(cf.correctedQty, 10);
   const correctionDelta = correctionQty === null || correctionCurrentQty === null ? null : correctionQty - correctionCurrentQty;
+  const correctionItemDetails = correctionItems.map((item) => {
+    const product = data.products.find((entry) => entry.id === item.productId);
+    const currentQty = product ? productOnHand(data, product, bId) : null;
+    const correctedQty = item.correctedQty === "" ? null : parseInt(item.correctedQty, 10);
+    return { ...item, product, currentQty, correctedQty, delta: correctedQty === null || currentQty === null ? null : correctedQty - currentQty };
+  });
+  const correctionReadyItems = correctionItemDetails.filter((item) => item.product && Number.isInteger(item.correctedQty) && item.correctedQty >= 0 && item.delta !== 0);
   const correctionList = (data.stockMovements || []).filter((movement) => movement.branchId === bId
     && (movement.mode === "correction" || String(movement.reason || "").startsWith("Stock correction")))
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
@@ -12323,6 +12331,7 @@ function StockTab({ data, update, branch, onNavigate }) {
   };
   const resetCorrection = () => {
     setCf({ q: "", productId: "", correctedQty: "", reason: "Incorrect quantity entered", note: "" });
+    setCorrectionItems([]);
     setCorrectionError("");
   };
   const openCorrection = () => {
@@ -12368,7 +12377,7 @@ function StockTab({ data, update, branch, onNavigate }) {
     setCorrectionError(correctionMatches.length ? "Select the correct product from the matches below." : "No matching product was found in " + bname + ".");
     return false;
   };
-  const recordCorrection = () => {
+  const addCorrectionItem = () => {
     if (session) {
       setCorrectionError("Finish or cancel " + session.code + " before correcting stock.");
       return;
@@ -12385,25 +12394,64 @@ function StockTab({ data, update, branch, onNavigate }) {
       setCorrectionError("The corrected quantity is already the current quantity.");
       return;
     }
+    if (correctionItems.some((item) => item.productId === correctionProduct.id)) {
+      setCorrectionError(correctionProduct.name + " is already in this correction. Edit its quantity in the list below.");
+      return;
+    }
+    setCorrectionItems((items) => [...items, { productId: correctionProduct.id, correctedQty: String(correctionQty) }]);
+    setCf((current) => ({ ...current, q: "", productId: "", correctedQty: "" }));
+    setCorrectionError("");
+  };
+  const updateCorrectionItem = (productId, correctedQty) => {
+    setCorrectionItems((items) => items.map((item) => item.productId === productId ? { ...item, correctedQty: correctedQty.replace(/\D/g, "") } : item));
+    setCorrectionError("");
+  };
+  const removeCorrectionItem = (productId) => setCorrectionItems((items) => items.filter((item) => item.productId !== productId));
+  const recordCorrection = () => {
+    if (session) {
+      setCorrectionError("Finish or cancel " + session.code + " before correcting stock.");
+      return;
+    }
+    if (correctionItems.length === 0) {
+      setCorrectionError("Add at least one product to the correction list.");
+      return;
+    }
+    if (correctionReadyItems.length !== correctionItems.length) {
+      setCorrectionError("Every listed product must have a different non-negative corrected quantity.");
+      return;
+    }
     const ts = now();
     const reason = "Stock correction - " + cf.reason + (cf.note.trim() ? " - " + cf.note.trim() : "");
-    const movement = {
-      id: uid("mv"),
-      productId: correctionProduct.id,
-      branchId: bId,
-      qty: correctionDelta,
-      mode: "correction",
-      reason,
-      correctionReason: cf.reason,
-      correctionNote: cf.note.trim(),
-      previousQty: correctionCurrentQty,
-      correctedQty: correctionQty,
-      correctedBy: operator,
-      ts,
-      synced: false,
-    };
-    update((d) => ({ ...d, stockMovements: [...(d.stockMovements || []), movement] }));
-    setScanMsg(correctionProduct.name + " corrected from " + correctionCurrentQty + " to " + correctionQty + " (" + (correctionDelta > 0 ? "+" : "") + correctionDelta + ").");
+    const submittedItems = correctionItems.map((item) => ({ productId: item.productId, correctedQty: parseInt(item.correctedQty, 10) }));
+    let movements = [];
+    update((d) => {
+      movements = submittedItems.map((item) => {
+        const product = d.products.find((entry) => entry.id === item.productId);
+        const previousQty = product ? productOnHand(d, product, bId) : null;
+        const qty = item.correctedQty - previousQty;
+        return {
+          id: uid("mv"),
+          productId: item.productId,
+          branchId: bId,
+          qty,
+          mode: "correction",
+          reason,
+          correctionReason: cf.reason,
+          correctionNote: cf.note.trim(),
+          previousQty,
+          correctedQty: item.correctedQty,
+          correctedBy: operator,
+          ts,
+          synced: false,
+        };
+      }).filter((movement) => Number.isInteger(movement.previousQty) && movement.qty !== 0);
+      return movements.length ? { ...d, stockMovements: [...(d.stockMovements || []), ...movements] } : d;
+    });
+    if (!movements.length) {
+      setCorrectionError("Those quantities are already current. Refresh the list and make any needed changes.");
+      return;
+    }
+    setScanMsg(movements.length + " stock correction(s) applied at " + bname + ". Every adjustment is recorded separately in the stock ledger.");
     closeCorrection();
   };
   useBarcodeScanner({ enabled: inventoryMode === "full" && scannerOn && !lossOpen && !lossCameraOpen && !correctionOpen && !correctionCameraOpen && !cameraOpen, mode: "stock", onScan: handleStockScan });
@@ -12685,9 +12733,9 @@ function StockTab({ data, update, branch, onNavigate }) {
       )}
       {correctionOpen && (
         <div className="scrim" onClick={closeCorrection}>
-          <div className="modal" style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Correct stock quantity</div></div><button className="iconbtn" onClick={closeCorrection}><X /></button></div>
-            <div className="notice" style={{ marginTop: 12 }}>Use this only to repair an incorrect entry. VisionPOS will preserve the old quantity, correction reason, operator, and time in the stock ledger.</div>
+          <div className="modal" style={{ maxWidth: 760 }} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>{bname}</div><div className="title" style={{ fontSize: 21 }}>Batch stock correction</div></div><button className="iconbtn" onClick={closeCorrection}><X /></button></div>
+            <div className="notice" style={{ marginTop: 12 }}>Add every product you counted incorrectly, then apply the list once. VisionPOS records the old quantity, corrected quantity, reason, operator, and time for every product.</div>
             {correctionError && <div className="alert error" style={{ marginTop: 12 }}><AlertCircle />{correctionError}</div>}
             <label className="label" style={{ marginTop: 14 }}>Find product</label>
             <div className="barcode-input-row">
@@ -12699,12 +12747,22 @@ function StockTab({ data, update, branch, onNavigate }) {
               <div className="notice" style={{ marginTop: 12 }}><b>{correctionProduct.name}</b> - {correctionProduct.sku} - currently <b>{correctionCurrentQty}</b> on hand</div>
               <div className="grid2" style={{ marginTop: 12 }}>
                 <div><label className="label">Current quantity</label><input className="input" value={correctionCurrentQty} readOnly /></div>
-                <div><label className="label">Correct quantity</label><input className="input" inputMode="numeric" value={cf.correctedQty} onChange={(event) => { setCf({ ...cf, correctedQty: event.target.value.replace(/\D/g, "") }); setCorrectionError(""); }} placeholder="Enter physical quantity" /></div>
+                <div><label className="label">Correct quantity</label><input className="input" inputMode="numeric" value={cf.correctedQty} onChange={(event) => { setCf({ ...cf, correctedQty: event.target.value.replace(/\D/g, "") }); setCorrectionError(""); }} onKeyDown={(event) => event.key === "Enter" && addCorrectionItem()} placeholder="Enter physical quantity" /></div>
               </div>
-              <div className="field" style={{ marginTop: 12 }}><label className="label">Correction reason</label><select className="select" value={cf.reason} onChange={(event) => setCf({ ...cf, reason: event.target.value })}>{CORRECTION_REASONS.map((reasonOption) => <option key={reasonOption}>{reasonOption}</option>)}</select></div>
-              <div className="field" style={{ marginTop: 12 }}><label className="label">Note (optional)</label><input className="input" value={cf.note} onChange={(event) => setCf({ ...cf, note: event.target.value })} placeholder="e.g. purchase quantity entered twice" /></div>
               {correctionDelta !== null && correctionDelta !== 0 && <div className="notice" style={{ marginTop: 12 }}>This correction will {correctionDelta > 0 ? "add " + correctionDelta : "remove " + Math.abs(correctionDelta)} unit{Math.abs(correctionDelta) === 1 ? "" : "s"}.</div>}
-              <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={correctionQty === null || correctionDelta === 0} onClick={recordCorrection}><Check /> Apply stock correction</button>
+              <button className="btn btn-ghost" style={{ marginTop: 14 }} disabled={correctionQty === null || correctionDelta === 0} onClick={addCorrectionItem}><Check /> Add to correction list</button>
+            </>}
+            {correctionItems.length > 0 && <>
+              <div className="section-divider" style={{ margin: "18px 0 12px" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}><b>{correctionItems.length} product{correctionItems.length === 1 ? "" : "s"} to correct</b><span className="cust-meta">Edit quantities before applying</span></div>
+              <div className="list" style={{ marginTop: 10, maxHeight: 250, overflowY: "auto" }}>{correctionItemDetails.map((item) => <div className="row" key={item.productId} style={{ alignItems: "center", gap: 10 }}>
+                <div className="meta" style={{ minWidth: 0, flex: 1 }}><div className="nm">{item.product?.name || "Unavailable product"}</div><div className="mt2">{item.product?.sku || item.productId} - current {item.currentQty ?? "-"} - {item.delta === null ? "enter a quantity" : item.delta === 0 ? "no change" : (item.delta > 0 ? "+" : "") + item.delta + " units"}</div></div>
+                <input className="input mono" style={{ width: 96, minWidth: 96 }} inputMode="numeric" aria-label={`Correct quantity for ${item.product?.name || "product"}`} value={item.correctedQty ?? ""} onChange={(event) => updateCorrectionItem(item.productId, event.target.value)} />
+                <button type="button" className="smdel" onClick={() => removeCorrectionItem(item.productId)} aria-label={`Remove ${item.product?.name || "product"} from correction list`} title="Remove from correction list"><Trash2 /></button>
+              </div>)}</div>
+              <div className="field" style={{ marginTop: 14 }}><label className="label">Correction reason</label><select className="select" value={cf.reason} onChange={(event) => setCf({ ...cf, reason: event.target.value })}>{CORRECTION_REASONS.map((reasonOption) => <option key={reasonOption}>{reasonOption}</option>)}</select></div>
+              <div className="field" style={{ marginTop: 12 }}><label className="label">Note for this batch (optional)</label><input className="input" value={cf.note} onChange={(event) => setCf({ ...cf, note: event.target.value })} placeholder="e.g. physical count after delivery" /></div>
+              <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={correctionReadyItems.length !== correctionItems.length} onClick={recordCorrection}><Check /> Apply {correctionItems.length} stock correction{correctionItems.length === 1 ? "" : "s"}</button>
             </>}
           </div>
         </div>
