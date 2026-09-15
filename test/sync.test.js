@@ -1713,6 +1713,40 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     });
 });
 
+test("6d1. cashier catalog exposes active transfer destination branches only", async () => {
+  const terminal = await activateTestTerminal("Transfer destination catalog Till", "b_sip");
+  const activeBranch = {
+    id: "branch-catalog-transfer-destination",
+    type: "branch",
+    updatedAt: 7250,
+    payload: { name: "Transfer Destination", location: "North", status: "active" },
+  };
+  const inactiveBranch = {
+    id: "branch-catalog-transfer-inactive",
+    type: "branch",
+    updatedAt: 7251,
+    payload: { name: "Closed Transfer Shop", status: "inactive" },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [activeBranch, inactiveBranch] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected)));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(
+        res.body.branches.find((branch) => branch.id === activeBranch.id),
+        { id: activeBranch.id, name: "Transfer Destination", location: "North" },
+      );
+      assert.equal(
+        res.body.branches.some((branch) => branch.id === inactiveBranch.id),
+        false,
+      );
+    });
+});
+
 test("6db. legacy supervisor day-close events remain visible to current admin clients", async () => {
   const closedAt = Date.now();
   const legacyCloseId = `legacy-supervisor-eod-${closedAt}`;

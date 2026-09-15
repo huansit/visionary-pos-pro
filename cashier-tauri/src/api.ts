@@ -862,9 +862,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   let serverBusinessDays: BusinessDayPeriod[] = [];
   let catalogDayClosedAt: number | null = null;
   let carriedOverInvoiceIds = new Set<string>();
+  const branchRecords = new Map<string, any>();
 
   try {
     const catalog = await jsonFetch<{
+      branches?: Branch[];
       products?: Product[];
       businessDays?: BusinessDayPeriod[];
       dayClosedAt?: number | null;
@@ -886,6 +888,21 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       serverCatalogProducts = dedupeCatalogProducts(
         catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
       );
+    }
+    // /catalog returns a deliberately minimal list of active branches. The
+    // generic sync pull is branch-scoped for terminal security, so it cannot
+    // be the source of transfer destinations.
+    if (Array.isArray(catalog.branches)) {
+      catalog.branches.forEach((branch) => {
+        const id = String(branch?.id || "").trim();
+        const name = String(branch?.name || "").trim();
+        if (!id || !name) return;
+        branchRecords.set(id, {
+          id,
+          payload: { name, location: String(branch?.location || "") },
+          serverTs: Number.MAX_SAFE_INTEGER,
+        });
+      });
     }
     if (Array.isArray(catalog.businessDays)) {
       serverBusinessDays = catalog.businessDays
@@ -914,7 +931,6 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     cursor = Number(data.cursor || cursor);
   }
 
-  const branchRecords = new Map<string, any>();
   const expenseCategoryRecords = new Map<string, any>();
   const productRecords = new Map<string, any>();
   const productGroups = new Map<string, Product[]>();

@@ -3067,6 +3067,7 @@ function StockTransferRequestView({
   type RequestLine = StockTransferRequestItem & { stockQty: number };
   const destinations = branches.filter((item) => item.id !== sourceBranchId);
   const [toBranchId, setToBranchId] = useState(destinations[0]?.id || "");
+  const destinationKey = destinations.map((item) => item.id).join("|");
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState<RequestLine[]>([]);
   const [note, setNote] = useState("");
@@ -3083,6 +3084,13 @@ function StockTransferRequestView({
       .slice(0, 6);
   }, [products, query]);
   const totalUnits = lines.reduce((sum, line) => sum + line.qty, 0);
+
+  // The catalog can finish loading after this sheet opens. Keep the selected
+  // destination valid without overwriting a cashier's deliberate choice.
+  useEffect(() => {
+    if (destinations.some((branch) => branch.id === toBranchId)) return;
+    setToBranchId(destinations[0]?.id || "");
+  }, [destinationKey, toBranchId]);
 
   function addProduct(product: Product) {
     const stockQty = Math.max(0, Math.floor(productStock(product)));

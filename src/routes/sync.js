@@ -163,6 +163,17 @@ function productPayloadIsEnabled(payload = {}) {
   return !["disabled", "inactive", "deleted"].includes(String(payload.status || "active").trim().toLowerCase());
 }
 
+function recordPayload(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+function branchPayloadIsEnabled(payload = {}) {
+  if (payload.enabled === false || payload.active === false) return false;
+  return !["disabled", "inactive", "closed", "deleted"].includes(String(payload.status || "active").trim().toLowerCase());
+}
+
 function productCatalogKey(row) {
   const payload = row.payload || {};
   const sku = normalizeCode(payload.sku);
@@ -515,6 +526,30 @@ router.get("/catalog", requireDevice, async (req, res) => {
   if (!branchId) return res.status(403).json({ error: "terminal_branch_required" });
 
   try {
+    // Terminals need a minimal, organisation-wide directory to create a
+    // transfer request. The generic sync pull is branch-scoped, so relying on
+    // it leaves cashiers with no destination branches. Deliberately expose
+    // only active branch IDs, names, and locations here.
+    const branchRows = await q(
+      `SELECT id, payload
+         FROM records
+        WHERE type = 'branch'
+          AND deleted = false
+        ORDER BY server_ts ASC, id ASC`
+    );
+    const branches = (branchRows.rows || [])
+      .map((row) => {
+        const payload = recordPayload(row.payload);
+        return {
+          id: String(row.id || "").trim(),
+          name: String(payload.name || payload.branchName || row.id || "").trim(),
+          location: String(payload.location || "").trim(),
+          enabled: branchPayloadIsEnabled(payload),
+        };
+      })
+      .filter((branch) => branch.id && branch.name && branch.enabled)
+      .map(({ enabled: _enabled, ...branch }) => branch);
+
     const records = await q(
       isMySql
         ? `SELECT id, branch_id AS branchId, updated_at AS updatedAt, server_ts AS serverTs, deleted, payload
@@ -635,11 +670,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
         ORDER BY server_ts DESC
         LIMIT 20`
     );
-    const parsePayload = (value) => {
-      if (!value) return {};
-      if (typeof value === "object") return value;
-      try { return JSON.parse(value); } catch { return {}; }
-    };
+    const parsePayload = recordPayload;
     const closeCandidates = (closeRows.rows || []).map((row) => {
       const payload = parsePayload(row.payload);
       return Number(payload.periodEndedAt || payload.closedAt || payload.ts || row.clientTs || row.serverTs || 0);
@@ -723,6 +754,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
 
     res.json({
       branchId,
+      branches,
       products,
       total: products.length,
       dayClosedAt,
