@@ -23,6 +23,7 @@
         "repair:branches": "node db/repair-cloud-branches.js",
         "repair:invoice-debts": "node db/reconcile-invoice-debts.js",
         "audit:transfers": "node db/audit-transfer-duplicates.js",
+        "audit:stock": "node db/audit-stock-ledger.js",
         "hash": "node db/hash-credential.js",
         "test": "node --test test/*.test.js",
         "test:sync": "node --test test/sync.test.js",

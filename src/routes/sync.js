@@ -939,6 +939,108 @@ function syncEventError(code) {
   return error;
 }
 
+function stockMovementBranchId(event = {}) {
+  const payload = event.payload || {};
+  return String(event.branchId || payload.branchId || payload.branch_id || "").trim();
+}
+
+function stockMovementProductId(event = {}) {
+  const payload = event.payload || {};
+  return String(payload.productId || payload.product_id || "").trim();
+}
+
+function stockMovementQuantity(event = {}) {
+  const quantity = Number(event.payload?.qty ?? event.payload?.quantity);
+  return Number.isFinite(quantity) ? quantity : 0;
+}
+
+function isStockAdjustment(event = {}) {
+  const mode = String(event.payload?.mode || "").trim().toLowerCase();
+  return mode === "correction" || mode === "count";
+}
+
+async function withInventoryWriteLock(client, key, operation) {
+  // A PostgreSQL advisory transaction lock serializes a receipt, correction,
+  // or count for the same business object across every browser and terminal.
+  // The in-memory test database does not implement advisory locks.
+  if (isPgMem) return operation();
+  if (isMySql) {
+    const result = await client.query("SELECT GET_LOCK($1, 5) AS acquired", [key]);
+    if (Number(result.rows[0]?.acquired || 0) !== 1) throw syncEventError("inventory_write_busy_retry");
+    try {
+      return await operation();
+    } finally {
+      await client.query("SELECT RELEASE_LOCK($1)", [key]).catch(() => {});
+    }
+  }
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [key]);
+  return operation();
+}
+
+async function currentStockQuantity(client, branchId, productId) {
+  const result = await client.query(
+    isMySql
+      ? `SELECT payload FROM events
+           WHERE type = 'stockMovement'
+             AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branch_id')) = $1)
+             AND (JSON_UNQUOTE(JSON_EXTRACT(payload, '$.productId')) = $2 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.product_id')) = $2)`
+      : `SELECT payload FROM events
+           WHERE type = 'stockMovement'
+             AND (branch_id = $1 OR payload->>'branchId' = $1 OR payload->>'branch_id' = $1)
+             AND (payload->>'productId' = $2 OR payload->>'product_id' = $2)`,
+    [branchId, productId]
+  );
+  return result.rows.reduce((sum, row) => sum + stockMovementQuantity({ payload: recordPayload(row.payload) }), 0);
+}
+
+async function hasPurchaseReceiptMovement(client, purchaseId) {
+  const result = await client.query(
+    isMySql
+      ? "SELECT id FROM events WHERE type = 'stockMovement' AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.purchaseId')) = $1 LIMIT 1"
+      : "SELECT id FROM events WHERE type = 'stockMovement' AND payload->>'purchaseId' = $1 LIMIT 1",
+    [purchaseId]
+  );
+  return result.rows[0]?.id || null;
+}
+
+async function insertGuardedStockMovement(client, event, type, deviceId, ts) {
+  const payload = event.payload || {};
+  const purchaseId = String(payload.purchaseId || "").trim();
+  const branchId = stockMovementBranchId(event);
+  const productId = stockMovementProductId(event);
+  const needsSnapshotGuard = isStockAdjustment(event);
+  if (!purchaseId && !needsSnapshotGuard) return insertAppendOnlyEvent(client, event, type, deviceId, ts);
+
+  const lockKey = purchaseId
+    ? `purchase-receipt:${purchaseId}`
+    : `stock-adjustment:${branchId}:${productId}`;
+  return withInventoryWriteLock(client, lockKey, async () => {
+    // Idempotent retries always keep their original accepted movement.
+    if (await existingEvent(client, event.id)) return insertAppendOnlyEvent(client, event, type, deviceId, ts);
+
+    if (purchaseId) {
+      const existingReceiptId = await hasPurchaseReceiptMovement(client, purchaseId);
+      if (existingReceiptId) throw syncEventError("purchase_already_received");
+    }
+
+    if (needsSnapshotGuard) {
+      const previousQty = Number(payload.previousQty);
+      const correctedQty = Number(payload.correctedQty);
+      const quantity = stockMovementQuantity(event);
+      if (!branchId || !productId || !Number.isInteger(previousQty) || previousQty < 0) {
+        throw syncEventError("stock_adjustment_snapshot_required");
+      }
+      if (Number.isFinite(correctedQty) && correctedQty !== previousQty + quantity) {
+        throw syncEventError("stock_adjustment_inconsistent");
+      }
+      const currentQty = await currentStockQuantity(client, branchId, productId);
+      if (currentQty !== previousQty) throw syncEventError("stock_quantity_changed_refresh_and_retry");
+    }
+
+    return insertAppendOnlyEvent(client, event, type, deviceId, ts);
+  });
+}
+
 async function existingEvent(client, id) {
   const result = await client.query("SELECT id, server_ts, type, branch_id, payload FROM events WHERE id = $1 LIMIT 1", [id]);
   return result.rows[0] || null;
@@ -1422,7 +1524,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             eventToStore = attachCanonicalInvoiceNumber(eventToStore, invoiceNumbers);
             eventToStore = attachCanonicalTransferNumber(eventToStore, transferNumbers);
           }
-          acceptedTs = await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
+          acceptedTs = type === "stockMovement"
+            ? await insertGuardedStockMovement(client, eventToStore, type, recordDeviceId, nextServerTs())
+            : await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
         } else {
           if (type === "stockCountSession") {

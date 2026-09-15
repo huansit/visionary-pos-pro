@@ -1075,14 +1075,14 @@ test("5a. admin stock corrections retain their audit details across devices", as
     branchId: "b_sip",
     clientTs: 3100,
     payload: {
-      productId: "prod-two-device-001",
+      productId: "prod-stock-correction-001",
       qty: 3,
       mode: "correction",
       reason: "Stock correction - Incorrect quantity entered - opening stock was keyed wrongly",
       correctionReason: "Incorrect quantity entered",
       correctionNote: "opening stock was keyed wrongly",
-      previousQty: 7,
-      correctedQty: 10,
+      previousQty: 0,
+      correctedQty: 3,
       correctedBy: "Admin Owner",
     },
   };
@@ -1713,6 +1713,64 @@ test("6da. cashier catalog carries the latest branch End of Day boundary", async
     });
 });
 
+test("5aa. a purchase can receive stock once and stale corrections cannot overwrite newer stock", async () => {
+  const branchId = "b_sip";
+  const productId = "prod-stock-lock-001";
+  const firstReceipt = {
+    id: "purchase-stock-lock-first",
+    type: "stockMovement",
+    branchId,
+    clientTs: 3110,
+    payload: { productId, branchId, purchaseId: "purchase-stock-lock-a", qty: 23, reason: "Purchase Supplier" },
+  };
+  const laterReceipt = {
+    id: "purchase-stock-lock-later",
+    type: "stockMovement",
+    branchId,
+    clientTs: 3111,
+    payload: { productId, branchId, purchaseId: "purchase-stock-lock-b", qty: 23, reason: "Purchase Supplier" },
+  };
+  const repeatedReceipt = {
+    ...firstReceipt,
+    id: "purchase-stock-lock-duplicate",
+    clientTs: 3112,
+  };
+  const staleCorrection = {
+    id: "purchase-stock-lock-stale-correction",
+    type: "stockMovement",
+    branchId,
+    clientTs: 3113,
+    payload: {
+      productId,
+      branchId,
+      qty: 2,
+      mode: "correction",
+      reason: "Stock correction - Counted shelf stock",
+      previousQty: 23,
+      correctedQty: 25,
+    },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [firstReceipt, laterReceipt] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted.sort(), [firstReceipt.id, laterReceipt.id].sort()));
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [repeatedReceipt, staleCorrection] })
+    .expect(200)
+    .expect((res) => {
+      assert.equal(res.body.accepted.length, 0);
+      assert.deepEqual(res.body.rejected.map((item) => [item.id, item.reason]).sort(), [
+        [repeatedReceipt.id, "purchase_already_received"],
+        [staleCorrection.id, "stock_quantity_changed_refresh_and_retry"],
+      ].sort());
+    });
+
+  const stored = await pool.query("SELECT payload FROM events WHERE type = 'stockMovement' AND payload->>'productId' = $1", [productId]);
+  assert.equal(stored.rows.reduce((sum, row) => sum + Number(row.payload.qty || 0), 0), 46);
+});
+
 test("6d1. cashier catalog exposes active transfer destination branches only", async () => {
   const terminal = await activateTestTerminal("Transfer destination catalog Till", "b_sip");
   const activeBranch = {
@@ -2321,7 +2379,7 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
           type: "stockMovement",
           branchId: "b_sip",
           clientTs: startedAt + 3,
-          payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 1, mode: "count", stockCountSessionId: sessionId },
+          payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 1, mode: "count", stockCountSessionId: sessionId, previousQty: 0, correctedQty: 1 },
         },
         {
           id: "cl-stock-count-commit",

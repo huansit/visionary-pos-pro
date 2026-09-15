@@ -2260,6 +2260,27 @@ function removeRejectedTransferChanges(data, rejected = []) {
     stockMovements: (data.stockMovements || []).filter((entry) => !rejectedIds.has(entry.id)),
   };
 }
+function removeRejectedInventoryChanges(data, rejected = []) {
+  const rejectedIds = new Set(rejected
+    .filter((item) => item?.type === "stockMovement"
+      && /^(?:purchase_already_received|stock_adjustment_snapshot_required|stock_adjustment_inconsistent|stock_quantity_changed_refresh_and_retry)/.test(String(item?.reason || "")))
+    .map((item) => item.id)
+    .filter(Boolean));
+  if (!rejectedIds.size) return data;
+  const rejectedMovements = (data.stockMovements || []).filter((movement) => rejectedIds.has(movement.id));
+  const reopenSessionIds = new Set(rejectedMovements
+    .map((movement) => movement.stockCountSessionId)
+    .filter(Boolean));
+  return {
+    ...data,
+    stockMovements: (data.stockMovements || []).filter((movement) => !rejectedIds.has(movement.id)),
+    // A count that lost its snapshot race must be refreshed and recommitted,
+    // never left looking committed only on the originating device.
+    stockCountSessions: (data.stockCountSessions || []).map((session) => reopenSessionIds.has(session.id)
+      ? { ...session, status: "open", committedBy: undefined, committedAt: undefined, summary: undefined, synced: false, updatedAt: now() }
+      : session),
+  };
+}
 async function loadOutbox() { return await loadJson(OUTBOX_KEY, []); }
 async function saveOutbox(outbox) { await saveJson(OUTBOX_KEY, outbox || []); }
 function hasCredentialLikePayload(ev) {
@@ -2446,6 +2467,7 @@ async function runSyncClient(currentData, options = {}) {
       outbox = outbox.filter((ev) => !done.has(ev.id));
       await saveOutbox(outbox);
       data = removeRejectedTransferChanges(data, rejected);
+      data = removeRejectedInventoryChanges(data, rejected);
       data = markAcceptedSynced(data, body.accepted || []);
       dataChanged = dataChanged || (body.accepted || []).length > 0 || rejected.length > 0;
     } catch (error) {
@@ -12246,9 +12268,11 @@ function StockTab({ data, update, branch, onNavigate }) {
       reason: "Stock count " + session.code,
       stockCountSessionId: session.id,
       expectedQty: row.expectedQty,
+      previousQty: row.liveQty,
       countedQty: row.countedQty,
       soldSince: row.soldSince,
       finalQty: row.finalQty,
+      correctedQty: row.finalQty,
       ts,
       synced: false,
     }));
