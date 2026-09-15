@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 function quarantineCashierArtifacts() {
-  const approvedInstaller = "VISIONPOS-Cashier_2.0.83_x64-setup.exe";
+  const approvedInstaller = "VISIONPOS-Cashier_2.0.84_x64-setup.exe";
   let downloadsDirectory = "";
   return {
     name: "quarantine-cashier-artifacts",
