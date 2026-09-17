@@ -56,6 +56,19 @@ test("Glovo webhook stores authenticated SIPCITY delivery once", async () => {
   const audit = await pool.query("SELECT payload FROM events WHERE id = $1", ["glovo:glovo-test-order-1:audit"]);
   assert.equal(audit.rows.length, 1);
   assert.equal(audit.rows[0].payload.orderId, "order-123");
+  assert.equal(audit.rows[0].payload.channel, "glovo");
+
+  const order = await pool.query("SELECT branch_id, status, order_total_cents, stock_state FROM glovo_orders WHERE order_id = $1", ["order-123"]);
+  assert.deepEqual(order.rows[0], {
+    branch_id: "b_sip",
+    status: "RECEIVED",
+    order_total_cents: 0,
+    stock_state: "pending_sandbox_validation",
+  });
+  const line = await pool.query("SELECT sku, quantity, stock_state FROM glovo_order_lines WHERE order_id = $1", ["order-123"]);
+  assert.deepEqual(line.rows[0], { sku: "SIP0001", quantity: 1, stock_state: "pending_sandbox_validation" });
+  const history = await pool.query("SELECT status FROM glovo_order_events WHERE event_id = $1", ["glovo:glovo-test-order-1"]);
+  assert.deepEqual(history.rows[0], { status: "RECEIVED" });
 });
 
 test("Glovo webhook rejects a callback for a different store", async () => {
@@ -64,4 +77,10 @@ test("Glovo webhook rejects a callback for a different store", async () => {
     .set("Authorization", process.env.GLOVO_WEBHOOK_SECRET)
     .send({ ...payload, event_id: "other-store", client: { external_partner_config_id: "b_cpt" } })
     .expect(422, { error: "glovo_vendor_not_mapped" });
+});
+
+test("Glovo ledger totals stay separate from cashier and M-Pesa tables", async () => {
+  const totals = await pool.query("SELECT COUNT(*) AS count, COALESCE(SUM(order_total_cents), 0) AS total FROM glovo_orders WHERE branch_id = $1", ["b_sip"]);
+  assert.equal(Number(totals.rows[0].count), 1);
+  assert.equal(Number(totals.rows[0].total), 0);
 });

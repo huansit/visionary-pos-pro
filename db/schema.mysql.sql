@@ -54,6 +54,53 @@ CREATE TABLE IF NOT EXISTS glovo_webhook_events (
   INDEX glovo_webhook_events_order_idx (branch_id, order_id, received_at)
 );
 
+CREATE TABLE IF NOT EXISTS glovo_orders (
+  order_id          varchar(191) PRIMARY KEY,
+  branch_id         varchar(191) NOT NULL,
+  vendor_id         varchar(191) NOT NULL,
+  external_order_id varchar(191),
+  order_code        varchar(191),
+  status            varchar(80) NOT NULL,
+  payment_type      varchar(80),
+  currency          varchar(16),
+  sub_total_cents   bigint NOT NULL DEFAULT 0,
+  order_total_cents bigint NOT NULL DEFAULT 0,
+  stock_state       varchar(80) NOT NULL DEFAULT 'pending_sandbox_validation',
+  payload           json NOT NULL,
+  created_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX glovo_orders_branch_status_idx (branch_id, status, updated_at)
+);
+
+CREATE TABLE IF NOT EXISTS glovo_order_lines (
+  order_id          varchar(191) NOT NULL,
+  line_id           varchar(191) NOT NULL,
+  sku               varchar(191),
+  product_id        varchar(191),
+  product_name      varchar(255),
+  quantity          decimal(12,3) NOT NULL DEFAULT 0,
+  pricing_type      varchar(32),
+  unit_price_cents  bigint NOT NULL DEFAULT 0,
+  total_price_cents bigint NOT NULL DEFAULT 0,
+  stock_state       varchar(80) NOT NULL DEFAULT 'pending_sandbox_validation',
+  raw_item          json NOT NULL,
+  updated_at        datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (order_id, line_id),
+  INDEX glovo_order_lines_product_idx (product_id, order_id),
+  CONSTRAINT glovo_order_lines_order_fk FOREIGN KEY (order_id) REFERENCES glovo_orders(order_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS glovo_order_events (
+  event_id    varchar(191) PRIMARY KEY,
+  order_id    varchar(191) NOT NULL,
+  branch_id   varchar(191) NOT NULL,
+  status      varchar(80) NOT NULL,
+  payload     json NOT NULL,
+  received_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX glovo_order_events_order_idx (order_id, received_at),
+  CONSTRAINT glovo_order_events_order_fk FOREIGN KEY (order_id) REFERENCES glovo_orders(order_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS invoice_sequences (
   branch_id    varchar(191) PRIMARY KEY,
   last_number  bigint NOT NULL DEFAULT 0,

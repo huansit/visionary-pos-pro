@@ -67,6 +67,60 @@ CREATE TABLE IF NOT EXISTS glovo_webhook_events (
 CREATE INDEX IF NOT EXISTS glovo_webhook_events_order_idx
   ON glovo_webhook_events (branch_id, order_id, received_at DESC);
 
+-- Normalised Glovo audit ledger. Provider callbacks remain immutable above;
+-- these records make each order, line, and status transition reportable
+-- without ever mixing it into a cashier or M-Pesa sale.
+CREATE TABLE IF NOT EXISTS glovo_orders (
+  order_id          text PRIMARY KEY,
+  branch_id         text NOT NULL,
+  vendor_id         text NOT NULL,
+  external_order_id text,
+  order_code        text,
+  status            text NOT NULL,
+  payment_type      text,
+  currency          text,
+  sub_total_cents   bigint NOT NULL DEFAULT 0,
+  order_total_cents bigint NOT NULL DEFAULT 0,
+  stock_state       text NOT NULL DEFAULT 'pending_sandbox_validation',
+  payload           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS glovo_orders_branch_status_idx
+  ON glovo_orders (branch_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS glovo_order_lines (
+  order_id          text NOT NULL REFERENCES glovo_orders(order_id) ON DELETE CASCADE,
+  line_id           text NOT NULL,
+  sku               text,
+  product_id        text,
+  product_name      text,
+  quantity          numeric(12,3) NOT NULL DEFAULT 0,
+  pricing_type      text,
+  unit_price_cents  bigint NOT NULL DEFAULT 0,
+  total_price_cents bigint NOT NULL DEFAULT 0,
+  stock_state       text NOT NULL DEFAULT 'pending_sandbox_validation',
+  raw_item          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at        timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (order_id, line_id)
+);
+
+CREATE INDEX IF NOT EXISTS glovo_order_lines_product_idx
+  ON glovo_order_lines (product_id, order_id);
+
+CREATE TABLE IF NOT EXISTS glovo_order_events (
+  event_id    text PRIMARY KEY,
+  order_id    text NOT NULL REFERENCES glovo_orders(order_id) ON DELETE CASCADE,
+  branch_id   text NOT NULL,
+  status      text NOT NULL,
+  payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  received_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS glovo_order_events_order_idx
+  ON glovo_order_events (order_id, received_at DESC);
+
 -- Receipt numbers are allocated by the server, independently per branch.
 -- last_number is incremented in the same transaction that stores the invoice.
 CREATE TABLE IF NOT EXISTS invoice_sequences (

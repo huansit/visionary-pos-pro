@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "node:crypto";
+import { requireAdminOrSupervisor } from "../auth.js";
 import { isMySql, q, serverNow, tx } from "../db.js";
 
 const router = Router();
@@ -50,10 +51,182 @@ function vendorId(body = {}) {
 }
 
 function eventId(body, rawBody) {
-  const explicit = text(body.event_id || body.eventId || body.id);
+  // `id` is commonly the order identifier. Treating it as a callback ID
+  // would make a later cancellation or fulfilment callback look like a retry.
+  const explicit = text(body.event_id || body.eventId);
   if (explicit) return `glovo:${explicit}`.slice(0, 191);
   return `glovo:${crypto.createHash("sha256").update(rawBody || JSON.stringify(body)).digest("hex")}`;
 }
+
+function object(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function json(value) {
+  if (value && typeof value === "object") return value;
+  try { return JSON.parse(value || "{}"); } catch { return {}; }
+}
+
+function moneyCents(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100)) : 0;
+}
+
+function quantity(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? amount : 0;
+}
+
+function orderBody(body = {}) {
+  return object(body.order).order_id ? object(body.order) : object(body);
+}
+
+function orderLines(body = {}) {
+  const order = orderBody(body);
+  return Array.isArray(order.items) ? order.items.filter((item) => item && typeof item === "object") : [];
+}
+
+async function productIdForSku(client, sku) {
+  const wanted = text(sku).toLowerCase();
+  if (!wanted) return null;
+  // Product records are the live shared catalogue. Resolving here keeps the
+  // Glovo ledger aligned with the same SKU aliases used by every terminal.
+  const result = await client.query("SELECT id, payload FROM records WHERE type = 'product' AND deleted = false");
+  const row = (result.rows || []).find((candidate) => text(json(candidate.payload).sku).toLowerCase() === wanted);
+  return row ? String(row.id) : null;
+}
+
+async function writeGlovoOrderLedger(client, { event, orderId: id, vendorId: vendor, status, body }) {
+  const order = orderBody(body);
+  const payment = object(order.payment);
+  const externalOrderId = text(order.external_order_id || order.externalOrderId) || null;
+  const orderCode = text(order.order_code || order.orderCode) || null;
+  const paymentType = text(payment.type || order.payment_type || order.paymentType) || null;
+  const currency = text(payment.currency || order.currency) || null;
+  const subTotalCents = moneyCents(payment.sub_total ?? payment.subTotal);
+  const orderTotalCents = moneyCents(payment.order_total ?? payment.orderTotal ?? payment.total);
+  const stockState = "pending_sandbox_validation";
+
+  if (isMySql) {
+    await client.query(
+      `INSERT INTO glovo_orders
+         (order_id, branch_id, vendor_id, external_order_id, order_code, status, payment_type, currency, sub_total_cents, order_total_cents, stock_state, payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON DUPLICATE KEY UPDATE
+         external_order_id=VALUES(external_order_id), order_code=VALUES(order_code), status=VALUES(status),
+         payment_type=VALUES(payment_type), currency=VALUES(currency), sub_total_cents=VALUES(sub_total_cents),
+         order_total_cents=VALUES(order_total_cents), stock_state=VALUES(stock_state), payload=VALUES(payload)`,
+      [id, "b_sip", vendor, externalOrderId, orderCode, status, paymentType, currency, subTotalCents, orderTotalCents, stockState, body]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO glovo_orders
+         (order_id, branch_id, vendor_id, external_order_id, order_code, status, payment_type, currency, sub_total_cents, order_total_cents, stock_state, payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (order_id) DO UPDATE SET
+         external_order_id=EXCLUDED.external_order_id, order_code=EXCLUDED.order_code, status=EXCLUDED.status,
+         payment_type=EXCLUDED.payment_type, currency=EXCLUDED.currency, sub_total_cents=EXCLUDED.sub_total_cents,
+         order_total_cents=EXCLUDED.order_total_cents, stock_state=EXCLUDED.stock_state, payload=EXCLUDED.payload,
+         updated_at=now()`,
+      [id, "b_sip", vendor, externalOrderId, orderCode, status, paymentType, currency, subTotalCents, orderTotalCents, stockState, body]
+    );
+  }
+
+  let mappedLines = 0;
+  for (const [index, rawLine] of orderLines(body).entries()) {
+    const line = object(rawLine);
+    const pricing = object(line.pricing);
+    const sku = text(line.sku || line.product_sku || line.productSku) || null;
+    const lineId = text(line._id || line.line_id || line.lineId || sku || `line-${index + 1}`).slice(0, 191);
+    const productId = await productIdForSku(client, sku);
+    if (productId) mappedLines += 1;
+    const values = [
+      id, lineId, sku, productId, text(line.name || line.product_name || line.productName) || null,
+      quantity(pricing.quantity ?? line.quantity ?? line.qty), text(pricing.pricing_type || line.pricing_type || line.pricingType) || null,
+      moneyCents(pricing.unit_price ?? line.unit_price ?? line.unitPrice), moneyCents(pricing.total_price ?? line.total_price ?? line.totalPrice),
+      stockState, line,
+    ];
+    if (isMySql) {
+      await client.query(
+        `INSERT INTO glovo_order_lines
+           (order_id,line_id,sku,product_id,product_name,quantity,pricing_type,unit_price_cents,total_price_cents,stock_state,raw_item)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON DUPLICATE KEY UPDATE sku=VALUES(sku), product_id=VALUES(product_id), product_name=VALUES(product_name),
+           quantity=VALUES(quantity), pricing_type=VALUES(pricing_type), unit_price_cents=VALUES(unit_price_cents),
+           total_price_cents=VALUES(total_price_cents), stock_state=VALUES(stock_state), raw_item=VALUES(raw_item)`,
+        values
+      );
+    } else {
+      await client.query(
+        `INSERT INTO glovo_order_lines
+           (order_id,line_id,sku,product_id,product_name,quantity,pricing_type,unit_price_cents,total_price_cents,stock_state,raw_item)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (order_id,line_id) DO UPDATE SET sku=EXCLUDED.sku, product_id=EXCLUDED.product_id,
+           product_name=EXCLUDED.product_name, quantity=EXCLUDED.quantity, pricing_type=EXCLUDED.pricing_type,
+           unit_price_cents=EXCLUDED.unit_price_cents, total_price_cents=EXCLUDED.total_price_cents,
+           stock_state=EXCLUDED.stock_state, raw_item=EXCLUDED.raw_item, updated_at=now()`,
+        values
+      );
+    }
+  }
+
+  if (isMySql) {
+    await client.query(
+      "INSERT IGNORE INTO glovo_order_events (event_id,order_id,branch_id,status,payload) VALUES ($1,$2,$3,$4,$5)",
+      [event, id, "b_sip", status, body]
+    );
+  } else {
+    await client.query(
+      "INSERT INTO glovo_order_events (event_id,order_id,branch_id,status,payload) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (event_id) DO NOTHING",
+      [event, id, "b_sip", status, body]
+    );
+  }
+  return { mappedLines, lineCount: orderLines(body).length, stockState, orderTotalCents, paymentType };
+}
+
+router.get("/orders", requireAdminOrSupervisor, async (_req, res, next) => {
+  try {
+    const result = await q(
+      isMySql
+        ? `SELECT order_id AS orderId, branch_id AS branchId, external_order_id AS externalOrderId, order_code AS orderCode,
+                  status, payment_type AS paymentType, currency, sub_total_cents AS subTotalCents, order_total_cents AS orderTotalCents,
+                  stock_state AS stockState, created_at AS createdAt, updated_at AS updatedAt
+             FROM glovo_orders WHERE branch_id = 'b_sip' ORDER BY updated_at DESC LIMIT 250`
+        : `SELECT order_id AS "orderId", branch_id AS "branchId", external_order_id AS "externalOrderId", order_code AS "orderCode",
+                  status, payment_type AS "paymentType", currency, sub_total_cents AS "subTotalCents", order_total_cents AS "orderTotalCents",
+                  stock_state AS "stockState", created_at AS "createdAt", updated_at AS "updatedAt"
+             FROM glovo_orders WHERE branch_id = 'b_sip' ORDER BY updated_at DESC LIMIT 250`
+    );
+    res.json({ branchId: "b_sip", orders: result.rows || [] });
+  } catch (error) { next(error); }
+});
+
+router.get("/report", requireAdminOrSupervisor, async (_req, res, next) => {
+  try {
+    const result = await q(
+      `SELECT
+         COUNT(*) AS order_count,
+         COALESCE(SUM(order_total_cents), 0) AS gross_order_cents,
+         COALESCE(SUM(CASE WHEN status IN ('CANCELLED', 'CANCELED') THEN order_total_cents ELSE 0 END), 0) AS cancelled_order_cents,
+         COALESCE(SUM(CASE WHEN stock_state = 'pending_sandbox_validation' THEN 1 ELSE 0 END), 0) AS pending_stock_validation_count
+       FROM glovo_orders WHERE branch_id = $1`,
+      ["b_sip"]
+    );
+    const byStatus = await q(
+      "SELECT status, COUNT(*) AS order_count, COALESCE(SUM(order_total_cents), 0) AS gross_order_cents FROM glovo_orders WHERE branch_id = $1 GROUP BY status ORDER BY status",
+      ["b_sip"]
+    );
+    res.json({
+      branchId: "b_sip",
+      channel: "glovo",
+      ...result.rows[0],
+      byStatus: byStatus.rows || [],
+      feesCents: null,
+      payoutCents: null,
+      note: "Glovo fees and payout reconciliation require Glovo's settlement feed; no fee is estimated by VisionPOS.",
+    });
+  } catch (error) { next(error); }
+});
 
 router.post("/orders/webhook", async (req, res, next) => {
   try {
@@ -99,7 +272,8 @@ router.post("/orders/webhook", async (req, res, next) => {
       const inserted = isMySql
         ? Number(insert.raw?.affectedRows || 0)
         : Number(insert.rows?.length || 0);
-      return { duplicate: inserted === 0 };
+      if (inserted === 0) return { duplicate: true };
+      return { duplicate: false, ...(await writeGlovoOrderLedger(client, { event, orderId: id, vendorId: incomingVendorId, status, body: req.body || {} })) };
     });
 
     // Publish a branch-scoped append-only audit event for the admin PWA. It
@@ -118,10 +292,16 @@ router.post("/orders/webhook", async (req, res, next) => {
         status,
         receivedAt,
         source: "glovo",
+        channel: "glovo",
+        stockState: result.stockState || "pending_sandbox_validation",
+        mappedLines: result.mappedLines || 0,
+        lineCount: result.lineCount || 0,
+        orderTotalCents: result.orderTotalCents || 0,
+        paymentType: result.paymentType || null,
       }]
     );
 
-    return res.status(200).json({ ok: true, orderId: id, status, duplicate: result.duplicate });
+    return res.status(200).json({ ok: true, orderId: id, status, duplicate: result.duplicate, stockState: result.stockState || "pending_sandbox_validation" });
   } catch (error) {
     return next(error);
   }
