@@ -47,9 +47,10 @@ const notes = [
   `VISIONPOS Cashier ${version}`,
   "Manual signed and timestamped Cashier installer.",
   "Automatic desktop updates are disabled.",
-  "Inventory-count shortages now wait for manager review and never become cashier debt automatically.",
-  "Managers can approve a cashier charge or record the variance as a business loss while retaining the complete count audit trail.",
-  "Cashier debt totals ignore pending or written-off inventory variances across all terminals.",
+  "Supervisor-only stock counts are available on cashier terminals.",
+  "Opening and approving a count requires a fresh supervisor PIN or enrolled fingerprint.",
+  "Stock count, quick inventory, and correction variances never create cashier debt automatically.",
+  "All approved count adjustments are written to the shared stock ledger for every device.",
 ];
 writeJson(releaseManifestPath, {
   version,

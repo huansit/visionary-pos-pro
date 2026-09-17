@@ -1,15 +1,16 @@
 {
-  "version": "2.0.84",
+  "version": "2.0.85",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.84_x64-setup.exe",
-  "size": 2949456,
-  "sha512": "4A10F6137ECFC66DCA907181E5686CAC9F705B12F0E226A551C98DE40A892C07A32B87F53F696AEB4D8C3FBE68D4BEE445E19D94CDE1EFEAB2F92B35BAD6A5DF",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.85_x64-setup.exe",
+  "size": 2951648,
+  "sha512": "1404629959329568EEEB4CA03D142FEA31A6AADB5CAE1DC277D293155656B8E00DD8E16E5F103BF67A136D360E5E871E05E31C2B52B2B57FFD06539FDCE5C276",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.84",
+    "VISIONPOS Cashier 2.0.85",
     "Manual signed and timestamped Cashier installer.",
     "Automatic desktop updates are disabled.",
-    "Inventory-count shortages now wait for manager review and never become cashier debt automatically.",
-    "Managers can approve a cashier charge or record the variance as a business loss while retaining the complete count audit trail.",
-    "Cashier debt totals ignore pending or written-off inventory variances across all terminals."
+    "Supervisor-only stock counts are available on cashier terminals.",
+    "Opening and approving a count requires a fresh supervisor PIN or enrolled fingerprint.",
+    "Stock count, quick inventory, and correction variances never create cashier debt automatically.",
+    "All approved count adjustments are written to the shared stock ledger for every device."
   ]
 }
