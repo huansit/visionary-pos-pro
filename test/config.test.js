@@ -78,6 +78,24 @@ test("partial optional WhatsApp configuration cannot take the POS offline", () =
   assert.match(result.stderr, /WhatsApp integration is disabled/i);
 });
 
+test("enabled Glovo integration fails closed without a protected SIPCITY webhook configuration", () => {
+  const result = validateConfig({
+    NODE_ENV: "production",
+    VISIONPOS_MODE: "live",
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/visionary_live",
+    PUBLIC_APP_URL: "https://visionarypos.cloud",
+    DEVICE_TOKEN_SECRET: "live-device-token-secret-that-is-long-and-random",
+    DEVICE_SETUP_KEY: "live-device-setup-key-that-is-long-and-random",
+    ADMIN_EMAIL_CODE_REQUIRED: "0",
+    GLOVO_ENABLED: "1",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /GLOVO_WEBHOOK_SECRET/);
+  assert.match(result.stderr, /GLOVO_SIPCITY_VENDOR_ID/);
+  assert.match(result.stderr, /GLOVO_WEBHOOK_URL/);
+});
+
 test("sandbox startup does not require live-only setup and SMTP secrets", () => {
   const result = validateConfig({
     NODE_ENV: "sandbox",

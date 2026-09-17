@@ -215,6 +215,18 @@ export function assertStartupConfig() {
     if (duplicateSigningSecret) errors.push("A Kopo Kopo webhook signing secret is assigned to more than one account");
   }
 
+  if (process.env.GLOVO_ENABLED === "1") {
+    for (const name of ["GLOVO_WEBHOOK_SECRET", "GLOVO_SIPCITY_VENDOR_ID"]) {
+      if (!String(process.env[name] || "").trim()) errors.push(`${name} is required when Glovo is enabled`);
+    }
+    try {
+      const webhookUrl = new URL(process.env.GLOVO_WEBHOOK_URL || "");
+      if (webhookUrl.protocol !== "https:") errors.push("GLOVO_WEBHOOK_URL must use HTTPS");
+    } catch {
+      errors.push("GLOVO_WEBHOOK_URL must be a valid HTTPS URL when Glovo is enabled");
+    }
+  }
+
   if (errors.length) {
     throw new Error(`Invalid VisionPOS startup configuration:\n- ${errors.join("\n- ")}`);
   }

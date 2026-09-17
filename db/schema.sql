@@ -52,6 +52,21 @@ CREATE INDEX IF NOT EXISTS events_server_ts_idx ON events (server_ts);
 CREATE INDEX IF NOT EXISTS events_type_idx ON events (type);
 CREATE INDEX IF NOT EXISTS events_branch_idx ON events (branch_id);
 
+-- Raw, authenticated delivery-provider callbacks. Keeping this separate from
+-- operational events makes webhook retries idempotent and auditable.
+CREATE TABLE IF NOT EXISTS glovo_webhook_events (
+  event_id    text PRIMARY KEY,
+  order_id    text NOT NULL,
+  branch_id   text NOT NULL,
+  vendor_id   text NOT NULL,
+  status      text NOT NULL,
+  payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
+  received_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS glovo_webhook_events_order_idx
+  ON glovo_webhook_events (branch_id, order_id, received_at DESC);
+
 -- Receipt numbers are allocated by the server, independently per branch.
 -- last_number is incremented in the same transaction that stores the invoice.
 CREATE TABLE IF NOT EXISTS invoice_sequences (

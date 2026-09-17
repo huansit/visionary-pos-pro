@@ -43,6 +43,17 @@ CREATE INDEX events_server_ts_idx ON events (server_ts);
 CREATE INDEX events_type_idx ON events (type);
 CREATE INDEX events_branch_idx ON events (branch_id);
 
+CREATE TABLE IF NOT EXISTS glovo_webhook_events (
+  event_id    varchar(191) PRIMARY KEY,
+  order_id    varchar(191) NOT NULL,
+  branch_id   varchar(191) NOT NULL,
+  vendor_id   varchar(191) NOT NULL,
+  status      varchar(80) NOT NULL,
+  payload     json NOT NULL,
+  received_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX glovo_webhook_events_order_idx (branch_id, order_id, received_at)
+);
+
 CREATE TABLE IF NOT EXISTS invoice_sequences (
   branch_id    varchar(191) PRIMARY KEY,
   last_number  bigint NOT NULL DEFAULT 0,

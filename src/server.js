@@ -13,6 +13,7 @@ import aiRoutes from "./routes/ai.js";
 import barcodeRoutes from "./routes/barcodes.js";
 import environmentRoutes from "./routes/environment.js";
 import kopokopoRoutes from "./routes/kopokopo.js";
+import glovoRoutes from "./routes/glovo.js";
 import syncRoutes from "./routes/sync.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { requireAdminOrSupervisor, requireDevice } from "./auth.js";
@@ -42,6 +43,7 @@ app.use(express.json({
   verify(req, _res, buffer) {
     if (req.originalUrl.startsWith("/api/integrations/kopokopo/webhook")
         || req.originalUrl.startsWith("/api/integrations/kopokopo/sandbox-test-webhook")
+        || req.originalUrl.startsWith("/api/integrations/glovo/orders/webhook")
         || req.originalUrl.startsWith("/api/whatsapp/webhook")) {
       req.rawBody = Buffer.from(buffer);
     }
@@ -113,6 +115,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/barcodes", barcodeRoutes);
 app.use("/api/environment", environmentRoutes);
 app.use("/api/integrations/kopokopo", kopokopoRoutes);
+app.use("/api/integrations/glovo", glovoRoutes);
 app.use("/api/sync", syncRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 
