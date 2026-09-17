@@ -8966,7 +8966,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
-      case "glovo": return <GlovoOrdersTab data={data} />;
+      case "glovo": return <GlovoOrdersTab data={data} update={update} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
@@ -11582,6 +11582,38 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const [summary, setSummary] = useState("");
 
   const activeInvoices = operationalInvoices(data);
+  const glovoInScope = rb === "all" || rb === "b_sip";
+  const glovoFrom = sinceFor > 0 ? new Date(sinceFor).toISOString() : "";
+  const glovoTo = untilFor !== Infinity ? new Date(untilFor).toISOString() : "";
+  const [glovoPnl, setGlovoPnl] = useState({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+
+  useEffect(() => {
+    let active = true;
+    if (!glovoInScope) {
+      setGlovoPnl({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+      return () => { active = false; };
+    }
+    setGlovoPnl((current) => ({ ...current, loading: true, error: "" }));
+    const query = new URLSearchParams();
+    if (glovoFrom) query.set("from", glovoFrom);
+    if (glovoTo) query.set("to", glovoTo);
+    authGet(`/api/integrations/glovo/pnl?${query.toString()}`, { session: true })
+      .then((result) => {
+        if (!active) return;
+        setGlovoPnl({
+          loading: false,
+          error: "",
+          orderCount: Number(result?.orderCount || 0),
+          revenueCents: Number(result?.revenueCents || 0),
+          lines: Array.isArray(result?.lines) ? result.lines : [],
+          note: result?.note || "",
+        });
+      })
+      .catch(() => {
+        if (active) setGlovoPnl({ loading: false, error: "Glovo profit data could not be loaded.", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+      });
+    return () => { active = false; };
+  }, [glovoInScope, glovoFrom, glovoTo]);
   const branchInvoices = activeInvoices.filter((invoice) => invoice.branchId === branch.id);
   const businessPeriodStart = branchLastEndDay(data, branch.id);
   const todayInv = branchInvoices.filter((invoice) => Number(invoice.ts || 0) > businessPeriodStart);
@@ -11823,7 +11855,7 @@ function ProductsTab({ data, update, branch, isAdmin, onNavigate }) {
     const productId = uid("p");
     const catalogResult = ensureBarcodeEntries(data, [barcode, ...extraBarcodes]);
     const [primaryCatalog, ...extraCatalogs] = catalogResult.entries;
-    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", reorderLevel, status: "active", synced: false, updatedAt: ts };
+    const productBase = { id: productId, branchId: branch.id, name: f.name.trim(), sku, size: f.size, category: f.category, priceCents: 0, costCents: 0, glovoPriceCents: 0, glovoEnabled: false, barcode, barcodes: extraBarcodes, barcodeCatalogId: primaryCatalog?.id || null, barcodeCatalogIds: extraCatalogs.map((entry) => entry.id), taxRate: parseFloat(f.tax) || 0, supplierId: f.supplierId || null, unit: f.unit || "unit", reorderLevel, status: "active", synced: false, updatedAt: ts };
     const product = withBranchProductCost(productBase, branch.id, 0);
     const movement = initialStock > 0 ? [{ id: uid("mv"), productId, branchId: branch.id, qty: initialStock, reason: "Initial stock", ts, synced: false }] : [];
     update((d) => {
@@ -11931,6 +11963,8 @@ function ProductsTab({ data, update, branch, isAdmin, onNavigate }) {
           ...source,
           id: uid("p"),
           branchId: branch.id,
+          glovoPriceCents: 0,
+          glovoEnabled: false,
           barcodeCatalogId: primaryId,
           barcodeCatalogIds: extraIds,
           synced: false,
@@ -11984,7 +12018,7 @@ function ProductsTab({ data, update, branch, isAdmin, onNavigate }) {
           const result = ensureBarcodeEntries({ ...d, barcodeCatalog }, [sku]);
           const entry = result.entries[0];
           barcodeCatalog = result.barcodeCatalog;
-          const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, status: "active", synced: false, updatedAt: now() };
+          const productBase = { id: uid("p"), branchId: branch.id, name: r.name || sku, sku, size: r.size, category: r.category, priceCents: 0, costCents: 0, glovoPriceCents: 0, glovoEnabled: false, barcode: sku, barcodeCatalogId: entry?.id || null, reorderLevel: d.settings.reorderLevel, status: "active", synced: false, updatedAt: now() };
           products.push(withBranchProductCost(productBase, branch.id, 0));
           added++;
         }
@@ -16632,13 +16666,22 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const lossByReason = {}; lossMoves.forEach((mv) => { const r = mv.reason.replace("Loss/Damage · ", "").split(" — ")[0]; const p = prod(mv.productId); lossByReason[r] = (lossByReason[r] || 0) + Math.abs(mv.qty) * movementUnitCostCents(data, mv, p); });
 
   const itemsSold = saleMoves.reduce((s, m) => s + (-m.qty), 0);
-  const cogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
+  const cashierCogs = saleMoves.reduce((s, m) => { const p = prod(m.productId); return s + (-m.qty) * movementUnitCostCents(data, m, p); }, 0);
   // Gross sales is the full non-void invoice value for the selected period,
   // including invoices that are still open or have since become overdue.
   // Total sales remains conservative: only paid invoices from a closed
   // business day are recognized in profit, margin and product P&L.
-  const grossSales = invs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
-  const totalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
+  const cashierGrossSales = invs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
+  const cashierTotalSales = recInvs.reduce((s, i) => s + Math.max(0, Number(i.totalCents || 0)), 0);
+  const glovoRevenue = glovoInScope ? Math.max(0, Number(glovoPnl.revenueCents || 0)) : 0;
+  const glovoCogs = glovoInScope ? (glovoPnl.lines || []).reduce((sum, line) => {
+    const product = data.products.find((item) => item.id === line.productId)
+      || branchProductsUnique(data, "b_sip").find((item) => String(item.sku || "").toLowerCase() === String(line.sku || "").toLowerCase());
+    return sum + Math.max(0, Number(line.quantity || 0)) * (product ? branchInventoryCostCents(data, product, "b_sip") : 0);
+  }, 0) : 0;
+  const grossSales = cashierGrossSales + glovoRevenue;
+  const totalSales = cashierTotalSales + glovoRevenue;
+  const cogs = cashierCogs + glovoCogs;
   const periodOpenInvoices = invs.filter((invoice) => invOutstanding(invoice) > 0 && !invIsDebt(invoice) && !invIsOverdue(invoice));
   const periodOverdueInvoices = invs.filter((invoice) => invIsOverdue(invoice));
   const periodDebtInvoices = invs.filter((invoice) => invIsDebt(invoice));
@@ -16809,6 +16852,23 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       category: product?.category || "",
     });
     row.cogs += Math.max(0, -Number(movement.qty || 0)) * movementUnitCostCents(data, movement, product);
+  });
+  // Glovo uses the same SIPCITY catalogue, but its own captured online price.
+  // Only dispatched orders arrive from the protected Glovo P&L endpoint.
+  (glovoPnl.lines || []).forEach((line) => {
+    const product = productsById.get(line.productId)
+      || branchProductsUnique(data, "b_sip").find((item) => String(item.sku || "").toLowerCase() === String(line.sku || "").toLowerCase())
+      || null;
+    const row = ensureProductPnlRow(product ? productDedupeKey(product) : productKeyForValue(line.sku), {
+      productId: product?.id || line.productId,
+      name: product?.name || line.productName || "Glovo product",
+      sku: product?.sku || line.sku || "",
+      category: product?.category || "Glovo",
+    });
+    const quantity = Math.max(0, Number(line.quantity || 0));
+    row.qty += quantity;
+    row.revenue += Math.max(0, Number(line.revenueCents || 0));
+    row.cogs += quantity * (product ? branchInventoryCostCents(data, product, "b_sip") : 0);
   });
   lossMoves.forEach((movement) => {
     const product = productsById.get(movement.productId) || prod(movement.productId);
@@ -16986,7 +17046,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     }) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
-    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (all non-void invoices)", m(grossSales)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Total sales (paid and closed)", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
+    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (cashier + dispatched Glovo)", m(grossSales)], ["Glovo dispatched sales", m(glovoRevenue)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Recognized sales", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length + glovoPnl.orderCount], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
   const activeBranchName = rb === "all" ? "All branches" : bname(rb);
@@ -17069,6 +17129,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       ];
       return [
         { label: "Gross Sales", value: fmt(grossSales, cur) },
+        { label: "Glovo sales", value: fmt(glovoRevenue, cur) },
         { label: "Total Sales", value: fmt(totalSales, cur) },
         { label: "Gross Profit", value: fmt(grossProfit, cur) },
         { label: "Net Profit", value: fmt(netProfit, cur) },
@@ -17145,7 +17206,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "overview" && (
         <>
           <div className="stats">
-            <Stat l="Gross Sales" v={fmt(grossSales, cur)} sub2={invs.length + " non-void invoice(s)"} />
+            <Stat l="Gross Sales" v={fmt(grossSales, cur)} sub2={invs.length + " invoices · " + glovoPnl.orderCount + " Glovo order(s)"} />
             <Stat l="Inventory Value" v={fmt(inventoryValue, cur)} sub2={activeBranchName} />
             <Stat l="Net Profit" v={fmt(netProfit, cur)} warn={netProfit < 0} />
             <Stat l="Cost of Goods" v={fmt(cogs, cur)} />
@@ -17158,6 +17219,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
             <Stat l="Items Sold" v={itemsSold} />
             <Stat l="Payments Collected" v={fmt(cleared, cur)} sub2={clearedInvoiceCount + " invoice(s)"} />
+            <Stat l="Glovo Sales" v={fmt(glovoRevenue, cur)} sub2={glovoPnl.loading ? "loading…" : "dispatched orders"} />
             <Stat l="Pending Sync" v={pending} sub2="local only" warn={pending > 0} />
           </div>
           <div className="grid2" style={{ gap: 16 }}>
@@ -17290,10 +17352,13 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "pnl" && (
         <>
           <div className="panel"><div className="section-title" style={{ marginTop: 0 }}>Profit &amp; Loss · {period === "all" ? "all time" : period}</div>
-            {[["Total sales (paid and closed)", totalSales], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
+            {[["Cashier sales (paid and closed)", cashierTotalSales], ["Glovo sales (dispatched)", glovoRevenue], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
               <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
             <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
-            <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} transactions · {itemsSold} units</div>
+            <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} cashier transaction(s) · {glovoPnl.orderCount} stock-posted Glovo order(s) · {itemsSold} cashier units</div>
+            {glovoPnl.loading ? <div className="sub" style={{ marginTop: 6 }}>Loading Glovo channel totals…</div> : null}
+            {glovoPnl.error ? <div className="sub" style={{ marginTop: 6, color: "var(--danger)" }}>{glovoPnl.error}</div> : null}
+            {glovoPnl.note ? <div className="sub" style={{ marginTop: 6 }}>{glovoPnl.note}</div> : null}
           </div>
 
           <div style={{ display: "flex", gap: 12, alignItems: "flex-end", justifyContent: "space-between", margin: "18px 0 10px", flexWrap: "wrap" }}>
@@ -18883,11 +18948,13 @@ function StockFundingAllocationModal({ transaction, data, onClose, onSaved }) {
   </div>;
 }
 
-function GlovoOrdersTab({ data }) {
+function GlovoOrdersTab({ data, update }) {
   const currency = data?.settings?.currency || "KES";
   const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
   const [reload, setReload] = useState(0);
   const [state, setState] = useState({ loading: true, refreshing: false, error: "", orders: [], report: null });
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogMessage, setCatalogMessage] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -18949,6 +19016,39 @@ function GlovoOrdersTab({ data }) {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "—" : formatBusinessDateTime(date.toISOString(), timeZone);
   };
+  const glovoProducts = sortProductsAZ(branchProductsUnique(data, "b_sip")).filter((product) => {
+    const needle = catalogSearch.trim().toLowerCase();
+    return !needle || [product.name, product.sku, product.barcode].some((value) => String(value || "").toLowerCase().includes(needle));
+  });
+  const saveGlovoPrice = (product, value) => {
+    const amount = Number(String(value || "").replace(/,/g, ""));
+    if (!Number.isFinite(amount) || amount < 0) {
+      setCatalogMessage(`Enter a valid Glovo price for ${product.name}.`);
+      return;
+    }
+    const glovoPriceCents = Math.round(amount * 100);
+    update((current) => ({
+      ...current,
+      products: current.products.map((item) => item.id === product.id
+        ? { ...item, glovoPriceCents, glovoEnabled: glovoPriceCents > 0 ? Boolean(item.glovoEnabled) : false, synced: false, updatedAt: now() }
+        : item),
+    }));
+    setCatalogMessage(`${product.name}: Glovo price saved.`);
+  };
+  const setGlovoEnabled = (product, enabled) => {
+    const price = Number(product.glovoPriceCents || 0);
+    if (enabled && price <= 0) {
+      setCatalogMessage(`Set a Glovo price for ${product.name} before making it available.`);
+      return;
+    }
+    update((current) => ({
+      ...current,
+      products: current.products.map((item) => item.id === product.id
+        ? { ...item, glovoEnabled: enabled, synced: false, updatedAt: now() }
+        : item),
+    }));
+    setCatalogMessage(`${product.name} is ${enabled ? "available" : "hidden"} on Glovo.`);
+  };
 
   return (
     <div className="fade">
@@ -18995,6 +19095,26 @@ function GlovoOrdersTab({ data }) {
         </table></div> : null}
         {Array.isArray(report.byStatus) && report.byStatus.length ? <div className="sub" style={{ marginTop: 12 }}>Status totals: {report.byStatus.map((row) => `${String(row.status || "RECEIVED").replaceAll("_", " ")} ${Number(row.order_count || 0)}`).join(" · ")}</div> : null}
         <div className="sub" style={{ marginTop: 8 }}>{report.note || "Provider fees and payouts are not estimated by VisionPOS."}</div>
+      </div>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <div className="page-h" style={{ marginBottom: 12 }}>
+          <div><div className="section-title" style={{ margin: 0 }}>SIPCITY Glovo price list</div><div className="sub">Separate online pricing and availability. Physical-shop prices are not changed.</div></div>
+          <div className="possearch" style={{ width: 300, maxWidth: "100%" }}><Search /><input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search SKU or product" aria-label="Search Glovo price list" /></div>
+        </div>
+        <div className="notice" style={{ marginBottom: 12 }}><ShieldCheck /> Price changes are saved in VisionPOS now. Publishing to Glovo remains disabled until Glovo activates the Catalog API for SIPCITY.</div>
+        {catalogMessage ? <div className="sub" role="status" style={{ color: "var(--ok)", marginBottom: 10 }}>{catalogMessage}</div> : null}
+        <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Physical price</th><th>Glovo price</th><th>Available on Glovo</th></tr></thead><tbody>
+          {glovoProducts.map((product) => {
+            const glovoPrice = Number(product.glovoPriceCents || 0);
+            return <tr key={product.id}>
+              <td><div className="nm">{product.name}</div><div className="mt2">{product.sku || "No SKU"}</div></td>
+              <td className="amt">{fmt(branchProductPriceCents(product, "b_sip"), currency)}</td>
+              <td><input className="input" type="number" inputMode="decimal" min="0" step="0.01" defaultValue={glovoPrice ? (glovoPrice / 100).toFixed(2) : ""} placeholder="Set price" aria-label={`Glovo price for ${product.name}`} onBlur={(event) => saveGlovoPrice(product, event.target.value)} /></td>
+              <td><button type="button" role="switch" aria-checked={Boolean(product.glovoEnabled)} className={"product-enable-toggle" + (product.glovoEnabled ? " on" : "")} onClick={() => setGlovoEnabled(product, !product.glovoEnabled)}><span className="product-enable-track"><span /></span><span>{product.glovoEnabled ? "Available" : "Hidden"}</span></button></td>
+            </tr>;
+          })}
+          {glovoProducts.length === 0 ? <tr><td colSpan="4"><div className="notice">No SIPCITY products match this search.</div></td></tr> : null}
+        </tbody></table></div>
       </div>
     </div>
   );

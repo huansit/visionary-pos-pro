@@ -77,6 +77,13 @@ function quantity(value) {
   return Number.isFinite(amount) && amount >= 0 ? amount : 0;
 }
 
+function optionalDate(value) {
+  const raw = text(value);
+  if (!raw) return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
 function orderBody(body = {}) {
   return object(body.order).order_id ? object(body.order) : object(body);
 }
@@ -224,6 +231,61 @@ router.get("/report", requireAdminOrSupervisor, async (_req, res, next) => {
       feesCents: null,
       payoutCents: null,
       note: "Glovo fees and payout reconciliation require Glovo's settlement feed; no fee is estimated by VisionPOS.",
+    });
+  } catch (error) { next(error); }
+});
+
+router.get("/pnl", requireAdminOrSupervisor, async (req, res, next) => {
+  try {
+    const from = optionalDate(req.query.from);
+    const to = optionalDate(req.query.to);
+    if (from === undefined || to === undefined || (from && to && from > to)) {
+      return res.status(422).json({ error: "invalid_date_range" });
+    }
+    // A Glovo sale becomes reportable only after dispatch. This is deliberately
+    // conservative: RECEIVED and READY_FOR_PICKUP orders are still subject to
+    // cancellation or item changes. The first live sandbox flow will confirm
+    // whether Glovo sends an additional delivered status for this merchant.
+    const where = ["o.branch_id = $1", "o.status = 'DISPATCHED'", "o.stock_state = 'posted'"];
+    const values = ["b_sip"];
+    if (from) { values.push(from); where.push(`o.updated_at >= $${values.length}`); }
+    if (to) { values.push(to); where.push(`o.updated_at <= $${values.length}`); }
+    const filter = where.join(" AND ");
+    const summary = await q(
+      isMySql
+        ? `SELECT COUNT(*) AS orderCount, COALESCE(SUM(o.order_total_cents), 0) AS revenueCents
+             FROM glovo_orders o WHERE ${filter}`
+        : `SELECT COUNT(*) AS "orderCount", COALESCE(SUM(o.order_total_cents), 0) AS "revenueCents"
+             FROM glovo_orders o WHERE ${filter}`,
+      values
+    );
+    const lines = await q(
+      isMySql
+        ? `SELECT l.product_id AS productId, l.sku, l.product_name AS productName,
+                  COALESCE(SUM(l.quantity), 0) AS quantity,
+                  COALESCE(SUM(l.total_price_cents), 0) AS revenueCents
+             FROM glovo_order_lines l JOIN glovo_orders o ON o.order_id = l.order_id
+             WHERE ${filter}
+             GROUP BY l.product_id, l.sku, l.product_name
+             ORDER BY revenueCents DESC`
+        : `SELECT l.product_id AS "productId", l.sku, l.product_name AS "productName",
+                  COALESCE(SUM(l.quantity), 0) AS quantity,
+                  COALESCE(SUM(l.total_price_cents), 0) AS "revenueCents"
+             FROM glovo_order_lines l JOIN glovo_orders o ON o.order_id = l.order_id
+             WHERE ${filter}
+             GROUP BY l.product_id, l.sku, l.product_name
+             ORDER BY "revenueCents" DESC`,
+      values
+    );
+    res.json({
+      branchId: "b_sip",
+      channel: "glovo",
+      recognition: "dispatched",
+      from: from || null,
+      to: to || null,
+      ...(summary.rows[0] || { orderCount: 0, revenueCents: 0 }),
+      lines: lines.rows || [],
+      note: "Only dispatched Glovo orders whose stock movement has been posted are included. Cost of goods is calculated from the mapped SIPCITY product cost; provider fees and payout require Glovo's settlement feed.",
     });
   } catch (error) { next(error); }
 });
