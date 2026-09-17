@@ -234,6 +234,14 @@ export async function tx(fn) {
   }
 }
 
-// ms-epoch server clock used for cursors and server-time LWW.
-export const serverNow = () => Date.now();
+// ms-epoch server clock used for cursors and server-time LWW. Cursors are
+// numeric, so two independently written rows must never share a value: a
+// client that advances to a page boundary would otherwise be allowed to skip
+// a sibling row with the same timestamp. Keep one monotonic process clock for
+// every event and record writer.
+let lastServerNow = 0;
+export const serverNow = () => {
+  lastServerNow = Math.max(Date.now(), lastServerNow + 1);
+  return lastServerNow;
+};
 

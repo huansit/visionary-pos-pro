@@ -82,7 +82,10 @@ const RESET_EPOCH_KEY = "visionary:pos:sync:reset-epoch:v1";
 const INVOICE_SYNC_REPAIR_KEY = "visionary:pos:sync:invoice-repair:v1";
 const INVOICE_SYNC_REPAIR_VERSION = "2026-08-05-iphone-invoices-v1";
 const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
-const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-11-cross-device-dashboard-v2";
+// Force one complete replay after cursor uniqueness was strengthened on the
+// server. This repairs any device whose earlier numeric cursor landed in a
+// timestamp tie, then future incremental pulls remain safe.
+const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-17-monotonic-sync-cursor-v3";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
 const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v4";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only

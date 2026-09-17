@@ -5,6 +5,7 @@ import {
   Barcode,
   Boxes,
   Building2,
+  ClipboardPaste,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -48,7 +49,6 @@ import {
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
-  loginManagementTerminal,
   listInvoiceCashDepositOffsets,
   listMpesaTransactions,
   logout,
@@ -59,6 +59,7 @@ import {
   pushExpense,
   requestInvoiceVoid,
   requestStockTransfer,
+  receiveTerminalPurchase,
   resolveBarcode,
   settleInvoiceWithVerifiedMpesa,
   isTerminalRegistrationError,
@@ -1561,23 +1562,27 @@ export default function App() {
             void preloadCashierFingerprintTemplate(terminal, result.account.id);
             await refreshCatalog(terminal);
           }}
-          onManagementLogin={async (identifier, password, code) => {
-            setError("");
-            const result = await loginManagementTerminal(terminal, identifier, password, code);
-            if (!result.account || !result.sessionToken) return result;
-            resetCashierSessionUi();
-            setAccount(result.account);
-            setSessionToken(result.sessionToken);
-            setStatus(`Signed in as ${result.account.name}.`);
-            writeLastFingerprintUserId(terminal, result.account.id);
-            void preloadCashierFingerprintTemplate(terminal, result.account.id);
-            await refreshCatalog(terminal);
-            return result;
-          }}
         />
         {updateModal}
       </>
     );
+  }
+
+  // Cashier terminals intentionally do not expose the web administration
+  // workspace. Owner and admin work is performed on visionarypos.cloud,
+  // leaving this app focused on cashiers and supervisor-approved operations.
+  if (["owner", "admin"].includes(accountRole)) {
+    return <main className="terminal-role-notice">
+      <section>
+        <span>VisionPOS Cashier</span>
+        <h1>Use the admin website</h1>
+        <p>This terminal is reserved for cashier and supervisor operations. Open <b>visionarypos.cloud</b> to use the owner or admin workspace.</p>
+        <div>
+          <a href="https://visionarypos.cloud" target="_blank" rel="noreferrer">Open admin website</a>
+          <button type="button" onClick={() => { void handleLogout(); }}>Sign out</button>
+        </div>
+      </section>
+    </main>;
   }
 
   return (
@@ -2133,8 +2138,264 @@ export default function App() {
   );
 }
 
+function ManagementTerminalWorkspace({
+  terminal,
+  account,
+  sessionToken,
+  branchName,
+  invoices,
+  products,
+  branches,
+  businessDays,
+  dayClosedAt,
+  online,
+  lastSyncAt,
+  onRefresh,
+  onLogout,
+  onSettleMpesa,
+  onApplyStockCount
+}: {
+  terminal: TerminalCredentials;
+  account: Account;
+  sessionToken: string;
+  branchName: string;
+  invoices: Invoice[];
+  products: Product[];
+  branches: Branch[];
+  businessDays: BusinessDayPeriod[];
+  dayClosedAt: number | null;
+  online: boolean;
+  lastSyncAt?: number;
+  onRefresh: (branchId?: string) => Promise<void>;
+  onLogout: () => void;
+  onSettleMpesa: (invoice: Invoice, transaction: MpesaTransaction, amountCents: number) => Promise<{ paidCents: number; settledAt: number }>;
+  onApplyStockCount: (branchId: string, rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>, startedAt: number) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [invoiceFilter, setInvoiceFilter] = useState<"all" | "open" | "partial" | "paid" | "debts">("all");
+  const [cashierFilter, setCashierFilter] = useState("all");
+  const [businessPeriod, setBusinessPeriod] = useState<"all" | "current">("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [oldestFirst, setOldestFirst] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [activeView, setActiveView] = useState<"invoices" | "mpesa" | "stock-count" | "transfers" | "purchases">("invoices");
+  const [selectedBranchId, setSelectedBranchId] = useState(terminal.branchId);
+  const [branchLoading, setBranchLoading] = useState(false);
+  const managementCatalogLoaded = useRef(false);
+  const selectedBranchName = branches.find((entry) => entry.id === selectedBranchId)?.name || (selectedBranchId === terminal.branchId ? branchName : selectedBranchId);
+  const cashierNames = useMemo(() => [...new Set(invoices.filter((invoice) => invoice.branchId === selectedBranchId).map((invoice) => invoice.cashierName || "Unknown cashier"))].sort(), [invoices, selectedBranchId]);
+
+  useEffect(() => {
+    if (managementCatalogLoaded.current) return;
+    managementCatalogLoaded.current = true;
+    void onRefresh(selectedBranchId);
+  }, [onRefresh, selectedBranchId]);
+
+  async function changeManagementBranch(nextBranchId: string) {
+    if (!nextBranchId || nextBranchId === selectedBranchId || branchLoading) return;
+    setBranchLoading(true);
+    setSelectedBranchId(nextBranchId);
+    setSelectedInvoice(null);
+    setCashierFilter("all");
+    setQuery("");
+    try {
+      await onRefresh(nextBranchId);
+    } finally {
+      setBranchLoading(false);
+    }
+  }
+
+  const filteredInvoices = useMemo(() => invoices
+    .filter((invoice) => invoice.branchId === selectedBranchId)
+    .filter((invoice) => invoice.voidRequestStatus !== "approved")
+    .filter((invoice) => {
+      const due = outstanding(invoice) > 0;
+      const paid = !due;
+      const partial = due && Number(invoice.paidCents || 0) > 0;
+      const debt = due && (Boolean(invoice.carriedOver) || isOverdueOpenInvoice(invoice));
+      return invoiceFilter === "all" || (invoiceFilter === "open" && due) || (invoiceFilter === "partial" && partial) || (invoiceFilter === "paid" && paid) || (invoiceFilter === "debts" && debt);
+    })
+    .filter((invoice) => cashierFilter === "all" || (invoice.cashierName || "Unknown cashier") === cashierFilter)
+    .filter((invoice) => businessPeriod !== "current" || Number(invoice.ts || 0) >= (Number(dayClosedAt || 0) || Date.parse(businessDateTimeBoundary(`${businessDateValue()}T00:00`, "start"))))
+    .filter((invoice) => !query.trim() || invoiceSearchText(invoice).includes(query.trim().toLowerCase()))
+    .filter((invoice) => !fromDate || new Date(Number(invoice.ts || 0)).toISOString().slice(0, 10) >= fromDate)
+    .filter((invoice) => !toDate || new Date(Number(invoice.ts || 0)).toISOString().slice(0, 10) <= toDate)
+    .sort((a, b) => oldestFirst ? Number(a.ts || 0) - Number(b.ts || 0) : Number(b.ts || 0) - Number(a.ts || 0)), [businessPeriod, cashierFilter, dayClosedAt, fromDate, invoiceFilter, invoices, oldestFirst, query, selectedBranchId, toDate]);
+  const openInvoices = filteredInvoices.filter((invoice) => outstanding(invoice) > 0);
+  const balanceDue = openInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
+
+  return <main className="management-workspace">
+    <header className="management-topbar">
+      <div className="brand"><span>V</span><strong>Vision<b>POS</b></strong></div>
+      <div className="management-terminal-meta">
+        <span className={online ? "management-online" : "management-offline"}><i />{online ? "Online" : "Offline"}</span>
+        <span><Building2 size={17} />{selectedBranchName}</span>
+        <span>{account.name} · {account.role || "admin"}</span>
+        <button type="button" onClick={onLogout}><LogOut size={16} />Sign out</button>
+      </div>
+    </header>
+
+    <section className="management-content">
+      <nav className="management-commandbar" aria-label="Branch operations">
+        <div className="management-branch-identity">
+          <span><Building2 size={18} /></span>
+          <label><small>Branch operations</small><select value={selectedBranchId} disabled={branchLoading} onChange={(event) => { void changeManagementBranch(event.target.value); }}>{branches.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        </div>
+        <div className="management-command-tabs" role="tablist" aria-label="Management workspace">
+          <button type="button" role="tab" aria-selected={activeView === "invoices"} className={activeView === "invoices" ? "active" : ""} onClick={() => setActiveView("invoices")}><FileText size={17} />Invoices</button>
+          <button type="button" role="tab" aria-selected={activeView === "mpesa"} className={activeView === "mpesa" ? "active" : ""} onClick={() => setActiveView("mpesa")}><Smartphone size={17} />M-Pesa</button>
+          <button type="button" role="tab" aria-selected={activeView === "stock-count"} className={activeView === "stock-count" ? "active" : ""} onClick={() => setActiveView("stock-count")}><Boxes size={17} />Stock count</button>
+          <button type="button" role="tab" aria-selected={activeView === "transfers"} className={activeView === "transfers" ? "active" : ""} onClick={() => setActiveView("transfers")}><ArrowLeftRight size={17} />Transfers</button>
+          <button type="button" role="tab" aria-selected={activeView === "purchases"} className={activeView === "purchases" ? "active" : ""} onClick={() => setActiveView("purchases")}><WalletCards size={17} />Purchases</button>
+        </div>
+        <button type="button" className="management-refresh" disabled={branchLoading} onClick={() => { void onRefresh(selectedBranchId); }}><RefreshCw size={16} />{branchLoading ? "Loading" : "Sync"}</button>
+      </nav>
+
+      {activeView === "invoices" && <section className="management-invoice-panel">
+        <div className="management-invoice-head">
+          <div><span>Invoice clearing</span><h2>All {selectedBranchName} cashier invoices</h2><p>{openInvoices.length} open · {money(balanceDue)} due</p></div>
+          <label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search receipt, customer, cashier, or code" /></label>
+        </div>
+        <div className="management-filters">
+          <div className="management-filter-tabs" role="group" aria-label="Invoice status">
+            {(["all", "open", "partial", "paid", "debts"] as const).map((filter) => <button type="button" key={filter} className={invoiceFilter === filter ? "active" : ""} onClick={() => setInvoiceFilter(filter)}>{filter === "all" ? "All" : filter === "partial" ? "Part paid" : filter[0].toUpperCase() + filter.slice(1)}</button>)}
+          </div>
+          <select value={businessPeriod} onChange={(event) => setBusinessPeriod(event.target.value as "all" | "current")} aria-label="Business day"><option value="all">All dates</option><option value="current">Current business day</option></select>
+          <select value={cashierFilter} onChange={(event) => setCashierFilter(event.target.value)}><option value="all">All cashiers</option>{cashierNames.map((name) => <option key={name} value={name}>{name}</option>)}</select>
+          <label>From<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
+          <label>To<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
+          <button type="button" className="management-sort" onClick={() => setOldestFirst((value) => !value)}>{oldestFirst ? "Oldest first" : "Newest first"}</button>
+          <button type="button" className="management-clear-filters" onClick={() => { setInvoiceFilter("all"); setCashierFilter("all"); setBusinessPeriod("all"); setFromDate(""); setToDate(""); setQuery(""); }}>Clear</button>
+        </div>
+        <div className="management-invoice-list">
+          {filteredInvoices.length === 0 ? <div className="management-empty">No invoices match these filters.</div> : filteredInvoices.map((invoice) => (
+            <button type="button" key={invoice.id} className="management-invoice-row" onClick={() => setSelectedInvoice(invoice)}>
+              <span><b>{invoice.number}</b><small>{invoiceCustomerLabel(invoice)} · {invoice.cashierName || "Cashier"}</small></span>
+              <time>{invoiceDate(invoice)}</time>
+              <strong>{money(outstanding(invoice))}</strong>
+              <em>Clear</em>
+            </button>
+          ))}
+        </div>
+        <footer>Last branch sync: {syncLabel(lastSyncAt)}</footer>
+      </section>}
+      {activeView === "mpesa" && <section className="management-tool-panel management-mpesa-panel">
+        <CashierMpesaView branchId={selectedBranchId} branchName={selectedBranchName} sessionToken={sessionToken} businessDays={businessDays} dayClosedAt={dayClosedAt} onTransactionsViewed={() => {}} onClose={() => setActiveView("invoices")} />
+      </section>}
+      {activeView === "stock-count" && <section className="management-tool-panel management-stock-count-panel">
+        <SupervisorStockCountView terminal={terminal} account={account} sessionToken={sessionToken} branchName={selectedBranchName} products={products} onClose={() => setActiveView("invoices")} onApply={(rows, startedAt) => onApplyStockCount(selectedBranchId, rows, startedAt)} />
+      </section>}
+      {activeView === "transfers" && <section className="management-tool-panel management-transfer-panel">
+        <StockTransferRequestView branchName={selectedBranchName} sourceBranchId={selectedBranchId} branches={branches} products={products} requests={[]} onClose={() => setActiveView("invoices")} onSave={async (request) => {
+          await requestStockTransfer(terminal, account, request, { sessionToken, branchId: selectedBranchId });
+          await onRefresh(selectedBranchId);
+          setActiveView("invoices");
+        }} />
+      </section>}
+      {activeView === "purchases" && <section className="management-tool-panel management-purchase-panel">
+        <PurchaseReceivingView branchName={selectedBranchName} products={products} onClose={() => setActiveView("invoices")} onReceive={async (purchase) => {
+          await receiveTerminalPurchase(sessionToken, selectedBranchId, account, purchase);
+          await onRefresh(selectedBranchId);
+        }} />
+      </section>}
+    </section>
+
+    {selectedInvoice && <InvoiceDetailSlideOver invoice={selectedInvoice} side="left" sessionToken={sessionToken} account={account} dayClosedAt={dayClosedAt} cashierName={account.name} branchName={selectedBranchName} managementOnly onReprint={() => {}} onSaveNote={async () => {}} onRequestVoid={async () => {}} onSettleMpesa={onSettleMpesa} onClose={() => setSelectedInvoice(null)} />}
+  </main>;
+}
+
 function mpesaDateBoundary(value: string, edge: "start" | "end" = "start") {
   return businessDateTimeBoundary(value, edge);
+}
+
+function PurchaseReceivingView({
+  branchName,
+  products,
+  onClose,
+  onReceive
+}: {
+  branchName: string;
+  products: Product[];
+  onClose: () => void;
+  onReceive: (purchase: { supplierName: string; items: Array<{ productId: string; productName: string; qty: number; unitCostCents: number }> }) => Promise<void>;
+}) {
+  const [supplierName, setSupplierName] = useState("");
+  const [query, setQuery] = useState("");
+  const [lines, setLines] = useState<Array<{ productId: string; productName: string; qty: string; unitCost: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const visibleProducts = useMemo(() => {
+    const term = normalize(query);
+    return products.filter((product) => !term || [product.name, product.sku, product.barcode, ...(product.barcodes || [])]
+      .filter(Boolean).some((value) => normalize(String(value)).includes(term))).slice(0, 12);
+  }, [products, query]);
+  const totalCents = lines.reduce((sum, line) => sum + Math.max(0, Number(line.qty) || 0) * Math.round(Math.max(0, Number(line.unitCost) || 0) * 100), 0);
+
+  function addProduct(product: Product) {
+    setLines((current) => current.some((line) => line.productId === product.id) ? current : [...current, {
+      productId: product.id,
+      productName: product.name,
+      qty: "1",
+      unitCost: ""
+    }]);
+  }
+
+  async function receive() {
+    const items = lines.map((line) => ({
+      productId: line.productId,
+      productName: line.productName,
+      qty: Math.floor(Number(line.qty)),
+      unitCostCents: Math.round(Number(line.unitCost) * 100)
+    })).filter((line) => line.productId && Number.isInteger(line.qty) && line.qty > 0 && Number.isInteger(line.unitCostCents) && line.unitCostCents >= 0);
+    if (!items.length) {
+      setMessage("Add at least one product with a whole quantity and buying cost.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await onReceive({ supplierName, items });
+      setLines([]);
+      setSupplierName("");
+      setQuery("");
+      setMessage("Purchase received and stock updated across the branch.");
+    } catch (error) {
+      setMessage(String(error).replace(/^Error:\s*/, ""));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="purchase-receive" aria-labelledby="terminal-purchases-title">
+    <header className="management-tool-head">
+      <div><span>Purchases</span><h2 id="terminal-purchases-title">New purchase</h2><p>{branchName} · build the delivery first, then receive it once into the shared stock ledger.</p></div>
+      <button type="button" className="management-close-tool" onClick={onClose}><X size={17} />Close</button>
+    </header>
+    {message && <div className="purchase-receive-message" role="status">{message}</div>}
+    <div className="purchase-receive-form">
+      <label>Supplier<input value={supplierName} onChange={(event) => setSupplierName(event.target.value)} placeholder="Supplier name" maxLength={100} /></label>
+      <label>Find product<span className="purchase-product-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product, SKU, or barcode" autoFocus /></span></label>
+    </div>
+    {query.trim() && <div className="purchase-product-results" aria-label="Matching products">
+      {visibleProducts.length === 0 ? <div className="purchase-product-empty">No products match “{query}”.</div> : visibleProducts.map((product) => <button type="button" key={product.id} onClick={() => addProduct(product)} disabled={lines.some((line) => line.productId === product.id)}>
+        <span><b>{product.name}</b><small>{product.sku || product.barcode || "No SKU"} · {productStock(product)} on hand</small></span><Plus size={17} />
+      </button>)}
+    </div>}
+    <div className="purchase-lines">
+      <div className="purchase-lines-head"><b>Purchase lines</b><span>{money(totalCents)}</span></div>
+      {lines.length === 0 ? <div className="purchase-lines-empty"><ShoppingCart size={22} /><b>Start a purchase batch</b><span>Search the catalogue above, add every delivered product, then enter the quantity and unit cost.</span></div> : <>
+        <div className="purchase-line-columns" aria-hidden="true"><span>Product</span><span>Quantity</span><span>Unit cost</span><span>Line total</span><span /></div>
+        {lines.map((line) => <div className="purchase-line" key={line.productId}>
+        <b>{line.productName}</b>
+        <label>Qty<input inputMode="numeric" value={line.qty} onChange={(event) => setLines((current) => current.map((entry) => entry.productId === line.productId ? { ...entry, qty: event.target.value.replace(/\D/g, "") } : entry))} /></label>
+        <label>Buying cost<input inputMode="decimal" value={line.unitCost} onChange={(event) => setLines((current) => current.map((entry) => entry.productId === line.productId ? { ...entry, unitCost: event.target.value.replace(/[^\d.]/g, "") } : entry))} placeholder="0.00" /></label>
+        <strong>{money((Number(line.qty) || 0) * Math.round((Number(line.unitCost) || 0) * 100))}</strong>
+        <button type="button" aria-label={`Remove ${line.productName}`} onClick={() => setLines((current) => current.filter((entry) => entry.productId !== line.productId))}><Trash2 size={17} /></button>
+      </div>)}</>}
+    </div>
+    <footer className="purchase-receive-footer"><div><span>Batch total</span><b>{money(totalCents)}</b></div><button type="button" disabled={busy || lines.length === 0} onClick={() => void receive()}><Check size={17} />{busy ? "Receiving…" : "Receive purchase"}</button></footer>
+  </section>;
 }
 
 function cashierMpesaStatus(transaction: MpesaTransaction) {
@@ -2514,18 +2775,18 @@ function SupervisorStockCountView({
   branchName: string;
   products: Product[];
   onClose: () => void;
-  onApply: (rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>) => Promise<void>;
+  onApply: (rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>, startedAt: number) => Promise<void>;
 }) {
-  const [unlocked, setUnlocked] = useState(false);
   const [pin, setPin] = useState("");
   const [query, setQuery] = useState("");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [sessionStartedAt] = useState(() => Date.now());
   const filteredProducts = useMemo(() => {
     const term = normalize(query);
     return products.filter((product) => !term || [product.name, product.sku, product.barcode, ...(product.barcodes || [])]
-      .filter(Boolean).some((value) => normalize(String(value)).includes(term))).slice(0, 120);
+      .filter(Boolean).some((value) => normalize(String(value)).includes(term)));
   }, [products, query]);
   const countRows = Object.entries(counts).flatMap(([productId, raw]) => {
     const product = products.find((entry) => entry.id === productId);
@@ -2545,7 +2806,7 @@ function SupervisorStockCountView({
     setPhysicalCount(product.id, Math.max(0, (Number.isFinite(current) ? current : productStock(product)) + amount));
   }
 
-  async function verify(method: "fingerprint" | "pin", purpose: "open" | "approve") {
+  async function verify(method: "fingerprint" | "pin", _legacyPurpose?: "open" | "approve") {
     if (busy) return;
     if (method === "pin" && !/^\d{4}$/.test(pin)) {
       setMessage("Enter the four-digit supervisor PIN.");
@@ -2557,22 +2818,20 @@ function SupervisorStockCountView({
       if (method === "fingerprint") await verifyCashierFingerprint(terminal, account, sessionToken);
       else await verifyCheckoutWithSupervisorPin(terminal, account, sessionToken, pin);
       setPin("");
-      if (purpose === "open") {
-        setUnlocked(true);
-        setMessage("Supervisor verification accepted. Enter the physical counts, then approve the final changes.");
-      } else {
-        await onApply(changes);
-        onClose();
-      }
+      await onApply(countRows, sessionStartedAt);
+      onClose();
     } catch (error) {
-      setMessage(String(error).replace(/^Error:\s*/, ""));
+      const errorText = String(error).replace(/^Error:\s*/, "");
+      setMessage(errorText.includes("stock_quantity_changed_refresh_and_retry")
+        ? "Stock changed on another device. Sync, review the latest figures, then approve again."
+        : errorText);
       setPin("");
     } finally {
       setBusy(false);
     }
   }
 
-  if (!unlocked) return <section className="stock-count-panel stock-count-gate" aria-labelledby="terminal-stock-count-title">
+  if (false) return <section className="stock-count-panel stock-count-gate" aria-labelledby="terminal-stock-count-title">
     <header className="stock-count-header">
       <div><span className="stock-count-eyebrow"><ShieldCheck size={14} />Restricted inventory control</span><h2 id="terminal-stock-count-title">Stock count</h2><p>{branchName}</p></div>
       <button className="stock-count-close" onClick={onClose} aria-label="Close stock count"><X size={20} /></button>
@@ -2593,14 +2852,14 @@ function SupervisorStockCountView({
 
   return <section className="stock-count-panel" aria-labelledby="terminal-stock-count-title">
     <header className="stock-count-header">
-      <div><span className="stock-count-eyebrow"><ShieldCheck size={14} />Supervisor verified</span><h2 id="terminal-stock-count-title">Stock count</h2><p>{branchName}</p></div>
+      <div><span className="stock-count-eyebrow"><ShieldCheck size={14} />Supervisor approval required to confirm</span><h2 id="terminal-stock-count-title">Stock count</h2><p>{branchName}</p></div>
       <button className="stock-count-close" onClick={onClose} aria-label="Close stock count"><X size={20} /></button>
     </header>
     {message && <div className="stock-count-message">{message}</div>}
     <div className="stock-count-summary" aria-label="Stock count summary">
       <div><span>Reviewed</span><b>{countRows.length}</b></div>
       <div className={changes.length ? "has-changes" : ""}><span>Adjustments</span><b>{changes.length}</b></div>
-      <small>Only adjustments are saved</small>
+      <small>Enter physical quantities, then confirm the completed count with PIN or fingerprint</small>
     </div>
     <div className="stock-count-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product, SKU, or barcode" autoFocus /></div>
     <div className="stock-count-list" aria-live="polite">
@@ -2615,8 +2874,8 @@ function SupervisorStockCountView({
       {filteredProducts.length === 0 && <div className="stock-count-empty">No matching product.</div>}
     </div>
     <footer className="stock-count-approval">
-      <div className="stock-count-pin-row"><input className="stock-count-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Approval PIN" aria-label="Supervisor approval PIN" /><button className="stock-count-secondary" disabled={busy || changes.length === 0 || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "approve")}><Check size={18} />Approve</button></div>
-      <button className="stock-count-primary" disabled={busy || changes.length === 0} onClick={() => void verify("fingerprint", "approve")}><Fingerprint size={19} />Approve with fingerprint</button>
+      <div className="stock-count-pin-row"><input className="stock-count-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(event) => { if (event.key === "Enter") void verify("pin"); }} placeholder="Approval PIN" aria-label="Supervisor approval PIN" /><button className="stock-count-secondary" disabled={busy || countRows.length === 0 || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin")}><Check size={18} />Confirm count</button></div>
+      <button className="stock-count-primary" disabled={busy || countRows.length === 0} onClick={() => void verify("fingerprint")}><Fingerprint size={19} />Confirm with fingerprint</button>
     </footer>
   </section>;
 }
@@ -2675,6 +2934,7 @@ function InvoiceDetailSlideOver({
   onSaveNote,
   onRequestVoid,
   onSettleMpesa,
+  managementOnly = false,
   onClose
 }: {
   invoice: Invoice;
@@ -2688,6 +2948,7 @@ function InvoiceDetailSlideOver({
   onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
   onRequestVoid: (invoice: Invoice, reason: string) => Promise<void>;
   onSettleMpesa: (invoice: Invoice, transaction: MpesaTransaction, amountCents: number) => Promise<{ paidCents: number; settledAt: number }>;
+  managementOnly?: boolean;
   onClose: () => void;
 }) {
   const items = invoice.items || [];
@@ -2701,6 +2962,7 @@ function InvoiceDetailSlideOver({
   const [voidStatus, setVoidStatus] = useState<"idle" | "sending" | "error">("idle");
   const [mpesaState, setMpesaState] = useState<{ loading: boolean; error: string; transactions: MpesaTransaction[] }>({ loading: false, error: "", transactions: [] });
   const [selectedMpesaId, setSelectedMpesaId] = useState("");
+  const [mpesaSearch, setMpesaSearch] = useState("");
   const [mpesaAmount, setMpesaAmount] = useState("");
   const [mpesaStatus, setMpesaStatus] = useState<"idle" | "submitting" | "error" | "saved">("idle");
   const [auditNonce, setAuditNonce] = useState(0);
@@ -2721,6 +2983,35 @@ function InvoiceDetailSlideOver({
   const currentBusinessStart = dayClosedAt && Number.isFinite(dayClosedAt)
     ? new Date(dayClosedAt + 1).toISOString()
     : mpesaDateBoundary(`${businessDateValue()}T00:00`, "start");
+  const visibleMpesaReceipts = useMemo(() => {
+    const query = mpesaSearch.trim().toLowerCase();
+    if (!query) return mpesaState.transactions;
+    const compact = query.replace(/[^a-z0-9]/g, "");
+    const codeSuffix = compact.length >= 4 ? compact.slice(-4) : compact;
+    return mpesaState.transactions.filter((transaction) => {
+      const text = [transaction.referenceMasked, transaction.referenceLast4, transaction.payerName, transaction.payerPhoneLast4]
+        .filter(Boolean).join(" ").toLowerCase();
+      return text.includes(query) || (codeSuffix.length >= 3 && String(transaction.referenceLast4 || "").toLowerCase().includes(codeSuffix));
+    });
+  }, [mpesaSearch, mpesaState.transactions]);
+
+  function searchMpesaReceipt(value: string) {
+    setMpesaSearch(value);
+    setMpesaStatus("idle");
+    const compact = value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const suffix = compact.length >= 4 ? compact.slice(-4) : "";
+    if (!suffix) return;
+    const match = mpesaState.transactions.find((transaction) => String(transaction.referenceLast4 || "").toLowerCase() === suffix);
+    if (match) setSelectedMpesaId(match.id);
+  }
+
+  async function pasteMpesaReceiptCode() {
+    try {
+      searchMpesaReceipt(await navigator.clipboard.readText());
+    } catch {
+      setMpesaStatus("error");
+    }
+  }
 
   useEffect(() => {
     setOpenNote(invoice.note || "");
@@ -2728,6 +3019,7 @@ function InvoiceDetailSlideOver({
     setVoidReason("");
     setVoidStatus("idle");
     setSelectedMpesaId("");
+    setMpesaSearch("");
     setMpesaAmount(balanceCents > 0 ? String(balanceCents / 100) : "");
     setMpesaStatus("idle");
   }, [invoice.id, invoice.note]);
@@ -2855,7 +3147,7 @@ function InvoiceDetailSlideOver({
           <div className="balance-due"><span>Balance due</span><b>{money(balanceCents)}</b></div>
         </div>
 
-        <section className="invoice-cash-offset-audit" aria-label="Cash deposit audit">
+        {!managementOnly && <section className="invoice-cash-offset-audit" aria-label="Cash deposit audit">
           <div className="invoice-cash-offset-head">
             <div><ShieldCheck size={17} /><span>Cash deposit audit</span></div>
             <b>{money(activeCashOffsetTotal)}</b>
@@ -2883,7 +3175,7 @@ function InvoiceDetailSlideOver({
               </div>
             );
           })}
-        </section>
+        </section>}
 
         {canSettleWithMpesa ? (
           <section className="invoice-mpesa-settlement" aria-label="Verified M-Pesa settlement">
@@ -2892,13 +3184,21 @@ function InvoiceDetailSlideOver({
               <em>{mpesaState.loading ? "Loading receipts..." : `${money(balanceCents)} due today`}</em>
             </div>
             <label>
-              <span>Receipt code</span>
+              <span>Find receipt</span>
+              <div className="invoice-mpesa-search">
+                <Search size={16} />
+                <input value={mpesaSearch} onChange={(event) => searchMpesaReceipt(event.target.value)} placeholder="Search or paste M-Pesa code" autoComplete="off" />
+                <button type="button" onClick={() => { void pasteMpesaReceiptCode(); }} title="Paste M-Pesa code"><ClipboardPaste size={16} />Paste</button>
+              </div>
+            </label>
+            <label>
+              <span>Verified receipt</span>
               <select value={selectedMpesaId} disabled={mpesaState.loading || mpesaStatus === "submitting"} onChange={(event) => {
                 setSelectedMpesaId(event.target.value);
                 setMpesaStatus("idle");
               }}>
                 <option value="">Select verified M-Pesa receipt</option>
-                {mpesaState.transactions.map((transaction) => (
+                {visibleMpesaReceipts.map((transaction) => (
                   <option key={transaction.id} value={transaction.id}>
                     {transaction.referenceMasked || transaction.referenceLast4} · {transaction.payerName || "M-Pesa payer"} · {money(transaction.remainingCents)} available
                   </option>
@@ -2930,7 +3230,7 @@ function InvoiceDetailSlideOver({
           </div>
         )}
 
-        <div className="invoice-open-note">
+        {!managementOnly && <div className="invoice-open-note">
           <div className="invoice-open-note-head">
             <span><Pencil size={15} />OPEN NOTE</span>
             <em>{noteStatus === "saved" ? "Saved" : noteStatus === "saving" ? "Saving..." : noteStatus === "error" ? "Try again" : "only you can edit"}</em>
@@ -2953,9 +3253,9 @@ function InvoiceDetailSlideOver({
           >
             <Check size={16} />Save note
           </button>
-        </div>
+        </div>}
 
-        <div className={`invoice-void-request ${invoice.voidRequestStatus || "idle"}`}>
+        {!managementOnly && <div className={`invoice-void-request ${invoice.voidRequestStatus || "idle"}`}>
           <div className="invoice-void-request-head">
             <span><ShieldCheck size={16} />VOID INVOICE</span>
             {invoice.voidRequestStatus === "pending" && <em>Awaiting supervisor</em>}
@@ -2987,11 +3287,11 @@ function InvoiceDetailSlideOver({
             </>
           )}
           {invoice.voidReason && <small>Reason: {invoice.voidReason}</small>}
-        </div>
+        </div>}
 
-        <footer className="invoice-slide-actions">
+        {!managementOnly && <footer className="invoice-slide-actions">
           <button type="button" disabled={!cashOffsetAudit.loaded} onClick={() => onReprint(invoice, cashOffsetAudit.offsets)}><FileText size={18} />{cashOffsetAudit.loading ? "Loading audit..." : "Reprint"}</button>
-        </footer>
+        </footer>}
       </section>
     </Drawer>
   );
@@ -4173,8 +4473,7 @@ function LoginScreen({
   updateVersion,
   onCheckForUpdates,
   onInstallUpdate,
-  onCashierLogin,
-  onManagementLogin
+  onCashierLogin
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
@@ -4187,45 +4486,19 @@ function LoginScreen({
   onCheckForUpdates: () => Promise<void> | void;
   onInstallUpdate: () => void;
   onCashierLogin: (employeeNumber: string, pin: string) => Promise<void>;
-  onManagementLogin: (identifier: string, password: string, code: string) => Promise<{ verificationRequired?: boolean; emailVerificationRequired?: boolean; maskedTarget?: string }>;
 }) {
-  const [mode, setMode] = useState<"pin" | "management">("pin");
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
-  const [code, setCode] = useState("");
-  const [verificationPending, setVerificationPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(error);
-  const management = mode === "management";
-  const canSubmit = !busy && employeeNumber.trim().length > 0 && (management ? (verificationPending ? /^\d{6}$/.test(code) : pin.length > 0) : pin.length >= 4);
-
-  function chooseMode(nextMode: "pin" | "management") {
-    setMode(nextMode);
-    setPin("");
-    setCode("");
-    setVerificationPending(false);
-    setMessage("");
-  }
+  const canSubmit = !busy && employeeNumber.trim().length > 0 && pin.length >= 4;
 
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
     setMessage("");
     try {
-      if (!management) {
-        await onCashierLogin(employeeNumber, pin);
-        return;
-      }
-      const result = await onManagementLogin(employeeNumber, pin, verificationPending ? code : "");
-      if (result.emailVerificationRequired) {
-        setMessage(`Confirm the email verification code sent to ${result.maskedTarget || "your email"}, then sign in again.`);
-        return;
-      }
-      if (result.verificationRequired) {
-        setVerificationPending(true);
-        setCode("");
-        setMessage(`Enter the six-digit code sent to ${result.maskedTarget || "your email"}.`);
-      }
+      await onCashierLogin(employeeNumber, pin);
     } catch (err) {
       setMessage(String(err).replace(/^Error:\s*/, ""));
     } finally {
@@ -4235,23 +4508,18 @@ function LoginScreen({
 
   return (
     <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status} onClose={onClose}>
-      <LoginCard eyebrow="Trusted Terminal" title={management ? "Management access" : "Cashier and supervisor login"} subtitle={management ? "Owner and admin accounts use email, password, and a verification code." : "Cashiers and supervisors use their employee number and PIN."}>
+      <LoginCard eyebrow="Trusted Terminal" title="Cashier sign in" subtitle="Cashiers and supervisors sign in with their employee number and PIN.">
         <div className="terminal-summary">
           <ConnectionIndicator label="Terminal Registered" />
           <span>{branch?.name || terminal.branchId} / {terminal.terminalName}</span>
         </div>
         <p>{branch?.name || terminal.branchId} · {terminal.terminalName}</p>
-        <div className="terminal-summary">
-          <button type="button" className={management ? "" : "premium-primary"} style={{ minHeight: 38 }} onClick={() => chooseMode("pin")}>Cashier / supervisor</button>
-          <button type="button" className={management ? "premium-primary" : ""} style={{ minHeight: 38 }} onClick={() => chooseMode("management")}>Owner / admin</button>
-        </div>
-        <label>{management ? "Email address" : "Employee or supervisor number"}</label>
+        <label>Employee or supervisor number</label>
         <div className="premium-input"><UserRound size={20} /><input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} autoFocus /></div>
-        <label>{management ? "Password" : "PIN"}</label>
-        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode={management ? "text" : "numeric"} disabled={management && verificationPending} /></div>
-        {management && verificationPending && <><label>Email verification code</label><div className="premium-input"><KeyRound size={20} /><input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" autoFocus /></div></>}
+        <label>PIN</label>
+        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" /></div>
         {message && <div className="error">{message}</div>}
-        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : management && verificationPending ? "Verify and sign in" : management ? "Continue with password" : "Sign in with PIN"}</button>
+        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign in with PIN"}</button>
         <PreLoginUpdateControl updateState={updateState} updateVersion={updateVersion} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
       </LoginCard>
     </AuthShell>

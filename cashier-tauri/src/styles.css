@@ -4536,6 +4536,29 @@ body {
   grid-template-rows: auto auto auto auto 1fr auto;
 }
 
+.terminal-role-notice {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at top left, #e8f3ff, transparent 38%), #f5f8fc;
+}
+.terminal-role-notice > section {
+  width: min(100%, 520px);
+  padding: 34px;
+  border: 1px solid #dce6f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(30, 55, 85, .12);
+  color: #17233b;
+}
+.terminal-role-notice span { color: #4a67d8; font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.terminal-role-notice h1 { margin: 8px 0; font-size: 28px; letter-spacing: -.03em; }
+.terminal-role-notice p { margin: 0; color: #65748b; line-height: 1.55; }
+.terminal-role-notice > section > div { display: flex; gap: 10px; margin-top: 25px; }
+.terminal-role-notice a,.terminal-role-notice button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; padding: 0 15px; border: 1px solid #b9c9e9; border-radius: 9px; background: #fff; color: #294ec0; font: inherit; font-weight: 850; text-decoration: none; }
+.terminal-role-notice a { border-color: #355dd0; background: #355dd0; color: #fff; }
+
 .debts-center-panel.has-business-day-filter {
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
 }
@@ -6171,6 +6194,53 @@ body {
 .invoice-mpesa-submit:disabled { cursor: not-allowed; opacity: .46; }
 .invoice-mpesa-error { margin: 0; color: #fda4af; font-size: 12px; font-weight: 750; }
 .invoice-mpesa-success { margin: 0; color: #86efac; font-size: 12px; font-weight: 800; }
+
+.invoice-mpesa-search { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 42px; padding-left: 11px; border: 1px solid rgba(94, 234, 212, .28); border-radius: 10px; background: rgba(2, 6, 23, .72); color: #99f6e4; }
+.invoice-mpesa-search input { min-width: 0; height: 40px; min-height: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.invoice-mpesa-search button { height: 32px; margin-right: 5px; padding: 0 9px; border: 1px solid rgba(94, 234, 212, .28); border-radius: 8px; background: rgba(45, 212, 191, .12); color: #99f6e4; font: inherit; font-size: 11px; font-weight: 850; }
+
+.management-workspace { min-height: 100vh; background: #f5f8fb; color: #172033; }
+.management-topbar { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 28px; border-bottom: 1px solid #dce5ed; background: #fff; }
+.management-terminal-meta { display: flex; align-items: center; justify-content: flex-end; gap: 12px; color: #64748b; font-size: 13px; font-weight: 750; }
+.management-terminal-meta > span { display: inline-flex; align-items: center; gap: 6px; }
+.management-terminal-meta button { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: #c2414c; font: inherit; font-weight: 850; }
+.management-online,.management-offline { padding: 7px 10px; border-radius: 999px; }
+.management-online { background: #e4f8eb; color: #16864a; }.management-offline { background: #fff1f2; color: #be3347; }.management-online i,.management-offline i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.management-content { width: min(1320px, calc(100% - 40px)); margin: 0 auto; padding: 32px 0 48px; }
+.management-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }.management-heading span,.management-invoice-head > div > span { color: #3d67d7; font-size: 11px; font-weight: 950; letter-spacing: .09em; text-transform: uppercase; }.management-heading h1 { margin: 4px 0; font-size: 28px; }.management-heading p { margin: 0; color: #718096; }.management-refresh { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 15px; border: 1px solid #b8c9e9; border-radius: 10px; background: #fff; color: #2454bf; font-weight: 850; }
+.management-actions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; margin: 22px 0; }.management-actions > button { display: flex; align-items: center; gap: 11px; min-height: 72px; padding: 13px; border: 1px solid #dce5ed; border-radius: 12px; background: #fff; color: #21304a; text-align: left; transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }.management-actions > button:hover,.management-actions > button.active { border-color: #6d8fe5; box-shadow: 0 5px 16px rgba(37, 84, 191, .10); background: #f7f9ff; }.management-actions > button.active { box-shadow: inset 0 3px #426ae0, 0 5px 16px rgba(37, 84, 191, .08); }.management-actions b,.management-actions small { display: block; }.management-actions b { font-size: 13px; }.management-actions small { margin-top: 3px; color: #718096; font-size: 11px; }.management-actions svg { flex: 0 0 auto; color: #3962cf; }
+.management-invoice-panel { overflow: hidden; border: 1px solid #dce5ed; border-radius: 16px; background: #fff; }.management-invoice-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding: 20px; border-bottom: 1px solid #e5edf3; }.management-invoice-head h2 { margin: 4px 0; font-size: 20px; }.management-invoice-head p { margin: 0; color: #718096; font-size: 13px; }.management-invoice-head label { min-width: min(400px, 44%); display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 12px; border: 1px solid #d5e0ea; border-radius: 10px; color: #7a8ba1; }.management-invoice-head input { width: 100%; min-width: 0; border: 0; outline: 0; font: inherit; }
+.management-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 12px 20px; border-bottom: 1px solid #e5edf3; background: #fafcff; }.management-filter-tabs { display: inline-flex; gap: 3px; padding: 3px; border-radius: 9px; background: #edf2f7; }.management-filter-tabs button,.management-sort,.management-clear-filters { min-height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #596b83; font-size: 12px; font-weight: 800; }.management-filter-tabs button.active { background: #fff; color: #2657c9; box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }.management-filters select,.management-filters label { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; color: #718096; font-size: 11px; font-weight: 800; }.management-filters select,.management-filters input { min-height: 34px; padding: 0 9px; border: 1px solid #d5e0ea; border-radius: 8px; background: #fff; color: #34445c; font: inherit; }.management-clear-filters { color: #c2414c; }
+.management-invoice-list { display: grid; }.management-invoice-row { display: grid; grid-template-columns: minmax(220px, 1fr) 150px 130px auto; align-items: center; gap: 16px; min-height: 70px; padding: 12px 20px; border: 0; border-bottom: 1px solid #edf2f6; background: #fff; color: #243047; text-align: left; }.management-invoice-row:hover { background: #f6f9ff; }.management-invoice-row span b,.management-invoice-row span small { display: block; }.management-invoice-row span small,.management-invoice-row time { margin-top: 4px; color: #718096; font-size: 12px; }.management-invoice-row strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; }.management-invoice-row em { padding: 7px 10px; border-radius: 8px; background: #e8f3ff; color: #2360c2; font-size: 12px; font-style: normal; font-weight: 900; }.management-invoice-panel footer { padding: 12px 20px; color: #8090a5; font-size: 12px; }.management-empty { padding: 36px; color: #718096; text-align: center; }
+.management-tool-panel { overflow: hidden; min-height: 590px; border: 1px solid #dce5ed; border-radius: 16px; background: #fff; }.management-tool-panel .cashier-mpesa-panel,.management-tool-panel .stock-count-panel,.management-tool-panel .transfer-request-panel { width: 100%; max-width: none; min-height: 0; border-radius: 0; box-shadow: none; }.management-tool-panel .cashier-mpesa-panel { padding: 24px; }.management-tool-panel .stock-count-panel { max-height: none; padding: 24px; background: #10192c; }.management-tool-panel .stock-count-list { max-height: min(58vh, 670px); }.management-tool-panel .transfer-request-panel { padding: 24px; }.management-tool-panel .stock-count-close { display: inline-flex; }.management-tool-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 22px 24px; border-bottom: 1px solid #e5edf3; }.management-tool-head span { color: #3d67d7; font-size: 11px; font-weight: 950; letter-spacing: .09em; text-transform: uppercase; }.management-tool-head h2 { margin: 5px 0; font-size: 21px; }.management-tool-head p { margin: 0; color: #718096; font-size: 13px; }.management-close-tool { display: inline-flex; align-items: center; gap: 6px; min-height: 37px; padding: 0 11px; border: 1px solid #d5e0ea; border-radius: 9px; background: #fff; color: #3c4f69; font: inherit; font-weight: 800; }
+.purchase-receive { padding-bottom: 20px; }.purchase-receive-message { margin: 16px 24px 0; padding: 11px 13px; border-radius: 9px; background: #eaf8ef; color: #177a43; font-size: 13px; font-weight: 750; }.purchase-receive-form { display: grid; grid-template-columns: minmax(220px, .6fr) minmax(260px, 1fr); gap: 13px; padding: 20px 24px 12px; }.purchase-receive-form label,.purchase-line label { display: grid; gap: 5px; color: #607086; font-size: 11px; font-weight: 850; text-transform: uppercase; }.purchase-receive-form input,.purchase-line input { min-height: 40px; padding: 0 11px; border: 1px solid #d5e0ea; border-radius: 9px; background: #fff; color: #20304a; font: inherit; }.purchase-product-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: 210px; overflow: auto; padding: 0 24px 18px; }.purchase-product-results button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 60px; padding: 10px 12px; border: 1px solid #e1e9f0; border-radius: 10px; background: #fbfdff; color: #253550; text-align: left; }.purchase-product-results button:disabled { opacity: .48; }.purchase-product-results b,.purchase-product-results small { display: block; }.purchase-product-results small { margin-top: 3px; color: #7c8ca1; font-size: 11px; }.purchase-product-results svg { color: #3866cf; }.purchase-lines { margin: 0 24px; overflow: hidden; border: 1px solid #e1e9f0; border-radius: 12px; }.purchase-lines-head { display: flex; justify-content: space-between; gap: 12px; padding: 13px 15px; background: #f6f9fc; color: #4e6078; font-size: 13px; }.purchase-lines-empty { padding: 28px; color: #718096; font-size: 13px; text-align: center; }.purchase-line { display: grid; grid-template-columns: minmax(170px, 1fr) 105px 145px 115px 38px; align-items: end; gap: 10px; padding: 12px 15px; border-top: 1px solid #edf2f6; }.purchase-line > b { padding-bottom: 11px; }.purchase-line strong { padding-bottom: 11px; color: #1a7f4c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }.purchase-line > button { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 8px; background: #fff1f2; color: #c2414c; }.purchase-receive-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 16px 24px 0; color: #718096; font-size: 12px; }.purchase-receive-footer button { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 14px; border: 0; border-radius: 9px; background: #3564d3; color: #fff; font: inherit; font-weight: 850; }.purchase-receive-footer button:disabled { opacity: .5; }
+
+@media (max-width: 900px) { .management-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }.purchase-product-results { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .management-topbar { align-items: flex-start; padding: 14px 16px; }.management-terminal-meta { gap: 7px; flex-wrap: wrap; font-size: 11px; }.management-terminal-meta > span:not(.management-online) { display: none; }.management-content { width: min(100% - 24px, 1320px); padding-top: 22px; }.management-heading { align-items: flex-start; }.management-heading h1 { font-size: 23px; }.management-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }.management-invoice-head { display: grid; }.management-invoice-head label { min-width: 0; }.management-invoice-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }.management-invoice-row time { display: none; }.management-invoice-row strong { grid-column: 1; }.management-invoice-row em { grid-column: 2; grid-row: 1 / span 2; }.management-filters { align-items: stretch; }.management-filter-tabs { overflow-x: auto; }.management-filters select,.management-filters label { flex: 1 1 130px; }.management-tool-panel .cashier-mpesa-panel,.management-tool-panel .stock-count-panel,.management-tool-panel .transfer-request-panel { padding: 15px; }.purchase-receive-form { grid-template-columns: 1fr; padding: 16px 15px 10px; }.purchase-product-results { grid-template-columns: 1fr; padding: 0 15px 14px; }.purchase-lines { margin: 0 15px; }.purchase-line { grid-template-columns: 1fr 92px 112px 34px; }.purchase-line > b { grid-column: 1 / -1; padding: 0; }.purchase-line strong { display: none; }.purchase-receive-footer { align-items: stretch; flex-direction: column; margin: 15px; }.purchase-receive-footer button { justify-content: center; } }
+
+/* Management terminals use a single, predictable app scroll surface.  The
+   cashier shell intentionally locks body scrolling; this workspace must not
+   inherit that constraint or create competing inner scrollbars. */
+.management-workspace {
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.management-topbar { position: sticky; top: 0; z-index: 20; min-height: 58px; padding: 0 24px; box-shadow: 0 1px 0 rgba(15, 23, 42, .04); }
+.management-content { width: min(1560px, calc(100% - 36px)); padding: 18px 0 30px; }
+.management-heading { min-height: 52px; }.management-heading h1 { margin: 2px 0; font-size: 25px; }.management-heading p { font-size: 13px; }
+.management-actions { position: sticky; top: 58px; z-index: 12; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; margin: 13px 0; padding: 8px 0; background: #f5f8fb; }.management-actions > button { min-height: 58px; padding: 10px 12px; border-radius: 10px; }.management-actions b { font-size: 13px; }.management-actions small { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.management-invoice-panel { border-radius: 12px; }.management-invoice-head { padding: 15px 18px; }.management-invoice-head h2 { font-size: 18px; }.management-invoice-head label { min-width: 360px; min-height: 38px; }
+.management-filters { align-items: center; gap: 7px; padding: 9px 18px; }.management-filter-tabs { flex: 0 0 auto; }.management-filters select { width: auto; min-width: 148px; flex: 0 0 auto; }.management-filters label { flex: 0 0 auto; }.management-filters label input { width: 132px; }.management-sort,.management-clear-filters { flex: 0 0 auto; }.management-invoice-row { min-height: 58px; padding: 9px 18px; }.management-invoice-row span small,.management-invoice-row time { margin-top: 2px; }.management-invoice-row em { padding: 6px 9px; }
+
+.management-tool-panel { min-height: 0; overflow: visible; border-radius: 12px; }.management-tool-panel .cashier-mpesa-panel,.management-tool-panel .stock-count-panel,.management-tool-panel .transfer-request-panel { height: auto; min-height: 0; }.management-tool-panel .cashier-mpesa-panel { padding: 18px; }.management-tool-panel .cashier-mpesa-list { max-height: none; overflow: visible; }.management-tool-panel .stock-count-panel { display: block; padding: 18px; }.management-tool-panel .stock-count-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; overflow: visible; gap: 7px; padding: 0; }.management-tool-panel .stock-count-row { grid-template-columns: minmax(0, 1fr) 138px; min-height: 58px; padding: 8px 10px; gap: 9px; border-radius: 10px; }.management-tool-panel .stock-count-product b { font-size: 13px; }.management-tool-panel .stock-count-input input { height: 32px; }.management-tool-panel .stock-count-approval { position: sticky; bottom: 0; z-index: 4; margin-top: 12px; padding: 10px 0 0; background: #10192c; }.management-tool-panel .transfer-request-panel { padding: 18px; }
+.purchase-receive-form { padding: 15px 18px 10px; }.purchase-product-results { max-height: none; overflow: visible; padding: 0 18px 14px; }.purchase-product-results button { min-height: 52px; }.purchase-lines { margin: 0 18px; }.purchase-receive-footer { margin: 13px 18px 0; }
+
+@media (max-width: 980px) { .management-actions { position: static; grid-template-columns: repeat(3, minmax(0, 1fr)); }.management-tool-panel .stock-count-list { grid-template-columns: 1fr; }.management-invoice-head { align-items: stretch; }.management-invoice-head label { min-width: 280px; }.management-filters select { min-width: 130px; } }
+@media (max-width: 680px) { .management-workspace { height: 100dvh; }.management-topbar { min-height: 54px; padding: 0 14px; }.management-content { width: min(100% - 20px, 1560px); padding-top: 12px; }.management-heading { min-height: 0; }.management-heading p { display: none; }.management-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }.management-invoice-head { padding: 13px; }.management-invoice-head label { min-width: 0; }.management-filters { padding: 9px 13px; }.management-filters select { min-width: 0; flex: 1 1 130px; }.management-filters label { flex: 1 1 130px; }.management-filters label input { width: 100%; }.management-tool-panel .stock-count-panel { padding: 13px; }.management-tool-panel .stock-count-list { grid-template-columns: 1fr; }.management-tool-panel .stock-count-approval { grid-template-columns: 1fr; }.management-tool-panel .stock-count-summary { grid-template-columns: 1fr 1fr; }.management-tool-panel .stock-count-summary small { grid-column: 1 / -1; padding: 7px 10px; border-top: 1px solid rgba(148, 163, 184, .16); white-space: normal; }.purchase-receive-form { padding: 13px; }.purchase-product-results { padding: 0 13px 12px; }.purchase-lines { margin: 0 13px; }.purchase-receive-footer { margin: 12px 13px 0; } }
 
 .invoice-cash-offset-audit {
   overflow: hidden;
@@ -9932,4 +10002,99 @@ body {
   .stock-count-row { grid-template-columns: minmax(0, 1fr) 132px; gap: 8px; padding: 9px; }
   .stock-count-approval { grid-template-columns: 1fr; }
   .stock-count-approval .stock-count-primary { width: 100%; }
+}
+
+/* Management workspace: a compact operations console, not a second cashier
+   screen. The command bar keeps the branch context and tools visible without
+   stealing the working area from tables, count sessions, or purchases. */
+.management-content { width: min(1480px, calc(100% - 32px)); padding: 14px 0 34px; }
+.management-commandbar {
+  position: sticky;
+  top: 58px;
+  z-index: 16;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  margin-bottom: 14px;
+  padding: 7px 9px 7px 12px;
+  border: 1px solid #dfe7f1;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 8px 26px rgba(15, 23, 42, .08);
+  backdrop-filter: blur(12px);
+}
+.management-branch-identity { display: flex; align-items: center; gap: 9px; min-width: 156px; padding-right: 3px; }
+.management-branch-identity > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: #14213d; color: #7dd3fc; }
+.management-branch-identity small,.management-branch-identity b { display: block; }
+.management-branch-identity small { color: #728197; font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.management-branch-identity b { margin-top: 2px; overflow: hidden; color: #17233b; font-size: 14px; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+.management-branch-identity label { display: grid; min-width: 122px; gap: 2px; }
+.management-branch-identity select { width: 100%; min-width: 0; padding: 0 20px 0 0; border: 0; outline: 0; background: transparent; color: #17233b; font: inherit; font-size: 14px; font-weight: 900; text-overflow: ellipsis; }
+.management-branch-identity select:disabled,.management-refresh:disabled { cursor: wait; opacity: .62; }
+.management-command-tabs { display: flex; min-width: 0; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+.management-command-tabs::-webkit-scrollbar { display: none; }
+.management-command-tabs button {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 7px;
+  min-height: 40px; padding: 0 12px; border: 1px solid transparent; border-radius: 9px;
+  background: transparent; color: #63728a; font: inherit; font-size: 12px; font-weight: 850;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.management-command-tabs button:hover { background: #f1f5fb; color: #254bb8; }
+.management-command-tabs button.active { border-color: #b7c8ff; background: #edf2ff; color: #2448bb; box-shadow: inset 0 -2px #4d6bea; }
+.management-refresh { min-height: 38px; padding: 0 12px; border-radius: 9px; font-size: 12px; }
+.management-heading,.management-actions { display: none; }
+.management-invoice-panel,.management-tool-panel { border-color: #dfe7f1; border-radius: 13px; box-shadow: 0 4px 18px rgba(15, 23, 42, .035); }
+.management-invoice-head { align-items: center; padding: 16px 18px; }
+.management-invoice-head h2 { font-size: 19px; letter-spacing: -.015em; }
+.management-invoice-head label { min-width: min(420px, 42%); background: #fbfcfe; }
+.management-filters { gap: 7px; padding: 10px 18px; background: #fbfcfe; }
+.management-invoice-row { grid-template-columns: minmax(260px, 1fr) 165px 130px auto; min-height: 62px; transition: background .14s ease; }
+.management-invoice-row:hover { background: #f4f7ff; }
+.management-invoice-row em { background: #e9f0ff; color: #3156bd; }
+
+/* Purchasing mirrors the web purchase batch: search, add lines, review the
+   quantities and cost, then receive a single auditable delivery. */
+.purchase-receive { padding-bottom: 18px; }
+.purchase-receive-status { display: flex; justify-content: space-between; gap: 12px; padding: 10px 18px; border-bottom: 1px solid #edf2f7; background: #f8fafc; color: #728197; font-size: 12px; font-weight: 750; }
+.purchase-receive-status b { margin-right: 4px; color: #2448bb; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.purchase-receive-form { grid-template-columns: minmax(220px, .52fr) minmax(320px, 1fr); padding: 18px 18px 11px; }
+.purchase-product-search { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 11px; border: 1px solid #b7cae6; border-radius: 9px; background: #fff; color: #5270b9; }
+.purchase-product-search:focus-within { border-color: #4c6ee8; box-shadow: 0 0 0 3px rgba(76, 110, 232, .12); }
+.purchase-product-search input { width: 100%; min-width: 0; height: 38px; padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+.purchase-product-results { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 252px; margin: 0 18px 16px; padding: 0; overflow: auto; }
+.purchase-product-results button { min-height: 55px; border-radius: 9px; background: #fff; }
+.purchase-product-empty { grid-column: 1 / -1; padding: 18px; border: 1px dashed #cdd9e8; border-radius: 10px; color: #718096; font-size: 13px; text-align: center; }
+.purchase-lines { margin: 0 18px; border-radius: 11px; }
+.purchase-lines-head { align-items: center; padding: 12px 14px; background: #f3f6fb; }
+.purchase-lines-head span { color: #193f9d; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; font-weight: 900; }
+.purchase-lines-empty { display: grid; place-items: center; gap: 6px; min-height: 150px; color: #7d8da3; }
+.purchase-lines-empty svg { color: #6a88df; }
+.purchase-lines-empty b { color: #354764; font-size: 14px; }
+.purchase-lines-empty span { max-width: 380px; text-align: center; line-height: 1.45; }
+.purchase-line-columns,.purchase-line { display: grid; grid-template-columns: minmax(220px, 1fr) 105px 145px 128px 38px; gap: 10px; }
+.purchase-line-columns { align-items: center; padding: 8px 14px; border-top: 1px solid #e7eef6; background: #fbfcfe; color: #8997aa; font-size: 10px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.purchase-line { padding: 11px 14px; }
+.purchase-line > b { padding-bottom: 10px; color: #233654; }
+.purchase-line strong { color: #148054; }
+.purchase-receive-footer { position: sticky; bottom: 10px; z-index: 3; margin: 14px 18px 0; padding: 11px 12px 11px 15px; border: 1px solid #dbe5f2; border-radius: 11px; background: rgba(255,255,255,.96); box-shadow: 0 9px 20px rgba(15, 23, 42, .08); }
+.purchase-receive-footer > div { display: grid; gap: 2px; }.purchase-receive-footer > div span { color: #75849a; font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }.purchase-receive-footer > div b { color: #17233b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px; }
+
+@media (max-width: 980px) {
+  .management-commandbar { position: static; grid-template-columns: minmax(0, 1fr) auto; }
+  .management-command-tabs { grid-column: 1 / -1; grid-row: 2; margin: 0 -2px; }
+  .management-branch-identity { min-width: 0; }
+  .purchase-product-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .management-content { width: min(100% - 20px, 1480px); }
+  .management-commandbar { top: 54px; gap: 8px; margin-bottom: 10px; padding: 7px; }
+  .management-branch-identity > span { width: 31px; height: 31px; }.management-branch-identity b { font-size: 13px; }
+  .management-command-tabs button { min-height: 37px; padding: 0 10px; font-size: 11px; }
+  .management-refresh { min-height: 36px; padding: 0 10px; }
+  .management-invoice-head { align-items: stretch; }.management-invoice-head label { min-width: 0; }
+  .purchase-receive-status { align-items: flex-start; flex-direction: column; }
+  .purchase-receive-form { grid-template-columns: 1fr; padding: 14px; }.purchase-product-results { grid-template-columns: 1fr; margin: 0 14px 13px; }.purchase-lines { margin: 0 14px; }
+  .purchase-line-columns { display: none; }.purchase-line { grid-template-columns: minmax(0, 1fr) 88px 106px 34px; gap: 8px; padding: 10px; }.purchase-line > b { grid-column: 1 / -1; padding: 0; }.purchase-line strong { display: none; }.purchase-receive-footer { margin: 12px 14px 0; }
 }

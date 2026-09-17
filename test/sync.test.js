@@ -15,7 +15,7 @@ process.env.BCRYPT_ROUNDS = "10";
 process.env.ADMIN_EMAIL_CODE_REQUIRED = "0";
 process.env.WHATSAPP_APP_SECRET = "test-whatsapp-app-secret";
 
-const { pool } = await import("../src/db.js");
+const { pool, serverNow } = await import("../src/db.js");
 const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8")
   .replace(/,\s*CONSTRAINT devices_token_hash_is_bcrypt CHECK \(token_hash ~ '[^']+'\)/g, "")
   .replace(/,\s*CONSTRAINT user_records_have_no_plain_credentials CHECK \([\s\S]*?\n  \)/g, "")
@@ -51,6 +51,14 @@ const state = {
     payload: { total: 42.5, lineCount: 2 },
   },
 };
+
+test("sync cursors receive strictly increasing server timestamps", () => {
+  const issued = Array.from({ length: 40 }, () => serverNow());
+  assert.equal(new Set(issued).size, issued.length);
+  for (let index = 1; index < issued.length; index += 1) {
+    assert.ok(issued[index] > issued[index - 1]);
+  }
+});
 
 async function activateTestTerminal(name = "SIPCITY Cashier Till", branchId = "b_sip") {
   const activation = await withAdminSession(request(app)

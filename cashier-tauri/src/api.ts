@@ -816,16 +816,18 @@ export async function applySupervisorStockCount(
   sessionToken: string,
   account: Account,
   branchId: string,
-  rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>
+  rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>,
+  startedAt = Date.now()
 ): Promise<{ sessionId: string; changes: number; committedAt: number }> {
   const role = String(account.role || account.kind || "").trim().toLowerCase();
   if (!["owner", "admin", "manager", "supervisor"].includes(role)) {
     throw new Error("supervisor_authorization_required");
   }
-  const changes = rows
+  const reviewedRows = rows
     .map((row) => ({ ...row, productId: String(row.productId || "").trim(), previousQty: Math.floor(Number(row.previousQty)), countedQty: Math.floor(Number(row.countedQty)) }))
-    .filter((row) => row.productId && Number.isInteger(row.previousQty) && row.previousQty >= 0 && Number.isInteger(row.countedQty) && row.countedQty >= 0 && row.previousQty !== row.countedQty);
-  if (!changes.length) throw new Error("stock_count_no_changes");
+    .filter((row) => row.productId && Number.isInteger(row.previousQty) && row.previousQty >= 0 && Number.isInteger(row.countedQty) && row.countedQty >= 0);
+  if (!reviewedRows.length) throw new Error("stock_count_no_products_reviewed");
+  const changes = reviewedRows.filter((row) => row.previousQty !== row.countedQty);
   const ts = Date.now();
   const sessionId = uid("terminal-stock-count");
   const events = [
@@ -855,7 +857,7 @@ export async function applySupervisorStockCount(
     // Count logs are deliberately separate from the stock ledger. The ledger
     // changes on-hand; this record preserves the physical-count evidence for
     // Inventory, product reports and later audit without reapplying stock.
-    ...changes.map((row) => ({
+    ...reviewedRows.map((row) => ({
       id: uid("count-log"),
       type: "countLog",
       branchId,
@@ -888,13 +890,16 @@ export async function applySupervisorStockCount(
         code: `TSC-${String(ts).slice(-6)}`,
         status: "committed",
         startedBy: account.name,
-        startedAt: ts,
+        startedAt: Math.min(ts, Math.max(0, Math.floor(startedAt))) || ts,
         committedBy: account.name,
         committedAt: ts,
         approvedBy: account.name,
         approvedAt: ts,
         source: "cashier_terminal",
-        items: changes.map((row) => ({
+        // Keep every reviewed line, including quantities that did not change.
+        // This is the evidence that a physical count occurred; only the stock
+        // ledger rows above are allowed to amend on-hand stock.
+        items: reviewedRows.map((row) => ({
           productId: row.productId,
           productName: row.productName,
           expectedQty: row.previousQty,
@@ -905,7 +910,7 @@ export async function applySupervisorStockCount(
           approvedBy: account.name,
           approvedAt: ts
         })),
-        summary: { products: rows.length, adjustments: changes.length },
+        summary: { products: reviewedRows.length, adjustments: changes.length },
         updatedAt: ts
       }
     }
@@ -1085,7 +1090,10 @@ export async function listInvoiceCashDepositOffsets(
   return offsetsByInvoiceId;
 }
 
-export async function pullCatalog(terminal: TerminalCredentials): Promise<{
+export async function pullCatalog(
+  terminal: TerminalCredentials,
+  options: { sessionToken?: string; branchId?: string } = {}
+): Promise<{
   branches: Branch[];
   products: Product[];
   invoices: Invoice[];
@@ -1095,6 +1103,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   businessDays: BusinessDayPeriod[];
   dayClosedAt: number | null;
 }> {
+  const targetBranchId = String(options.branchId || terminal.branchId || "").trim();
+  const managementSession = String(options.sessionToken || "").trim();
+  const readHeaders: HeadersInit = managementSession
+    ? { "Content-Type": "application/json", "Cache-Control": "no-store", "Pragma": "no-cache", "X-Session-Token": managementSession }
+    : terminalHeaders(terminal);
   let cursor = 0;
   let hasMore = true;
   const events: Array<any> = [];
@@ -1104,7 +1117,10 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   let carriedOverInvoiceIds = new Set<string>();
   const branchRecords = new Map<string, any>();
 
-  try {
+  // A terminal credential remains branch-scoped. Owner/admin branch changes
+  // use the existing organisation-wide, authenticated user session; no
+  // terminal permission is expanded or reused for another branch.
+  if (!managementSession) try {
     const catalog = await jsonFetch<{
       branches?: Branch[];
       products?: Product[];
@@ -1114,7 +1130,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       resetEpoch?: string;
     }>(`/api/sync/catalog?t=${Date.now()}`, {
       method: "GET",
-      headers: terminalHeaders(terminal)
+      headers: readHeaders
     });
     writeResetEpoch(terminal, catalog.resetEpoch);
     const closeCandidate = Number(catalog.dayClosedAt || 0);
@@ -1126,7 +1142,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     );
     if (Array.isArray(catalog.products)) {
       serverCatalogProducts = dedupeCatalogProducts(
-        catalog.products.map((product) => normalizeProductForBranch(product, terminal.branchId))
+        catalog.products.map((product) => normalizeProductForBranch(product, targetBranchId))
       );
     }
     // /catalog returns a deliberately minimal list of active branches. The
@@ -1148,13 +1164,13 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       serverBusinessDays = catalog.businessDays
         .map((period) => ({
           id: String(period.id || ""),
-          branchId: String(period.branchId || terminal.branchId),
+          branchId: String(period.branchId || targetBranchId),
           businessDate: String(period.businessDate || ""),
           startedAt: Number(period.startedAt || 0),
           endedAt: Number(period.endedAt || 0),
           closedAt: Number(period.closedAt || period.endedAt || 0)
         }))
-        .filter((period) => period.branchId === terminal.branchId && period.startedAt > 0 && period.endedAt > period.startedAt);
+        .filter((period) => period.branchId === targetBranchId && period.startedAt > 0 && period.endedAt > period.startedAt);
     }
   } catch (error) {
     console.warn("[visionpos] normalized catalog unavailable; using sync stream fallback", error);
@@ -1163,7 +1179,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   while (hasMore) {
     const data = await jsonFetch<{ events: Array<any>; cursor?: number; hasMore?: boolean; resetEpoch?: string }>(`/api/sync/pull?since=${cursor}&limit=2000`, {
       method: "GET",
-      headers: terminalHeaders(terminal)
+      headers: readHeaders
     });
     writeResetEpoch(terminal, data.resetEpoch);
     events.push(...(data.events || []));
@@ -1253,7 +1269,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     if (normalizedEventType === "endofday" || normalizedEventType === "dayclosed") {
       const payload = item.payload || {};
       const branchId = String(payload.branchId || item.branchId || "");
-      if (branchId === terminal.branchId) {
+      if (branchId === targetBranchId) {
         const closedAt = Number(
           payload.periodEndedAt
           || payload.closedAt
@@ -1283,7 +1299,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     }
     if (item.type === "setting" || item.type === "settings") {
       const payload = item.payload || {};
-      const closedAt = Number(payload.lastEndDayByBranch?.[terminal.branchId] || 0);
+      const closedAt = Number(payload.lastEndDayByBranch?.[targetBranchId] || 0);
       if (Number.isFinite(closedAt) && closedAt > 0) {
         dayClosedAt = Math.max(dayClosedAt || 0, closedAt);
       }
@@ -1358,7 +1374,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
           source: String(payload.source || "stock_count"),
           ts: Number(payload.ts || item.clientTs || item.serverTs || 0)
         };
-        if (debt.id && debt.branchId === terminal.branchId) cashierJointDebtRecords.set(debt.id, debt);
+        if (debt.id && debt.branchId === targetBranchId) cashierJointDebtRecords.set(debt.id, debt);
       }
     }
     if (item.type === "cashierJointDebtPayment") {
@@ -1429,7 +1445,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     if (item.type === "stockMovement") {
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
-      if (productId && (payload.branchId || item.branchId) === terminal.branchId) {
+      if (productId && (payload.branchId || item.branchId) === targetBranchId) {
         addStock(stockByProduct, productId, eventQuantity(payload), payload.stockBaseQty);
       }
     }
@@ -1456,7 +1472,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0) || a.name.localeCompare(b.name));
 
   for (const item of productRecords.values()) {
-    const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, terminal.branchId);
+    const product = normalizeProductForBranch({ id: item.id, serverTs: item.serverTs, ...(item.payload || {}) }, targetBranchId);
     const key = productDedupeKey(product);
     productIdsByKey.set(key, [...(productIdsByKey.get(key) || []), product.id]);
     baseStockByKey.set(key, Math.max(baseStockByKey.get(key) || 0, product.stockQty));
@@ -1487,7 +1503,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         ? { ...hydratedInvoice, carriedOver: true }
         : hydratedInvoice;
     })
-    .filter((invoice) => invoice.branchId === terminal.branchId)
+    .filter((invoice) => invoice.branchId === targetBranchId)
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
 
   const fallbackProducts = dedupeCatalogProducts(Array.from(productGroups.entries())
@@ -1516,11 +1532,11 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         )
       }))
     }))
-    .filter((debt) => debt.branchId === terminal.branchId)
+    .filter((debt) => debt.branchId === targetBranchId)
     .sort((a, b) => b.ts - a.ts);
 
   const stockTransferRequests = Array.from(stockTransferRequestRecords.values())
-    .filter((request) => request.fromBranchId === terminal.branchId)
+    .filter((request) => request.fromBranchId === targetBranchId)
     .map((request) => {
       const review = stockTransferDecisions.get(request.id);
       return review ? {
@@ -1675,18 +1691,21 @@ export async function pushExpense(
 export async function requestStockTransfer(
   terminal: TerminalCredentials,
   account: Account,
-  request: { toBranchId: string; note?: string; items: StockTransferRequestItem[] }
+  request: { toBranchId: string; note?: string; items: StockTransferRequestItem[] },
+  scope: { sessionToken?: string; branchId?: string } = {}
 ): Promise<string> {
+  const fromBranchId = String(scope.branchId || terminal.branchId || "").trim();
+  const sessionToken = String(scope.sessionToken || "").trim();
   const ts = Date.now();
   const requestId = uid("transfer-request");
   const events = [{
     id: requestId,
     type: "stockTransferRequest",
-    branchId: terminal.branchId,
+    branchId: fromBranchId,
     clientTs: ts,
     payload: {
       id: requestId,
-      fromBranchId: terminal.branchId,
+      fromBranchId,
       toBranchId: request.toBranchId,
       cashierId: account.id,
       cashierName: account.name,
@@ -1702,9 +1721,102 @@ export async function requestStockTransfer(
       ts
     }
   }];
-  const result = await pushSyncEvents(terminal, events);
+  const result = sessionToken
+    ? await jsonFetch<SyncPushResult>("/api/sync/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+      body: JSON.stringify({ events })
+    })
+    : await pushSyncEvents(terminal, events);
   assertSyncAccepted(result, events);
   return requestId;
+}
+
+/**
+ * Mirrors the web Purchases workspace: a received purchase is both a
+ * business document and one idempotent stock movement per line.  Keeping the
+ * two records in the same sync batch prevents a terminal from showing stock
+ * that has no purchase/audit trail.
+ */
+export async function receiveTerminalPurchase(
+  sessionToken: string,
+  branchId: string,
+  account: Account,
+  purchase: {
+    supplierName: string;
+    items: Array<{ productId: string; productName: string; qty: number; unitCostCents: number }>;
+  }
+): Promise<string> {
+  const items = purchase.items
+    .map((item) => ({
+      productId: String(item.productId || "").trim(),
+      productName: String(item.productName || "Product").trim() || "Product",
+      qty: Math.floor(Number(item.qty || 0)),
+      unitCostCents: Math.max(0, Math.floor(Number(item.unitCostCents || 0)))
+    }))
+    .filter((item) => item.productId && item.qty > 0);
+  if (!items.length) throw new Error("purchase_items_required");
+
+  const ts = Date.now();
+  const batchId = uid("purchase-batch");
+  const batchNo = `TPO-${businessDateValue(ts).replace(/-/g, "")}-${String(ts).slice(-4)}`;
+  const supplierName = String(purchase.supplierName || "Walk-in supplier").trim() || "Walk-in supplier";
+  const events = items.flatMap((item, index) => {
+    const purchaseId = `${batchId}:${index + 1}`;
+    const lineTotalCents = item.qty * item.unitCostCents;
+    return [
+      {
+        id: purchaseId,
+        type: "purchase",
+        branchId,
+        clientTs: ts,
+        payload: {
+          id: purchaseId,
+          batchId,
+          batchNo,
+          productId: item.productId,
+          productName: item.productName,
+          branchId,
+          supplierName,
+          qty: item.qty,
+          costCents: item.unitCostCents,
+          lineTotalCents,
+          status: "received",
+          date: businessDateValue(ts),
+          updatedAt: ts,
+          receivedAt: ts,
+          receivedBy: account.name,
+          ts
+        }
+      },
+      {
+        id: uid("purchase-stock"),
+        type: "stockMovement",
+        branchId,
+        clientTs: ts,
+        payload: {
+          purchaseId,
+          purchaseBatchId: batchId,
+          purchaseBatchNo: batchNo,
+          productId: item.productId,
+          branchId,
+          qty: item.qty,
+          costCents: item.unitCostCents,
+          valueCents: lineTotalCents,
+          reason: `Purchase ${supplierName}`,
+          receivedBy: account.name,
+          ts
+        }
+      }
+    ];
+  });
+  const result = await jsonFetch<SyncPushResult>("/api/sync/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+    body: JSON.stringify({ events })
+  });
+  assertSyncAccepted(result, events);
+  return batchId;
 }
 
 export async function pushCashSessionEvent(

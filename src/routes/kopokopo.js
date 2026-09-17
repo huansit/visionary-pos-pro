@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Router } from "express";
 import { requireAdminOrSupervisor, requireOwnerOrAdmin, requireRoles } from "../auth.js";
-import { isMySql, q, tx } from "../db.js";
+import { isMySql, q, serverNow, tx } from "../db.js";
 import { publishRealtimeEvent } from "../realtime.js";
 import {
   branchForTill,
@@ -28,7 +28,6 @@ import {
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
 const requireKopokopoViewer = requireRoles(new Set(["owner", "admin", "manager", "supervisor", "cashier"]));
-let walletEventClock = Date.now();
 
 function integerCents(value) {
   const cents = Number(value);
@@ -82,8 +81,7 @@ function accountRole(account) {
 }
 
 function nextWalletEventTs() {
-  walletEventClock = Math.max(Date.now(), walletEventClock + 1);
-  return walletEventClock;
+  return serverNow();
 }
 
 function walletRequestFingerprint(value) {
