@@ -93,18 +93,75 @@ function orderLines(body = {}) {
   return Array.isArray(order.items) ? order.items.filter((item) => item && typeof item === "object") : [];
 }
 
-async function productIdForSku(client, sku) {
+async function productForSku(client, sku) {
   const wanted = text(sku).toLowerCase();
   if (!wanted) return null;
   // Product records are the live shared catalogue. Resolving here keeps the
   // Glovo ledger aligned with the same SKU aliases used by every terminal.
   const result = await client.query("SELECT id, payload FROM records WHERE type = 'product' AND deleted = false");
   const row = (result.rows || []).find((candidate) => text(json(candidate.payload).sku).toLowerCase() === wanted);
-  return row ? String(row.id) : null;
+  return row ? { id: String(row.id), payload: json(row.payload) } : null;
+}
+
+async function productForId(client, productId) {
+  const id = text(productId);
+  if (!id) return null;
+  const result = await client.query(
+    "SELECT id, payload FROM records WHERE type = 'product' AND deleted = false AND id = $1 LIMIT 1",
+    [id]
+  );
+  const row = result.rows?.[0];
+  return row ? { id: String(row.id), payload: json(row.payload) } : null;
+}
+
+function productUnitCostCents(product = {}) {
+  const payload = object(product?.payload);
+  const candidates = [];
+  for (const field of ["branchCosts", "costByBranch", "movingAverageCostByBranch", "averageCostByBranch", "branchMovingAverageCosts"]) {
+    const map = object(payload[field]);
+    const branchKey = Object.keys(map).find((key) => text(key).toLowerCase() === "b_sip");
+    if (!branchKey) continue;
+    const mapped = map[branchKey];
+    if (mapped && typeof mapped === "object") {
+      candidates.push(mapped.costCents, mapped.movingAverageCostCents, mapped.averageCostCents, mapped.cost, mapped.movingAverageCost, mapped.averageCost);
+    } else candidates.push(mapped);
+  }
+  candidates.push(payload.costCents, payload.movingAverageCostCents, payload.averageCostCents, payload.cost, payload.movingAverageCost, payload.averageCost);
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value >= 0) return Math.round(value);
+  }
+  return 0;
+}
+
+function finalFulfilmentStatus(status) {
+  return ["DISPATCHED", "DELIVERED", "COMPLETED"].includes(text(status).toUpperCase());
+}
+
+function cancelledStatus(status) {
+  return ["CANCELLED", "CANCELED", "REJECTED", "FAILED"].includes(text(status).toUpperCase());
+}
+
+async function insertGlovoStockMovement(client, id, payload) {
+  if (isMySql) {
+    await client.query(
+      `INSERT IGNORE INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+       VALUES ($1,'stockMovement',$2,NULL,$3,$4,$5)`,
+      [id, "b_sip", Date.now(), serverNow(), payload]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
+       VALUES ($1,'stockMovement',$2,NULL,$3,$4,$5)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, "b_sip", Date.now(), serverNow(), payload]
+    );
+  }
 }
 
 async function writeGlovoOrderLedger(client, { event, orderId: id, vendorId: vendor, status, body }) {
   const order = orderBody(body);
+  const existingOrder = await client.query("SELECT stock_state FROM glovo_orders WHERE order_id = $1", [id]);
   const payment = object(order.payment);
   const externalOrderId = text(order.external_order_id || order.externalOrderId) || null;
   const orderCode = text(order.order_code || order.orderCode) || null;
@@ -112,7 +169,9 @@ async function writeGlovoOrderLedger(client, { event, orderId: id, vendorId: ven
   const currency = text(payment.currency || order.currency) || null;
   const subTotalCents = moneyCents(payment.sub_total ?? payment.subTotal);
   const orderTotalCents = moneyCents(payment.order_total ?? payment.orderTotal ?? payment.total);
-  const stockState = "pending_sandbox_validation";
+  // Never reset a posted order when Glovo sends its next lifecycle callback.
+  // The inventory transition below is idempotent and owns this state.
+  const stockState = text(existingOrder.rows?.[0]?.stock_state) || "pending_sandbox_validation";
 
   if (isMySql) {
     await client.query(
@@ -145,7 +204,8 @@ async function writeGlovoOrderLedger(client, { event, orderId: id, vendorId: ven
     const pricing = object(line.pricing);
     const sku = text(line.sku || line.product_sku || line.productSku) || null;
     const lineId = text(line._id || line.line_id || line.lineId || sku || `line-${index + 1}`).slice(0, 191);
-    const productId = await productIdForSku(client, sku);
+    const product = await productForSku(client, sku);
+    const productId = product?.id || null;
     if (productId) mappedLines += 1;
     const values = [
       id, lineId, sku, productId, text(line.name || line.product_name || line.productName) || null,
@@ -189,6 +249,104 @@ async function writeGlovoOrderLedger(client, { event, orderId: id, vendorId: ven
     );
   }
   return { mappedLines, lineCount: orderLines(body).length, stockState, orderTotalCents, paymentType };
+}
+
+async function setGlovoStockState(client, orderId, state) {
+  await client.query("UPDATE glovo_orders SET stock_state = $2 WHERE order_id = $1", [orderId, state]);
+  await client.query("UPDATE glovo_order_lines SET stock_state = $2 WHERE order_id = $1", [orderId, state]);
+}
+
+async function glovoOrderLines(client, orderId) {
+  const stored = await client.query(
+    "SELECT line_id, sku, product_id, product_name, quantity FROM glovo_order_lines WHERE order_id = $1 ORDER BY line_id",
+    [orderId]
+  );
+  const lines = [];
+  for (const row of stored.rows || []) {
+    let productId = text(row.product_id) || null;
+    let product = productId ? await productForId(client, productId) : null;
+    if (!product && row.sku) {
+      product = await productForSku(client, row.sku);
+      productId = product?.id || null;
+      if (productId) {
+        await client.query(
+          "UPDATE glovo_order_lines SET product_id = $3 WHERE order_id = $1 AND line_id = $2",
+          [orderId, row.line_id, productId]
+        );
+      }
+    }
+    lines.push({
+      lineId: String(row.line_id),
+      sku: text(row.sku) || null,
+      productId,
+      productName: text(row.product_name) || null,
+      quantity: quantity(row.quantity),
+      unitCostCents: productUnitCostCents(product),
+    });
+  }
+  return lines;
+}
+
+async function synchronizeGlovoOrderInventory(client, { orderId, status, orderCode }) {
+  const row = await client.query("SELECT stock_state FROM glovo_orders WHERE order_id = $1", [orderId]);
+  const priorState = text(row.rows?.[0]?.stock_state) || "pending_sandbox_validation";
+  const lines = await glovoOrderLines(client, orderId);
+
+  if (cancelledStatus(status)) {
+    if (priorState === "posted") {
+      for (const line of lines.filter((item) => item.productId && item.quantity > 0)) {
+        await insertGlovoStockMovement(client, `glovo-stock-reversal:${orderId}:${line.lineId}`.slice(0, 191), {
+          productId: line.productId,
+          branchId: "b_sip",
+          qty: line.quantity,
+          unitCostCents: line.unitCostCents,
+          reason: `Glovo cancellation ${orderCode || orderId}`,
+          source: "glovo",
+          channel: "glovo",
+          glovoOrderId: orderId,
+          glovoLineId: line.lineId,
+          sku: line.sku,
+          status: "cancelled",
+          ts: Date.now(),
+        });
+      }
+      await setGlovoStockState(client, orderId, "reversed");
+      return { stockState: "reversed", mappedLines: lines.filter((line) => line.productId).length, lineCount: lines.length };
+    }
+    if (priorState !== "reversed") await setGlovoStockState(client, orderId, "cancelled_before_posting");
+    return { stockState: priorState === "reversed" ? priorState : "cancelled_before_posting", mappedLines: lines.filter((line) => line.productId).length, lineCount: lines.length };
+  }
+
+  if (!finalFulfilmentStatus(status)) {
+    return { stockState: priorState, mappedLines: lines.filter((line) => line.productId).length, lineCount: lines.length };
+  }
+  if (priorState === "posted" || priorState === "reversed") {
+    return { stockState: priorState, mappedLines: lines.filter((line) => line.productId).length, lineCount: lines.length };
+  }
+  const incomplete = !lines.length || lines.some((line) => !line.productId || line.quantity <= 0);
+  if (incomplete) {
+    await setGlovoStockState(client, orderId, "awaiting_product_mapping");
+    return { stockState: "awaiting_product_mapping", mappedLines: lines.filter((line) => line.productId).length, lineCount: lines.length };
+  }
+
+  for (const line of lines) {
+    await insertGlovoStockMovement(client, `glovo-stock:${orderId}:${line.lineId}`.slice(0, 191), {
+      productId: line.productId,
+      branchId: "b_sip",
+      qty: -line.quantity,
+      unitCostCents: line.unitCostCents,
+      reason: `Glovo order ${orderCode || orderId}`,
+      source: "glovo",
+      channel: "glovo",
+      glovoOrderId: orderId,
+      glovoLineId: line.lineId,
+      sku: line.sku,
+      status: "posted",
+      ts: Date.now(),
+    });
+  }
+  await setGlovoStockState(client, orderId, "posted");
+  return { stockState: "posted", mappedLines: lines.length, lineCount: lines.length };
 }
 
 router.get("/orders", requireAdminOrSupervisor, async (_req, res, next) => {
@@ -242,11 +400,10 @@ router.get("/pnl", requireAdminOrSupervisor, async (req, res, next) => {
     if (from === undefined || to === undefined || (from && to && from > to)) {
       return res.status(422).json({ error: "invalid_date_range" });
     }
-    // A Glovo sale becomes reportable only after dispatch. This is deliberately
-    // conservative: RECEIVED and READY_FOR_PICKUP orders are still subject to
-    // cancellation or item changes. The first live sandbox flow will confirm
-    // whether Glovo sends an additional delivered status for this merchant.
-    const where = ["o.branch_id = $1", "o.status = 'DISPATCHED'", "o.stock_state = 'posted'"];
+    // A Glovo sale becomes reportable only after it is fulfilled and its
+    // matching stock movement is committed. RECEIVED and READY_FOR_PICKUP
+    // orders remain outside sales and profit because they can still change.
+    const where = ["o.branch_id = $1", "o.status IN ('DISPATCHED','DELIVERED','COMPLETED')", "o.stock_state = 'posted'"];
     const values = ["b_sip"];
     if (from) { values.push(from); where.push(`o.updated_at >= $${values.length}`); }
     if (to) { values.push(to); where.push(`o.updated_at <= $${values.length}`); }
@@ -280,12 +437,12 @@ router.get("/pnl", requireAdminOrSupervisor, async (req, res, next) => {
     res.json({
       branchId: "b_sip",
       channel: "glovo",
-      recognition: "dispatched",
+      recognition: "fulfilled",
       from: from || null,
       to: to || null,
       ...(summary.rows[0] || { orderCount: 0, revenueCents: 0 }),
       lines: lines.rows || [],
-      note: "Only dispatched Glovo orders whose stock movement has been posted are included. Cost of goods is calculated from the mapped SIPCITY product cost; provider fees and payout require Glovo's settlement feed.",
+      note: "Only fulfilled Glovo orders whose stock movement has been posted are included. Cost of goods is calculated from the mapped SIPCITY product cost; provider fees and payout require Glovo's settlement feed.",
     });
   } catch (error) { next(error); }
 });
@@ -335,12 +492,18 @@ router.post("/orders/webhook", async (req, res, next) => {
         ? Number(insert.raw?.affectedRows || 0)
         : Number(insert.rows?.length || 0);
       if (inserted === 0) return { duplicate: true };
-      return { duplicate: false, ...(await writeGlovoOrderLedger(client, { event, orderId: id, vendorId: incomingVendorId, status, body: req.body || {} })) };
+      const ledger = await writeGlovoOrderLedger(client, { event, orderId: id, vendorId: incomingVendorId, status, body: req.body || {} });
+      const stock = await synchronizeGlovoOrderInventory(client, {
+        orderId: id,
+        status,
+        orderCode: text(orderBody(req.body || {}).order_code || orderBody(req.body || {}).orderCode),
+      });
+      return { duplicate: false, ...ledger, ...stock };
     });
 
-    // Publish a branch-scoped append-only audit event for the admin PWA. It
-    // intentionally does not issue invoices or change stock: that requires a
-    // tested catalogue mapping and confirmed delivery-payment policy.
+    // Publish a branch-scoped audit event. Stock movements, when a fulfilled
+    // order is completely SKU-mapped, are committed in the same transaction
+    // and flow through the standard inventory sync to every terminal.
     await q(
       isMySql
         ? `INSERT IGNORE INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)

@@ -84,3 +84,58 @@ test("Glovo ledger totals stay separate from cashier and M-Pesa tables", async (
   assert.equal(Number(totals.rows[0].count), 1);
   assert.equal(Number(totals.rows[0].total), 0);
 });
+
+test("a fulfilled mapped Glovo order posts stock once and a later cancellation restores it once", async () => {
+  const productId = "glovo-test-product-sip";
+  const orderId = "glovo-stock-order-1";
+  try {
+    await pool.query(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1, 'product', 'b_sip', NULL, $2, $2, false, $3)`,
+      [productId, Date.now(), { id: productId, branchId: "b_sip", name: "Glovo Stock Product", sku: "GLOVO-STOCK-001", costCents: 12500 }]
+    );
+    const fulfilled = {
+      event_id: "glovo-stock-order-fulfilled",
+      order_id: orderId,
+      status: "DISPATCHED",
+      client: { external_partner_config_id: "b_sip" },
+      payment: { order_total: 300 },
+      items: [{ line_id: "line-1", sku: "GLOVO-STOCK-001", pricing: { quantity: 2, unit_price: 150, total_price: 300 } }],
+    };
+    await request(app)
+      .post("/api/integrations/glovo/orders/webhook")
+      .set("Authorization", process.env.GLOVO_WEBHOOK_SECRET)
+      .send(fulfilled)
+      .expect(200, { ok: true, orderId, status: "DISPATCHED", duplicate: false, stockState: "posted" });
+
+    const posted = await pool.query("SELECT payload FROM events WHERE id = $1", [`glovo-stock:${orderId}:line-1`]);
+    assert.equal(posted.rows.length, 1);
+    assert.equal(posted.rows[0].payload.productId, productId);
+    assert.equal(posted.rows[0].payload.qty, -2);
+    assert.equal(posted.rows[0].payload.source, "glovo");
+
+    await request(app)
+      .post("/api/integrations/glovo/orders/webhook")
+      .set("Authorization", process.env.GLOVO_WEBHOOK_SECRET)
+      .send({ ...fulfilled, event_id: "glovo-stock-order-cancelled", status: "CANCELLED" })
+      .expect(200, { ok: true, orderId, status: "CANCELLED", duplicate: false, stockState: "reversed" });
+    const reversed = await pool.query("SELECT payload FROM events WHERE id = $1", [`glovo-stock-reversal:${orderId}:line-1`]);
+    assert.equal(reversed.rows.length, 1);
+    assert.equal(reversed.rows[0].payload.qty, 2);
+
+    await request(app)
+      .post("/api/integrations/glovo/orders/webhook")
+      .set("Authorization", process.env.GLOVO_WEBHOOK_SECRET)
+      .send({ ...fulfilled, event_id: "glovo-stock-order-late-dispatch" })
+      .expect(200, { ok: true, orderId, status: "DISPATCHED", duplicate: false, stockState: "reversed" });
+    const stockEvents = await pool.query("SELECT id FROM events WHERE id LIKE $1", [`glovo-stock:${orderId}:%`]);
+    assert.equal(stockEvents.rows.length, 1, "a status replay must not deduct stock twice");
+  } finally {
+    await pool.query("DELETE FROM events WHERE id LIKE $1", [`glovo-stock%:${orderId}%`]);
+    await pool.query("DELETE FROM glovo_order_events WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_order_lines WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_webhook_events WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_orders WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM records WHERE type = 'product' AND id = $1", [productId]);
+  }
+});

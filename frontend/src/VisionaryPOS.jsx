@@ -16855,7 +16855,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     row.cogs += Math.max(0, -Number(movement.qty || 0)) * movementUnitCostCents(data, movement, product);
   });
   // Glovo uses the same SIPCITY catalogue, but its own captured online price.
-  // Only dispatched orders arrive from the protected Glovo P&L endpoint.
+  // Only fulfilled, stock-posted orders arrive from the protected Glovo P&L endpoint.
   (glovoPnl.lines || []).forEach((line) => {
     const product = productsById.get(line.productId)
       || branchProductsUnique(data, "b_sip").find((item) => String(item.sku || "").toLowerCase() === String(line.sku || "").toLowerCase())
@@ -17047,7 +17047,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     }) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
-    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (cashier + dispatched Glovo)", m(grossSales)], ["Glovo dispatched sales", m(glovoRevenue)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Recognized sales", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length + glovoPnl.orderCount], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
+    return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (cashier + fulfilled Glovo)", m(grossSales)], ["Glovo fulfilled sales", m(glovoRevenue)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Recognized sales", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length + glovoPnl.orderCount], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
   };
   const periodLabel = period === "custom" ? fromD + " to " + toD : { today: "Today", "7d": "Last 7 days", "30d": "Last 30 days", all: "All time" }[period];
   const activeBranchName = rb === "all" ? "All branches" : bname(rb);
@@ -17220,7 +17220,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
             <Stat l="Items Sold" v={itemsSold} />
             <Stat l="Payments Collected" v={fmt(cleared, cur)} sub2={clearedInvoiceCount + " invoice(s)"} />
-            <Stat l="Glovo Sales" v={fmt(glovoRevenue, cur)} sub2={glovoPnl.loading ? "loading…" : "dispatched orders"} />
+            <Stat l="Glovo Sales" v={fmt(glovoRevenue, cur)} sub2={glovoPnl.loading ? "loading…" : "fulfilled orders"} />
             <Stat l="Pending Sync" v={pending} sub2="local only" warn={pending > 0} />
           </div>
           <div className="grid2" style={{ gap: 16 }}>
@@ -17353,7 +17353,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       {sub === "pnl" && (
         <>
           <div className="panel"><div className="section-title" style={{ marginTop: 0 }}>Profit &amp; Loss · {period === "all" ? "all time" : period}</div>
-            {[["Cashier sales (paid and closed)", cashierTotalSales], ["Glovo sales (dispatched)", glovoRevenue], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
+            {[["Cashier sales (paid and closed)", cashierTotalSales], ["Glovo sales (fulfilled)", glovoRevenue], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
               <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
             <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
             <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} cashier transaction(s) · {glovoPnl.orderCount} stock-posted Glovo order(s) · {itemsSold} cashier units</div>
@@ -18956,6 +18956,7 @@ function GlovoOrdersTab({ data, update }) {
   const [state, setState] = useState({ loading: true, refreshing: false, error: "", orders: [], report: null });
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogMessage, setCatalogMessage] = useState("");
+  const [priceDrafts, setPriceDrafts] = useState({});
 
   useEffect(() => {
     let active = true;
@@ -19021,25 +19022,39 @@ function GlovoOrdersTab({ data, update }) {
     const needle = catalogSearch.trim().toLowerCase();
     return !needle || [product.name, product.sku, product.barcode].some((value) => String(value || "").toLowerCase().includes(needle));
   });
-  const saveGlovoPrice = (product, value) => {
+  const priceDraftFor = (product) => Object.prototype.hasOwnProperty.call(priceDrafts, product.id)
+    ? priceDrafts[product.id]
+    : (Number(product.glovoPriceCents || 0) ? (Number(product.glovoPriceCents || 0) / 100).toFixed(2) : "");
+  const saveGlovoPrice = (product, value, availability) => {
     const amount = Number(String(value || "").replace(/,/g, ""));
     if (!Number.isFinite(amount) || amount < 0) {
       setCatalogMessage(`Enter a valid Glovo price for ${product.name}.`);
-      return;
+      return false;
     }
     const glovoPriceCents = Math.round(amount * 100);
     update((current) => ({
       ...current,
       products: current.products.map((item) => item.id === product.id
-        ? { ...item, glovoPriceCents, glovoEnabled: glovoPriceCents > 0 ? Boolean(item.glovoEnabled) : false, synced: false, updatedAt: now() }
+        ? { ...item, glovoPriceCents, glovoEnabled: availability ?? (glovoPriceCents > 0 ? Boolean(item.glovoEnabled) : false), synced: false, updatedAt: now() }
         : item),
     }));
-    setCatalogMessage(`${product.name}: Glovo price saved.`);
+    setPriceDrafts((current) => {
+      const next = { ...current };
+      delete next[product.id];
+      return next;
+    });
+    setCatalogMessage(`${product.name}: saved locally and queued for sync.`);
+    return true;
   };
   const setGlovoEnabled = (product, enabled) => {
-    const price = Number(product.glovoPriceCents || 0);
+    const draft = priceDraftFor(product);
+    const price = Math.round(Number(String(draft || "").replace(/,/g, "")) * 100);
     if (enabled && price <= 0) {
       setCatalogMessage(`Set a Glovo price for ${product.name} before making it available.`);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(priceDrafts, product.id)) {
+      saveGlovoPrice(product, draft, enabled);
       return;
     }
     update((current) => ({
@@ -19069,7 +19084,7 @@ function GlovoOrdersTab({ data, update }) {
           <span className="ist" style={pendingValidation ? { background: "rgba(199,123,32,.14)", color: "#a66413" } : { background: "rgba(33,140,99,.13)", color: "#218c63" }}>{pendingValidation ? `${pendingValidation} pending validation` : "Ready for validation"}</span>
         </div>
         <div className="notice" style={{ marginTop: 12 }}>
-          <ShieldCheck /> Glovo order callbacks are visible and auditable now. Stock is deliberately not adjusted until the first real Glovo sandbox order confirms the SKU, quantity, cancellation, and delivery payloads.
+          <ShieldCheck /> A fulfilled Glovo order deducts SIPCITY stock once when every SKU and quantity is mapped. A cancellation after posting restores the same stock once; incomplete product mappings remain visible for review instead of changing stock.
         </div>
       </div>
       <div className="panel">
@@ -19083,13 +19098,23 @@ function GlovoOrdersTab({ data, update }) {
         {state.orders.length ? <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th className="amt">Gross</th><th>Stock audit</th><th>Last update</th></tr></thead>
           <tbody>{state.orders.map((order) => {
             const status = String(order.status || "RECEIVED").replaceAll("_", " ");
-            const stockPending = order.stockState === "pending_sandbox_validation";
+            const stockState = String(order.stockState || "pending_sandbox_validation");
+            const stockLabel = stockState === "posted" ? "Stock posted"
+              : stockState === "reversed" ? "Stock restored"
+              : stockState === "cancelled_before_posting" ? "Cancelled"
+              : stockState === "awaiting_product_mapping" ? "SKU mapping needed"
+              : "Awaiting fulfilment";
+            const stockTone = stockState === "posted" || stockState === "reversed"
+              ? { background: "rgba(33,140,99,.13)", color: "#218c63" }
+              : stockState === "awaiting_product_mapping"
+                ? { background: "rgba(220,90,111,.12)", color: "#c43d55" }
+                : { background: "rgba(199,123,32,.14)", color: "#a66413" };
             return <tr key={order.orderId}>
               <td><div className="nm">{order.orderCode || order.externalOrderId || order.orderId}</div><div className="mt2">{order.orderId}</div></td>
               <td><span className="ist" style={statusTone(order.status)}>{status}</span></td>
               <td>{order.paymentType || "—"}</td>
               <td className="amt">{fmt(Number(order.orderTotalCents || 0), order.currency || currency)}</td>
-              <td><span className="ist" style={stockPending ? { background: "rgba(199,123,32,.14)", color: "#a66413" } : { background: "rgba(33,140,99,.13)", color: "#218c63" }}>{stockPending ? "Validation pending" : "Validated"}</span></td>
+              <td><span className="ist" style={stockTone}>{stockLabel}</span></td>
               <td>{stamp(order.updatedAt || order.createdAt)}</td>
             </tr>;
           })}</tbody>
@@ -19102,15 +19127,18 @@ function GlovoOrdersTab({ data, update }) {
           <div><div className="section-title" style={{ margin: 0 }}>SIPCITY Glovo price list</div><div className="sub">Separate online pricing and availability. Physical-shop prices are not changed.</div></div>
           <div className="possearch" style={{ width: 300, maxWidth: "100%" }}><Search /><input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search SKU or product" aria-label="Search Glovo price list" /></div>
         </div>
-        <div className="notice" style={{ marginBottom: 12 }}><ShieldCheck /> Price changes are saved in VisionPOS now. Publishing to Glovo remains disabled until Glovo activates the Catalog API for SIPCITY.</div>
+        <div className="notice" style={{ marginBottom: 12 }}><ShieldCheck /> Enter a price, then press Enter or Save. It is visible immediately and syncs in the background. Publishing the price to Glovo remains disabled until Glovo activates the Catalog API for SIPCITY.</div>
         {catalogMessage ? <div className="sub" role="status" style={{ color: "var(--ok)", marginBottom: 10 }}>{catalogMessage}</div> : null}
         <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Physical price</th><th>Glovo price</th><th>Available on Glovo</th></tr></thead><tbody>
           {glovoProducts.map((product) => {
             const glovoPrice = Number(product.glovoPriceCents || 0);
+            const priceDraft = priceDraftFor(product);
+            const savedPrice = glovoPrice ? (glovoPrice / 100).toFixed(2) : "";
+            const priceChanged = priceDraft !== savedPrice;
             return <tr key={product.id}>
               <td><div className="nm">{product.name}</div><div className="mt2">{product.sku || "No SKU"}</div></td>
               <td className="amt">{fmt(branchProductPriceCents(product, "b_sip"), currency)}</td>
-              <td><input className="input" type="number" inputMode="decimal" min="0" step="0.01" defaultValue={glovoPrice ? (glovoPrice / 100).toFixed(2) : ""} placeholder="Set price" aria-label={`Glovo price for ${product.name}`} onBlur={(event) => saveGlovoPrice(product, event.target.value)} /></td>
+              <td><div style={{ display: "flex", gap: 6, minWidth: 180 }}><input className="input" type="number" inputMode="decimal" min="0" step="0.01" value={priceDraft} placeholder="Set price" aria-label={`Glovo price for ${product.name}`} onChange={(event) => setPriceDrafts((current) => ({ ...current, [product.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); saveGlovoPrice(product, event.currentTarget.value); } if (event.key === "Escape") setPriceDrafts((current) => { const next = { ...current }; delete next[product.id]; return next; }); }} onBlur={(event) => { if (priceChanged) saveGlovoPrice(product, event.target.value); }} /><button type="button" className="btn btn-ghost" disabled={!priceChanged} onMouseDown={(event) => event.preventDefault()} onClick={() => saveGlovoPrice(product, priceDraft)}>Save</button></div></td>
               <td><button type="button" role="switch" aria-checked={Boolean(product.glovoEnabled)} className={"product-enable-toggle" + (product.glovoEnabled ? " on" : "")} onClick={() => setGlovoEnabled(product, !product.glovoEnabled)}><span className="product-enable-track"><span /></span><span>{product.glovoEnabled ? "Available" : "Hidden"}</span></button></td>
             </tr>;
           })}
