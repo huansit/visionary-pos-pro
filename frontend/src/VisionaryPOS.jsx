@@ -8722,7 +8722,7 @@ const NAV_TOP = [
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
   products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
-  cash: "cash", payments: "cash", mpesa: "cash", audit: "__admin_only", expenses: "expenses",
+  cash: "cash", payments: "cash", mpesa: "cash", glovo: "__admin_only", audit: "__admin_only", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
   users: "users", terminals: "__admin_only", settings: "settings", environment: "__admin_only", system: "__admin_only",
@@ -8731,6 +8731,7 @@ const NAV_GROUPS = [
   { id: "salesgrp", label: "Sales & Customers", icon: Receipt, tone: "#dc5a6f", items: [
     { id: "invoices", label: "Sales", icon: FileText },
     { id: "customers", label: "Customers", icon: Users },
+    { id: "glovo", label: "Glovo Orders", mobileLabel: "Glovo", icon: ShoppingBag },
   ] },
   { id: "invgrp", label: "Inventory", icon: Boxes, tone: "#218c63", items: [
     { id: "products", label: "Product Catalog", mobileLabel: "Catalog", icon: Tag },
@@ -8965,6 +8966,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
+      case "glovo": return <GlovoOrdersTab data={data} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
@@ -18879,6 +18881,123 @@ function StockFundingAllocationModal({ transaction, data, onClose, onSaved }) {
       <div className="mpesa-offset-actions"><button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" disabled={!valid || busy} onClick={submit}><Banknote /> {busy ? "Recording..." : `Fund stock with ${fmt(amountCents, "KES")}`}</button></div>
     </section>
   </div>;
+}
+
+function GlovoOrdersTab({ data }) {
+  const currency = data?.settings?.currency || "KES";
+  const timeZone = normalizeBusinessTimeZone(data?.settings?.timeZone);
+  const [reload, setReload] = useState(0);
+  const [state, setState] = useState({ loading: true, refreshing: false, error: "", orders: [], report: null });
+
+  useEffect(() => {
+    let active = true;
+    setState((current) => ({ ...current, loading: current.orders.length === 0, refreshing: current.orders.length > 0, error: "" }));
+    Promise.all([
+      authGet("/api/integrations/glovo/orders", { session: true }),
+      authGet("/api/integrations/glovo/report", { session: true }),
+    ]).then(([ordersResult, reportResult]) => {
+      if (!active) return;
+      setState({
+        loading: false,
+        refreshing: false,
+        error: "",
+        orders: Array.isArray(ordersResult?.orders) ? ordersResult.orders : [],
+        report: reportResult || null,
+      });
+    }).catch((error) => {
+      if (!active) return;
+      const message = error.message === "forbidden" || error.message === "unauthorized"
+        ? "Your account is not permitted to view the Glovo audit."
+        : "Glovo orders could not be loaded. Refresh and try again.";
+      setState((current) => ({ ...current, loading: false, refreshing: false, error: message }));
+    });
+    return () => { active = false; };
+  }, [reload]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (!document.hidden && navigator.onLine) setReload((value) => value + 1);
+    };
+    const onRealtime = (event) => {
+      const types = Array.isArray(event.detail?.types) ? event.detail.types : [];
+      if (types.includes("glovoOrderWebhook")) setReload((value) => value + 1);
+    };
+    window.addEventListener("visionpos:realtime", onRealtime);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("visionpos:realtime", onRealtime);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
+
+  const report = state.report || {};
+  const totalOrders = Number(report.order_count || 0);
+  const grossOrderCents = Number(report.gross_order_cents || 0);
+  const cancelledOrderCents = Number(report.cancelled_order_cents || 0);
+  const pendingValidation = Number(report.pending_stock_validation_count || 0);
+  const statusTone = (status) => {
+    const value = String(status || "").toUpperCase();
+    if (value === "CANCELLED" || value === "CANCELED") return { background: "rgba(220,90,111,.12)", color: "#c43d55" };
+    if (value === "DISPATCHED" || value === "DELIVERED") return { background: "rgba(33,140,99,.13)", color: "#218c63" };
+    if (value === "READY_FOR_PICKUP") return { background: "rgba(199,123,32,.14)", color: "#a66413" };
+    return { background: "rgba(52,120,199,.12)", color: "#3478c7" };
+  };
+  const stamp = (value) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : formatBusinessDateTime(date.toISOString(), timeZone);
+  };
+
+  return (
+    <div className="fade">
+      <PageHead
+        title="Glovo orders"
+        sub="SIPCITY · dedicated delivery-channel audit"
+        right={<button type="button" className="btn btn-ghost" onClick={() => setReload((value) => value + 1)} disabled={state.loading || state.refreshing}><RefreshCw className={state.refreshing ? "spin" : ""} /> {state.refreshing ? "Refreshing" : "Refresh"}</button>}
+      />
+      <div className="kpis">
+        <div className="kpi"><div><div className="kl">Orders received</div><div className="kv">{totalOrders}</div></div><ShoppingBag color="var(--accent)" /></div>
+        <div className="kpi"><div><div className="kl">Gross order value</div><div className="kv">{fmt(grossOrderCents, currency)}</div></div><Banknote color="var(--ok)" /></div>
+        <div className="kpi"><div><div className="kl">Cancelled order value</div><div className="kv" style={{ color: cancelledOrderCents ? "var(--danger)" : undefined }}>{fmt(cancelledOrderCents, currency)}</div></div><X color="var(--danger)" /></div>
+      </div>
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="page-h" style={{ marginBottom: 6 }}>
+          <div><div className="section-title" style={{ margin: 0 }}>Audit &amp; stock control</div><div className="sub">Every Glovo callback is retained separately from walk-in sales and cashier invoices.</div></div>
+          <span className="ist" style={pendingValidation ? { background: "rgba(199,123,32,.14)", color: "#a66413" } : { background: "rgba(33,140,99,.13)", color: "#218c63" }}>{pendingValidation ? `${pendingValidation} pending validation` : "Ready for validation"}</span>
+        </div>
+        <div className="notice" style={{ marginTop: 12 }}>
+          <ShieldCheck /> Glovo order callbacks are visible and auditable now. Stock is deliberately not adjusted until the first real Glovo sandbox order confirms the SKU, quantity, cancellation, and delivery payloads.
+        </div>
+      </div>
+      <div className="panel">
+        <div className="page-h" style={{ marginBottom: 12 }}>
+          <div><div className="section-title" style={{ margin: 0 }}>Order ledger</div><div className="sub">Newest callback first · SIPCITY only</div></div>
+          <div className="sub">{state.loading ? "Loading…" : `${state.orders.length} order${state.orders.length === 1 ? "" : "s"} shown`}</div>
+        </div>
+        {state.error ? <div className="errorbox">{state.error}</div> : null}
+        {!state.loading && !state.error && state.orders.length === 0 ? <div className="notice"><ShoppingBag /> No Glovo orders have reached VisionPOS yet. Once Glovo activates the Orders API and sends a test order, it will appear here.</div> : null}
+        {state.loading ? <div className="notice"><RefreshCw className="spin" /> Loading Glovo order ledger…</div> : null}
+        {state.orders.length ? <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th className="amt">Gross</th><th>Stock audit</th><th>Last update</th></tr></thead>
+          <tbody>{state.orders.map((order) => {
+            const status = String(order.status || "RECEIVED").replaceAll("_", " ");
+            const stockPending = order.stockState === "pending_sandbox_validation";
+            return <tr key={order.orderId}>
+              <td><div className="nm">{order.orderCode || order.externalOrderId || order.orderId}</div><div className="mt2">{order.orderId}</div></td>
+              <td><span className="ist" style={statusTone(order.status)}>{status}</span></td>
+              <td>{order.paymentType || "—"}</td>
+              <td className="amt">{fmt(Number(order.orderTotalCents || 0), order.currency || currency)}</td>
+              <td><span className="ist" style={stockPending ? { background: "rgba(199,123,32,.14)", color: "#a66413" } : { background: "rgba(33,140,99,.13)", color: "#218c63" }}>{stockPending ? "Validation pending" : "Validated"}</span></td>
+              <td>{stamp(order.updatedAt || order.createdAt)}</td>
+            </tr>;
+          })}</tbody>
+        </table></div> : null}
+        {Array.isArray(report.byStatus) && report.byStatus.length ? <div className="sub" style={{ marginTop: 12 }}>Status totals: {report.byStatus.map((row) => `${String(row.status || "RECEIVED").replaceAll("_", " ")} ${Number(row.order_count || 0)}`).join(" · ")}</div> : null}
+        <div className="sub" style={{ marginTop: 8 }}>{report.note || "Provider fees and payouts are not estimated by VisionPOS."}</div>
+      </div>
+    </div>
+  );
 }
 
 function MpesaTransactionsTab({ data, branch, onNavigate, allowAllBranches = false, canClassifyFunding = false, canWhitelistCrossBranch = false, canFundWallet = false }) {
