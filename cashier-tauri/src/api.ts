@@ -632,7 +632,10 @@ async function fingerprintTemplates(terminal: TerminalCredentials, preferredUser
     body: JSON.stringify({ branchId: terminal.branchId, userId: preferredUserId || null })
   });
   const templates = (Array.isArray(data.templates) ? data.templates : [])
-    .filter((entry) => String(entry?.account?.kind || "").toLowerCase() === "cashier");
+    .filter((entry) => {
+      const role = String(entry?.account?.role || entry?.account?.kind || "").toLowerCase();
+      return ["cashier", "supervisor", "manager", "admin", "owner"].includes(role);
+    });
   fingerprintTemplateCache.set(cacheKey, {
     expiresAt: Date.now() + FINGERPRINT_TEMPLATE_CACHE_MS,
     templates
@@ -779,6 +782,71 @@ export async function verifyCheckoutWithSupervisorPin(
       pin
     })
   });
+}
+
+export async function applySupervisorStockCount(
+  sessionToken: string,
+  account: Account,
+  branchId: string,
+  rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>
+): Promise<{ sessionId: string; changes: number }> {
+  const role = String(account.role || account.kind || "").trim().toLowerCase();
+  if (!["owner", "admin", "manager", "supervisor"].includes(role)) {
+    throw new Error("supervisor_authorization_required");
+  }
+  const changes = rows
+    .map((row) => ({ ...row, productId: String(row.productId || "").trim(), previousQty: Math.floor(Number(row.previousQty)), countedQty: Math.floor(Number(row.countedQty)) }))
+    .filter((row) => row.productId && Number.isInteger(row.previousQty) && row.previousQty >= 0 && Number.isInteger(row.countedQty) && row.countedQty >= 0 && row.previousQty !== row.countedQty);
+  if (!changes.length) throw new Error("stock_count_no_changes");
+  const ts = Date.now();
+  const sessionId = uid("terminal-stock-count");
+  const events = [
+    ...changes.map((row) => ({
+      id: uid("stock-movement"),
+      type: "stockMovement",
+      branchId,
+      clientTs: ts,
+      payload: {
+        productId: row.productId,
+        branchId,
+        qty: row.countedQty - row.previousQty,
+        mode: "count",
+        reason: "Supervisor terminal stock count",
+        stockCountSessionId: sessionId,
+        previousQty: row.previousQty,
+        countedQty: row.countedQty,
+        correctedQty: row.countedQty,
+        countedBy: account.name,
+        ts
+      }
+    })),
+    {
+      id: sessionId,
+      type: "stockCountSession",
+      branchId,
+      clientTs: ts,
+      updatedAt: ts,
+      payload: {
+        id: sessionId,
+        branchId,
+        code: `TSC-${String(ts).slice(-6)}`,
+        status: "committed",
+        startedBy: account.name,
+        startedAt: ts,
+        committedBy: account.name,
+        committedAt: ts,
+        summary: { products: rows.length, adjustments: changes.length },
+        updatedAt: ts
+      }
+    }
+  ];
+  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string }> }>("/api/sync/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+    body: JSON.stringify({ events })
+  });
+  assertSyncAccepted(result, events);
+  return { sessionId, changes: changes.length };
 }
 
 export async function logout(sessionToken: string): Promise<void> {

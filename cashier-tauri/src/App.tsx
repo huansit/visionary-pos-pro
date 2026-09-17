@@ -42,6 +42,7 @@ import {
 import {
   APP_VERSION,
   activateTerminal,
+  applySupervisorStockCount,
   clearFingerprintTemplateCache,
   connectSyncStream,
   dedupeCatalogProducts,
@@ -783,6 +784,7 @@ export default function App() {
   const [mpesaUnreadCount, setMpesaUnreadCount] = useState(0);
   const [mpesaBadgeRefreshNonce, setMpesaBadgeRefreshNonce] = useState(0);
   const [transferRequestOpen, setTransferRequestOpen] = useState(false);
+  const [stockCountOpen, setStockCountOpen] = useState(false);
   const [invoiceListMode, setInvoiceListMode] = useState<InvoiceListMode | null>(null);
   const [invoiceDetail, setInvoiceDetail] = useState<{ invoice: Invoice; side: DrawerSide } | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<UpdatePrompt | null>(null);
@@ -814,6 +816,8 @@ export default function App() {
   const mpesaBadgeRequestInFlight = useRef(false);
 
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
+  const accountRole = String(account?.role || account?.kind || "").trim().toLowerCase();
+  const canManageStockCounts = ["owner", "admin", "manager", "supervisor"].includes(accountRole);
   const cartLines = Object.values(cart);
   const totalCents = cartLines.reduce((sum, line) => sum + line.qty * line.product.priceCents, 0);
   const itemCount = cartLines.reduce((sum, line) => sum + line.qty, 0);
@@ -1472,6 +1476,7 @@ export default function App() {
     setMpesaOpen(false);
     setMpesaUnreadCount(0);
     setTransferRequestOpen(false);
+    setStockCountOpen(false);
     setInvoiceListMode(null);
     setInvoiceDetail(null);
   }
@@ -1609,6 +1614,7 @@ export default function App() {
                   <ArrowLeftRight size={18} />
                   {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
                 </button>
+                {canManageStockCounts && <button onClick={() => setStockCountOpen(true)} title="Supervisor stock count"><Boxes size={18} /></button>}
                 <button className="mini-badge-button" onClick={() => setInvoiceListMode("debts")} title={`${cashierDebtCount} cashier debts`}>
                   <span className="info-dot">!</span>
                   {cashierDebtCount > 0 && <b>{cashierDebtCount}</b>}
@@ -1767,6 +1773,7 @@ export default function App() {
               <ArrowLeftRight size={18} />Transfer
               {pendingTransferRequestCount > 0 && <b>{pendingTransferRequestCount}</b>}
             </button>
+            {canManageStockCounts && <button onClick={() => setStockCountOpen(true)}><Boxes size={18} />Stock count</button>}
             <button className="rail-action-badge" onClick={() => setInvoiceListMode("debts")}>
               <span className="info-dot">!</span>
               Debts
@@ -1982,6 +1989,23 @@ export default function App() {
               setError("");
               await requestStockTransfer(terminal, account, request);
               setStatus("Stock transfer request sent for admin or supervisor approval.");
+              await refreshCatalog(terminal, { silent: true });
+            }}
+          />
+        </Drawer>
+      )}
+      {stockCountOpen && terminal && account && canManageStockCounts && (
+        <Drawer side="left" onClose={() => { setStockCountOpen(false); focusSearch(); }} labelledBy="terminal-stock-count-title">
+          <SupervisorStockCountView
+            terminal={terminal}
+            account={account}
+            sessionToken={sessionToken}
+            branchName={branch?.name || terminal.branchId}
+            products={products}
+            onClose={() => { setStockCountOpen(false); focusSearch(); }}
+            onApply={async (rows) => {
+              const result = await applySupervisorStockCount(sessionToken, account, terminal.branchId, rows);
+              setStatus(`Supervisor stock count saved. ${result.changes} catalog change${result.changes === 1 ? "" : "s"} synced.`);
               await refreshCatalog(terminal, { silent: true });
             }}
           />
@@ -2438,6 +2462,102 @@ function CashierMpesaView({
       </footer>
     </section>
   );
+}
+
+function SupervisorStockCountView({
+  terminal,
+  account,
+  sessionToken,
+  branchName,
+  products,
+  onClose,
+  onApply
+}: {
+  terminal: TerminalCredentials;
+  account: Account;
+  sessionToken: string;
+  branchName: string;
+  products: Product[];
+  onClose: () => void;
+  onApply: (rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>) => Promise<void>;
+}) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pin, setPin] = useState("");
+  const [query, setQuery] = useState("");
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const filteredProducts = useMemo(() => {
+    const term = normalize(query);
+    return products.filter((product) => !term || [product.name, product.sku, product.barcode, ...(product.barcodes || [])]
+      .filter(Boolean).some((value) => normalize(String(value)).includes(term))).slice(0, 120);
+  }, [products, query]);
+  const countRows = Object.entries(counts).flatMap(([productId, raw]) => {
+    const product = products.find((entry) => entry.id === productId);
+    const countedQty = Number(raw);
+    if (!product || !Number.isInteger(countedQty) || countedQty < 0) return [];
+    return [{ productId, productName: product.name, previousQty: productStock(product), countedQty }];
+  });
+  const changes = countRows.filter((row) => row.previousQty !== row.countedQty);
+
+  async function verify(method: "fingerprint" | "pin", purpose: "open" | "approve") {
+    if (busy) return;
+    if (method === "pin" && !/^\d{4}$/.test(pin)) {
+      setMessage("Enter the four-digit supervisor PIN.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      if (method === "fingerprint") await verifyCashierFingerprint(terminal, account, sessionToken);
+      else await verifyCheckoutWithSupervisorPin(terminal, account, sessionToken, pin);
+      setPin("");
+      if (purpose === "open") {
+        setUnlocked(true);
+        setMessage("Supervisor verification accepted. Enter the physical counts, then approve the final changes.");
+      } else {
+        await onApply(changes);
+        onClose();
+      }
+    } catch (error) {
+      setMessage(String(error).replace(/^Error:\s*/, ""));
+      setPin("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!unlocked) return <section className="expense-modal" aria-labelledby="terminal-stock-count-title">
+    <header className="expense-header"><div><span>Restricted inventory control</span><h2 id="terminal-stock-count-title">Supervisor stock count</h2><p>{branchName}</p></div><button className="close-button" onClick={onClose}><X size={20} /></button></header>
+    <div className="expense-note"><ShieldCheck size={18} /><span>Cashiers cannot open this feature. Verify as supervisor before viewing or counting stock.</span></div>
+    {message && <div className="cashier-mpesa-message">{message}</div>}
+    <div className="expense-keypad" style={{ marginTop: 16 }}>
+      <button className="expense-submit" disabled={busy} onClick={() => void verify("fingerprint", "open")}><Fingerprint size={19} />{busy ? "Verifying..." : "Verify fingerprint"}</button>
+    </div>
+    <label className="expense-label" style={{ marginTop: 16 }}>Supervisor PIN</label>
+    <input className="expense-note-input" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(event) => { if (event.key === "Enter") void verify("pin", "open"); }} placeholder="••••" />
+    <button className="expense-submit" disabled={busy || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "open")}><KeyRound size={18} />Verify PIN</button>
+  </section>;
+
+  return <section className="expense-modal" aria-labelledby="terminal-stock-count-title">
+    <header className="expense-header"><div><span>Supervisor only · {branchName}</span><h2 id="terminal-stock-count-title">Stock count</h2><p>Enter physical quantities. Only changed products are submitted.</p></div><button className="close-button" onClick={onClose}><X size={20} /></button></header>
+    {message && <div className="cashier-mpesa-message">{message}</div>}
+    <label className="expense-label">Find product</label>
+    <div className="cashier-mpesa-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, SKU, or barcode" autoFocus /></div>
+    <div className="ledger-list" style={{ maxHeight: 420, overflowY: "auto", marginTop: 12 }}>
+      {filteredProducts.map((product) => <div className="ledger-row" key={product.id} style={{ cursor: "default" }}>
+        <div><b>{product.name}</b><span>{product.sku || product.barcode || "No SKU"} · system {productStock(product)}</span></div>
+        <input className="expense-note-input" style={{ width: 94, margin: 0 }} inputMode="numeric" value={counts[product.id] || ""} onChange={(event) => setCounts((current) => ({ ...current, [product.id]: event.target.value.replace(/\D/g, "") }))} placeholder="Count" aria-label={`Physical count for ${product.name}`} />
+      </div>)}
+    </div>
+    <div className="expense-note" style={{ marginTop: 14 }}><Boxes size={18} /><span>{countRows.length} product{countRows.length === 1 ? "" : "s"} counted · {changes.length} catalog change{changes.length === 1 ? "" : "s"}. No cashier debt can be created here.</span></div>
+    <label className="expense-label" style={{ marginTop: 16 }}>Re-enter supervisor PIN to approve</label>
+    <input className="expense-note-input" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" />
+    <div className="expense-keypad" style={{ marginTop: 12 }}>
+      <button className="expense-submit" disabled={busy || changes.length === 0} onClick={() => void verify("fingerprint", "approve")}><Fingerprint size={19} />Approve with fingerprint</button>
+      <button className="expense-submit" disabled={busy || changes.length === 0 || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "approve")}><Check size={19} />Approve with PIN</button>
+    </div>
+  </section>;
 }
 
 function Drawer({

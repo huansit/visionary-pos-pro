@@ -1878,51 +1878,6 @@ function nextQuickInventoryNumber(data) {
   }, 0) + 1;
   return `QI-${String(sequence).padStart(6, "0")}`;
 }
-function createCashierJointDebt(data, session, rows, operator, ts = now(), source = "stock_count") {
-  const branchId = session?.branchId;
-  const items = (rows || []).filter((row) => Number(row.varianceQty) < 0).map((row) => {
-    const missingQty = Math.abs(Number(row.varianceQty) || 0);
-    const unitCostCents = branchInventoryCostCents(data, row.product, branchId);
-    return {
-      productId: row.productId,
-      productName: row.product?.name || row.productId,
-      sku: row.product?.sku || "",
-      missingQty,
-      unitCostCents,
-      amountCents: Math.max(0, Math.round(missingQty * unitCostCents)),
-    };
-  }).filter((item) => item.amountCents > 0);
-  const totalCents = items.reduce((sum, item) => sum + item.amountCents, 0);
-  if (!branchId || totalCents <= 0) return null;
-  const cashiers = branchCashiers(data, branchId);
-  const baseShare = cashiers.length ? Math.floor(totalCents / cashiers.length) : 0;
-  const remainder = cashiers.length ? totalCents % cashiers.length : 0;
-  const shares = cashiers.map((cashier, index) => ({
-    cashierId: cashier.id,
-    cashierName: cashier.name,
-    amountCents: baseShare + (index < remainder ? 1 : 0),
-    paidCents: 0,
-  }));
-  return {
-    id: "cjd_" + session.id,
-    branchId,
-    stockCountSessionId: session.id,
-    stockCountCode: session.code,
-    // A physical variance is evidence for review, not proof that every
-    // cashier owes money. Management must explicitly approve a charge.
-    status: "pending_review",
-    requiresManagementReview: true,
-    shortageUnits: items.reduce((sum, item) => sum + item.missingQty, 0),
-    totalCents,
-    cashierCount: shares.length,
-    items,
-    shares,
-    source,
-    createdBy: operator,
-    ts,
-    synced: false,
-  };
-}
 async function provisionCloudEmployeeCredentials(data) {
   const employees = Array.isArray(data?.employees) ? data.employees : [];
   const admin = data?.admin;
@@ -12190,6 +12145,40 @@ function ProductsTab({ data, update, branch, isAdmin, onNavigate }) {
   );
 }
 
+function InventoryApplyConfirmation({ confirmation, onCancel, onConfirm }) {
+  if (!confirmation) return null;
+  const changes = confirmation.changes || [];
+  return <div className="scrim" role="presentation" onClick={onCancel}>
+    <div className="modal" style={{ maxWidth: 620 }} role="dialog" aria-modal="true" aria-labelledby="inventory-confirm-title" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-head">
+        <div><div className="sub" style={{ margin: 0 }}>Inventory confirmation</div><div className="title" id="inventory-confirm-title" style={{ fontSize: 21 }}>{confirmation.title}</div></div>
+        <button type="button" className="iconbtn" onClick={onCancel} aria-label="Cancel inventory update"><X /></button>
+      </div>
+      <div className="notice" style={{ marginTop: 14 }}>{confirmation.detail}</div>
+      {changes.length > 0 ? <div className="list" style={{ maxHeight: 300, overflowY: "auto", marginTop: 12 }}>
+        {changes.slice(0, 12).map((change) => <div className="row" key={change.productId}>
+          <div className="meta"><div className="nm">{change.name}</div><div className="mt2">{change.before} on hand <ArrowRight /> {change.after} on hand</div></div>
+          <b style={{ color: change.delta < 0 ? "var(--danger)" : "var(--ok)" }}>{change.delta > 0 ? "+" : ""}{change.delta}</b>
+        </div>)}
+        {changes.length > 12 ? <div className="notice">{changes.length - 12} additional product change(s) will also be applied.</div> : null}
+      </div> : <div className="notice" style={{ marginTop: 12 }}>There are no quantity changes to apply.</div>}
+      <div className="notice" style={{ marginTop: 12 }}>This records an auditable stock movement and updates the shared catalog only after the server accepts it. A stock count, quick inventory, or correction never creates cashier debt automatically.</div>
+      <div className="grid2" style={{ marginTop: 16 }}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn btn-primary" onClick={onConfirm}><Check /> Confirm stock update</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function inventorySaveError(error) {
+  const reason = String(error?.message || "");
+  if (reason.includes("stock_quantity_changed_refresh_and_retry")) return "Stock changed on another device while you were counting. Nothing was applied; refresh the stock list and recount the affected product(s).";
+  if (reason.includes("management_session_required")) return "Your admin session has expired. Sign in again before applying an inventory update.";
+  if (reason.includes("stock_adjustment_")) return "The inventory update was rejected to protect the stock ledger. Nothing was applied; refresh and retry.";
+  return "The inventory update was not saved to the shared ledger. Nothing was applied; check the connection and retry.";
+}
+
 /* ---- Stock ---- */
 function StockTab({ data, update, branch, onNavigate }) {
   const cur = data.settings.currency;
@@ -12205,6 +12194,7 @@ function StockTab({ data, update, branch, onNavigate }) {
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionCameraOpen, setCorrectionCameraOpen] = useState(false);
   const [correctionError, setCorrectionError] = useState("");
+  const [inventoryConfirmation, setInventoryConfirmation] = useState(null);
   const [scannerOn, setScannerOn] = useState(true);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
@@ -12334,10 +12324,26 @@ function StockTab({ data, update, branch, onNavigate }) {
     const countedQty = cleaned === "" ? null : parseInt(cleaned, 10);
     upsertSession(updateStockCountSessionItem(session, productId, countedQty, operator));
   };
-  const commitSession = () => {
+  const commitSession = async (confirmed = false) => {
     if (!session || session.status !== "open") return;
     if (progress.counted !== progress.total) {
       setScanMsg("Count every product before committing. " + (progress.total - progress.counted) + " item(s) remain.");
+      return;
+    }
+    if (!confirmed) {
+      const changes = rows.filter((row) => row.commitDelta !== 0).map((row) => ({
+        productId: row.productId,
+        name: row.product.name,
+        before: row.liveQty,
+        after: row.finalQty,
+        delta: row.commitDelta,
+      }));
+      setInventoryConfirmation({
+        kind: "full_count",
+        title: "Commit " + session.code + "?",
+        detail: `${changes.length} catalog quantity change${changes.length === 1 ? "" : "s"} will be applied for ${bname}. Review the before and after quantities first.`,
+        changes,
+      });
       return;
     }
     const ts = now();
@@ -12374,7 +12380,8 @@ function StockTab({ data, update, branch, onNavigate }) {
       ts,
       synced: false,
     }));
-    const jointDebt = createCashierJointDebt(data, session, rows, operator, ts);
+    const shortageValueCents = rows.filter((row) => row.varianceQty < 0)
+      .reduce((sum, row) => sum + Math.abs(row.valueImpact || 0), 0);
     const committed = {
       ...session,
       status: "committed",
@@ -12387,24 +12394,28 @@ function StockTab({ data, update, branch, onNavigate }) {
         salesDuringCount,
         adjustments: movements.length,
         valueImpact: rows.reduce((s, row) => s + row.valueImpact, 0),
-        missingInventoryReviewCents: jointDebt?.totalCents || 0,
-        reviewCashierCount: jointDebt?.cashierCount || 0,
+        shortageValueCents,
       },
-      synced: false,
+      synced: true,
       updatedAt: ts,
     };
+    const syncedMovements = movements.map((movement) => ({ ...movement, synced: true }));
+    const syncedLogs = logs.map((entry) => ({ ...entry, synced: true }));
+    try {
+      await publishSyncEvents([
+        ...syncedMovements.map((movement) => eventFromRecord("stockMovements", movement, data)),
+        ...syncedLogs.map((entry) => eventFromRecord("countLog", entry, data)),
+        eventFromRecord("stockCountSessions", committed, data),
+      ], data, { management: true });
+    } catch (error) {
+      setScanMsg(inventorySaveError(error));
+      return;
+    }
     update((d) => {
-      const existingJointDebts = d.cashierJointDebts || [];
-      const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === session.id)
-        ? [...existingJointDebts, jointDebt]
-        : existingJointDebts;
-      return { ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...movements], countLog: [...(d.countLog || []), ...logs], cashierJointDebts };
-    });
-    setReport(buildStockCountReport(committed, rows, movements, data, bname));
-    const reviewMessage = jointDebt
-      ? " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " was recorded for management review. No cashier was charged."
-      : "";
-    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied." + reviewMessage);
+      return { ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...syncedMovements], countLog: [...(d.countLog || []), ...syncedLogs] };
+    }, { skipSync: true });
+    setReport(buildStockCountReport(committed, rows, syncedMovements, data, bname));
+    setScanMsg(committed.code + " committed. " + syncedMovements.length + " catalog adjustment(s) saved to the shared ledger. No cashier debt was created.");
   };
   const handleStockScan = (code) => {
     const barcode = normalizeBarcode(code);
@@ -12594,7 +12605,7 @@ function StockTab({ data, update, branch, onNavigate }) {
     setCorrectionError("");
   };
   const removeCorrectionItem = (productId) => setCorrectionItems((items) => items.filter((item) => item.productId !== productId));
-  const recordCorrection = () => {
+  const recordCorrection = async (confirmed = false) => {
     if (session) {
       setCorrectionError("Finish or cancel " + session.code + " before correcting stock.");
       return;
@@ -12607,37 +12618,49 @@ function StockTab({ data, update, branch, onNavigate }) {
       setCorrectionError("Every listed product must have a different non-negative corrected quantity.");
       return;
     }
+    if (!confirmed) {
+      setInventoryConfirmation({
+        kind: "stock_correction",
+        title: "Apply stock correction?",
+        detail: `${correctionReadyItems.length} product correction${correctionReadyItems.length === 1 ? "" : "s"} will be saved for ${bname}.`,
+        changes: correctionReadyItems.map((item) => ({
+          productId: item.productId,
+          name: item.product.name,
+          before: item.currentQty,
+          after: item.correctedQty,
+          delta: item.delta,
+        })),
+      });
+      return;
+    }
     const ts = now();
     const reason = "Stock correction - " + cf.reason + (cf.note.trim() ? " - " + cf.note.trim() : "");
-    const submittedItems = correctionItems.map((item) => ({ productId: item.productId, correctedQty: parseInt(item.correctedQty, 10) }));
-    let movements = [];
-    update((d) => {
-      movements = submittedItems.map((item) => {
-        const product = d.products.find((entry) => entry.id === item.productId);
-        const previousQty = product ? productOnHand(d, product, bId) : null;
-        const qty = item.correctedQty - previousQty;
-        return {
-          id: uid("mv"),
-          productId: item.productId,
-          branchId: bId,
-          qty,
-          mode: "correction",
-          reason,
-          correctionReason: cf.reason,
-          correctionNote: cf.note.trim(),
-          previousQty,
-          correctedQty: item.correctedQty,
-          correctedBy: operator,
-          ts,
-          synced: false,
-        };
-      }).filter((movement) => Number.isInteger(movement.previousQty) && movement.qty !== 0);
-      return movements.length ? { ...d, stockMovements: [...(d.stockMovements || []), ...movements] } : d;
-    });
+    const movements = correctionReadyItems.map((item) => ({
+      id: uid("mv"),
+      productId: item.productId,
+      branchId: bId,
+      qty: item.delta,
+      mode: "correction",
+      reason,
+      correctionReason: cf.reason,
+      correctionNote: cf.note.trim(),
+      previousQty: item.currentQty,
+      correctedQty: item.correctedQty,
+      correctedBy: operator,
+      ts,
+      synced: true,
+    }));
     if (!movements.length) {
       setCorrectionError("Those quantities are already current. Refresh the list and make any needed changes.");
       return;
     }
+    try {
+      await publishSyncEvents(movements.map((movement) => eventFromRecord("stockMovements", movement, data)), data, { management: true });
+    } catch (error) {
+      setCorrectionError(inventorySaveError(error));
+      return;
+    }
+    update((d) => ({ ...d, stockMovements: [...(d.stockMovements || []), ...movements] }), { skipSync: true });
     setScanMsg(movements.length + " stock correction(s) applied at " + bname + ". Every adjustment is recorded separately in the stock ledger.");
     closeCorrection();
   };
@@ -13003,6 +13026,16 @@ function StockTab({ data, update, branch, onNavigate }) {
           onScan={(barcode) => { const accepted = handleLossScan(barcode); if (accepted) setLossCameraOpen(false); return accepted; }}
         />
       )}
+      <InventoryApplyConfirmation
+        confirmation={inventoryConfirmation}
+        onCancel={() => setInventoryConfirmation(null)}
+        onConfirm={() => {
+          const kind = inventoryConfirmation?.kind;
+          setInventoryConfirmation(null);
+          if (kind === "full_count") commitSession(true);
+          if (kind === "stock_correction") recordCorrection(true);
+        }}
+      />
     </div>
   );
 }
@@ -13018,6 +13051,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [report, setReport] = useState(null);
+  const [applyConfirmation, setApplyConfirmation] = useState(null);
   const bname = data.branches.find((b) => b.id === bId)?.name || "branch";
   const lockedSession = activeStockCountSession(data, bId);
   const draft = activeQuickInventoryDraft(data.stockCountSessions, bId);
@@ -13134,7 +13168,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
   };
   useBarcodeScanner({ enabled: scannerOn && !lockedSession && !cameraOpen, mode: "stock", onScan: handleQuickScan });
 
-  const applyCounts = () => {
+  const applyCounts = async (confirmed = false) => {
     if (applyingRef.current) return;
     if (lockedSession) {
       setMessage("Finish or cancel " + lockedSession.code + " before using Quick inventory.");
@@ -13142,6 +13176,21 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
     }
     if (!selectedRows.length) {
       setMessage("Search or scan at least one product and enter its physical count.");
+      return;
+    }
+    if (!confirmed) {
+      const changes = selectedRows.filter((row) => row.variance !== 0).map((row) => ({
+        productId: row.product.id,
+        name: row.product.name,
+        before: row.current,
+        after: row.counted,
+        delta: row.variance,
+      }));
+      setApplyConfirmation({
+        title: "Apply quick inventory?",
+        detail: `${changes.length} catalog quantity change${changes.length === 1 ? "" : "s"} will be applied for ${bname}.`,
+        changes,
+      });
       return;
     }
     applyingRef.current = true;
@@ -13182,41 +13231,44 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         ts,
         synced: false,
       }));
-      const debtRows = selectedRows.map((row) => ({
-        ...row,
-        productId: row.product.id,
-        varianceQty: row.variance,
-      }));
-      const jointDebt = createCashierJointDebt(data, quickInventoryBatch, debtRows, operator, ts, "quick_inventory");
+      const committedSession = {
+        ...(draft || createQuickInventoryDraft({ id: quickInventoryId, branchId: bId, operator, timestamp: ts })),
+        id: quickInventoryId,
+        code: quickInventoryBatch.code,
+        status: "committed",
+        committedBy: operator,
+        committedAt: ts,
+        summary: { products: selectedRows.length, adjustments: adjustments.length },
+        synced: true,
+        updatedAt: ts,
+      };
+      const syncedAdjustments = adjustments.map((movement) => ({ ...movement, synced: true }));
+      const syncedLogs = logs.map((entry) => ({ ...entry, synced: true }));
+      try {
+        await publishSyncEvents([
+          ...syncedAdjustments.map((movement) => eventFromRecord("stockMovements", movement, data)),
+          ...syncedLogs.map((entry) => eventFromRecord("countLog", entry, data)),
+          eventFromRecord("stockCountSessions", committedSession, data),
+        ], data, { management: true });
+      } catch (error) {
+        setMessage(inventorySaveError(error));
+        return;
+      }
       update((d) => {
-        const existingJointDebts = d.cashierJointDebts || [];
-        const cashierJointDebts = jointDebt && !existingJointDebts.some((debt) => debt.stockCountSessionId === quickInventoryId)
-          ? [...existingJointDebts, jointDebt]
-          : existingJointDebts;
-        const stockCountSessions = (d.stockCountSessions || []).map((session) => session.id === quickInventoryId ? {
-          ...session,
-          code: quickInventoryBatch.code,
-          status: "committed",
-          committedBy: operator,
-          committedAt: ts,
-          summary: { products: selectedRows.length, adjustments: adjustments.length },
-          synced: false,
-          updatedAt: ts,
-        } : session);
+        const existingSessions = d.stockCountSessions || [];
+        const stockCountSessions = existingSessions.some((session) => session.id === quickInventoryId)
+          ? existingSessions.map((session) => session.id === quickInventoryId ? committedSession : session)
+          : [...existingSessions, committedSession];
         return {
           ...d,
           stockCountSessions,
-          stockMovements: [...(d.stockMovements || []), ...adjustments],
-          countLog: [...(d.countLog || []), ...logs],
-          cashierJointDebts,
+          stockMovements: [...(d.stockMovements || []), ...syncedAdjustments],
+          countLog: [...(d.countLog || []), ...syncedLogs],
         };
-      });
-      setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
+      }, { skipSync: true });
+      setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: syncedAdjustments.length });
       setQ("");
-      const reviewMessage = jointDebt
-        ? " " + fmt(jointDebt.totalCents, cur) + " was recorded for management review. No cashier was charged."
-        : "";
-      setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + reviewMessage);
+      setMessage(quickInventoryBatch.code + " applied. " + syncedAdjustments.length + " catalog adjustment(s) saved to the shared ledger. No cashier debt was created.");
     } catch (error) {
       console.error("Quick inventory apply failed", error);
       setMessage("Quick inventory could not be applied. No selected counts were cleared; please retry.");
@@ -13291,10 +13343,14 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
           onScan={handleQuickCameraScan}
         />
       )}
+      <InventoryApplyConfirmation
+        confirmation={applyConfirmation}
+        onCancel={() => setApplyConfirmation(null)}
+        onConfirm={() => { setApplyConfirmation(null); applyCounts(true); }}
+      />
       {report && <div className="panel fade" style={{ marginTop: 16 }}>
         <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 18 }}>Quick inventory applied</div><div className="sub">{report.code} - {report.branchName} - {dt(report.ts)}</div></div><button className="iconbtn" onClick={() => setReport(null)}><X /></button></div>
         <div className="notice">{report.rows.length} product(s) checked. {report.adjustments} product(s) were adjusted; every unselected product was left unchanged.</div>
-        {report.jointDebt && <div className="alert" style={{ marginTop: 10 }}><Boxes /><div><b>{fmt(report.jointDebt.totalCents, cur)} added to cashier inventory credit</b><div>{report.jointDebt.cashierCount > 0 ? "Shared equally across " + report.jointDebt.cashierCount + " active branch cashier(s)." : "No active branch cashier is available, so this credit is awaiting allocation."}</div></div></div>}
       </div>}
     </div>
   );
