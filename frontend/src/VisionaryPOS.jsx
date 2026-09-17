@@ -16608,12 +16608,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const glovoInScope = rb === "all" || rb === "b_sip";
   const glovoFrom = sinceFor > 0 ? new Date(sinceFor).toISOString() : "";
   const glovoTo = untilFor !== Infinity ? new Date(untilFor).toISOString() : "";
-  const [glovoPnl, setGlovoPnl] = useState({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+  const [glovoPnl, setGlovoPnl] = useState({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], daily: [], note: "" });
 
   useEffect(() => {
     let active = true;
     if (!glovoInScope) {
-      setGlovoPnl({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+      setGlovoPnl({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], daily: [], note: "" });
       return () => { active = false; };
     }
     setGlovoPnl((current) => ({ ...current, loading: true, error: "" }));
@@ -16629,11 +16629,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
           orderCount: Number(result?.orderCount || 0),
           revenueCents: Number(result?.revenueCents || 0),
           lines: Array.isArray(result?.lines) ? result.lines : [],
+          daily: Array.isArray(result?.daily) ? result.daily : [],
           note: result?.note || "",
         });
       })
       .catch(() => {
-        if (active) setGlovoPnl({ loading: false, error: "Glovo profit data could not be loaded.", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+        if (active) setGlovoPnl({ loading: false, error: "Glovo profit data could not be loaded.", orderCount: 0, revenueCents: 0, lines: [], daily: [], note: "" });
       });
     return () => { active = false; };
   }, [glovoInScope, glovoFrom, glovoTo]);
@@ -16727,6 +16728,23 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     const product = productsById.get(productId);
     return product ? productDedupeKey(product) : productKeyForValue(productId) || (productId ? "product:" + productId : "");
   };
+  // The Glovo audit ledger is authoritative for online sales. Its stock
+  // movement is deliberately separate from cashier invoice movements, so add
+  // it here instead of relying on invoice-only report calculations.
+  const glovoSoldQty = {};
+  const glovoRevenueByProduct = {};
+  (glovoPnl.lines || []).forEach((line) => {
+    const product = productsById.get(line.productId)
+      || branchProductsUnique(data, "b_sip").find((item) => String(item.sku || "").toLowerCase() === String(line.sku || "").toLowerCase())
+      || null;
+    const key = product ? productDedupeKey(product)
+      : productKeyForValue(line.productId) || productKeyForValue(line.sku);
+    if (!key) return;
+    glovoSoldQty[key] = (glovoSoldQty[key] || 0) + Math.max(0, Number(line.quantity || 0));
+    glovoRevenueByProduct[key] = (glovoRevenueByProduct[key] || 0) + Math.max(0, Number(line.revenueCents || 0));
+  });
+  const glovoItemsSold = Object.values(glovoSoldQty).reduce((sum, quantity) => sum + quantity, 0);
+  const reportedItemsSold = itemsSold + glovoItemsSold;
   const movementSoldQty = {};
   saleMoves.forEach((movement) => {
     const key = productKeyForId(movement.productId);
@@ -16757,7 +16775,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   });
   const qtyFor = (product) => {
     const key = productDedupeKey(product);
-    return Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0);
+    return Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0) + (glovoSoldQty[key] || 0);
   };
   const lossFor = (product) => lossQtyByProd[productDedupeKey(product)] || 0;
   const productsWithSales = reportProducts
@@ -16791,8 +16809,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const allProductReportRows = reportProducts.map((p) => {
     const priceCents = productBranchAverageCents(data, p, bId, branchProductPriceCents);
     const costCents = productBranchAverageCents(data, p, bId, (item, id) => branchInventoryCostCents(data, item, id));
+    const key = productDedupeKey(p);
+    const cashierQty = Math.max(invoiceSoldQty[key] || 0, movementSoldQty[key] || 0);
     const qty = qtyFor(p);
-    const revenue = qty * priceCents;
+    const revenue = cashierQty * priceCents + (glovoRevenueByProduct[key] || 0);
     const cost = qty * costCents;
     const lossValue = lossFor(p) * costCents;
     const profit = revenue - cost;
@@ -16806,7 +16826,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       lossValue,
       profit,
       netProfit,
-      marg: priceCents > 0 ? Math.round((priceCents - costCents) / priceCents * 100) : 0,
+      marg: revenue > 0 ? Math.round((revenue - cost) / revenue * 100) : 0,
       stockOnHand: productOnHand(data, p, bId || null),
       movement: classOf(p),
     };
@@ -16968,6 +16988,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const topMax = Math.max(1, ...productRows.map((r) => r.qty));
 
   const trend = {}; recInvs.forEach((i) => { trend[i.date] = (trend[i.date] || 0) + i.totalCents; });
+  (glovoPnl.daily || []).forEach((day) => {
+    const date = String(day.date || "").slice(0, 10);
+    if (date) trend[date] = (trend[date] || 0) + Math.max(0, Number(day.revenueCents || 0));
+  });
   const trendRows = Object.entries(trend).sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-10);
   const trendMax = Math.max(1, ...trendRows.map(([, v]) => v));
 
@@ -17224,7 +17248,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             <Stat l="Overdue Invoices" v={fmt(overdueSales, cur)} sub2={periodOverdueInvoices.length + " invoice(s)"} warn={overdueSales > 0} />
             <Stat l="Debts" v={fmt(debtSales, cur)} sub2={periodDebtInvoices.length + " carried-over invoice(s)"} warn={debtSales > 0} />
             <Stat l="Expenses" v={fmt(expTotal, cur)} sub2={periodExp.length + " record(s)"} />
-            <Stat l="Items Sold" v={itemsSold} />
+            <Stat l="Items Sold" v={reportedItemsSold} sub2={glovoItemsSold ? `${itemsSold} cashier · ${glovoItemsSold} Glovo` : "cashier"} />
             <Stat l="Payments Collected" v={fmt(cleared, cur)} sub2={clearedInvoiceCount + " invoice(s)"} />
             <Stat l="Glovo Sales" v={fmt(glovoRevenue, cur)} sub2={glovoPnl.loading ? "loading…" : "fulfilled orders"} />
             <Stat l="Pending Sync" v={pending} sub2="local only" warn={pending > 0} />
@@ -17252,7 +17276,12 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
           let bal = 0; const ledger = moves.map((mv) => { bal += mv.qty; return { ...mv, bal }; }).reverse();
           const priceCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, branchProductPriceCents);
           const costCents = productBranchAverageCents(data, p, rb === "all" ? undefined : rb, (item, id) => branchInventoryCostCents(data, item, id));
-          const soldUnits = qtyFor(p); const rev = soldUnits * priceCents; const cost = soldUnits * costCents; const cls = classOf(p);
+          const productKey = productDedupeKey(p);
+          const cashierSoldUnits = Math.max(invoiceSoldQty[productKey] || 0, movementSoldQty[productKey] || 0);
+          const glovoSoldUnits = glovoSoldQty[productKey] || 0;
+          const soldUnits = cashierSoldUnits + glovoSoldUnits;
+          const rev = cashierSoldUnits * priceCents + (glovoRevenueByProduct[productKey] || 0);
+          const cost = soldUnits * costCents; const cls = classOf(p);
           const lossUnits = lossFor(p); const lossVal = lossUnits * costCents; const gp = rev - cost; const net = gp - lossVal;
           const stockValuation = productStockValuation(data, p, rb === "all" ? undefined : rb);
           const stockOnHand = stockValuation.quantity;
@@ -17362,7 +17391,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
             {[["Cashier sales (paid and closed)", cashierTotalSales], ["Glovo sales (fulfilled)", glovoRevenue], ["Cost of goods sold", -cogs], ["Gross profit", grossProfit], ["Expenses", -expTotal], ["Loss & damage", -lossTotal]].map(([l, v]) => (
               <div className="totrow" key={l}><span>{l}</span><span style={{ color: v < 0 ? "var(--danger)" : "var(--text)" }}>{v < 0 ? "−" : ""}{fmt(Math.abs(v), cur)}</span></div>))}
             <div className="totrow grand"><span>Net profit</span><span className="v" style={{ color: netProfit < 0 ? "var(--danger)" : "var(--ok)" }}>{fmt(netProfit, cur)}</span></div>
-            <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} cashier transaction(s) · {glovoPnl.orderCount} stock-posted Glovo order(s) · {itemsSold} cashier units</div>
+            <div className="sub" style={{ marginTop: 10 }}>Margin {margin}% · {recInvs.length} cashier transaction(s) · {glovoPnl.orderCount} stock-posted Glovo order(s) · {itemsSold} cashier units · {glovoItemsSold} Glovo units</div>
             {glovoPnl.loading ? <div className="sub" style={{ marginTop: 6 }}>Loading Glovo channel totals…</div> : null}
             {glovoPnl.error ? <div className="sub" style={{ marginTop: 6, color: "var(--danger)" }}>{glovoPnl.error}</div> : null}
             {glovoPnl.note ? <div className="sub" style={{ marginTop: 6 }}>{glovoPnl.note}</div> : null}

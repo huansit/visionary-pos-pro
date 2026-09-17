@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import request from "supertest";
+import bcrypt from "bcryptjs";
 
 process.env.NODE_ENV = "test";
 process.env.PG_MEM = "1";
@@ -131,6 +132,60 @@ test("a fulfilled mapped Glovo order posts stock once and a later cancellation r
     const stockEvents = await pool.query("SELECT id FROM events WHERE id LIKE $1", [`glovo-stock:${orderId}:%`]);
     assert.equal(stockEvents.rows.length, 1, "a status replay must not deduct stock twice");
   } finally {
+    await pool.query("DELETE FROM events WHERE id LIKE $1", [`glovo-stock%:${orderId}%`]);
+    await pool.query("DELETE FROM glovo_order_events WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_order_lines WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_webhook_events WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM glovo_orders WHERE order_id = $1", [orderId]);
+    await pool.query("DELETE FROM records WHERE type = 'product' AND id = $1", [productId]);
+  }
+});
+
+test("Glovo reports expose fulfilled online revenue, product lines, and daily totals", async () => {
+  const productId = "glovo-report-product-sip";
+  const orderId = "glovo-report-order-1";
+  const adminId = "glovo-report-admin";
+  try {
+    await pool.query(
+      `INSERT INTO records (id, type, branch_id, device_id, updated_at, server_ts, deleted, payload)
+       VALUES ($1, 'product', 'b_sip', NULL, $2, $2, false, $3)`,
+      [productId, Date.now(), { id: productId, branchId: "b_sip", name: "Glovo Report Product", sku: "GLOVO-REPORT-001", costCents: 12000 }]
+    );
+    await request(app)
+      .post("/api/integrations/glovo/orders/webhook")
+      .set("Authorization", process.env.GLOVO_WEBHOOK_SECRET)
+      .send({
+        event_id: "glovo-report-order-fulfilled",
+        order_id: orderId,
+        status: "DELIVERED",
+        client: { external_partner_config_id: "b_sip" },
+        payment: { order_total: 420 },
+        items: [{ line_id: "line-1", sku: "GLOVO-REPORT-001", pricing: { quantity: 2, unit_price: 210, total_price: 420 } }],
+      })
+      .expect(200, { ok: true, orderId, status: "DELIVERED", duplicate: false, stockState: "posted" });
+
+    await pool.query(
+      `INSERT INTO credentials (id, kind, name, email, password_hash, rights, status, email_verified)
+       VALUES ($1, 'admin', $2, $3, $4, $5::jsonb, 'active', true)`,
+      [adminId, "Glovo Report Admin", "glovo.report@example.com", await bcrypt.hash("Admin@123", 10), JSON.stringify({ role: "Admin" })]
+    );
+    const login = await request(app)
+      .post("/api/auth/login")
+      .send({ identifier: "glovo.report@example.com", password: "Admin@123" })
+      .expect(200);
+    const report = await request(app)
+      .get("/api/integrations/glovo/pnl")
+      .set("X-Session-Token", login.body.sessionToken)
+      .expect(200);
+
+    assert.equal(Number(report.body.revenueCents), 42000);
+    assert.equal(Number(report.body.orderCount), 1);
+    assert.deepEqual(report.body.lines.map((line) => ({ productId: line.productId, quantity: Number(line.quantity), revenueCents: Number(line.revenueCents) })), [{ productId, quantity: 2, revenueCents: 42000 }]);
+    assert.equal(report.body.daily.length, 1);
+    assert.equal(Number(report.body.daily[0].revenueCents), 42000);
+  } finally {
+    await pool.query("DELETE FROM user_sessions WHERE user_id = $1", [adminId]);
+    await pool.query("DELETE FROM credentials WHERE id = $1", [adminId]);
     await pool.query("DELETE FROM events WHERE id LIKE $1", [`glovo-stock%:${orderId}%`]);
     await pool.query("DELETE FROM glovo_order_events WHERE order_id = $1", [orderId]);
     await pool.query("DELETE FROM glovo_order_lines WHERE order_id = $1", [orderId]);

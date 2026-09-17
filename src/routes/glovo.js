@@ -434,6 +434,27 @@ router.get("/pnl", requireAdminOrSupervisor, async (req, res, next) => {
              ORDER BY "revenueCents" DESC`,
       values
     );
+    // Aggregate daily totals in JavaScript rather than using database-specific
+    // date formatting. Production PostgreSQL and test SQLite/MySQL adapters
+    // then produce the exact same audit report.
+    const dailyRows = await q(
+      isMySql
+        ? `SELECT o.updated_at AS updatedAt, o.order_total_cents AS revenueCents
+             FROM glovo_orders o WHERE ${filter} ORDER BY o.updated_at ASC`
+        : `SELECT o.updated_at AS "updatedAt", o.order_total_cents AS "revenueCents"
+             FROM glovo_orders o WHERE ${filter} ORDER BY o.updated_at ASC`,
+      values
+    );
+    const dailyMap = new Map();
+    for (const row of dailyRows.rows || []) {
+      const at = new Date(row.updatedAt);
+      const date = Number.isNaN(at.getTime()) ? "Unknown" : at.toISOString().slice(0, 10);
+      const current = dailyMap.get(date) || { date, orderCount: 0, revenueCents: 0 };
+      current.orderCount += 1;
+      current.revenueCents += Number(row.revenueCents || 0);
+      dailyMap.set(date, current);
+    }
+    const daily = [...dailyMap.values()];
     res.json({
       branchId: "b_sip",
       channel: "glovo",
@@ -442,6 +463,7 @@ router.get("/pnl", requireAdminOrSupervisor, async (req, res, next) => {
       to: to || null,
       ...(summary.rows[0] || { orderCount: 0, revenueCents: 0 }),
       lines: lines.rows || [],
+      daily,
       note: "Only fulfilled Glovo orders whose stock movement has been posted are included. Cost of goods is calculated from the mapped SIPCITY product cost; provider fees and payout require Glovo's settlement feed.",
     });
   } catch (error) { next(error); }
