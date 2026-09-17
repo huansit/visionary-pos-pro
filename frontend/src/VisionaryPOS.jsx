@@ -11582,38 +11582,6 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
   const [summary, setSummary] = useState("");
 
   const activeInvoices = operationalInvoices(data);
-  const glovoInScope = rb === "all" || rb === "b_sip";
-  const glovoFrom = sinceFor > 0 ? new Date(sinceFor).toISOString() : "";
-  const glovoTo = untilFor !== Infinity ? new Date(untilFor).toISOString() : "";
-  const [glovoPnl, setGlovoPnl] = useState({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
-
-  useEffect(() => {
-    let active = true;
-    if (!glovoInScope) {
-      setGlovoPnl({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
-      return () => { active = false; };
-    }
-    setGlovoPnl((current) => ({ ...current, loading: true, error: "" }));
-    const query = new URLSearchParams();
-    if (glovoFrom) query.set("from", glovoFrom);
-    if (glovoTo) query.set("to", glovoTo);
-    authGet(`/api/integrations/glovo/pnl?${query.toString()}`, { session: true })
-      .then((result) => {
-        if (!active) return;
-        setGlovoPnl({
-          loading: false,
-          error: "",
-          orderCount: Number(result?.orderCount || 0),
-          revenueCents: Number(result?.revenueCents || 0),
-          lines: Array.isArray(result?.lines) ? result.lines : [],
-          note: result?.note || "",
-        });
-      })
-      .catch(() => {
-        if (active) setGlovoPnl({ loading: false, error: "Glovo profit data could not be loaded.", orderCount: 0, revenueCents: 0, lines: [], note: "" });
-      });
-    return () => { active = false; };
-  }, [glovoInScope, glovoFrom, glovoTo]);
   const branchInvoices = activeInvoices.filter((invoice) => invoice.branchId === branch.id);
   const businessPeriodStart = branchLastEndDay(data, branch.id);
   const todayInv = branchInvoices.filter((invoice) => Number(invoice.ts || 0) > businessPeriodStart);
@@ -16630,6 +16598,39 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   const bname = (id) => data.branches.find((b) => b.id === id)?.name || "—";
   const prod = (id) => data.products.find((p) => p.id === id);
   const activeInvoices = operationalInvoices(data);
+
+  const glovoInScope = rb === "all" || rb === "b_sip";
+  const glovoFrom = sinceFor > 0 ? new Date(sinceFor).toISOString() : "";
+  const glovoTo = untilFor !== Infinity ? new Date(untilFor).toISOString() : "";
+  const [glovoPnl, setGlovoPnl] = useState({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+
+  useEffect(() => {
+    let active = true;
+    if (!glovoInScope) {
+      setGlovoPnl({ loading: false, error: "", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+      return () => { active = false; };
+    }
+    setGlovoPnl((current) => ({ ...current, loading: true, error: "" }));
+    const query = new URLSearchParams();
+    if (glovoFrom) query.set("from", glovoFrom);
+    if (glovoTo) query.set("to", glovoTo);
+    authGet(`/api/integrations/glovo/pnl?${query.toString()}`, { session: true })
+      .then((result) => {
+        if (!active) return;
+        setGlovoPnl({
+          loading: false,
+          error: "",
+          orderCount: Number(result?.orderCount || 0),
+          revenueCents: Number(result?.revenueCents || 0),
+          lines: Array.isArray(result?.lines) ? result.lines : [],
+          note: result?.note || "",
+        });
+      })
+      .catch(() => {
+        if (active) setGlovoPnl({ loading: false, error: "Glovo profit data could not be loaded.", orderCount: 0, revenueCents: 0, lines: [], note: "" });
+      });
+    return () => { active = false; };
+  }, [glovoInScope, glovoFrom, glovoTo]);
 
   const invs = activeInvoices.filter((i) => inRange(i.ts) && inBranch(i.branchId));
   const recInvs = invs.filter((i) => invRecognized(i, data)); // counted in P&L only after payment and end-of-day
