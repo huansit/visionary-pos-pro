@@ -1521,17 +1521,27 @@ export async function pullCatalog(
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);
   const cashierJointDebts = Array.from(cashierJointDebtRecords.values())
-    .map((debt) => ({
-      ...debt,
-      status: cashierJointDebtReviews.get(debt.id)?.decision || debt.status,
-      shares: debt.shares.map((share) => ({
-        ...share,
-        paidCents: Math.min(
-          Math.max(0, Number(share.amountCents || 0)),
-          Math.max(0, Number(share.paidCents || 0)) + (cashierJointDebtPaidCents.get(`${debt.id}:${share.cashierId}`) || 0)
-        )
-      }))
-    }))
+    .map((debt) => {
+      const review = cashierJointDebtReviews.get(debt.id);
+      const source = String(debt.source || "").trim().toLowerCase();
+      const storedStatus = String(debt.status || "open").trim().toLowerCase();
+      const pendingLegacyCountShortage = ["stock_count", "quick_inventory"].includes(source)
+        && !review
+        && ["", "open", "pending_review"].includes(storedStatus);
+      return {
+        ...debt,
+        // Normalize old automatic count charges while catalog data is rebuilt.
+        // The cashier app must never show them as payable until approved.
+        status: review?.decision || (pendingLegacyCountShortage ? "pending_review" : debt.status),
+        shares: debt.shares.map((share) => ({
+          ...share,
+          paidCents: Math.min(
+            Math.max(0, Number(share.amountCents || 0)),
+            Math.max(0, Number(share.paidCents || 0)) + (cashierJointDebtPaidCents.get(`${debt.id}:${share.cashierId}`) || 0)
+          )
+        }))
+      };
+    })
     .filter((debt) => debt.branchId === targetBranchId)
     .sort((a, b) => b.ts - a.ts);
 

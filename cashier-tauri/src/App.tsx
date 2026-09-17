@@ -679,12 +679,25 @@ function invoiceAgeText(invoice: Invoice) {
   return `${ageDays}d old`;
 }
 
+function isInventoryCountShortage(debt: CashierJointDebt) {
+  return ["stock_count", "quick_inventory"].includes(String(debt.source || "").trim().toLowerCase());
+}
+
+function cashierDebtIsChargeable(debt: CashierJointDebt) {
+  const status = String(debt.status || "open").trim().toLowerCase();
+  if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(status)) return false;
+  // A legacy count record may still say "open". It is a branch variance, not
+  // a cashier liability, until the server has returned an approved review.
+  if (isInventoryCountShortage(debt)) return status === "approved";
+  return ["open", "approved"].includes(status);
+}
+
 function cashierJointDebtEntries(debts: CashierJointDebt[], account: Account | null, branchId?: string): CashierJointDebtEntry[] {
   if (!account) return [];
   const accountName = normalize(account.name || "");
   return debts.flatMap((debt) => {
     if (branchId && debt.branchId !== branchId) return [];
-    if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(String(debt.status || "open").toLowerCase())) return [];
+    if (!cashierDebtIsChargeable(debt)) return [];
     const share = debt.shares.find((entry) => entry.cashierId === account.id)
       || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
     if (!share) return [];
@@ -698,7 +711,7 @@ function cashierJointDebtAccumulator(debts: CashierJointDebt[], account: Account
   const accountName = normalize(account.name || "");
   return debts.reduce((totals, debt) => {
     if (branchId && debt.branchId !== branchId) return totals;
-    if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(String(debt.status || "open").toLowerCase())) return totals;
+    if (!cashierDebtIsChargeable(debt)) return totals;
     const share = debt.shares.find((entry) => entry.cashierId === account.id)
       || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
     if (!share) return totals;

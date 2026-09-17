@@ -210,6 +210,10 @@ export function deriveCashierState(source: CashierStateSource): CashierState {
   const accountName = customerKey(source.account?.name);
   const inventoryDebts = (source.cashierJointDebts || []).flatMap((debt) => {
     if (branch && debt.branchId !== branch.id) return [];
+    const sourceType = String(debt.source || "").trim().toLowerCase();
+    const status = String(debt.status || "open").trim().toLowerCase();
+    const isCountShortage = ["stock_count", "quick_inventory"].includes(sourceType);
+    if (isCountShortage ? status !== "approved" : !["open", "approved"].includes(status)) return [];
     const share = debt.shares.find((entry) => entry.cashierId === accountId)
       || debt.shares.find((entry) => accountName && customerKey(entry.cashierName) === accountName);
     if (!share) return [];

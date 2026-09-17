@@ -1802,15 +1802,25 @@ function cashierJointDebtReview(data, debt) {
     .filter((review) => String(review?.debtId || "") === debtId)
     .sort((left, right) => Number(right.reviewedAt || right.ts || 0) - Number(left.reviewedAt || left.ts || 0))[0] || null;
 }
+function isInventoryCountShortage(debt) {
+  return ["stock_count", "quick_inventory"].includes(String(debt?.source || "").trim().toLowerCase());
+}
+function cashierJointDebtNeedsReview(data, debt) {
+  if (!isInventoryCountShortage(debt) || cashierJointDebtReview(data, debt)) return false;
+  return ["", "open", "pending_review"].includes(String(debt?.status || "").trim().toLowerCase());
+}
 function cashierJointDebtStatus(data, debt) {
   const decision = String(cashierJointDebtReview(data, debt)?.decision || "").toLowerCase();
+  if (!decision && cashierJointDebtNeedsReview(data, debt)) return "pending_review";
   return decision || String(debt?.status || "open").toLowerCase();
 }
 function cashierJointDebtIsChargeable(data, debt) {
-  // Older, already-open balances retain their existing accounting treatment.
-  // New count shortages are created as pending_review and must be approved by
-  // management before any cashier sees a liability.
-  return ["open", "approved"].includes(cashierJointDebtStatus(data, debt));
+  const status = cashierJointDebtStatus(data, debt);
+  // Count variances are branch losses until a manager has explicitly approved
+  // a charge. Older clients wrote these as "open"; never make that legacy
+  // value a cashier liability just because a device later replays it.
+  if (isInventoryCountShortage(debt)) return status === "approved";
+  return ["open", "approved"].includes(status);
 }
 function cashierJointDebtShareBalance(data, debt, share) {
   const assignedCents = Math.max(0, Number(share?.amountCents) || 0);
@@ -9412,10 +9422,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const pendingJointDebts = (data.cashierJointDebts || [])
     .filter((debt) => {
       if (debt.branchId !== branch.id) return false;
-      const status = cashierJointDebtStatus(data, debt);
-      // Older auto-created open debts remain reviewable without deleting their
-      // original stock-count evidence.
-      return status === "pending_review" || (status === "open" && ["stock_count", "quick_inventory"].includes(String(debt.source || "stock_count")) && !cashierJointDebtReview(data, debt));
+      return cashierJointDebtStatus(data, debt) === "pending_review";
     })
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   const missingDebtByCashier = {};
@@ -9622,10 +9629,9 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             <span className="pill plain">{pendingJointDebts.length} awaiting review</span>
           </div>
           <div className="list mini inventory-debt-list">{pendingJointDebts.map((debt) => {
-            const legacyOpen = cashierJointDebtStatus(data, debt) === "open";
             return <div className="row" key={debt.id}>
               <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
-              <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)}{legacyOpen ? " · legacy automatic charge" : ""}</div></div>
+              <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)} · review required</div></div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
                 <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>

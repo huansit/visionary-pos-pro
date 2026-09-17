@@ -2522,7 +2522,8 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       branchId: "b_sip",
       stockCountSessionId: "sc-test-lock-a",
       stockCountCode: "SC-TEST",
-      status: "open",
+      source: "stock_count",
+      status: "pending_review",
       shortageUnits: 2,
       totalCents: 10001,
       cashierCount: 2,
@@ -2543,6 +2544,19 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
     .expect((res) => {
       assert.deepEqual(res.body.rejected, []);
       assert.ok(res.body.accepted.includes(debtId));
+    });
+
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{
+      ...jointDebt,
+      id: "cjd-stock-count-auto-charge-blocked",
+      payload: { ...jointDebt.payload, status: "open" }
+    }] }))
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "cashier_debt_requires_manager_review");
     });
 
   await request(app)

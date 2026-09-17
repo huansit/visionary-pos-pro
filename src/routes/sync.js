@@ -1623,6 +1623,16 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
+          if (type === "cashierJointDebt") {
+            if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
+              throw syncEventError("supervisor_authorization_required");
+            }
+            const source = String(eventToStore.payload?.source || "").trim().toLowerCase();
+            const status = String(eventToStore.payload?.status || "").trim().toLowerCase();
+            if (["stock_count", "quick_inventory"].includes(source) && status !== "pending_review") {
+              throw syncEventError("cashier_debt_requires_manager_review");
+            }
+          }
           if (type === "cashierJointDebtPayment") {
             await validatePayrollCashierDebtSettlement(client, eventToStore, req);
           }
