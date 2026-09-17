@@ -18957,6 +18957,7 @@ function GlovoOrdersTab({ data, update }) {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogMessage, setCatalogMessage] = useState("");
   const [priceDrafts, setPriceDrafts] = useState({});
+  const [upliftPercent, setUpliftPercent] = useState("30");
 
   useEffect(() => {
     let active = true;
@@ -19065,15 +19066,20 @@ function GlovoOrdersTab({ data, update }) {
     }));
     setCatalogMessage(`${product.name} is ${enabled ? "available" : "hidden"} on Glovo.`);
   };
-  const applyThirtyPercentGlovoUplift = () => {
+  const applyGlovoUplift = () => {
+    const uplift = Number(String(upliftPercent || "").trim());
+    if (!Number.isFinite(uplift) || uplift < 0) {
+      setCatalogMessage("Enter a valid Glovo uplift percentage of zero or more.");
+      return;
+    }
     const targets = branchProductsUnique(data, "b_sip")
-      .map((product) => ({ id: product.id, priceCents: Math.round(branchProductPriceCents(product, "b_sip") * 1.3) }))
+      .map((product) => ({ id: product.id, priceCents: Math.round(branchProductPriceCents(product, "b_sip") * (1 + uplift / 100)) }))
       .filter((product) => product.priceCents > 0);
     if (!targets.length) {
       setCatalogMessage("No SIPCITY products with a physical price are available to update.");
       return;
     }
-    if (!window.confirm(`Set the Glovo price for ${targets.length} SIPCITY product(s) to 30% above their physical price? Product availability will not change.`)) return;
+    if (!window.confirm(`Set the Glovo price for ${targets.length} SIPCITY product(s) to ${uplift}% above their physical price? Product availability will not change.`)) return;
     const targetPrices = new Map(targets.map((product) => [product.id, product.priceCents]));
     const updatedAt = now();
     update((current) => ({
@@ -19083,7 +19089,7 @@ function GlovoOrdersTab({ data, update }) {
         : product),
     }));
     setPriceDrafts({});
-    setCatalogMessage(`${targets.length} Glovo prices set to 30% above their physical price and queued for sync.`);
+    setCatalogMessage(`${targets.length} Glovo prices set to ${uplift}% above their physical price and queued for sync.`);
   };
 
   return (
@@ -19146,11 +19152,12 @@ function GlovoOrdersTab({ data, update }) {
         <div className="page-h" style={{ marginBottom: 12 }}>
           <div><div className="section-title" style={{ margin: 0 }}>SIPCITY Glovo price list</div><div className="sub">Separate online pricing and availability. Physical-shop prices are not changed.</div></div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button type="button" className="btn btn-ghost" onClick={applyThirtyPercentGlovoUplift}>Set all +30%</button>
+            <label className="sub" style={{ display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>Uplift <input className="input" type="number" inputMode="decimal" min="0" step="0.1" value={upliftPercent} onChange={(event) => setUpliftPercent(event.target.value)} aria-label="Glovo price uplift percentage" style={{ width: 76, minHeight: 34, padding: "4px 8px" }} />%</label>
+            <button type="button" className="btn btn-ghost" onClick={applyGlovoUplift}>Set all +{upliftPercent || 0}%</button>
             <div className="possearch" style={{ width: 300, maxWidth: "100%" }}><Search /><input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search SKU or product" aria-label="Search Glovo price list" /></div>
           </div>
         </div>
-        <div className="notice" style={{ marginBottom: 12 }}><ShieldCheck /> Set all +30% applies the agreed 30% uplift to every priced SIPCITY product while keeping availability unchanged. Individual prices save immediately and sync in the background. Publishing to Glovo remains disabled until it activates the Catalog API for SIPCITY.</div>
+        <div className="notice" style={{ marginBottom: 12 }}><ShieldCheck /> Choose an uplift, then use Set all to apply it to every priced SIPCITY product while keeping availability unchanged. Individual prices save immediately and sync in the background. Publishing to Glovo remains disabled until it activates the Catalog API for SIPCITY.</div>
         {catalogMessage ? <div className="sub" role="status" style={{ color: "var(--ok)", marginBottom: 10 }}>{catalogMessage}</div> : null}
         <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Product</th><th>Physical price</th><th>Glovo price</th><th>Available on Glovo</th></tr></thead><tbody>
           {glovoProducts.map((product) => {
