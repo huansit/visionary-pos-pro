@@ -2616,7 +2616,14 @@ function clampPaymentCents(value, balanceCents) {
   return Math.min(Math.max(0, Number(balanceCents) || 0), centsFromInput(value));
 }
 function onHand(data, productId, branchId) {
-  return data.stockMovements.filter((m) => m.productId === productId && (!branchId || m.branchId === branchId)).reduce((s, m) => s + m.qty, 0);
+  const movements = data.stockMovements.filter((m) => m.productId === productId && (!branchId || m.branchId === branchId));
+  // The first audited correction/count against a legacy catalogue quantity
+  // includes its opening baseline. All later movements remain deltas, so this
+  // yields the same on-hand result as the terminal catalogue without turning
+  // a first count of 23 (from 20) into an on-hand value of 3.
+  const opening = movements.find((movement) => Number.isFinite(Number(movement.stockBaseQty)) && Number(movement.stockBaseQty) >= 0);
+  return (opening ? Number(opening.stockBaseQty) : 0)
+    + movements.reduce((sum, movement) => sum + (Number(movement.qty) || 0), 0);
 }
 function wacCost(prevQty, prevCost, addQty, addCost) {
   const q = Math.max(0, prevQty); const denom = q + addQty;
@@ -9789,6 +9796,10 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
+  const settlementRole = String(typeof user === "object" && user ? (user.role || user.kind || user.rights?.role || "") : "").toLowerCase();
+  const payrollDebtEligible = selectedAllocations.length > 0
+    && selectedAllocations.every((allocation) => Number(allocation.debt?.ts || 0) > 0 && now() - Number(allocation.debt.ts) >= 30 * 24 * 60 * 60 * 1000);
+  const canUsePayroll = ["owner", "admin"].includes(settlementRole) && payrollDebtEligible;
   const paymentCents = clampPaymentCents(amount, selectedDebtTotal);
   const branchPayments = (data.cashierJointDebtPayments || [])
     .filter((payment) => payment.branchId === branch.id && (!payment.status || payment.status === "captured"))
@@ -9826,6 +9837,9 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
       });
     return () => { active = false; };
   }, [selectedCashierId, branch.id]);
+  useEffect(() => {
+    if (method === "payroll" && !canUsePayroll) setMethod("m-pesa");
+  }, [method, canUsePayroll]);
 
   const replaceDebtSelection = (nextIds) => {
     const nextTotal = openDebtAllocations
@@ -9852,6 +9866,14 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
     }
     if (paymentCents <= 0) {
       setError("Enter a payment amount greater than zero.");
+      return;
+    }
+    if (method === "payroll" && !["owner", "admin"].includes(settlementRole)) {
+      setError("Only an owner or admin can record a payroll recovery.");
+      return;
+    }
+    if (method === "payroll" && !payrollDebtEligible) {
+      setError("Payroll recovery is available only for cashier debts that are at least 30 days old.");
       return;
     }
     if (method === "cashier-wallet" && paymentCents > walletState.balanceCents) {
@@ -9943,7 +9965,7 @@ function DebtPaymentsTab({ data, update, branch, user, compact = false, onSettle
 
   const paymentMethods = [
     { id: "m-pesa", label: "M-Pesa", Icon: Smartphone },
-    { id: "payroll", label: "Payroll", Icon: Wallet },
+    ...(canUsePayroll ? [{ id: "payroll", label: "Payroll", Icon: Wallet }] : []),
     { id: "cashier-wallet", label: "Wallet", Icon: Wallet },
   ];
 

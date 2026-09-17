@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { productDisplayImage } from "./productImages";
 import { businessDateValue } from "./businessTime";
-import type { Account, Branch, BusinessDayPeriod, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaOffset, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
+import type { Account, Branch, BusinessDayPeriod, CashierJointDebt, ExpenseCategory, Invoice, MpesaLedger, MpesaOffset, MpesaTransaction, Product, Receipt, StockTransferRequest, StockTransferRequestItem, TerminalCredentials } from "./types";
 
 export const API_BASE_URL = "https://visionarypos.cloud";
 declare const __APP_VERSION__: string;
@@ -123,12 +123,18 @@ function eventQuantity(payload: Record<string, any>) {
   return 0;
 }
 
-function addStock(stockByProduct: Map<string, number>, productId: unknown, qty: unknown) {
+type StockLedgerEntry = { qty: number; stockBaseQty: number | null };
+
+function addStock(stockByProduct: Map<string, StockLedgerEntry>, productId: unknown, qty: unknown, stockBaseQty: unknown = null) {
   if (!productId) return;
   const quantity = Number(qty);
-  if (!Number.isFinite(quantity) || quantity === 0) return;
+  const baseline = Number(stockBaseQty);
+  if (!Number.isFinite(quantity) && !Number.isFinite(baseline)) return;
   const id = String(productId);
-  stockByProduct.set(id, (stockByProduct.get(id) || 0) + quantity);
+  const current = stockByProduct.get(id) || { qty: 0, stockBaseQty: null };
+  if (current.stockBaseQty === null && Number.isFinite(baseline) && baseline >= 0) current.stockBaseQty = baseline;
+  if (Number.isFinite(quantity)) current.qty += quantity;
+  stockByProduct.set(id, current);
 }
 
 function terminalHeaders(terminal: TerminalCredentials): HeadersInit {
@@ -811,7 +817,7 @@ export async function applySupervisorStockCount(
   account: Account,
   branchId: string,
   rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>
-): Promise<{ sessionId: string; changes: number }> {
+): Promise<{ sessionId: string; changes: number; committedAt: number }> {
   const role = String(account.role || account.kind || "").trim().toLowerCase();
   if (!["owner", "admin", "manager", "supervisor"].includes(role)) {
     throw new Error("supervisor_authorization_required");
@@ -839,7 +845,35 @@ export async function applySupervisorStockCount(
         countedQty: row.countedQty,
         correctedQty: row.countedQty,
         countedBy: account.name,
+        countedAt: ts,
+        approvedBy: account.name,
+        approvedAt: ts,
+        source: "cashier_terminal",
         ts
+      }
+    })),
+    // Count logs are deliberately separate from the stock ledger. The ledger
+    // changes on-hand; this record preserves the physical-count evidence for
+    // Inventory, product reports and later audit without reapplying stock.
+    ...changes.map((row) => ({
+      id: uid("count-log"),
+      type: "countLog",
+      branchId,
+      clientTs: ts,
+      payload: {
+        productId: row.productId,
+        productName: row.productName,
+        branchId,
+        mode: "count",
+        stockCountSessionId: sessionId,
+        expectedQty: row.previousQty,
+        countedQty: row.countedQty,
+        varianceQty: row.countedQty - row.previousQty,
+        countedBy: account.name,
+        countedAt: ts,
+        approvedBy: account.name,
+        approvedAt: ts,
+        source: "cashier_terminal"
       }
     })),
     {
@@ -857,6 +891,20 @@ export async function applySupervisorStockCount(
         startedAt: ts,
         committedBy: account.name,
         committedAt: ts,
+        approvedBy: account.name,
+        approvedAt: ts,
+        source: "cashier_terminal",
+        items: changes.map((row) => ({
+          productId: row.productId,
+          productName: row.productName,
+          expectedQty: row.previousQty,
+          countedQty: row.countedQty,
+          varianceQty: row.countedQty - row.previousQty,
+          countedBy: account.name,
+          countedAt: ts,
+          approvedBy: account.name,
+          approvedAt: ts
+        })),
         summary: { products: rows.length, adjustments: changes.length },
         updatedAt: ts
       }
@@ -868,7 +916,109 @@ export async function applySupervisorStockCount(
     body: JSON.stringify({ events })
   });
   assertSyncAccepted(result, events);
-  return { sessionId, changes: changes.length };
+  return { sessionId, changes: changes.length, committedAt: ts };
+}
+
+/**
+ * App settlements deliberately use the same Kopo Kopo reservation and sync
+ * records as the website. There is no manual-paid path here: a valid provider
+ * transaction is reserved before the shared payment/settlement events are
+ * accepted, which prevents a terminal from clearing an invoice by typing a
+ * reference alone.
+ */
+export async function settleInvoiceWithVerifiedMpesa(
+  sessionToken: string,
+  account: Account,
+  invoice: Invoice,
+  transaction: MpesaTransaction,
+  amountCents: number
+): Promise<{ paidCents: number; settledAt: number }> {
+  const role = String(account.role || account.kind || "").trim().toLowerCase();
+  if (!["owner", "admin"].includes(role)) throw new Error("admin_invoice_settlement_required");
+
+  const amount = Math.floor(Number(amountCents));
+  const balance = Math.max(0, Number(invoice.totalCents || 0) - Number(invoice.paidCents || 0));
+  if (!invoice.id || !invoice.branchId || !Number.isSafeInteger(amount) || amount <= 0 || amount > balance) {
+    throw new Error("invalid_invoice_settlement_amount");
+  }
+  if (!transaction?.id || transaction.providerVerified !== true || transaction.purpose === "stock_funding"
+    || transaction.branchId !== invoice.branchId || transaction.allocatable === false
+    || amount > Math.max(0, Number(transaction.remainingCents || 0))) {
+    throw new Error("verified_mpesa_receipt_required");
+  }
+
+  const ts = Date.now();
+  const paymentId = uid("payment");
+  const batchId = `cashier-mpesa-settlement:${paymentId}`;
+  const reservation = await jsonFetch<{ allocations?: Array<{ id?: string }> }>("/api/integrations/kopokopo/allocations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+    body: JSON.stringify({
+      transactionId: transaction.id,
+      branchId: transaction.branchId,
+      idempotencyKey: batchId,
+      allocations: [{ invoiceId: invoice.id, amountCents: amount, localPaymentId: paymentId }]
+    })
+  });
+  const allocationId = String(reservation.allocations?.[0]?.id || "");
+  if (!allocationId) throw new Error("kopokopo_allocation_missing");
+
+  const paidCents = Math.min(Number(invoice.totalCents || 0), Number(invoice.paidCents || 0) + amount);
+  const fullyPaid = paidCents >= Number(invoice.totalCents || 0) && Number(invoice.totalCents || 0) > 0;
+  const payment = {
+    id: paymentId,
+    type: "payment",
+    branchId: invoice.branchId,
+    clientTs: ts,
+    payload: {
+      id: paymentId,
+      orderId: invoice.id,
+      invoiceId: invoice.id,
+      branchId: invoice.branchId,
+      method: "m-pesa",
+      amountCents: amount,
+      status: "captured",
+      recordedBy: account.id,
+      recordedByName: account.name,
+      settledBy: account.id,
+      settledByName: account.name,
+      cashierId: invoice.cashierId || "",
+      cashierName: invoice.cashierName || "",
+      providerVerified: true,
+      kopokopoTransactionId: transaction.id,
+      kopokopoAllocationId: allocationId,
+      mpesaReferenceLast4: transaction.referenceLast4 || "",
+      mpesaReferenceMasked: transaction.referenceMasked || "",
+      ts
+    }
+  };
+  const settlement = {
+    id: `invoiceSettlement:${encodeURIComponent(invoice.id)}:${ts}`,
+    type: "invoiceSettlement",
+    branchId: invoice.branchId,
+    clientTs: ts,
+    payload: {
+      invoiceId: invoice.id,
+      branchId: invoice.branchId,
+      paidCents,
+      status: fullyPaid ? "paid" : "open",
+      carriedOver: fullyPaid ? false : Boolean(invoice.carriedOver),
+      lastSettledBy: account.id,
+      lastSettledByName: account.name,
+      lastSettledAt: ts,
+      settledBy: fullyPaid ? account.id : "",
+      settledByName: fullyPaid ? account.name : "",
+      settledAt: fullyPaid ? ts : 0
+    }
+  };
+  const events = [payment, settlement];
+  const result = await jsonFetch<SyncPushResult>("/api/sync/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
+    body: JSON.stringify({ events })
+  });
+  assertSyncAccepted(result, events);
+  return { paidCents, settledAt: ts };
 }
 
 export async function logout(sessionToken: string): Promise<void> {
@@ -1038,7 +1188,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const businessDayRecords = new Map<string, BusinessDayPeriod>();
   serverBusinessDays.forEach((period) => businessDayRecords.set(period.id, period));
   const paidByInvoice = new Map<string, number>();
-  const stockByProduct = new Map<string, number>();
+  const stockByProduct = new Map<string, StockLedgerEntry>();
   let dayClosedAt: number | null = catalogDayClosedAt;
 
   for (const item of events) {
@@ -1280,22 +1430,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
       const payload = item.payload || {};
       const productId = payload.productId || item.productId;
       if (productId && (payload.branchId || item.branchId) === terminal.branchId) {
-        addStock(stockByProduct, productId, eventQuantity(payload));
-      }
-    }
-    if (item.type === "purchase") {
-      const payload = item.payload || {};
-      const status = String(payload.status || "").toLowerCase();
-      if (["cancelled", "canceled", "void", "rejected"].includes(status)) continue;
-      if ((payload.branchId || item.branchId) === terminal.branchId) {
-        const lines = firstArray(payload.items, payload.lines, payload.products, payload.purchaseItems, payload.purchase_items, payload.stockItems);
-        if (lines.length) {
-          for (const line of lines) {
-            addStock(stockByProduct, line.productId || line.product_id || line.productRecordId, eventQuantity(line));
-          }
-        } else {
-          addStock(stockByProduct, payload.productId || payload.product_id || item.productId, eventQuantity(payload));
-        }
+        addStock(stockByProduct, productId, eventQuantity(payload), payload.stockBaseQty);
       }
     }
   }
@@ -1359,10 +1494,13 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
     .flatMap(([key, rows]) => {
       const product = mergeProductGroup(rows);
       if (!product) return [];
-      return [{
-        ...product,
-        stockQty: (baseStockByKey.get(key) || 0) + (productIdsByKey.get(key) || []).reduce((sum, id) => sum + (stockByProduct.get(id) || 0), 0)
-      }];
+      const productIds = productIdsByKey.get(key) || [];
+      const hasMovement = productIds.some((id) => stockByProduct.has(id));
+      const ledgerQty = productIds.reduce((sum, id) => {
+        const entry = stockByProduct.get(id);
+        return sum + (entry ? entry.qty + (entry.stockBaseQty ?? 0) : 0);
+      }, 0);
+      return [{ ...product, stockQty: hasMovement ? ledgerQty : (baseStockByKey.get(key) || 0) }];
     }));
 
   const products = dedupeCatalogProducts(serverCatalogProducts !== null ? serverCatalogProducts : fallbackProducts);

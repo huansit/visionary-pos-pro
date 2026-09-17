@@ -366,11 +366,20 @@ function quantityFromPayload(payload = {}) {
   return 0;
 }
 
-function addCatalogStock(stockByProduct, productId, qty) {
+function addCatalogStock(stockByProduct, productId, qty, stockBaseQty = null) {
   if (!productId) return;
   const quantity = Number(qty);
-  if (!Number.isFinite(quantity) || quantity === 0) return;
-  stockByProduct.set(productId, (stockByProduct.get(productId) || 0) + quantity);
+  const baseQty = Number(stockBaseQty);
+  if (!Number.isFinite(quantity) && !Number.isFinite(baseQty)) return;
+  const current = stockByProduct.get(productId) || { qty: 0, stockBaseQty: null };
+  // A count/correction is stored as an auditable delta. If it is the first
+  // movement for a legacy product, retain the legacy opening quantity so the
+  // first adjustment does not make the catalogue jump to the delta alone.
+  if (current.stockBaseQty === null && Number.isFinite(baseQty) && baseQty >= 0) {
+    current.stockBaseQty = baseQty;
+  }
+  if (Number.isFinite(quantity)) current.qty += quantity;
+  stockByProduct.set(productId, current);
 }
 
 function productCompletenessScore(row) {
@@ -626,7 +635,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
       let productId = canonicalProductId(payload.productId || payload.product_id, productAliases);
       if (!productId || !canonicalIds.has(productId)) productId = overlayProductId(payload, productIndexes, productAliases);
       if (!productId || !canonicalIds.has(productId)) continue;
-      addCatalogStock(stockByProduct, productId, quantityFromPayload(payload));
+      addCatalogStock(stockByProduct, productId, quantityFromPayload(payload), payload.stockBaseQty);
     }
 
     const products = canonicalRows
@@ -638,7 +647,10 @@ router.get("/catalog", requireDevice, async (req, res) => {
         // workspace. Purchase events are business documents and already emit a
         // stock movement when received; adding both inflated cashier stock.
         // Legacy branch stock remains a fallback only until a movement exists.
-        const stockQty = stockByProduct.has(productId) ? stockByProduct.get(productId) : baseStock;
+        const movementStock = stockByProduct.get(productId);
+        const stockQty = movementStock
+          ? movementStock.qty + (movementStock.stockBaseQty ?? 0)
+          : baseStock;
         return normalizeProduct(row, branchId, stockQty, overlay);
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
@@ -908,6 +920,44 @@ function enforceTerminalWritePolicy(req, type) {
   return { ok: true };
 }
 
+const PAYROLL_CASHIER_DEBT_MINIMUM_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function recordEventTimestamp(row) {
+  const payload = recordPayload(row?.payload);
+  for (const value of [payload.ts, payload.createdAt, row?.server_ts, row?.serverTs]) {
+    const timestamp = Number(value);
+    if (Number.isFinite(timestamp) && timestamp > 0) return timestamp;
+  }
+  return 0;
+}
+
+async function validatePayrollCashierDebtSettlement(client, event, req) {
+  const payload = event.payload || {};
+  if (String(payload.method || "").trim().toLowerCase() !== "payroll") return;
+  // A retry of a committed payment remains safe and idempotent.
+  if (await existingEvent(client, event.id)) return;
+  if (!req.account || !["owner", "admin"].includes(syncRole(req.account))) {
+    throw syncEventError("admin_payroll_settlement_required");
+  }
+  const debtId = String(payload.debtId || "").trim();
+  if (!debtId) throw syncEventError("payroll_debt_required");
+  const target = await client.query(
+    "SELECT branch_id, server_ts, payload FROM events WHERE id = $1 AND type = 'cashierJointDebt' LIMIT 1",
+    [debtId]
+  );
+  const row = target.rows[0];
+  if (!row) throw syncEventError("payroll_debt_not_found");
+  const targetBranchId = String(row.branch_id || row.branchId || recordPayload(row.payload).branchId || "").trim();
+  const eventBranchIdValue = String(eventBranchId(event) || "").trim();
+  if (eventBranchIdValue && targetBranchId && eventBranchIdValue !== targetBranchId) {
+    throw syncEventError("payroll_settlement_branch_mismatch");
+  }
+  const createdAt = recordEventTimestamp(row);
+  if (!createdAt || Date.now() - createdAt < PAYROLL_CASHIER_DEBT_MINIMUM_AGE_MS) {
+    throw syncEventError("payroll_debt_minimum_age_not_met");
+  }
+}
+
 async function validateStockCountSessionWrite(client, ev) {
   const payload = ev.payload || {};
   const branchId = ev.branchId || payload.branchId;
@@ -979,7 +1029,40 @@ async function withInventoryWriteLock(client, key, operation) {
   return operation();
 }
 
-async function currentStockQuantity(client, branchId, productId) {
+async function legacyStockQuantity(client, branchId, productId) {
+  const productResult = await client.query(
+    "SELECT payload FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1",
+    [productId]
+  );
+  const productPayload = recordPayload(productResult.rows[0]?.payload);
+  let stockQty = productOverlayFromPayload(productPayload, branchId).stockQty
+    ?? numberFromPayload(productPayload, PRODUCT_STOCK_FIELDS, 0);
+
+  const overlayResult = await client.query(
+    isMySql
+      ? `SELECT branch_id AS branchId, payload FROM records
+           WHERE type IN ('branchProduct', 'branchProducts', 'branch_product', 'branch_products',
+                          'branchInventory', 'branchInventories', 'branch_inventory', 'branch_inventories')
+             AND deleted = false
+             AND (branch_id = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branchId')) = $1 OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.branch_id')) = $1)`
+      : `SELECT branch_id AS "branchId", payload FROM records
+           WHERE type IN ('branchProduct', 'branchProducts', 'branch_product', 'branch_products',
+                          'branchInventory', 'branchInventories', 'branch_inventory', 'branch_inventories')
+             AND deleted = false
+             AND (branch_id = $1 OR payload->>'branchId' = $1 OR payload->>'branch_id' = $1)`,
+    [branchId]
+  );
+  for (const row of overlayResult.rows || []) {
+    const payload = recordPayload(row.payload);
+    const overlayProductId = String(payload.productId || payload.product_id || payload.catalogProductId || "").trim();
+    if (overlayProductId !== productId) continue;
+    const overlayQty = productOverlayFromPayload(payload, branchId).stockQty;
+    if (Number.isFinite(Number(overlayQty))) stockQty = Number(overlayQty);
+  }
+  return Math.max(0, Number(stockQty) || 0);
+}
+
+async function currentStockSnapshot(client, branchId, productId) {
   const result = await client.query(
     isMySql
       ? `SELECT payload FROM events
@@ -992,7 +1075,18 @@ async function currentStockQuantity(client, branchId, productId) {
              AND (payload->>'productId' = $2 OR payload->>'product_id' = $2)`,
     [branchId, productId]
   );
-  return result.rows.reduce((sum, row) => sum + stockMovementQuantity({ payload: recordPayload(row.payload) }), 0);
+  const rows = result.rows || [];
+  if (!rows.length) {
+    return { quantity: await legacyStockQuantity(client, branchId, productId), hasMovements: false };
+  }
+  let stockBaseQty = null;
+  const movementQty = rows.reduce((sum, row) => {
+    const payload = recordPayload(row.payload);
+    const candidateBase = Number(payload.stockBaseQty);
+    if (stockBaseQty === null && Number.isFinite(candidateBase) && candidateBase >= 0) stockBaseQty = candidateBase;
+    return sum + stockMovementQuantity({ payload });
+  }, 0);
+  return { quantity: movementQty + (stockBaseQty ?? 0), hasMovements: true };
 }
 
 async function hasPurchaseReceiptMovement(client, purchaseId) {
@@ -1035,8 +1129,20 @@ async function insertGuardedStockMovement(client, event, type, deviceId, ts) {
       if (Number.isFinite(correctedQty) && correctedQty !== previousQty + quantity) {
         throw syncEventError("stock_adjustment_inconsistent");
       }
-      const currentQty = await currentStockQuantity(client, branchId, productId);
-      if (currentQty !== previousQty) throw syncEventError("stock_quantity_changed_refresh_and_retry");
+      const snapshot = await currentStockSnapshot(client, branchId, productId);
+      if (snapshot.quantity !== previousQty) throw syncEventError("stock_quantity_changed_refresh_and_retry");
+      if (!snapshot.hasMovements) {
+        event = {
+          ...event,
+          payload: {
+            ...payload,
+            // Preserve the pre-ledger baseline for this first adjustment.
+            // Later catalogue and report reads use this with the movement
+            // delta, keeping every device on the same on-hand quantity.
+            stockBaseQty: previousQty,
+          },
+        };
+      }
     }
 
     return insertAppendOnlyEvent(client, event, type, deviceId, ts);
@@ -1517,6 +1623,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
             : guardedEvent;
+          if (type === "cashierJointDebtPayment") {
+            await validatePayrollCashierDebtSettlement(client, eventToStore, req);
+          }
           if (type === "borrowing" || type === "stockMovement") {
             await validateApprovedStockTransferEvent(client, eventToStore, type);
           }

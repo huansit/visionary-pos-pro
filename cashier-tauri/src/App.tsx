@@ -60,6 +60,7 @@ import {
   requestInvoiceVoid,
   requestStockTransfer,
   resolveBarcode,
+  settleInvoiceWithVerifiedMpesa,
   isTerminalRegistrationError,
   verifyCashierFingerprint,
   verifyCheckoutWithSupervisorPin
@@ -2009,7 +2010,7 @@ export default function App() {
         </Drawer>
       )}
       {stockCountOpen && terminal && account && canManageStockCounts && (
-        <Drawer side="left" onClose={() => { setStockCountOpen(false); focusSearch(); }} labelledBy="terminal-stock-count-title">
+        <Drawer side="left" modal showClose={false} variant="stock-count-drawer" onClose={() => { setStockCountOpen(false); focusSearch(); }} labelledBy="terminal-stock-count-title">
           <SupervisorStockCountView
             terminal={terminal}
             account={account}
@@ -2019,7 +2020,7 @@ export default function App() {
             onClose={() => { setStockCountOpen(false); focusSearch(); }}
             onApply={async (rows) => {
               const result = await applySupervisorStockCount(sessionToken, account, terminal.branchId, rows);
-              setStatus(`Supervisor stock count saved. ${result.changes} catalog change${result.changes === 1 ? "" : "s"} synced.`);
+              setStatus(`Stock count saved at ${formatBusinessDateTime(result.committedAt)}. ${result.changes} adjustment${result.changes === 1 ? "" : "s"} synced.`);
               await refreshCatalog(terminal, { silent: true });
             }}
           />
@@ -2052,6 +2053,8 @@ export default function App() {
           invoice={invoiceDetail.invoice}
           side={invoiceDetail.side}
           sessionToken={sessionToken}
+          account={account}
+          dayClosedAt={dayClosedAt}
           cashierName={account.name}
           branchName={branch?.name || terminal.branchId}
           onReprint={(invoice, cashDepositOffsets) => {
@@ -2101,6 +2104,24 @@ export default function App() {
             } : current);
             setStatus(`Void request sent for ${invoice.number}. Awaiting supervisor approval.`);
             void refreshCatalog(terminal, { silent: true });
+          }}
+          onSettleMpesa={async (invoice, transaction, amountCents) => {
+            if (!terminal || !account) throw new Error("management_session_required");
+            const result = await settleInvoiceWithVerifiedMpesa(sessionToken, account, invoice, transaction, amountCents);
+            const nextInvoice: Invoice = {
+              ...invoice,
+              paidCents: result.paidCents,
+              status: result.paidCents >= invoice.totalCents ? "paid" : "open",
+              carriedOver: result.paidCents >= invoice.totalCents ? false : invoice.carriedOver
+            };
+            setInvoices((current) => current.map((item) => item.id === invoice.id ? nextInvoice : item));
+            setInvoiceDetail((current) => current && current.invoice.id === invoice.id ? {
+              ...current,
+              invoice: nextInvoice
+            } : current);
+            setStatus(`${money(amountCents)} M-Pesa payment recorded for ${invoice.number}.`);
+            void refreshCatalog(terminal, { silent: true });
+            return result;
           }}
           onClose={() => {
             setInvoiceDetail(null);
@@ -2514,6 +2535,16 @@ function SupervisorStockCountView({
   });
   const changes = countRows.filter((row) => row.previousQty !== row.countedQty);
 
+  function setPhysicalCount(productId: string, value: string | number) {
+    const normalized = String(value).replace(/\D/g, "");
+    setCounts((current) => ({ ...current, [productId]: normalized }));
+  }
+
+  function adjustPhysicalCount(product: Product, amount: number) {
+    const current = Object.prototype.hasOwnProperty.call(counts, product.id) ? Number(counts[product.id]) : productStock(product);
+    setPhysicalCount(product.id, Math.max(0, (Number.isFinite(current) ? current : productStock(product)) + amount));
+  }
+
   async function verify(method: "fingerprint" | "pin", purpose: "open" | "approve") {
     if (busy) return;
     if (method === "pin" && !/^\d{4}$/.test(pin)) {
@@ -2541,36 +2572,52 @@ function SupervisorStockCountView({
     }
   }
 
-  if (!unlocked) return <section className="expense-modal" aria-labelledby="terminal-stock-count-title">
-    <header className="expense-header"><div><span>Restricted inventory control</span><h2 id="terminal-stock-count-title">Supervisor stock count</h2><p>{branchName}</p></div><button className="close-button" onClick={onClose}><X size={20} /></button></header>
-    <div className="expense-note"><ShieldCheck size={18} /><span>Cashiers cannot open this feature. Verify as supervisor before viewing or counting stock.</span></div>
-    {message && <div className="cashier-mpesa-message">{message}</div>}
-    <div className="expense-keypad" style={{ marginTop: 16 }}>
-      <button className="expense-submit" disabled={busy} onClick={() => void verify("fingerprint", "open")}><Fingerprint size={19} />{busy ? "Verifying..." : "Verify fingerprint"}</button>
+  if (!unlocked) return <section className="stock-count-panel stock-count-gate" aria-labelledby="terminal-stock-count-title">
+    <header className="stock-count-header">
+      <div><span className="stock-count-eyebrow"><ShieldCheck size={14} />Restricted inventory control</span><h2 id="terminal-stock-count-title">Stock count</h2><p>{branchName}</p></div>
+      <button className="stock-count-close" onClick={onClose} aria-label="Close stock count"><X size={20} /></button>
+    </header>
+    <div className="stock-count-gate-card">
+      <div className="stock-count-gate-icon"><Boxes size={28} /></div>
+      <div><b>Supervisor verification</b><span>Confirm your identity to begin a count.</span></div>
     </div>
-    <label className="expense-label" style={{ marginTop: 16 }}>Supervisor PIN</label>
-    <input className="expense-note-input" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(event) => { if (event.key === "Enter") void verify("pin", "open"); }} placeholder="••••" />
-    <button className="expense-submit" disabled={busy || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "open")}><KeyRound size={18} />Verify PIN</button>
+    {message && <div className="stock-count-message">{message}</div>}
+    <div className="stock-count-gate-actions">
+      <button className="stock-count-primary" disabled={busy} onClick={() => void verify("fingerprint", "open")}><Fingerprint size={19} />{busy ? "Verifying…" : "Use fingerprint"}</button>
+      <div className="stock-count-pin-row">
+        <input className="stock-count-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(event) => { if (event.key === "Enter") void verify("pin", "open"); }} placeholder="PIN" aria-label="Supervisor PIN" />
+        <button className="stock-count-secondary" disabled={busy || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "open")}><KeyRound size={18} />Continue</button>
+      </div>
+    </div>
   </section>;
 
-  return <section className="expense-modal" aria-labelledby="terminal-stock-count-title">
-    <header className="expense-header"><div><span>Supervisor only · {branchName}</span><h2 id="terminal-stock-count-title">Stock count</h2><p>Enter physical quantities. Only changed products are submitted.</p></div><button className="close-button" onClick={onClose}><X size={20} /></button></header>
-    {message && <div className="cashier-mpesa-message">{message}</div>}
-    <label className="expense-label">Find product</label>
-    <div className="cashier-mpesa-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, SKU, or barcode" autoFocus /></div>
-    <div className="ledger-list" style={{ maxHeight: 420, overflowY: "auto", marginTop: 12 }}>
-      {filteredProducts.map((product) => <div className="ledger-row" key={product.id} style={{ cursor: "default" }}>
-        <div><b>{product.name}</b><span>{product.sku || product.barcode || "No SKU"} · system {productStock(product)}</span></div>
-        <input className="expense-note-input" style={{ width: 94, margin: 0 }} inputMode="numeric" value={counts[product.id] || ""} onChange={(event) => setCounts((current) => ({ ...current, [product.id]: event.target.value.replace(/\D/g, "") }))} placeholder="Count" aria-label={`Physical count for ${product.name}`} />
-      </div>)}
+  return <section className="stock-count-panel" aria-labelledby="terminal-stock-count-title">
+    <header className="stock-count-header">
+      <div><span className="stock-count-eyebrow"><ShieldCheck size={14} />Supervisor verified</span><h2 id="terminal-stock-count-title">Stock count</h2><p>{branchName}</p></div>
+      <button className="stock-count-close" onClick={onClose} aria-label="Close stock count"><X size={20} /></button>
+    </header>
+    {message && <div className="stock-count-message">{message}</div>}
+    <div className="stock-count-summary" aria-label="Stock count summary">
+      <div><span>Reviewed</span><b>{countRows.length}</b></div>
+      <div className={changes.length ? "has-changes" : ""}><span>Adjustments</span><b>{changes.length}</b></div>
+      <small>Only adjustments are saved</small>
     </div>
-    <div className="expense-note" style={{ marginTop: 14 }}><Boxes size={18} /><span>{countRows.length} product{countRows.length === 1 ? "" : "s"} counted · {changes.length} catalog change{changes.length === 1 ? "" : "s"}. No cashier debt can be created here.</span></div>
-    <label className="expense-label" style={{ marginTop: 16 }}>Re-enter supervisor PIN to approve</label>
-    <input className="expense-note-input" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" />
-    <div className="expense-keypad" style={{ marginTop: 12 }}>
-      <button className="expense-submit" disabled={busy || changes.length === 0} onClick={() => void verify("fingerprint", "approve")}><Fingerprint size={19} />Approve with fingerprint</button>
-      <button className="expense-submit" disabled={busy || changes.length === 0 || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "approve")}><Check size={19} />Approve with PIN</button>
+    <div className="stock-count-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product, SKU, or barcode" autoFocus /></div>
+    <div className="stock-count-list" aria-live="polite">
+      {filteredProducts.map((product) => {
+        const hasCount = Object.prototype.hasOwnProperty.call(counts, product.id);
+        const systemQty = productStock(product);
+        return <article className={"stock-count-row" + (hasCount ? " is-reviewed" : "")} key={product.id}>
+          <div className="stock-count-product"><b>{product.name}</b><span>{product.sku || product.barcode || "No SKU"}<i />System {systemQty}</span></div>
+          <div className="stock-count-input"><label htmlFor={`count-${product.id}`}>Physical</label><div><button type="button" onClick={() => adjustPhysicalCount(product, -1)} aria-label={`Decrease ${product.name}`}><Minus size={15} /></button><input id={`count-${product.id}`} inputMode="numeric" value={counts[product.id] ?? ""} onChange={(event) => setPhysicalCount(product.id, event.target.value)} placeholder={String(systemQty)} aria-label={`Physical count for ${product.name}`} /><button type="button" onClick={() => adjustPhysicalCount(product, 1)} aria-label={`Increase ${product.name}`}><Plus size={15} /></button></div></div>
+        </article>;
+      })}
+      {filteredProducts.length === 0 && <div className="stock-count-empty">No matching product.</div>}
     </div>
+    <footer className="stock-count-approval">
+      <div className="stock-count-pin-row"><input className="stock-count-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Approval PIN" aria-label="Supervisor approval PIN" /><button className="stock-count-secondary" disabled={busy || changes.length === 0 || !/^\d{4}$/.test(pin)} onClick={() => void verify("pin", "approve")}><Check size={18} />Approve</button></div>
+      <button className="stock-count-primary" disabled={busy || changes.length === 0} onClick={() => void verify("fingerprint", "approve")}><Fingerprint size={19} />Approve with fingerprint</button>
+    </footer>
   </section>;
 }
 
@@ -2578,11 +2625,17 @@ function Drawer({
   side,
   onClose,
   labelledBy,
+  modal = false,
+  variant = "",
+  showClose = true,
   children
 }: {
   side: DrawerSide;
   onClose: () => void;
   labelledBy?: string;
+  modal?: boolean;
+  variant?: string;
+  showClose?: boolean;
   children: ReactNode;
 }) {
   useEffect(() => {
@@ -2594,16 +2647,16 @@ function Drawer({
   }, [onClose]);
 
   return (
-    <div className={"drawer-backdrop " + side}>
+    <div className={"drawer-backdrop " + side + (variant ? ` ${variant}` : "")}>
       <aside
         className={"app-drawer " + side}
         role="dialog"
-        aria-modal="false"
+        aria-modal={modal}
         aria-labelledby={labelledBy}
       >
-        <button className="drawer-close" onClick={onClose} aria-label="Close panel">
+        {showClose && <button className="drawer-close" onClick={onClose} aria-label="Close panel">
           {side === "left" ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-        </button>
+        </button>}
         {children}
       </aside>
     </div>
@@ -2614,21 +2667,27 @@ function InvoiceDetailSlideOver({
   invoice,
   side,
   sessionToken,
+  account,
+  dayClosedAt,
   cashierName,
   branchName,
   onReprint,
   onSaveNote,
   onRequestVoid,
+  onSettleMpesa,
   onClose
 }: {
   invoice: Invoice;
   side: DrawerSide;
   sessionToken: string;
+  account: Account;
+  dayClosedAt: number | null;
   cashierName: string;
   branchName: string;
   onReprint: (invoice: Invoice, cashDepositOffsets: MpesaOffset[]) => void;
   onSaveNote: (invoice: Invoice, note: string) => Promise<void>;
   onRequestVoid: (invoice: Invoice, reason: string) => Promise<void>;
+  onSettleMpesa: (invoice: Invoice, transaction: MpesaTransaction, amountCents: number) => Promise<{ paidCents: number; settledAt: number }>;
   onClose: () => void;
 }) {
   const items = invoice.items || [];
@@ -2640,6 +2699,10 @@ function InvoiceDetailSlideOver({
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [voidReason, setVoidReason] = useState("");
   const [voidStatus, setVoidStatus] = useState<"idle" | "sending" | "error">("idle");
+  const [mpesaState, setMpesaState] = useState<{ loading: boolean; error: string; transactions: MpesaTransaction[] }>({ loading: false, error: "", transactions: [] });
+  const [selectedMpesaId, setSelectedMpesaId] = useState("");
+  const [mpesaAmount, setMpesaAmount] = useState("");
+  const [mpesaStatus, setMpesaStatus] = useState<"idle" | "submitting" | "error" | "saved">("idle");
   const [auditNonce, setAuditNonce] = useState(0);
   const [cashOffsetAudit, setCashOffsetAudit] = useState<{
     loading: boolean;
@@ -2650,13 +2713,54 @@ function InvoiceDetailSlideOver({
   const activeCashOffsetTotal = cashOffsetAudit.offsets
     .filter((offset) => String(offset.status || "active").toLowerCase() !== "reversed" && !offset.reversedAt)
     .reduce((sum, offset) => sum + Math.max(0, Number(offset.amountCents || 0)), 0);
+  const settlementRole = String(account.role || account.kind || "").trim().toLowerCase();
+  const canSettleWithMpesa = ["owner", "admin"].includes(settlementRole) && balanceCents > 0;
+  const selectedMpesaReceipt = mpesaState.transactions.find((transaction) => transaction.id === selectedMpesaId) || null;
+  const mpesaAmountCents = Math.round(Number(mpesaAmount) * 100);
+  const mpesaMaximumCents = Math.min(balanceCents, Math.max(0, Number(selectedMpesaReceipt?.remainingCents || 0)));
+  const currentBusinessStart = dayClosedAt && Number.isFinite(dayClosedAt)
+    ? new Date(dayClosedAt + 1).toISOString()
+    : mpesaDateBoundary(`${businessDateValue()}T00:00`, "start");
 
   useEffect(() => {
     setOpenNote(invoice.note || "");
     setNoteStatus("idle");
     setVoidReason("");
     setVoidStatus("idle");
+    setSelectedMpesaId("");
+    setMpesaAmount(balanceCents > 0 ? String(balanceCents / 100) : "");
+    setMpesaStatus("idle");
   }, [invoice.id, invoice.note]);
+
+  useEffect(() => {
+    if (!canSettleWithMpesa) {
+      setMpesaState({ loading: false, error: "", transactions: [] });
+      return undefined;
+    }
+    let active = true;
+    setMpesaState({ loading: true, error: "", transactions: [] });
+    listMpesaTransactions(sessionToken, invoice.branchId, {
+      status: "available",
+      sort: "desc",
+      limit: 100,
+      branchStarts: { [invoice.branchId]: currentBusinessStart }
+    })
+      .then((ledger) => {
+        if (!active) return;
+        const transactions = (ledger.transactions || []).filter((transaction) => transaction.providerVerified
+          && transaction.purpose !== "stock_funding"
+          && transaction.branchId === invoice.branchId
+          && transaction.allocatable !== false
+          && Number(transaction.remainingCents || 0) > 0);
+        setMpesaState({ loading: false, error: "", transactions });
+        setSelectedMpesaId((current) => transactions.some((transaction) => transaction.id === current) ? current : "");
+      })
+      .catch(() => {
+        if (!active) return;
+        setMpesaState({ loading: false, error: "Verified M-Pesa receipts could not be loaded.", transactions: [] });
+      });
+    return () => { active = false; };
+  }, [canSettleWithMpesa, currentBusinessStart, invoice.branchId, sessionToken]);
 
   useEffect(() => {
     let active = true;
@@ -2696,13 +2800,31 @@ function InvoiceDetailSlideOver({
     }
   }
 
+  async function settleWithMpesa() {
+    if (!selectedMpesaReceipt || !Number.isSafeInteger(mpesaAmountCents) || mpesaAmountCents <= 0 || mpesaAmountCents > mpesaMaximumCents || mpesaStatus === "submitting") return;
+    setMpesaStatus("submitting");
+    try {
+      await onSettleMpesa(invoice, selectedMpesaReceipt, mpesaAmountCents);
+      setMpesaStatus("saved");
+      setMpesaState((current) => ({
+        ...current,
+        transactions: current.transactions.map((transaction) => transaction.id === selectedMpesaReceipt.id
+          ? { ...transaction, remainingCents: Math.max(0, Number(transaction.remainingCents || 0) - mpesaAmountCents) }
+          : transaction)
+      }));
+    } catch (error) {
+      console.warn("verified M-Pesa settlement failed", error);
+      setMpesaStatus("error");
+    }
+  }
+
   return (
     <Drawer side={side} onClose={onClose} labelledBy="invoice-slide-title">
       <section className="invoice-slide">
         <header className="invoice-slide-header">
           <span className="invoice-slide-avatar">{avatarInitial(customer)}</span>
           <div>
-            <span className="invoice-slide-kicker">Read-only invoice</span>
+            <span className="invoice-slide-kicker">{canSettleWithMpesa ? "Verified M-Pesa settlement" : "Invoice details"}</span>
             <h2 id="invoice-slide-title">{customer}</h2>
             <p>{invoice.number} &middot; {branchName}</p>
           </div>
@@ -2763,10 +2885,50 @@ function InvoiceDetailSlideOver({
           })}
         </section>
 
-        <div className="invoice-lock-notice">
-          <ShieldCheck size={20} />
-          <span>Payments and clearing are done by a supervisor in the admin dashboard. You can view and reprint only.</span>
-        </div>
+        {canSettleWithMpesa ? (
+          <section className="invoice-mpesa-settlement" aria-label="Verified M-Pesa settlement">
+            <div className="invoice-mpesa-settlement-head">
+              <span><Smartphone size={17} />Verified M-Pesa</span>
+              <em>{mpesaState.loading ? "Loading receipts..." : `${money(balanceCents)} due today`}</em>
+            </div>
+            <label>
+              <span>Receipt code</span>
+              <select value={selectedMpesaId} disabled={mpesaState.loading || mpesaStatus === "submitting"} onChange={(event) => {
+                setSelectedMpesaId(event.target.value);
+                setMpesaStatus("idle");
+              }}>
+                <option value="">Select verified M-Pesa receipt</option>
+                {mpesaState.transactions.map((transaction) => (
+                  <option key={transaction.id} value={transaction.id}>
+                    {transaction.referenceMasked || transaction.referenceLast4} · {transaction.payerName || "M-Pesa payer"} · {money(transaction.remainingCents)} available
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedMpesaReceipt ? <div className="invoice-mpesa-receipt-meta">
+              <span>{selectedMpesaReceipt.payerName || "Verified payer"}</span>
+              <b>{money(selectedMpesaReceipt.remainingCents)} available</b>
+            </div> : null}
+            <div className="invoice-mpesa-entry">
+              <label>
+                <span>Amount (KES)</span>
+                <input inputMode="decimal" value={mpesaAmount} onChange={(event) => { setMpesaAmount(event.target.value.replace(/[^\d.]/g, "")); setMpesaStatus("idle"); }} placeholder="0.00" />
+              </label>
+              <button type="button" onClick={() => setMpesaAmount(String(mpesaMaximumCents / 100))} disabled={!selectedMpesaReceipt || mpesaStatus === "submitting"}>Full</button>
+            </div>
+            {mpesaState.error ? <p className="invoice-mpesa-error">{mpesaState.error}</p> : null}
+            {mpesaStatus === "error" ? <p className="invoice-mpesa-error">Settlement was not saved. Confirm the receipt is still available and try again.</p> : null}
+            {mpesaStatus === "saved" ? <p className="invoice-mpesa-success">Settlement saved and synced with the website.</p> : null}
+            <button type="button" className="invoice-mpesa-submit" disabled={!selectedMpesaReceipt || mpesaStatus === "submitting" || !Number.isSafeInteger(mpesaAmountCents) || mpesaAmountCents <= 0 || mpesaAmountCents > mpesaMaximumCents} onClick={() => { void settleWithMpesa(); }}>
+              <Check size={17} />{mpesaStatus === "submitting" ? "Saving verified payment..." : "Settle with M-Pesa"}
+            </button>
+          </section>
+        ) : (
+          <div className="invoice-lock-notice">
+            <ShieldCheck size={20} />
+            <span>Only an owner or admin can settle this invoice, and only with a verified M-Pesa receipt.</span>
+          </div>
+        )}
 
         <div className="invoice-open-note">
           <div className="invoice-open-note-head">

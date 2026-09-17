@@ -1101,7 +1101,7 @@ test("5a. admin stock corrections retain their audit details across devices", as
       assert.ok(stored, "the correction should reach another device");
       assert.equal(stored.type, "stockMovement");
       assert.equal(stored.branchId, correction.branchId);
-      assert.deepEqual(stored.payload, correction.payload);
+      assert.deepEqual(stored.payload, { ...correction.payload, stockBaseQty: 0 });
     });
 });
 
@@ -1539,6 +1539,110 @@ test("6d. admin branch pricing changes reach the activated cashier catalog", asy
     .expect((res) => {
       assert.deepEqual(res.body.accepted, []);
       assert.equal(res.body.rejected[0]?.reason, "terminal_write_not_allowed");
+    });
+});
+
+test("6da. the first terminal count retains a legacy opening stock baseline and is visible to every terminal", async () => {
+  const terminal = await activateTestTerminal("Count Baseline Till");
+  const productId = "prod-terminal-count-baseline";
+  const product = {
+    id: productId,
+    type: "product",
+    branchId: "b_sip",
+    updatedAt: Date.now(),
+    payload: {
+      name: "Terminal Count Baseline Product",
+      sku: "COUNT-BASELINE-001",
+      barcode: "COUNT-BASELINE-001",
+      category: "Spirits",
+      priceCents: 15000,
+      costCents: 9000,
+    },
+  };
+  const branchProduct = {
+    id: "branch-product-terminal-count-baseline",
+    type: "branchProduct",
+    branchId: "b_sip",
+    updatedAt: product.updatedAt + 1,
+    payload: { branchId: "b_sip", productId, stockQty: 20 },
+  };
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [product, branchProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected)));
+
+  const firstCount = {
+    id: "movement-terminal-count-baseline-one",
+    type: "stockMovement",
+    branchId: "b_sip",
+    clientTs: product.updatedAt + 2,
+    payload: {
+      branchId: "b_sip",
+      productId,
+      qty: 3,
+      mode: "count",
+      previousQty: 20,
+      correctedQty: 23,
+      countedAt: product.updatedAt + 2,
+      source: "cashier_terminal",
+    },
+  };
+  const countLog = {
+    id: "count-log-terminal-count-baseline-one",
+    type: "countLog",
+    branchId: "b_sip",
+    clientTs: product.updatedAt + 2,
+    payload: {
+      branchId: "b_sip",
+      productId,
+      expectedQty: 20,
+      countedQty: 23,
+      varianceQty: 3,
+      countedAt: product.updatedAt + 2,
+      approvedAt: product.updatedAt + 2,
+      source: "cashier_terminal",
+    },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [firstCount, countLog] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected)));
+
+  const storedMovement = await pool.query("SELECT payload FROM events WHERE id = $1", [firstCount.id]);
+  assert.equal(storedMovement.rows[0].payload.stockBaseQty, 20);
+  const storedCountLog = await pool.query("SELECT payload FROM events WHERE id = $1", [countLog.id]);
+  assert.equal(storedCountLog.rows[0].payload.countedAt, product.updatedAt + 2);
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.products.find((item) => item.id === productId);
+      assert.equal(synced?.stockQty, 23, JSON.stringify(synced));
+    });
+
+  const secondCount = {
+    ...firstCount,
+    id: "movement-terminal-count-baseline-two",
+    clientTs: product.updatedAt + 3,
+    payload: {
+      ...firstCount.payload,
+      qty: -2,
+      previousQty: 23,
+      correctedQty: 21,
+      countedAt: product.updatedAt + 3,
+    },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [secondCount] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, [], JSON.stringify(res.body.rejected)));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.products.find((item) => item.id === productId);
+      assert.equal(synced?.stockQty, 21, JSON.stringify(synced));
     });
 });
 
@@ -2574,6 +2678,70 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.deepEqual(res.body.accepted, []);
       assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
+});
+
+test("9c. payroll recovery is limited to an admin and cashier debts older than 30 days", async () => {
+  const oldDebtId = "cjd-payroll-old";
+  const oldCreatedAt = Date.now() - (31 * 24 * 60 * 60 * 1000);
+  const debt = {
+    id: oldDebtId,
+    type: "cashierJointDebt",
+    branchId: "b_sip",
+    clientTs: oldCreatedAt,
+    payload: {
+      id: oldDebtId,
+      branchId: "b_sip",
+      stockCountCode: "SC-PAYROLL-OLD",
+      totalCents: 9000,
+      shares: [{ cashierId: "cashier-a", cashierName: "Cashier A", amountCents: 9000, paidCents: 0 }],
+      ts: oldCreatedAt,
+    },
+  };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [debt] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(oldDebtId)));
+
+  const payrollPayment = {
+    id: "cjdp-payroll-old",
+    type: "cashierJointDebtPayment",
+    branchId: "b_sip",
+    clientTs: Date.now(),
+    payload: {
+      debtId: oldDebtId,
+      branchId: "b_sip",
+      cashierId: "cashier-a",
+      amountCents: 9000,
+      method: "payroll",
+      status: "captured",
+      ts: Date.now(),
+    },
+  };
+  await request(app)
+    .post("/api/sync/push")
+    .set("X-Session-Token", state.supervisorSessionToken)
+    .send({ events: [payrollPayment] })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0]?.reason, "admin_payroll_settlement_required"));
+
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [payrollPayment] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(payrollPayment.id)));
+
+  const recentDebtId = "cjd-payroll-recent";
+  const recentDebt = {
+    ...debt,
+    id: recentDebtId,
+    clientTs: Date.now(),
+    payload: { ...debt.payload, id: recentDebtId, ts: Date.now() },
+  };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [recentDebt] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(recentDebtId)));
+  await withAdminSession(request(app).post("/api/sync/push").send({
+    events: [{ ...payrollPayment, id: "cjdp-payroll-recent", payload: { ...payrollPayment.payload, debtId: recentDebtId } }],
+  }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0]?.reason, "payroll_debt_minimum_age_not_met"));
 });
 
 test("10. user credentials created on one device work for login on another device", async () => {
