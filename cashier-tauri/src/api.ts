@@ -784,6 +784,28 @@ export async function verifyCheckoutWithSupervisorPin(
   });
 }
 
+export type ManagementTerminalLoginResult = {
+  ok?: boolean;
+  account?: Account;
+  sessionToken?: string;
+  verificationRequired?: boolean;
+  emailVerificationRequired?: boolean;
+  maskedTarget?: string;
+};
+
+export async function loginManagementTerminal(
+  terminal: TerminalCredentials,
+  identifier: string,
+  password: string,
+  code = ""
+): Promise<ManagementTerminalLoginResult> {
+  return jsonFetch("/api/auth/login", {
+    method: "POST",
+    headers: terminalHeaders(terminal),
+    body: JSON.stringify({ identifier: identifier.trim(), password, code: code.trim(), branchId: terminal.branchId })
+  });
+}
+
 export async function applySupervisorStockCount(
   sessionToken: string,
   account: Account,

@@ -1,14 +1,15 @@
 {
-  "version": "2.0.85",
+  "version": "2.0.86",
   "platform": "windows",
-  "installer": "/downloads/VISIONPOS-Cashier_2.0.85_x64-setup.exe",
-  "size": 2951648,
-  "sha512": "1404629959329568EEEB4CA03D142FEA31A6AADB5CAE1DC277D293155656B8E00DD8E16E5F103BF67A136D360E5E871E05E31C2B52B2B57FFD06539FDCE5C276",
+  "installer": "/downloads/VISIONPOS-Cashier_2.0.86_x64-setup.exe",
+  "size": 2954704,
+  "sha512": "099B9C8B96A8389F1BB8AFE32EF425BB931526C0EB21971CE0B9F50BF1616706D8582BF873EF34B0E66B4DB485154CC46800145289CAAED0C8D92997BD50B661",
   "releaseNotes": [
-    "VISIONPOS Cashier 2.0.85",
+    "VISIONPOS Cashier 2.0.86",
     "Manual signed and timestamped Cashier installer.",
     "Automatic desktop updates are disabled.",
     "Supervisor-only stock counts are available on cashier terminals.",
+    "Cashier, supervisor, owner, and admin terminal sign-in paths are clearly separated.",
     "Opening and approving a count requires a fresh supervisor PIN or enrolled fingerprint.",
     "Stock count, quick inventory, and correction variances never create cashier debt automatically.",
     "All approved count adjustments are written to the shared stock ledger for every device."

@@ -1503,6 +1503,16 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "identifier_password_or_pin_required" });
     }
 
+    const hasTerminalCredentials = Boolean(String(req.get("x-terminal-uuid") || "").trim() || String(req.get("x-terminal-secret") || "").trim());
+    let managementTerminal = null;
+    if (hasTerminalCredentials) {
+      managementTerminal = await verifiedTerminalFromRequest(req, { requireRegisteredTerminal: true });
+      if (managementTerminal.error) {
+        await audit("login_failed", req, null, { mode: "password", reason: managementTerminal.error });
+        return res.status(401).json({ error: managementTerminal.error });
+      }
+    }
+
     const normalized = String(identifier).trim().toLowerCase();
     const result = await q(
       `SELECT id, kind, name, email, phone, branch_id, rights, status, email_verified, password_hash
@@ -1516,6 +1526,11 @@ router.post("/login", async (req, res) => {
       const rowPhone = String(row.phone || "").trim();
       if (rowEmail !== normalized && rowPhone !== String(identifier).trim()) continue;
       if (await bcrypt.compare(password, row.password_hash)) {
+        const rowBranchId = row.branch_id ?? row.branchId ?? null;
+        if (managementTerminal && rowBranchId && rowBranchId !== managementTerminal.branchId) {
+          await audit("login_failed", req, row.id, { mode: "password", reason: "terminal_branch_mismatch", terminalId: managementTerminal.deviceId, branchId: managementTerminal.branchId });
+          return res.status(403).json({ error: "terminal_branch_mismatch" });
+        }
         const emailVerified = Boolean(row.email_verified ?? row.emailVerified);
         const managementEmailAuthRequired = requiresManagementEmailAuth(row);
         if (managementEmailAuthRequired && adminEmailCodeEnabled() && rowEmail && validTarget("email", rowEmail) && !emailVerified) {
@@ -1575,7 +1590,7 @@ router.post("/login", async (req, res) => {
           await verifyAuthCode({ channel: "email", target, code: loginCode, purpose: "admin_login", consume: true });
         }
         const account = publicAccount(row);
-        const session = await issueSession(req, account);
+        const session = await issueSession(req, account, managementTerminal);
         return res.json({ ok: true, account, sessionToken: session.token, sessionId: session.id, expiresInDays: session.expiresInDays });
       }
     }
@@ -1651,7 +1666,10 @@ router.post("/verify-supervisor-pin", async (req, res) => {
       return res.status(400).json({ error: "session_cashier_and_pin_required" });
     }
     const active = await accountForSessionToken(sessionToken);
-    if (!active || active.account.id !== cashierAccountId || active.account.kind !== "cashier" || active.account.branchId !== terminal.branchId) {
+    const activeRole = String(active?.account?.role || credentialRole(active?.account) || active?.account?.kind || "").trim().toLowerCase();
+    const activeBranchId = active?.account?.branchId ?? null;
+    const activeCanAuthorize = ["cashier", "supervisor", "manager", "admin", "owner"].includes(activeRole);
+    if (!active || active.account.id !== cashierAccountId || !activeCanAuthorize || (activeBranchId && activeBranchId !== terminal.branchId)) {
       await audit("supervisor_checkout_override_failed", req, cashierAccountId, { reason: "invalid_cashier_session", terminalId: terminal.deviceId, branchId: terminal.branchId });
       return res.status(401).json({ error: "invalid_cashier_session" });
     }

@@ -48,6 +48,7 @@ const notes = [
   "Manual signed and timestamped Cashier installer.",
   "Automatic desktop updates are disabled.",
   "Supervisor-only stock counts are available on cashier terminals.",
+  "Cashier, supervisor, owner, and admin terminal sign-in paths are clearly separated.",
   "Opening and approving a count requires a fresh supervisor PIN or enrolled fingerprint.",
   "Stock count, quick inventory, and correction variances never create cashier debt automatically.",
   "All approved count adjustments are written to the shared stock ledger for every device.",

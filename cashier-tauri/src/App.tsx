@@ -48,6 +48,7 @@ import {
   dedupeCatalogProducts,
   type SyncVersionChange,
   loginCashier,
+  loginManagementTerminal,
   listInvoiceCashDepositOffsets,
   listMpesaTransactions,
   logout,
@@ -1542,7 +1543,7 @@ export default function App() {
           updateVersion={updatePrompt?.version}
           onCheckForUpdates={() => checkForUpdates(true)}
           onInstallUpdate={restartForUpdate}
-          onLogin={async (employeeNumber, pin) => {
+          onCashierLogin={async (employeeNumber, pin) => {
             setError("");
             let result;
             try {
@@ -1558,6 +1559,19 @@ export default function App() {
             writeLastFingerprintUserId(terminal, result.account.id);
             void preloadCashierFingerprintTemplate(terminal, result.account.id);
             await refreshCatalog(terminal);
+          }}
+          onManagementLogin={async (identifier, password, code) => {
+            setError("");
+            const result = await loginManagementTerminal(terminal, identifier, password, code);
+            if (!result.account || !result.sessionToken) return result;
+            resetCashierSessionUi();
+            setAccount(result.account);
+            setSessionToken(result.sessionToken);
+            setStatus(`Signed in as ${result.account.name}.`);
+            writeLastFingerprintUserId(terminal, result.account.id);
+            void preloadCashierFingerprintTemplate(terminal, result.account.id);
+            await refreshCatalog(terminal);
+            return result;
           }}
         />
         {updateModal}
@@ -1583,7 +1597,7 @@ export default function App() {
           >
             <Building2 size={18} /><b>{branch?.name || terminal.branchId}</b><small>{terminal.terminalName}</small>
           </div>
-          <div className="cashier-id"><b>{account.name}</b><span>Cashier</span></div>
+          <div className="cashier-id"><b>{account.name}</b><span>{account.role || account.kind || "Cashier"}</span></div>
         </div>
       </header>
 
@@ -3997,7 +4011,8 @@ function LoginScreen({
   updateVersion,
   onCheckForUpdates,
   onInstallUpdate,
-  onLogin
+  onCashierLogin,
+  onManagementLogin
 }: {
   terminal: TerminalCredentials;
   branch: Branch | null;
@@ -4009,22 +4024,48 @@ function LoginScreen({
   updateVersion?: string;
   onCheckForUpdates: () => Promise<void> | void;
   onInstallUpdate: () => void;
-  onLogin: (employeeNumber: string, pin: string) => Promise<void>;
+  onCashierLogin: (employeeNumber: string, pin: string) => Promise<void>;
+  onManagementLogin: (identifier: string, password: string, code: string) => Promise<{ verificationRequired?: boolean; emailVerificationRequired?: boolean; maskedTarget?: string }>;
 }) {
+  const [mode, setMode] = useState<"pin" | "management">("pin");
   const [employeeNumber, setEmployeeNumber] = useState("");
   const [pin, setPin] = useState("");
+  const [code, setCode] = useState("");
+  const [verificationPending, setVerificationPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(error);
-  const canSubmit = !busy && employeeNumber.trim().length > 0 && pin.length >= 4;
+  const management = mode === "management";
+  const canSubmit = !busy && employeeNumber.trim().length > 0 && (management ? (verificationPending ? /^\d{6}$/.test(code) : pin.length > 0) : pin.length >= 4);
+
+  function chooseMode(nextMode: "pin" | "management") {
+    setMode(nextMode);
+    setPin("");
+    setCode("");
+    setVerificationPending(false);
+    setMessage("");
+  }
 
   async function submit() {
     if (!canSubmit) return;
     setBusy(true);
     setMessage("");
     try {
-      await onLogin(employeeNumber, pin);
+      if (!management) {
+        await onCashierLogin(employeeNumber, pin);
+        return;
+      }
+      const result = await onManagementLogin(employeeNumber, pin, verificationPending ? code : "");
+      if (result.emailVerificationRequired) {
+        setMessage(`Confirm the email verification code sent to ${result.maskedTarget || "your email"}, then sign in again.`);
+        return;
+      }
+      if (result.verificationRequired) {
+        setVerificationPending(true);
+        setCode("");
+        setMessage(`Enter the six-digit code sent to ${result.maskedTarget || "your email"}.`);
+      }
     } catch (err) {
-      setMessage(String(err));
+      setMessage(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setBusy(false);
     }
@@ -4032,18 +4073,23 @@ function LoginScreen({
 
   return (
     <AuthShell terminal={terminal} branch={branch} lastSyncAt={lastSyncAt} status={status} onClose={onClose}>
-      <LoginCard eyebrow="Trusted Terminal" title="Cashier Login" subtitle="Sign in to begin today's sales.">
+      <LoginCard eyebrow="Trusted Terminal" title={management ? "Management access" : "Cashier and supervisor login"} subtitle={management ? "Owner and admin accounts use email, password, and a verification code." : "Cashiers and supervisors use their employee number and PIN."}>
         <div className="terminal-summary">
           <ConnectionIndicator label="Terminal Registered" />
           <span>{branch?.name || terminal.branchId} / {terminal.terminalName}</span>
         </div>
         <p>{branch?.name || terminal.branchId} · {terminal.terminalName}</p>
-        <label>Employee number</label>
+        <div className="terminal-summary">
+          <button type="button" className={management ? "" : "premium-primary"} style={{ minHeight: 38 }} onClick={() => chooseMode("pin")}>Cashier / supervisor</button>
+          <button type="button" className={management ? "premium-primary" : ""} style={{ minHeight: 38 }} onClick={() => chooseMode("management")}>Owner / admin</button>
+        </div>
+        <label>{management ? "Email address" : "Employee or supervisor number"}</label>
         <div className="premium-input"><UserRound size={20} /><input value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} autoFocus /></div>
-        <label>PIN</label>
-        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" /></div>
+        <label>{management ? "Password" : "PIN"}</label>
+        <div className="premium-input"><Lock size={20} /><input value={pin} onChange={(event) => setPin(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode={management ? "text" : "numeric"} disabled={management && verificationPending} /></div>
+        {management && verificationPending && <><label>Email verification code</label><div className="premium-input"><KeyRound size={20} /><input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} type="password" inputMode="numeric" autoFocus /></div></>}
         {message && <div className="error">{message}</div>}
-        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : "Sign in with PIN"}</button>
+        <button className="premium-primary" disabled={!canSubmit} onClick={submit}>{busy ? <span className="spinner" /> : <Wifi size={20} />}{busy ? "Signing in..." : management && verificationPending ? "Verify and sign in" : management ? "Continue with password" : "Sign in with PIN"}</button>
         <PreLoginUpdateControl updateState={updateState} updateVersion={updateVersion} onCheckForUpdates={onCheckForUpdates} onInstallUpdate={onInstallUpdate} />
       </LoginCard>
     </AuthShell>
