@@ -941,6 +941,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const invoiceVoidRequests = new Map<string, { id: string; reason: string; ts: number }>();
   const invoiceVoidDecisions = new Map<string, { requestId: string; decision: "approved" | "rejected"; reason: string; ts: number }>();
   const cashierJointDebtRecords = new Map<string, CashierJointDebt>();
+  const cashierJointDebtReviews = new Map<string, { decision: string; reviewedAt: number }>();
   const cashierJointDebtPaidCents = new Map<string, number>();
   const stockTransferRequestRecords = new Map<string, StockTransferRequest>();
   const stockTransferDecisions = new Map<string, { decision: "approved" | "rejected"; reason: string; transferNumber?: string; decidedAt: number }>();
@@ -1131,6 +1132,16 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
         cashierJointDebtPaidCents.set(key, (cashierJointDebtPaidCents.get(key) || 0) + amountCents);
       }
     }
+    if (item.type === "cashierJointDebtReview") {
+      const payload = item.payload || {};
+      const debtId = String(payload.debtId || "").trim();
+      const decision = String(payload.decision || "").trim().toLowerCase();
+      const reviewedAt = Number(payload.reviewedAt || payload.ts || item.clientTs || item.serverTs || 0);
+      if (debtId && ["approved", "written_off"].includes(decision)) {
+        const previous = cashierJointDebtReviews.get(debtId);
+        if (!previous || reviewedAt >= previous.reviewedAt) cashierJointDebtReviews.set(debtId, { decision, reviewedAt });
+      }
+    }
     if (item.type === "stockTransferRequest") {
       const payload = item.payload || {};
       const requestId = String(item.id || payload.id || "").trim();
@@ -1268,6 +1279,7 @@ export async function pullCatalog(terminal: TerminalCredentials): Promise<{
   const cashierJointDebts = Array.from(cashierJointDebtRecords.values())
     .map((debt) => ({
       ...debt,
+      status: cashierJointDebtReviews.get(debt.id)?.decision || debt.status,
       shares: debt.shares.map((share) => ({
         ...share,
         paidCents: Math.min(

@@ -4,7 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 function quarantineCashierArtifacts() {
-  const approvedInstaller = "VISIONPOS-Cashier_2.0.84_x64-setup.exe";
+  const releaseManifestPath = path.resolve("public", "downloads", "release.json");
+  let approvedInstaller = "";
+  try {
+    approvedInstaller = path.basename(JSON.parse(fs.readFileSync(releaseManifestPath, "utf8")).installer || "");
+  } catch {
+    approvedInstaller = "VISIONPOS-Cashier_2.0.84_x64-setup.exe";
+  }
   let downloadsDirectory = "";
   return {
     name: "quarantine-cashier-artifacts",

@@ -2463,6 +2463,48 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
 
+  const reviewId = "cjdr-sc-test-lock-a";
+  const review = {
+    id: reviewId,
+    type: "cashierJointDebtReview",
+    branchId: "b_sip",
+    clientTs: createdAt + 1,
+    payload: {
+      debtId,
+      branchId: "b_sip",
+      decision: "written_off",
+      reviewedBy: "Admin",
+      reviewedAt: createdAt + 1,
+    },
+  };
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({ events: [review] }))
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(reviewId));
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      const synced = res.body.events.find((event) => event.id === reviewId && event.type === "cashierJointDebtReview");
+      assert.ok(synced);
+      assert.equal(synced.payload.decision, "written_off");
+    });
+
+  await withTerminalAuth(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{ ...review, id: "cjdr-terminal-blocked" }] }), terminal)
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
+    });
+
   const paymentId = "cjdp-sc-test-lock-a-cashier-a";
   const jointDebtPayment = {
     id: paymentId,

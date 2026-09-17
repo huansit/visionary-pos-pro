@@ -680,6 +680,7 @@ function cashierJointDebtEntries(debts: CashierJointDebt[], account: Account | n
   const accountName = normalize(account.name || "");
   return debts.flatMap((debt) => {
     if (branchId && debt.branchId !== branchId) return [];
+    if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(String(debt.status || "open").toLowerCase())) return [];
     const share = debt.shares.find((entry) => entry.cashierId === account.id)
       || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
     if (!share) return [];
@@ -693,6 +694,7 @@ function cashierJointDebtAccumulator(debts: CashierJointDebt[], account: Account
   const accountName = normalize(account.name || "");
   return debts.reduce((totals, debt) => {
     if (branchId && debt.branchId !== branchId) return totals;
+    if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(String(debt.status || "open").toLowerCase())) return totals;
     const share = debt.shares.find((entry) => entry.cashierId === account.id)
       || debt.shares.find((entry) => accountName && normalize(entry.cashierName || "") === accountName);
     if (!share) return totals;

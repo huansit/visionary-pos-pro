@@ -611,6 +611,7 @@ const SEED = () => {
     products,
     barcodeCatalog,
     cashierJointDebts: [],
+    cashierJointDebtReviews: [],
     cashierJointDebtPayments: [],
     stockMovements,
     stockCountSessions: [],
@@ -649,6 +650,7 @@ const CLEAN_SETUP = () => {
     products: [],
     barcodeCatalog: [],
     cashierJointDebts: [],
+    cashierJointDebtReviews: [],
     cashierJointDebtPayments: [],
     stockMovements: [],
     stockCountSessions: [],
@@ -920,6 +922,7 @@ function normalizeLoadedData(data) {
     products: Array.isArray(data.products) ? data.products : [],
     barcodeCatalog: Array.isArray(data.barcodeCatalog) ? data.barcodeCatalog : [],
     cashierJointDebts: Array.isArray(data.cashierJointDebts) ? data.cashierJointDebts : [],
+    cashierJointDebtReviews: Array.isArray(data.cashierJointDebtReviews) ? data.cashierJointDebtReviews : [],
     cashierJointDebtPayments: Array.isArray(data.cashierJointDebtPayments) ? data.cashierJointDebtPayments : [],
     stockMovements: Array.isArray(data.stockMovements) ? data.stockMovements : [],
     stockCountSessions: Array.isArray(data.stockCountSessions) ? data.stockCountSessions : [],
@@ -1136,6 +1139,7 @@ const SYNC_APPEND = new Map([
   ["orders", "order"],
   ["countLog", "countLog"],
   ["cashierJointDebts", "cashierJointDebt"],
+  ["cashierJointDebtReviews", "cashierJointDebtReview"],
   ["cashierJointDebtPayments", "cashierJointDebtPayment"],
 ]);
 const SYNC_MUTABLE = new Map([
@@ -1783,6 +1787,22 @@ function cashierJointDebtCapturedCents(data, debtId, cashierId = null) {
     return sum + Math.max(0, Number(payment.amountCents) || 0);
   }, 0);
 }
+function cashierJointDebtReview(data, debt) {
+  const debtId = String(debt?.id || "");
+  return (data?.cashierJointDebtReviews || [])
+    .filter((review) => String(review?.debtId || "") === debtId)
+    .sort((left, right) => Number(right.reviewedAt || right.ts || 0) - Number(left.reviewedAt || left.ts || 0))[0] || null;
+}
+function cashierJointDebtStatus(data, debt) {
+  const decision = String(cashierJointDebtReview(data, debt)?.decision || "").toLowerCase();
+  return decision || String(debt?.status || "open").toLowerCase();
+}
+function cashierJointDebtIsChargeable(data, debt) {
+  // Older, already-open balances retain their existing accounting treatment.
+  // New count shortages are created as pending_review and must be approved by
+  // management before any cashier sees a liability.
+  return ["open", "approved"].includes(cashierJointDebtStatus(data, debt));
+}
 function cashierJointDebtShareBalance(data, debt, share) {
   const assignedCents = Math.max(0, Number(share?.amountCents) || 0);
   const legacyPaidCents = Math.max(0, Number(share?.paidCents) || 0);
@@ -1812,6 +1832,7 @@ function cashierJointDebtOutstanding(data, debt) {
 function cashierJointDebtEntries(data, cashierId, branchId = null) {
   return (data?.cashierJointDebts || []).flatMap((debt) => {
     if (branchId && debt.branchId !== branchId) return [];
+    if (!cashierJointDebtIsChargeable(data, debt)) return [];
     const share = (debt.shares || []).find((entry) => entry.cashierId === cashierId);
     if (!share) return [];
     const balance = cashierJointDebtShareBalance(data, debt, share);
@@ -1822,6 +1843,7 @@ function cashierJointDebtCashierBalances(data, branchId = null) {
   const balances = new Map();
   (data?.cashierJointDebts || []).forEach((debt) => {
     if (branchId && debt.branchId !== branchId) return;
+    if (!cashierJointDebtIsChargeable(data, debt)) return;
     (debt.shares || []).forEach((share) => {
       if (!share.cashierId) return;
       const balance = cashierJointDebtShareBalance(data, debt, share);
@@ -1886,7 +1908,10 @@ function createCashierJointDebt(data, session, rows, operator, ts = now(), sourc
     branchId,
     stockCountSessionId: session.id,
     stockCountCode: session.code,
-    status: shares.length ? "open" : "unallocated",
+    // A physical variance is evidence for review, not proof that every
+    // cashier owes money. Management must explicitly approve a charge.
+    status: "pending_review",
+    requiresManagementReview: true,
     shortageUnits: items.reduce((sum, item) => sum + item.missingQty, 0),
     totalCents,
     cashierCount: shares.length,
@@ -9138,6 +9163,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const [printingInvoices, setPrintingInvoices] = useState(false);
   const [printAuditError, setPrintAuditError] = useState("");
+  const [debtReviewError, setDebtReviewError] = useState("");
+  const [debtReviewingId, setDebtReviewingId] = useState("");
   const [visibleInvoiceCount, setVisibleInvoiceCount] = useState(40);
   // Foldables can expose a tablet-width CSS viewport even when operated by
   // touch. The stylesheet switches invoice tables to cards for that range;
@@ -9387,7 +9414,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     invoiceDebtByCashier[cashier] = (invoiceDebtByCashier[cashier] || 0) + invOutstanding(i);
   });
   const branchJointDebts = (data.cashierJointDebts || [])
-    .filter((debt) => debt.branchId === branch.id && cashierJointDebtOutstanding(data, debt) > 0)
+    .filter((debt) => debt.branchId === branch.id && cashierJointDebtIsChargeable(data, debt) && cashierJointDebtOutstanding(data, debt) > 0)
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+  const pendingJointDebts = (data.cashierJointDebts || [])
+    .filter((debt) => {
+      if (debt.branchId !== branch.id) return false;
+      const status = cashierJointDebtStatus(data, debt);
+      // Older auto-created open debts remain reviewable without deleting their
+      // original stock-count evidence.
+      return status === "pending_review" || (status === "open" && ["stock_count", "quick_inventory"].includes(String(debt.source || "stock_count")) && !cashierJointDebtReview(data, debt));
+    })
     .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
   const missingDebtByCashier = {};
   branchJointDebts.forEach((debt) => (debt.shares || []).forEach((share) => {
@@ -9432,6 +9468,34 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     setMobileFiltersOpen(false);
   };
   const canCloseCurrentBusinessDay = workspaceView === "invoices" && businessDayFilter === "current" && !hasCustomDateRange;
+  const reviewInventoryDebt = async (debt, decision) => {
+    if (!debt || debtReviewingId) return;
+    const confirmText = decision === "approved"
+      ? `Charge the listed cashier shares for ${debt.stockCountCode}? This creates a cashier liability.`
+      : `Record ${debt.stockCountCode} as a business inventory variance? The original count stays in the audit trail and no cashier will be charged.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmText)) return;
+    const ts = now();
+    const review = {
+      id: uid("cjdr"),
+      debtId: debt.id,
+      branchId: debt.branchId,
+      decision,
+      reviewedBy: typeof user === "string" ? user : (user?.name || user?.email || "Manager"),
+      reviewedAt: ts,
+      ts,
+      synced: false,
+    };
+    setDebtReviewingId(debt.id);
+    setDebtReviewError("");
+    try {
+      await publishSyncEvents([eventFromRecord("cashierJointDebtReviews", review, data)], data, { management: true });
+      update((current) => ({ ...current, cashierJointDebtReviews: [...(current.cashierJointDebtReviews || []), { ...review, synced: true }] }), { skipSync: true });
+    } catch (_) {
+      setDebtReviewError("The review was not saved. Check the connection and retry; no cashier balance was changed.");
+    } finally {
+      setDebtReviewingId("");
+    }
+  };
 
   return (
     <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "") + (workspaceView === "invoices" && mobileFiltersOpen ? " mobile-filters-open" : "")}>
@@ -9558,6 +9622,24 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
           <div><div className="section-title">Cashier debt accounts</div><div className="muted">Review balances here, then settle invoice and inventory debt together in one workspace.</div></div>
           <button className="btn sm btn-primary" onClick={onOpenDebtPayments}><CreditCard /> Settle cashier debts</button>
         </div>
+        {debtReviewError ? <div className="formerr">{debtReviewError}</div> : null}
+        {pendingJointDebts.length > 0 ? <section className="panel" style={{ marginBottom: 14 }}>
+          <div className="invoice-section-head" style={{ marginBottom: 8 }}>
+            <div><div className="section-title">Inventory shortage review</div><div className="muted">A count variance is not charged to staff until a manager approves it.</div></div>
+            <span className="pill plain">{pendingJointDebts.length} awaiting review</span>
+          </div>
+          <div className="list mini inventory-debt-list">{pendingJointDebts.map((debt) => {
+            const legacyOpen = cashierJointDebtStatus(data, debt) === "open";
+            return <div className="row" key={debt.id}>
+              <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
+              <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)}{legacyOpen ? " · legacy automatic charge" : ""}</div></div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
+                <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>
+              </div>
+            </div>;
+          })}</div>
+        </section> : null}
         <div className="invsummary debt-summary">
           <section>
             <div className="section-title">Cashier balances</div>
@@ -12305,8 +12387,8 @@ function StockTab({ data, update, branch, onNavigate }) {
         salesDuringCount,
         adjustments: movements.length,
         valueImpact: rows.reduce((s, row) => s + row.valueImpact, 0),
-        missingInventoryDebtCents: jointDebt?.totalCents || 0,
-        jointDebtCashiers: jointDebt?.cashierCount || 0,
+        missingInventoryReviewCents: jointDebt?.totalCents || 0,
+        reviewCashierCount: jointDebt?.cashierCount || 0,
       },
       synced: false,
       updatedAt: ts,
@@ -12319,12 +12401,10 @@ function StockTab({ data, update, branch, onNavigate }) {
       return { ...d, stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s), stockMovements: [...d.stockMovements, ...movements], countLog: [...(d.countLog || []), ...logs], cashierJointDebts };
     });
     setReport(buildStockCountReport(committed, rows, movements, data, bname));
-    const debtMessage = jointDebt
-      ? jointDebt.cashierCount > 0
-        ? " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " was shared across " + jointDebt.cashierCount + " cashier(s)."
-        : " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " is unallocated because this branch has no active cashiers."
+    const reviewMessage = jointDebt
+      ? " Missing stock of " + fmt(jointDebt.totalCents, data.settings.currency) + " was recorded for management review. No cashier was charged."
       : "";
-    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied." + debtMessage);
+    setScanMsg(committed.code + " committed. " + movements.length + " adjustment(s) applied." + reviewMessage);
   };
   const handleStockScan = (code) => {
     const barcode = normalizeBarcode(code);
@@ -13133,12 +13213,10 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       });
       setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: adjustments.length, jointDebt });
       setQ("");
-      const debtMessage = jointDebt
-        ? jointDebt.cashierCount > 0
-          ? " " + fmt(jointDebt.totalCents, cur) + " was added to the joint cashier inventory account."
-          : " Missing stock worth " + fmt(jointDebt.totalCents, cur) + " is awaiting cashier allocation."
-        : " No missing-stock cashier credit was created.";
-      setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + debtMessage);
+      const reviewMessage = jointDebt
+        ? " " + fmt(jointDebt.totalCents, cur) + " was recorded for management review. No cashier was charged."
+        : "";
+      setMessage(quickInventoryBatch.code + " applied. " + adjustments.length + " stock correction(s)." + reviewMessage);
     } catch (error) {
       console.error("Quick inventory apply failed", error);
       setMessage("Quick inventory could not be applied. No selected counts were cleared; please retry.");
@@ -16731,7 +16809,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   });
   const missingDebtByCashierReport = {};
   const missingDebtCountByCashier = {};
-  (data.cashierJointDebts || []).filter((debt) => inBranch(debt.branchId)).forEach((debt) => (debt.shares || []).forEach((share) => {
+  (data.cashierJointDebts || []).filter((debt) => inBranch(debt.branchId) && cashierJointDebtIsChargeable(data, debt)).forEach((debt) => (debt.shares || []).forEach((share) => {
     const amount = cashierJointDebtShareBalance(data, debt, share).outstandingCents;
     if (amount <= 0) return;
     const cashier = share.cashierName || share.cashierId || "Unassigned cashier";

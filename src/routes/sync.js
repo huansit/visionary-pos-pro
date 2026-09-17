@@ -786,6 +786,7 @@ const EVENT_TYPES = new Set([
   "order",
   "countLog",
   "cashierJointDebt",
+  "cashierJointDebtReview",
   "cashierJointDebtPayment",
 ]);
 
@@ -841,6 +842,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "invoiceLineVoidDecision",
   "stockTransferDecision",
   "cashierJointDebt",
+  "cashierJointDebtReview",
   "cashierJointDebtPayment",
 ]);
 
@@ -1480,6 +1482,37 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           );
           acceptedTs = result.ts;
           acceptedId = result.id;
+        } else if (type === "cashierJointDebtReview") {
+          if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
+            throw syncEventError("supervisor_authorization_required");
+          }
+          const debtId = String(guardedEvent.payload?.debtId || "").trim();
+          const decision = String(guardedEvent.payload?.decision || "").trim().toLowerCase();
+          if (!debtId || !["approved", "written_off"].includes(decision)) {
+            throw syncEventError("cashier_debt_review_invalid");
+          }
+          const debtResult = await client.query(
+            "SELECT branch_id FROM events WHERE id = $1 AND type = 'cashierJointDebt' LIMIT 1",
+            [debtId]
+          );
+          const debtBranchId = String(debtResult.rows[0]?.branch_id || "").trim();
+          if (!debtBranchId) throw syncEventError("cashier_debt_not_found");
+          if (eventBranchId(guardedEvent) && String(eventBranchId(guardedEvent)) !== debtBranchId) {
+            throw syncEventError("cashier_debt_branch_mismatch");
+          }
+          const reviewEvent = {
+            ...guardedEvent,
+            branchId: debtBranchId,
+            payload: {
+              ...(guardedEvent.payload || {}),
+              debtId,
+              decision,
+              branchId: debtBranchId,
+              reviewedBy: guardedEvent.payload?.reviewedBy || req.account.name || req.account.email || "Supervisor",
+            },
+          };
+          acceptedTs = await insertAppendOnlyEvent(client, reviewEvent, type, recordDeviceId, nextServerTs());
+          acceptedId = reviewEvent.id;
         } else if (isAppendOnlyEvent) {
           let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
@@ -1869,7 +1902,7 @@ router.get("/pull", requireSyncRead, async (req, res) => {
     const branchScopeId = req.deviceBranchId || req.syncBranchId || null;
     const branchScopedSharedRecordTypes = new Set(["product", "expenseCategory"]);
     const page = rawPage
-      .filter((event) => !["cashierJointDebt", "cashierJointDebtPayment"].includes(event.type)
+      .filter((event) => !["cashierJointDebt", "cashierJointDebtReview", "cashierJointDebtPayment"].includes(event.type)
         || !req.deviceBranchId
         || event.branchId === req.deviceBranchId)
       .filter((event) => !branchScopeId

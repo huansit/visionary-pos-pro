@@ -24,6 +24,7 @@
         "repair:invoice-debts": "node db/reconcile-invoice-debts.js",
         "audit:transfers": "node db/audit-transfer-duplicates.js",
         "audit:stock": "node db/audit-stock-ledger.js",
+        "audit:cashier-inventory-debts": "node db/audit-cashier-inventory-debts.js",
         "hash": "node db/hash-credential.js",
         "test": "node --test test/*.test.js",
         "test:sync": "node --test test/sync.test.js",
