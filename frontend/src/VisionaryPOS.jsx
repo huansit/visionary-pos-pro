@@ -86,6 +86,12 @@ const DASHBOARD_SYNC_REPAIR_KEY = "visionary:pos:sync:dashboard-repair:v1";
 // server. This repairs any device whose earlier numeric cursor landed in a
 // timestamp tie, then future incremental pulls remain safe.
 const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-17-monotonic-sync-cursor-v3";
+// Some older PWA installs kept a locally merged inventory snapshot even after
+// the cloud cursor had advanced. Replay the inventory ledger once from zero
+// while preserving every unsynced local action; this removes only cloud-owned
+// cached inventory and reconstructs it from the authoritative event stream.
+const INVENTORY_SYNC_REPAIR_KEY = "visionary:pos:sync:inventory-repair:v1";
+const INVENTORY_SYNC_REPAIR_VERSION = "2026-09-17-authoritative-inventory-v1";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
 const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v4";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only
@@ -112,7 +118,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 // EventSource delivers normal changes immediately. This is only a recovery
@@ -2364,6 +2370,7 @@ async function runSyncClient(currentData, options = {}) {
   let dataChanged = false;
   const credentialProvision = { ok: 0, failed: 0 };
   let outbox = await pruneAuthSyncEvents(await loadOutbox());
+  const inventoryRepairPending = await kvGet(INVENTORY_SYNC_REPAIR_KEY) !== INVENTORY_SYNC_REPAIR_VERSION;
   const settlementRepairPending = await kvGet(INVOICE_SETTLEMENT_REPAIR_KEY) !== INVOICE_SETTLEMENT_REPAIR_VERSION;
   const settlementRepairs = settlementRepairPending ? invoiceSettlementRepairEvents(data) : [];
   const invoicePaymentRepairs = settlementRepairPending ? invoicePaymentRepairEvents(data) : [];
@@ -2404,7 +2411,8 @@ async function runSyncClient(currentData, options = {}) {
   }
   let cursor = await loadCursor();
   let resetEpoch = await loadResetEpoch();
-  if (options.forceFullPull) {
+  const forceFullPull = Boolean(options.forceFullPull || inventoryRepairPending);
+  if (forceFullPull) {
     cursor = 0;
     await saveCursor(0);
   }
@@ -2507,6 +2515,20 @@ async function runSyncClient(currentData, options = {}) {
   // A no-op fallback poll must not clone and write the whole POS cache. On
   // lower-powered mobile devices that write was the primary source of UI jank.
   if (!dataChanged && !syncStatusChanged) {
+    // The repair replay is intentionally the one exception: write a compact
+    // successful checkpoint so the device records that the full inventory
+    // history was actually verified, even when it contained no new events.
+    if (inventoryRepairPending) {
+      data = { ...currentData, lastSyncedAt: now(), _sync: { ...previousStatus, cursor, error: "" } };
+      const cached = await saveData(data);
+      if (!cached) {
+        const cacheLimited = { ...data, _sync: { ...data._sync, cacheWarning: "offline_cache_unavailable" } };
+        return { data: cacheLimited, status: cacheLimited._sync };
+      }
+      await saveCursor(cursor);
+      await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
+      return { data, status: data._sync };
+    }
     return { data: currentData, status: previousStatus };
   }
   data = { ...data, lastSyncedAt: now(), _sync: nextStatus };
@@ -2522,6 +2544,7 @@ async function runSyncClient(currentData, options = {}) {
     return { data, status: data._sync };
   }
   await saveCursor(cursor);
+  if (inventoryRepairPending) await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
   return { data, status: data._sync };
 }
 async function syncStreamUrl(branchId = null) {
@@ -2542,7 +2565,8 @@ async function cloudBootstrapData(localData, options = {}) {
     // Re-read the complete event stream once after the dashboard parity repair.
     // A previously advanced cursor may have skipped a historical supervisor close.
     const dashboardRepairPending = await kvGet(DASHBOARD_SYNC_REPAIR_KEY) !== DASHBOARD_SYNC_REPAIR_VERSION;
-    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || dashboardRepairPending || !localHasBranches || !localHasProducts);
+    const inventoryRepairPending = await kvGet(INVENTORY_SYNC_REPAIR_KEY) !== INVENTORY_SYNC_REPAIR_VERSION;
+    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || dashboardRepairPending || inventoryRepairPending || !localHasBranches || !localHasProducts);
     if (needsFullBootstrap) await saveCursor(0);
     const first = (await runSyncClient(base, { ...options, forceFullPull: needsFullBootstrap })).data;
     if (!Array.isArray(first.branches) || first.branches.length === 0 || !Array.isArray(first.products) || first.products.length === 0) {
@@ -2552,6 +2576,7 @@ async function cloudBootstrapData(localData, options = {}) {
       if (Array.isArray(retried.branches) && retried.branches.length > 0 && Array.isArray(retried.products) && retried.products.length > 0) {
         await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
         await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
+        await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
       }
       const bootstrapComplete = Array.isArray(retried.branches) && retried.branches.length > 0
         && Array.isArray(retried.products) && retried.products.length > 0;
@@ -2569,6 +2594,7 @@ async function cloudBootstrapData(localData, options = {}) {
     }
     if (invoiceRepairPending) await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
     if (dashboardRepairPending) await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
+    if (inventoryRepairPending) await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
     return first;
   } catch (error) {
     return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };
