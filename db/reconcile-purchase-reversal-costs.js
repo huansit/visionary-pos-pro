@@ -31,11 +31,17 @@ function withBranchCost(payload, branchId, costCents, repair) {
 }
 
 async function main() {
-  const [reversalResult, productResult] = await Promise.all([
+  const [reversalResult, productResult, purchaseResult] = await Promise.all([
     q("SELECT id, branch_id, server_ts, payload FROM events WHERE type = 'purchaseReversal' ORDER BY server_ts, id"),
     q("SELECT id, updated_at, server_ts, payload FROM records WHERE type = 'product' AND deleted = false"),
+    q("SELECT id, branch_id, payload FROM records WHERE type = 'purchase' AND deleted = false"),
   ]);
   const products = new Map(productResult.rows.map((row) => [String(row.id), { ...row, payload: payloadOf(row) }]));
+  const purchaseLines = purchaseResult.rows
+    .map((row) => ({ id: row.id, branchId: row.branch_id, payload: payloadOf(row) }))
+    .filter((row) => !purchaseFilter || purchaseFilter === String(row.payload.batchNo || "").toLowerCase() || purchaseFilter === String(row.payload.batchId || row.id).toLowerCase())
+    .map((row) => ({ id: row.id, branchId: row.branchId, batchNo: row.payload.batchNo || "", batchId: row.payload.batchId || row.id, productId: row.payload.productId || "", productName: row.payload.productName || "", status: row.payload.status || "" }));
+  const reversalAudit = [];
   const repairs = [];
 
   for (const row of reversalResult.rows) {
@@ -44,6 +50,7 @@ async function main() {
     if (purchaseFilter && purchaseFilter !== purchaseNo.toLowerCase() && purchaseFilter !== String(reversal.purchaseBatchId || "").toLowerCase()) continue;
     const branchId = String(reversal.branchId || row.branch_id || "").trim();
     const restoredCosts = reversal.restoredCosts && typeof reversal.restoredCosts === "object" ? reversal.restoredCosts : {};
+    reversalAudit.push({ id: row.id, branchId, purchaseNo, reversedAt: reversal.reversedAt || row.server_ts, restoredCosts });
     for (const [productId, expectedValue] of Object.entries(restoredCosts)) {
       const expectedCostCents = Math.round(Number(expectedValue));
       const product = products.get(String(productId));
@@ -66,7 +73,7 @@ async function main() {
   }
 
   if (!apply) {
-    console.log(JSON.stringify({ mode: "dry-run", repairs: repairs.map(({ productPayload, ...repair }) => repair) }, null, 2));
+    console.log(JSON.stringify({ mode: "dry-run", purchaseLines, reversalAudit, repairs: repairs.map(({ productPayload, ...repair }) => repair) }, null, 2));
     console.log("Dry run only. Re-run with --apply to restore the recorded reversal costs.");
     return;
   }
