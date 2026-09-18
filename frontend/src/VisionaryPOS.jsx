@@ -17901,12 +17901,14 @@ function DocumentsTab({ data }) {
       const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
       const units = items.reduce((s, i) => s + i.qty, 0);
       const recd = items.filter((i) => i.status === "received").length;
+      const reversed = items.every((item) => String(item.status || "").toLowerCase() === "reversed");
       const suppliers = Array.from(new Set(items.map((i) => i.supplierName).filter(Boolean)));
       const branches = Array.from(new Set(items.map((i) => bname(i.branchId)).filter(Boolean)));
       const no = items[0].batchNo;
       return { id: key, poItems: items,
         label: (no ? no + " · " : "") + items.length + " item" + (items.length > 1 ? "s" : "") + " · " + units + " unit" + (units > 1 ? "s" : ""),
         meta: (suppliers.join(", ") || "—") + " · " + branches.join(", ") + " · " + (recd === items.length ? "received" : recd + "/" + items.length + " received"),
+        status: reversed ? "reversed" : null,
         date: dt(ts), ts, amountCents: total,
         detail: [["Purchase order", no || "—"], ["Items", items.length], ["Units", units], ["Supplier(s)", suppliers.join(", ") || "—"], ["Branch(es)", branches.join(", ")], ["Received", recd + "/" + items.length], ["Total", fmtExact(total, cur)], ["Date", dt(ts)]] };
     });
@@ -18017,6 +18019,7 @@ function DocumentsTab({ data }) {
             <div className={"row" + (d.poItems || d.countReport ? " clickable" : "") + (selected && selected.id === d.id ? " rowsel" : "")} key={d.id} onClick={d.poItems ? () => setPoView(d) : d.countReport ? () => setRepView(d) : undefined}>
               <div className="avatar">{d.poItems ? <ShoppingBag style={{ width: 17, height: 17 }} /> : d.countReport ? <Boxes style={{ width: 17, height: 17 }} /> : <FileText style={{ width: 17, height: 17 }} />}</div>
               <div className="meta"><div className="nm">{d.label}</div><div className="mt2">{d.meta} · {d.date}</div></div>
+              {d.status ? <span className={`ist ${d.status}`}>{d.status}</span> : null}
               {d.amountCents > 0 && <span className="pill plain">{fmt(d.amountCents, cur)}</span>}
               <button className="btn xs btn-ghost" onClick={(e) => { e.stopPropagation(); d.poItems ? setPoView(d) : d.countReport ? setRepView(d) : setSelected(d); }}>View</button>
             </div>))}</div>
@@ -18050,7 +18053,7 @@ function DocumentsTab({ data }) {
               <div className="supplier-invoice-mobile" aria-label="Purchase report line items">
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {bname(po.branchId)}</span></div>
-                  <div className="supplier-invoice-line-status"><span className={"ist " + (po.status === "received" ? "paid" : "")}>{po.status === "received" ? "received" : "ordered"}</span></div>
+                  <div className="supplier-invoice-line-status"><span className={"ist " + (po.status === "received" ? "paid" : po.status === "reversed" ? "reversed" : "")}>{po.status === "received" ? "received" : po.status === "reversed" ? "reversed" : "ordered"}</span></div>
                   <div><span>Quantity</span><b>{po.qty}</b></div>
                   <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b></div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
@@ -18061,7 +18064,7 @@ function DocumentsTab({ data }) {
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{bname(po.branchId)}</td>
                     <td style={{ textAlign: "right" }}>{po.qty}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
-                    <td>{po.status === "received" ? <span className="ist paid">received</span> : <span className="ist">ordered</span>}</td>
+                    <td>{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist reversed">reversed</span> : <span className="ist">ordered</span>}</td>
                   </tr>))}</tbody></table>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 10, flexWrap: "wrap" }}>
