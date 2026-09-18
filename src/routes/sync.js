@@ -1802,12 +1802,18 @@ async function processPurchaseReversalEvent(client, event, req, deviceId, ts) {
     }
 
     for (const [productId, restoredCost] of restoredCosts) {
-      const productResult = await client.query("SELECT payload FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1", [productId]);
-      const currentPayload = recordPayload(productResult.rows[0]?.payload);
+      const productResult = await client.query("SELECT payload, updated_at AS \"updatedAt\", server_ts AS \"serverTs\" FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1", [productId]);
+      const currentProduct = productResult.rows[0];
+      const currentPayload = recordPayload(currentProduct?.payload);
+      // A receipt reversal is an authoritative, locked inventory operation.
+      // It must not lose its branch cost restoration to an old device whose
+      // clock wrote a product record with a later client timestamp.
+      const productUpdatedAt = Math.max(Number(ts), Number(currentProduct?.updatedAt || 0) + 1);
       await upsertMutableRecord(client, {
         id: productId,
         branchId: null,
-        updatedAt: ts,
+        updatedAt: productUpdatedAt,
+        baseServerTs: Number(currentProduct?.serverTs || 0),
         payload: withBranchProductCostPayload(currentPayload, branchId, restoredCost),
       }, "product", deviceId, ts);
     }

@@ -2861,7 +2861,9 @@ test("9e. a received purchase reversal removes only untouched stock and restores
 
 test("9f. a legacy purchase reversal records an admin-entered prior cost instead of guessing", async () => {
   const ts = Date.now();
-  const product = { id: "legacy-purchase-reversal-product", type: "product", updatedAt: ts, payload: { id: "legacy-purchase-reversal-product", sku: "LEGACY-REV", name: "Legacy Reversal Product", branchCosts: { b_sip: { costCents: 6100 } } } };
+  // Simulates an earlier terminal with a clock ahead of the server. The
+  // reversal must still restore cost instead of being ignored as "older".
+  const product = { id: "legacy-purchase-reversal-product", type: "product", updatedAt: ts + 60000, payload: { id: "legacy-purchase-reversal-product", sku: "LEGACY-REV", name: "Legacy Reversal Product", branchCosts: { b_sip: { costCents: 6100 } } } };
   const purchase = { id: "legacy-purchase-reversal-line", type: "purchase", branchId: "b_sip", updatedAt: ts + 1, payload: { id: "legacy-purchase-reversal-line", batchId: "legacy-purchase-reversal-batch", batchNo: "PO-LEGACY-REV", branchId: "b_sip", productId: product.id, productName: "Legacy Reversal Product", qty: 3, costCents: 6100, lineTotalCents: 18300, status: "received", receivedAt: ts + 1 } };
   // Older receipts did not contain previousCostCents, which must never be guessed.
   const receipt = { id: "legacy-purchase-reversal-receipt", type: "stockMovement", branchId: "b_sip", clientTs: ts + 2, payload: { productId: product.id, branchId: "b_sip", purchaseId: purchase.id, purchaseBatchId: "legacy-purchase-reversal-batch", purchaseBatchNo: "PO-LEGACY-REV", qty: 3, costCents: 6100, valueCents: 18300, reason: "Purchase supplier", ts: ts + 2 } };
