@@ -9721,6 +9721,10 @@ function CashierDebtTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
   const [debtReviewError, setDebtReviewError] = useState("");
   const [debtReviewingId, setDebtReviewingId] = useState("");
+  const [invoiceSettlementTarget, setInvoiceSettlementTarget] = useState(null);
+  const [countCorrection, setCountCorrection] = useState(null);
+  const [countCorrectionReason, setCountCorrectionReason] = useState("");
+  const [countCorrectingId, setCountCorrectingId] = useState("");
   const pendingInventoryDebts = (data.cashierJointDebts || [])
     .filter((debt) => debt.branchId === branch.id && cashierJointDebtStatus(data, debt) === "pending_review")
     .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0));
@@ -9773,6 +9777,17 @@ function CashierDebtTab({ data, update, branch, user }) {
   const [invoiceSettlementOpen, setInvoiceSettlementOpen] = useState(false);
   const invoiceTotal = invoiceDebts.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryTotal = inventoryBalances.reduce((sum, balance) => sum + balance.outstandingCents, 0);
+  const completedCountSessions = (data.stockCountSessions || [])
+    .filter((session) => session.branchId === branch.id && ["committed", "corrected"].includes(String(session.status || "").toLowerCase()))
+    .sort((left, right) => Number(right.committedAt || right.updatedAt || right.startedAt || 0) - Number(left.committedAt || left.updatedAt || left.startedAt || 0));
+  const linkedCountDebts = (sessionId) => (data.cashierJointDebts || [])
+    .filter((debt) => String(debt.stockCountSessionId || "") === String(sessionId));
+  const countHasRecordedPayment = (sessionId) => {
+    const debtIds = new Set(linkedCountDebts(sessionId).map((debt) => String(debt.id)));
+    return (data.cashierJointDebtPayments || []).some((payment) => debtIds.has(String(payment.debtId || ""))
+      && String(payment.status || "captured").toLowerCase() === "captured"
+      && Number(payment.amountCents || 0) > 0);
+  };
 
   const reviewInventoryDebt = async (debt, decision) => {
     if (!debt || debtReviewingId) return;
@@ -9803,6 +9818,87 @@ function CashierDebtTab({ data, update, branch, user }) {
     }
   };
 
+  const openCountCorrection = (session) => {
+    if (!session || String(session.status || "").toLowerCase() !== "committed") return;
+    if (countHasRecordedPayment(session.id)) {
+      setDebtReviewError(`${session.code || "This count"} already has a recorded cashier payment and cannot be corrected automatically. Use a separate audited stock correction instead.`);
+      return;
+    }
+    setDebtReviewError("");
+    setCountCorrection(session);
+    setCountCorrectionReason("");
+  };
+
+  const correctCount = async () => {
+    const session = countCorrection;
+    const reason = String(countCorrectionReason || "").trim();
+    if (!session || !reason || countCorrectingId) return;
+    if (countHasRecordedPayment(session.id)) {
+      setDebtReviewError(`${session.code || "This count"} has a recorded cashier payment and cannot be corrected automatically.`);
+      setCountCorrection(null);
+      return;
+    }
+    const label = session.code || "this count";
+    if (typeof window !== "undefined" && !window.confirm(`Correct ${label}? This reverses its stock adjustments and cancels any unpaid linked cashier debt. You can then start a new count with the correct quantities.`)) return;
+    const ts = now();
+    const correction = {
+      id: uid("scc"),
+      type: "stockCountCorrection",
+      branchId: branch.id,
+      clientTs: ts,
+      payload: { stockCountSessionId: session.id, branchId: branch.id, reason },
+    };
+    setCountCorrectingId(session.id);
+    setDebtReviewError("");
+    try {
+      await publishSyncEvents([correction], data, { management: true });
+      const reversals = (data.stockMovements || [])
+        .filter((movement) => movement.branchId === branch.id && movement.stockCountSessionId === session.id && movement.mode === "count")
+        .map((movement) => ({
+          id: `stock-count-reversal:${correction.id}:${movement.id}`,
+          productId: movement.productId,
+          branchId: branch.id,
+          qty: -Number(movement.qty || 0),
+          mode: "count_reversal",
+          reason: `Stock count correction ${label}`,
+          stockCountSessionId: session.id,
+          correctionId: correction.id,
+          reversalOf: movement.id,
+          ts,
+          synced: true,
+        }));
+      const reviews = linkedCountDebts(session.id).map((debt) => ({
+        id: `stock-count-debt-reversal:${correction.id}:${debt.id}`,
+        debtId: debt.id,
+        branchId: branch.id,
+        decision: "reversed",
+        reviewedBy: typeof user === "string" ? user : (user?.name || user?.email || "Manager"),
+        reviewedAt: ts,
+        correctionId: correction.id,
+        synced: true,
+      }));
+      update((current) => ({
+        ...current,
+        stockCountSessions: (current.stockCountSessions || []).map((entry) => entry.id === session.id ? {
+          ...entry, status: "corrected", correctedBy: typeof user === "string" ? user : (user?.name || user?.email || "Manager"), correctedAt: ts, correctionId: correction.id, correctionReason: reason, synced: true, updatedAt: ts,
+        } : entry),
+        stockMovements: [...(current.stockMovements || []), ...reversals],
+        cashierJointDebtReviews: [...(current.cashierJointDebtReviews || []), ...reviews],
+      }), { skipSync: true });
+      setCountCorrection(null);
+      setCountCorrectionReason("");
+    } catch (error) {
+      const code = String(error?.message || "");
+      setDebtReviewError(code === "stock_count_debt_has_payment"
+        ? `${label} already has a recorded cashier payment and cannot be corrected automatically.`
+        : code === "stock_count_not_correctable"
+          ? `${label} has already been corrected or is no longer an applied count.`
+          : "The count correction was not saved. No stock or cashier debt was changed.");
+    } finally {
+      setCountCorrectingId("");
+    }
+  };
+
   useEffect(() => {
     if (!selectedKey || debtRows.some((row) => row.key === selectedKey)) return;
     setSelectedKey(debtRows[0]?.key || "");
@@ -9821,11 +9917,28 @@ function CashierDebtTab({ data, update, branch, user }) {
           <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
           <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)}</div></div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id || countCorrectingId === debt.stockCountSessionId} onClick={() => openCountCorrection(completedCountSessions.find((session) => session.id === debt.stockCountSessionId))}><RotateCcw /> Correct count</button>
             <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
             <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>
           </div>
         </div>)}</div>
       </section> : null}
+      <section className="panel" style={{ padding: 14, marginBottom: 14 }} aria-label="Applied stock counts">
+        <div className="invoice-section-head" style={{ marginBottom: 8 }}>
+          <div><div className="section-title"><ClipboardCheck /> Applied stock counts</div><div className="muted">Correcting a count reverses its stock adjustments and any unpaid linked cashier debt, then preserves the original count for audit.</div></div>
+          <span className="pill plain">{completedCountSessions.length} recorded</span>
+        </div>
+        {completedCountSessions.length === 0 ? <div className="notice compact-notice">No completed stock counts are available for this branch.</div> : <div className="list mini inventory-debt-list">{completedCountSessions.slice(0, 12).map((session) => {
+          const corrected = String(session.status || "").toLowerCase() === "corrected";
+          const hasPayment = countHasRecordedPayment(session.id);
+          const linkedDebt = linkedCountDebts(session.id)[0];
+          return <div className="row" key={session.id}>
+            <div className="avatar"><ClipboardCheck style={{ width: 17, height: 17 }} /></div>
+            <div className="meta"><div className="nm">{session.code || "Stock count"} <span className={"ist " + (corrected ? "voided" : "paid")}>{corrected ? "corrected" : "applied"}</span></div><div className="mt2">{session.kind === "quick" ? "Quick inventory" : "Full stock count"} Â· {dt(session.committedAt || session.updatedAt)}{linkedDebt ? ` Â· ${fmt(linkedDebt.totalCents, cur)} linked shortage` : " Â· no shortage debt"}</div></div>
+            {corrected ? <span className="pill plain">Corrected</span> : <button type="button" className="btn sm btn-ghost" disabled={hasPayment || countCorrectingId === session.id} title={hasPayment ? "A recorded cashier payment protects this count from automatic reversal." : "Reverse this count and enter a corrected replacement count."} onClick={() => openCountCorrection(session)}><RotateCcw /> Correct count</button>}
+          </div>;
+        })}</div>}
+      </section>
       <div className="invoice-summary-strip three">
         <div><span>Invoice debt</span><b className={invoiceTotal > 0 ? "danger" : ""}>{fmt(invoiceTotal, cur)}</b></div>
         <div><span>Inventory debt</span><b className={inventoryTotal > 0 ? "danger" : ""}>{fmt(inventoryTotal, cur)}</b></div>
@@ -9856,7 +9969,11 @@ function CashierDebtTab({ data, update, branch, user }) {
                   <button type="button" className="btn sm btn-primary" disabled={selected.invoices.length === 0} onClick={() => setInvoiceSettlementOpen(true)}><CreditCard /> Settle invoices</button>
                 </div>
                 {selected.invoices.length === 0 ? <div className="notice compact-notice">No invoice debt for this cashier.</div> : (
-                  <div className="list mini">{selected.invoices.map((invoice) => <div className="row" key={invoice.id}><div className="meta"><div className="nm">{invoice.number || invoice.receiptNo || "Invoice"}</div><div className="mt2">{invoice.customerName || "Walk-in"} - {dt(invoice.ts)}</div></div><span className="pill plain" style={{ color: "#C23A56" }}>{fmt(invOutstanding(invoice), cur)}</span></div>)}</div>
+                  <div className="list mini">{selected.invoices.map((invoice) => {
+                    const ageMs = now() - invoiceIssuedTimestamp(invoice);
+                    const payrollReady = ["owner", "admin"].includes(String(user?.role || user?.kind || "").toLowerCase()) && ageMs >= 30 * 24 * 60 * 60 * 1000;
+                    return <div className="row" key={invoice.id}><div className="meta"><div className="nm">{invoice.number || invoice.receiptNo || "Invoice"}</div><div className="mt2">{invoice.customerName || "Walk-in"} - {dt(invoice.ts)}{payrollReady ? " Â· payroll eligible" : ""}</div></div><span className="pill plain" style={{ color: "#C23A56" }}>{fmt(invOutstanding(invoice), cur)}</span><button type="button" className="btn xs btn-ghost" onClick={() => setInvoiceSettlementTarget(invoice)}><CreditCard /> Settle</button></div>;
+                  })}</div>
                 )}
               </section>
               <section>
@@ -9869,6 +9986,13 @@ function CashierDebtTab({ data, update, branch, user }) {
       )}
 
       {invoiceSettlementOpen && selected ? <BulkSettleDayModal invoices={selected.invoices} activeCashierNames={[selected.cashierName]} initialCashier={selected.cashierName} branch={branch} data={data} update={update} cur={cur} user={user} onClose={() => setInvoiceSettlementOpen(false)} /> : null}
+      {invoiceSettlementTarget ? <InvoiceDetailModal inv={invoiceSettlementTarget} data={data} update={update} cur={cur} user={user} settlementOnly onClose={() => setInvoiceSettlementTarget(null)} /> : null}
+      {countCorrection ? <div className="modalback"><div className="modal" style={{ maxWidth: 560 }}>
+        <div className="mhead"><div><div className="title">Correct {countCorrection.code || "stock count"}</div><div className="sub">The applied stock changes and any unpaid linked cashier debt will be reversed. Enter the corrected quantities in a new count afterwards.</div></div><button type="button" className="iconbtn" onClick={() => { if (!countCorrectingId) setCountCorrection(null); }} aria-label="Close"><X /></button></div>
+        <label className="label" htmlFor="stock-count-correction-reason">Reason</label>
+        <textarea id="stock-count-correction-reason" className="input" style={{ minHeight: 96, resize: "vertical" }} value={countCorrectionReason} onChange={(event) => setCountCorrectionReason(event.target.value)} placeholder="For example: counted the wrong product or entered the wrong quantity" disabled={!!countCorrectingId} />
+        <div className="grid2" style={{ marginTop: 16 }}><button type="button" className="btn btn-ghost" disabled={!!countCorrectingId} onClick={() => setCountCorrection(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!String(countCorrectionReason || "").trim() || !!countCorrectingId} onClick={correctCount}><RotateCcw /> {countCorrectingId ? "Correcting..." : "Reverse and recount"}</button></div>
+      </div></div> : null}
     </div>
   );
 }
@@ -11032,7 +11156,11 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   }, [stkRequest?.id, out]);
   const invoiceDebtAgeMs = now() - Number(live.ts || live.issuedAt || live.createdAt || 0);
   const carriedOverDebtEligible = out > 0 && invoiceWasCarriedOver(data, live);
-  const payrollEligible = carriedOverDebtEligible
+  // Payroll recovery is governed by the debt age, not by whether the
+  // originating device happened to have recorded an End-of-Day carry-over
+  // marker. Older invoices imported from a legacy device still need the
+  // same owner/admin-only payroll recovery route.
+  const payrollEligible = out > 0
     && invIsDebt(live)
     && invoiceDebtAgeMs >= 30 * 24 * 60 * 60 * 1000
     && ["owner", "admin"].includes(settlementRole);
