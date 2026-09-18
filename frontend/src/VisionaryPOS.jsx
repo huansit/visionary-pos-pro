@@ -8976,6 +8976,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const pendingTransferRequestCount = (data.stockTransferRequests || [])
     .filter((request) => !decidedTransferRequestIds.has(request.id))
     .length;
+  const pendingInventoryDebtReviewCount = (data.cashierJointDebts || [])
+    .filter((debt) => debt.branchId === branch.id && cashierJointDebtStatus(data, debt) === "pending_review")
+    .length;
   const openCashierCreditInvoices = (cashier) => {
     setInvoiceFocus({ cashier, filter: "debt", key: Date.now() });
     setTab("invoices");
@@ -9005,7 +9008,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       ? pendingVoidCount
       : itemId === "borrowing"
         ? pendingTransferRequestCount
-        : 0;
+        : itemId === "payments"
+          ? pendingInventoryDebtReviewCount
+          : 0;
   const mobileNavLabel = (item) => {
     const badgeCount = navBadgeCount(item.id);
     return badgeCount > 0 ? `${item.label} (${badgeCount} pending)` : item.label;
@@ -9026,7 +9031,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       ? "void requests pending approval"
       : item.id === "borrowing"
         ? "stock transfer requests pending approval"
-        : "expenses pending approval";
+        : item.id === "payments"
+          ? "inventory count debts pending approval"
+          : "expenses pending approval";
     return (
       <button
         className={"navitem" + (main ? " main" : "") + (item.tone ? " toned" : "") + (tab === item.id ? " on" : "")}
@@ -9580,7 +9587,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
       <div className="invoice-workspace-tabs" role="tablist" aria-label="Sales and invoicing sections">
         <button type="button" role="tab" aria-selected={workspaceView === "invoices"} className={workspaceView === "invoices" ? "active" : ""} onClick={() => switchInvoiceWorkspace("invoices")}><Receipt /> Invoices <span>{displayInvoices.length}</span></button>
-        <button type="button" role="tab" aria-selected={workspaceView === "debts"} className={workspaceView === "debts" ? "active" : ""} onClick={() => switchInvoiceWorkspace("debts")}><CreditCard /> Debts <span>{debtRows.length}</span></button>
         <button type="button" role="tab" aria-selected={workspaceView === "closes"} className={workspaceView === "closes" ? "active" : ""} onClick={() => switchInvoiceWorkspace("closes")}><FileText /> Day closes <span>{closes.length}</span></button>
       </div>
 
@@ -9683,68 +9689,6 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
       </div>}
 
-      {workspaceView === "debts" && <div className="invoice-workspace-view">
-        <div className="invoice-summary-strip three">
-          <div><span>Invoice debts</span><b>{fmt(invoiceDebtOutstanding, cur)}</b></div>
-          <div><span>Inventory debts</span><b>{fmt(inventoryDebtOutstanding, cur)}</b></div>
-          <div><span>Total cashier debt</span><b className={invoiceDebtOutstanding + inventoryDebtOutstanding > 0 ? "danger" : ""}>{fmt(invoiceDebtOutstanding + inventoryDebtOutstanding, cur)}</b></div>
-        </div>
-        <div className="invoice-section-head">
-          <div><div className="section-title">Cashier debt accounts</div><div className="muted">Review balances here, then settle invoice and inventory debt together in one workspace.</div></div>
-          <button className="btn sm btn-primary" onClick={onOpenDebtPayments}><CreditCard /> Settle cashier debts</button>
-        </div>
-        {debtReviewError ? <div className="formerr">{debtReviewError}</div> : null}
-        {pendingJointDebts.length > 0 ? <section className="panel" style={{ marginBottom: 14 }}>
-          <div className="invoice-section-head" style={{ marginBottom: 8 }}>
-            <div><div className="section-title">Inventory shortage review</div><div className="muted">A count variance is not charged to staff until a manager approves it.</div></div>
-            <span className="pill plain">{pendingJointDebts.length} awaiting review</span>
-          </div>
-          <div className="list mini inventory-debt-list">{pendingJointDebts.map((debt) => {
-            return <div className="row" key={debt.id}>
-              <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
-              <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)} · review required</div></div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
-                <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>
-              </div>
-            </div>;
-          })}</div>
-        </section> : null}
-        <div className="invsummary debt-summary">
-          <section>
-            <div className="section-title">Cashier balances</div>
-            {debtRows.length === 0 ? <div className="notice">No cashier invoice or missing inventory debts.</div> : (
-              <div className="list mini">{debtRows.map((row) => (
-                <div className="row" key={row.name}><div className="avatar" style={{ background: "linear-gradient(135deg,#E64368,#A66BFF)" }}>{row.name.charAt(0)}</div>
-                  <div className="meta"><div className="nm">{row.name}</div><div className="mt2">Invoices {fmt(row.invoiceAmountCents, cur)} - inventory {fmt(row.missingAmountCents, cur)}</div></div>
-                  <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(row.invoiceAmountCents + row.missingAmountCents, cur)} owed</span></div>))}</div>
-            )}
-          </section>
-          <section>
-            <div className="section-title">Inventory count records</div>
-            {branchJointDebts.length === 0 ? <div className="notice">No missing inventory debt has been recorded for {branch.name}.</div> : (
-              <div className="list mini inventory-debt-list">{branchJointDebts.map((debt) => (
-                <details className="row" key={debt.id} style={{ display: "block" }}>
-                  <summary style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", listStyle: "none" }}>
-                    <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
-                    <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) - {debt.cashierCount || 0} cashier(s) - {dt(debt.ts)}</div></div>
-                    <span className="pill plain" style={{ color: "#C23A56" }}>{fmt(cashierJointDebtOutstanding(data, debt), cur)}</span>
-                  </summary>
-                  <div className="inventory-debt-detail">
-                    {(debt.items || []).map((item) => <div className="mt2" key={item.productId}>{item.productName} - {item.missingQty} x {fmt(item.unitCostCents, cur)} = {fmt(item.amountCents, cur)}</div>)}
-                    {(debt.shares || []).map((share) => {
-                      const balance = cashierJointDebtShareBalance(data, debt, share);
-                      return <div className="mt2" key={share.cashierId}><b>{share.cashierName}</b> - assigned {fmt(balance.assignedCents, cur)} - paid {fmt(balance.paidCents, cur)} - balance {fmt(balance.outstandingCents, cur)}</div>;
-                    })}
-                    {debt.cashierCount === 0 && <div className="alert"><AlertCircle />No active cashier was assigned when this count was committed. The debt remains unallocated.</div>}
-                  </div>
-                </details>
-              ))}</div>
-            )}
-          </section>
-        </div>
-      </div>}
-
       {workspaceView === "closes" && <div className="invoice-workspace-view">
         <div className="invoice-summary-strip three">
           <div><span>Invoices since last close</span><b>{sinceEndDay.length}</b></div>
@@ -9775,6 +9719,11 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
 function CashierDebtTab({ data, update, branch, user }) {
   const cur = data.settings.currency;
+  const [debtReviewError, setDebtReviewError] = useState("");
+  const [debtReviewingId, setDebtReviewingId] = useState("");
+  const pendingInventoryDebts = (data.cashierJointDebts || [])
+    .filter((debt) => debt.branchId === branch.id && cashierJointDebtStatus(data, debt) === "pending_review")
+    .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0));
   const invoiceDebts = operationalInvoices(data)
     .filter((invoice) => invoice.branchId === branch.id && invIsDebt(invoice))
     .sort((left, right) => Number(left.ts || 0) - Number(right.ts || 0));
@@ -9825,6 +9774,35 @@ function CashierDebtTab({ data, update, branch, user }) {
   const invoiceTotal = invoiceDebts.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
   const inventoryTotal = inventoryBalances.reduce((sum, balance) => sum + balance.outstandingCents, 0);
 
+  const reviewInventoryDebt = async (debt, decision) => {
+    if (!debt || debtReviewingId) return;
+    const confirmText = decision === "approved"
+      ? `Charge the listed cashier shares for ${debt.stockCountCode}? This creates a cashier liability.`
+      : `Record ${debt.stockCountCode} as a business inventory variance? The original count stays in the audit trail and no cashier will be charged.`;
+    if (typeof window !== "undefined" && !window.confirm(confirmText)) return;
+    const ts = now();
+    const review = {
+      id: uid("cjdr"),
+      debtId: debt.id,
+      branchId: debt.branchId,
+      decision,
+      reviewedBy: typeof user === "string" ? user : (user?.name || user?.email || "Manager"),
+      reviewedAt: ts,
+      ts,
+      synced: false,
+    };
+    setDebtReviewingId(debt.id);
+    setDebtReviewError("");
+    try {
+      await publishSyncEvents([eventFromRecord("cashierJointDebtReviews", review, data)], data, { management: true });
+      update((current) => ({ ...current, cashierJointDebtReviews: [...(current.cashierJointDebtReviews || []), { ...review, synced: true }] }), { skipSync: true });
+    } catch (_) {
+      setDebtReviewError("The review was not saved. Check the connection and retry; no cashier balance was changed.");
+    } finally {
+      setDebtReviewingId("");
+    }
+  };
+
   useEffect(() => {
     if (!selectedKey || debtRows.some((row) => row.key === selectedKey)) return;
     setSelectedKey(debtRows[0]?.key || "");
@@ -9832,7 +9810,22 @@ function CashierDebtTab({ data, update, branch, user }) {
 
   return (
     <div className="invoice-workspace cashier-debt-workspace">
-      <PageHead title="Cashier Debt" sub={`${branch.name} - settle invoice and inventory balances in one place`} />
+      <PageHead title="Cashier Debt Management" sub={`${branch.name} - review and settle cashier liabilities separately from sales invoices`} />
+      {pendingInventoryDebts.length > 0 ? <section className="panel" style={{ padding: 14, marginBottom: 14 }} aria-label="Inventory count debts awaiting approval">
+        <div className="invoice-section-head" style={{ marginBottom: 8 }}>
+          <div><div className="section-title"><AlertCircle /> {pendingInventoryDebts.length} inventory count {pendingInventoryDebts.length === 1 ? "requires" : "require"} approval</div><div className="muted">These counts are not charged to a cashier until a manager makes a decision.</div></div>
+          <span className="pill warn">Action required</span>
+        </div>
+        {debtReviewError ? <div className="formerr">{debtReviewError}</div> : null}
+        <div className="list mini inventory-debt-list">{pendingInventoryDebts.map((debt) => <div className="row" key={debt.id}>
+          <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
+          <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)}</div></div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
+            <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>
+          </div>
+        </div>)}</div>
+      </section> : null}
       <div className="invoice-summary-strip three">
         <div><span>Invoice debt</span><b className={invoiceTotal > 0 ? "danger" : ""}>{fmt(invoiceTotal, cur)}</b></div>
         <div><span>Inventory debt</span><b className={inventoryTotal > 0 ? "danger" : ""}>{fmt(inventoryTotal, cur)}</b></div>
@@ -10953,6 +10946,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   const actorName = typeof user === "string"
     ? user
     : (user?.name || user?.displayName || user?.email || "Supervisor");
+  const settlementRole = String(typeof user === "object" && user ? (user.role || user.kind || user.rights?.role || "") : "").toLowerCase();
   useEffect(() => {
     setMpesaCode("");
     setMpesaReceiptAmount("");
@@ -11036,12 +11030,18 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
       if (timer) window.clearTimeout(timer);
     };
   }, [stkRequest?.id, out]);
-  const payrollEligible = out > 0 && invoiceWasCarriedOver(data, live);
+  const invoiceDebtAgeMs = now() - Number(live.ts || live.issuedAt || live.createdAt || 0);
+  const carriedOverDebtEligible = out > 0 && invoiceWasCarriedOver(data, live);
+  const payrollEligible = carriedOverDebtEligible
+    && invIsDebt(live)
+    && invoiceDebtAgeMs >= 30 * 24 * 60 * 60 * 1000
+    && ["owner", "admin"].includes(settlementRole);
+  const walletEligible = carriedOverDebtEligible;
   const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
   const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
   const walletCents = settlementMethod === "wallet" ? clampPaymentCents(walletAmount, out) : 0;
   useEffect(() => {
-    if (!payrollEligible || !live.cashierId || !live.branchId) return undefined;
+    if (!walletEligible || !live.cashierId || !live.branchId) return undefined;
     let cancelled = false;
     setInvoiceWallet((current) => ({ ...current, loading: true, error: "" }));
     getCashierWallet({ cashierId: live.cashierId, branchId: live.branchId, limit: 1 })
@@ -11054,7 +11054,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
         setInvoiceWallet({ balanceCents: 0, loading: false, error: "Cashier wallet could not be loaded." });
       });
     return () => { cancelled = true; };
-  }, [payrollEligible, live.cashierId, live.branchId]);
+  }, [walletEligible, live.cashierId, live.branchId]);
   useEffect(() => {
     if (normalizedMpesaCode.length !== 4 || receiptAvailableCents <= 0) return;
     const nextMpesaAmount = moneyInputValue(Math.min(receiptAvailableCents, out));
@@ -11068,8 +11068,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
     selectedTransaction: providerTransaction,
   });
   let paymentValidationError = "";
-  if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only for carried-over debt invoices.";
-  else if (settlementMethod === "wallet" && !payrollEligible) paymentValidationError = "The cashier wallet can settle only carried-over debt invoices.";
+  if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only to an owner or admin for invoice debts that are at least 30 days old.";
+  else if (settlementMethod === "wallet" && !walletEligible) paymentValidationError = "The cashier wallet can settle only carried-over debt invoices.";
   else if (settlementMethod === "wallet" && invoiceWallet.loading) paymentValidationError = "Loading cashier wallet balance.";
   else if (settlementMethod === "wallet" && invoiceWallet.error) paymentValidationError = invoiceWallet.error;
   else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : settlementMethod === "wallet" ? "Enter the wallet amount to apply." : "Enter an M-Pesa code and amount.";
@@ -11433,14 +11433,14 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
               <b>Record payment</b>
               <span>{fmt(out, cur)} due</span>
             </div>
-            {payrollEligible ? (
+            {payrollEligible || walletEligible ? (
               <div className="inventory-payment-methods" role="radiogroup" aria-label="Cashier debt settlement method">
                 <button type="button" role="radio" aria-checked={settlementMethod === "standard"}
                   className={"invoice-method" + (settlementMethod === "standard" ? " on" : "")}
                   onClick={() => { setSettlementMethod("standard"); setPayrollAmount(""); setWalletAmount(""); setPaymentError(""); }}>
                   <Smartphone /> M-Pesa code
                 </button>
-                <button type="button" role="radio" aria-checked={settlementMethod === "payroll"}
+                {payrollEligible ? <button type="button" role="radio" aria-checked={settlementMethod === "payroll"}
                   className={"invoice-method" + (settlementMethod === "payroll" ? " on" : "")}
                   onClick={() => {
                     setSettlementMethod("payroll");
@@ -11453,8 +11453,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
                     setPaymentError("");
                   }}>
                   <Wallet /> Payroll
-                </button>
-                <button type="button" role="radio" aria-checked={settlementMethod === "wallet"}
+                </button> : null}
+                {walletEligible ? <button type="button" role="radio" aria-checked={settlementMethod === "wallet"}
                   className={"invoice-method" + (settlementMethod === "wallet" ? " on" : "")}
                   onClick={() => {
                     setSettlementMethod("wallet");
@@ -11467,7 +11467,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
                     setPaymentError("");
                   }}>
                   <Wallet /> Tip wallet
-                </button>
+                </button> : null}
               </div>
             ) : null}
             {settlementMethod === "standard" ? <>

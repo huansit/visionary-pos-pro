@@ -962,6 +962,33 @@ async function validatePayrollCashierDebtSettlement(client, event, req) {
   }
 }
 
+async function validatePayrollInvoiceSettlement(client, event, req) {
+  const payload = event.payload || {};
+  if (String(payload.method || "").trim().toLowerCase() !== "payroll") return;
+  // A retry of a committed payroll record remains safe and idempotent.
+  if (await existingEvent(client, event.id)) return;
+  if (!req.account || !["owner", "admin"].includes(syncRole(req.account))) {
+    throw syncEventError("admin_payroll_settlement_required");
+  }
+  const invoiceId = String(payload.invoiceId || payload.orderId || "").trim();
+  if (!invoiceId) throw syncEventError("payroll_invoice_required");
+  const target = await client.query(
+    "SELECT branch_id, server_ts, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1",
+    [invoiceId]
+  );
+  const row = target.rows[0];
+  if (!row) throw syncEventError("payroll_invoice_not_found");
+  const targetBranchId = String(row.branch_id || row.branchId || recordPayload(row.payload).branchId || "").trim();
+  const eventBranchIdValue = String(eventBranchId(event) || "").trim();
+  if (eventBranchIdValue && targetBranchId && eventBranchIdValue !== targetBranchId) {
+    throw syncEventError("payroll_settlement_branch_mismatch");
+  }
+  const createdAt = recordEventTimestamp(row);
+  if (!createdAt || Date.now() - createdAt < PAYROLL_CASHIER_DEBT_MINIMUM_AGE_MS) {
+    throw syncEventError("payroll_invoice_minimum_age_not_met");
+  }
+}
+
 async function validateStockCountSessionWrite(client, ev) {
   const payload = ev.payload || {};
   const branchId = ev.branchId || payload.branchId;
@@ -2126,6 +2153,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           }
           if (type === "cashierJointDebtPayment") {
             await validatePayrollCashierDebtSettlement(client, eventToStore, req);
+          }
+          if (type === "payment") {
+            await validatePayrollInvoiceSettlement(client, eventToStore, req);
           }
           if (type === "borrowing" || type === "stockMovement") {
             await validateApprovedStockTransferEvent(client, eventToStore, type);

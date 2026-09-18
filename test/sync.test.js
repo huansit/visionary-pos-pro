@@ -1036,7 +1036,7 @@ test("5aa. management invoice settlement events clear debt on every admin device
     type: "invoice",
     branchId: "b_sip",
     clientTs: 4000,
-    payload: { totalCents: 87500, paidCents: 0, status: "debt", customerName: "Settlement Test" },
+    payload: { totalCents: 87500, paidCents: 0, status: "debt", customerName: "Settlement Test", ts: Date.now() - (31 * 24 * 60 * 60 * 1000) },
   };
   await withAdminSession(request(app).post("/api/sync/push"))
     .send({ events: [invoice] })
@@ -2984,6 +2984,43 @@ test("9c. payroll recovery is limited to an admin and cashier debts older than 3
   }))
     .expect(200)
     .expect((res) => assert.equal(res.body.rejected[0]?.reason, "payroll_debt_minimum_age_not_met"));
+
+  const oldInvoiceId = "invoice-payroll-old";
+  const oldInvoice = {
+    id: oldInvoiceId,
+    type: "invoice",
+    branchId: "b_sip",
+    clientTs: oldCreatedAt,
+    payload: { id: oldInvoiceId, branchId: "b_sip", totalCents: 5000, paidCents: 0, cashierId: "cashier-a", cashier: "Cashier A", ts: oldCreatedAt },
+  };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [oldInvoice] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(oldInvoiceId)));
+  const invoicePayrollPayment = {
+    id: "payment-payroll-old-invoice",
+    type: "payment",
+    branchId: "b_sip",
+    clientTs: Date.now(),
+    payload: { invoiceId: oldInvoiceId, orderId: oldInvoiceId, branchId: "b_sip", amountCents: 5000, method: "payroll", status: "captured", ts: Date.now() },
+  };
+  await request(app)
+    .post("/api/sync/push")
+    .set("X-Session-Token", state.supervisorSessionToken)
+    .send({ events: [invoicePayrollPayment] })
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0]?.reason, "admin_payroll_settlement_required"));
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [invoicePayrollPayment] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(invoicePayrollPayment.id)));
+
+  const recentInvoiceId = "invoice-payroll-recent";
+  const recentInvoice = { ...oldInvoice, id: recentInvoiceId, clientTs: Date.now(), payload: { ...oldInvoice.payload, id: recentInvoiceId, ts: Date.now() } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [recentInvoice] })).expect(200);
+  await withAdminSession(request(app).post("/api/sync/push").send({
+    events: [{ ...invoicePayrollPayment, id: "payment-payroll-recent-invoice", payload: { ...invoicePayrollPayment.payload, invoiceId: recentInvoiceId, orderId: recentInvoiceId } }],
+  }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0]?.reason, "payroll_invoice_minimum_age_not_met"));
 });
 
 test("10. user credentials created on one device work for login on another device", async () => {
