@@ -9030,7 +9030,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "glovo": return <GlovoOrdersTab data={data} update={update} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
-      case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
+      case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} onSyncNow={onSyncNow} />;
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} onSyncNow={onSyncNow} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
@@ -12292,7 +12292,7 @@ function inventorySaveError(error) {
 }
 
 /* ---- Stock ---- */
-function StockTab({ data, update, branch, onNavigate }) {
+function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
   const cur = data.settings.currency;
   const countInputRefs = useRef(new Map());
   const [bId, setBId] = useState(branch.id);
@@ -12511,9 +12511,6 @@ function StockTab({ data, update, branch, onNavigate }) {
       synced: true,
       updatedAt: ts,
     };
-    const automaticDebt = automaticStockCountDebt(data, {
-      session: committed, rows, branchId: bId, source: "stock_count", operator, ts,
-    });
     // A count may be started and committed before the background outbox has
     // delivered its opening record. Include the frozen opening snapshot in
     // this batch so every movement is still linked to a server-held session.
@@ -12525,12 +12522,12 @@ function StockTab({ data, update, branch, onNavigate }) {
     };
     const syncedMovements = movements.map((movement) => ({ ...movement, synced: true }));
     const syncedLogs = logs.map((entry) => ({ ...entry, synced: true }));
+    let syncResult;
     try {
-      await publishSyncEvents([
+      syncResult = await publishSyncEvents([
         eventFromRecord("stockCountSessions", openingSession, data),
         ...syncedMovements.map((movement) => eventFromRecord("stockMovements", movement, data)),
         ...syncedLogs.map((entry) => eventFromRecord("countLog", entry, data)),
-        ...(automaticDebt ? [eventFromRecord("cashierJointDebts", automaticDebt, data)] : []),
         eventFromRecord("stockCountSessions", committed, data),
       ], data, { management: true });
     } catch (error) {
@@ -12543,11 +12540,14 @@ function StockTab({ data, update, branch, onNavigate }) {
         stockCountSessions: (d.stockCountSessions || []).map((s) => s.id === session.id ? committed : s),
         stockMovements: [...d.stockMovements, ...syncedMovements],
         countLog: [...(d.countLog || []), ...syncedLogs],
-        cashierJointDebts: automaticDebt ? [...(d.cashierJointDebts || []), { ...automaticDebt, synced: true }] : (d.cashierJointDebts || []),
+        cashierJointDebts: d.cashierJointDebts || [],
       };
     }, { skipSync: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await onSyncNow?.({ forceFullPull: true, source: "stock-count-commit" });
     setReport(buildStockCountReport(committed, rows, syncedMovements, data, bname));
-    setScanMsg(committed.code + " committed. " + syncedMovements.length + " catalog adjustment(s) saved to the shared ledger." + (automaticDebt ? " The linked cashier debt is active and can be reversed by correcting this count." : " No shortage debt was created."));
+    const debtCreated = (syncResult.automaticCashierDebtIds || []).length > 0;
+    setScanMsg(committed.code + " committed. " + syncedMovements.length + " catalog adjustment(s) saved to the shared ledger." + (debtCreated ? " The server recorded the linked cashier debt; it can be reversed by correcting this count." : " No shortage debt was created."));
   };
   const correctCommittedCount = async (reportToCorrect) => {
     const sessionId = String(reportToCorrect?.sessionId || "").trim();
@@ -12913,7 +12913,7 @@ function StockTab({ data, update, branch, onNavigate }) {
   };
 
   if (inventoryMode === "quick") {
-    return <QuickInventoryTab data={data} update={update} branch={branch} initialBranchId={bId} onBack={(nextBranchId) => { setBId(nextBranchId || bId); setInventoryMode("full"); }} />;
+    return <QuickInventoryTab data={data} update={update} branch={branch} initialBranchId={bId} onSyncNow={onSyncNow} onBack={(nextBranchId) => { setBId(nextBranchId || bId); setInventoryMode("full"); }} />;
   }
 
   return (
@@ -13218,7 +13218,7 @@ function StockTab({ data, update, branch, onNavigate }) {
   );
 }
 
-function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
+function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, onBack }) {
   const cur = data.settings.currency;
   const operator = stockCountOperator(data);
   const countInputRefs = useRef(new Map());
@@ -13436,10 +13436,6 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
         synced: true,
         updatedAt: ts,
       };
-      const quickRows = selectedRows.map((row) => ({ ...row, productId: row.product.id, commitDelta: row.variance }));
-      const automaticDebt = automaticStockCountDebt(data, {
-        session: committedSession, rows: quickRows, branchId: bId, source: "quick_inventory", operator, ts,
-      });
       const openingSession = {
         ...(draft || createQuickInventoryDraft({ id: quickInventoryId, branchId: bId, operator, timestamp: ts })),
         id: quickInventoryId,
@@ -13450,12 +13446,12 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
       };
       const syncedAdjustments = adjustments.map((movement) => ({ ...movement, synced: true }));
       const syncedLogs = logs.map((entry) => ({ ...entry, synced: true }));
+      let syncResult;
       try {
-        await publishSyncEvents([
+        syncResult = await publishSyncEvents([
           eventFromRecord("stockCountSessions", openingSession, data),
           ...syncedAdjustments.map((movement) => eventFromRecord("stockMovements", movement, data)),
           ...syncedLogs.map((entry) => eventFromRecord("countLog", entry, data)),
-          ...(automaticDebt ? [eventFromRecord("cashierJointDebts", automaticDebt, data)] : []),
           eventFromRecord("stockCountSessions", committedSession, data),
         ], data, { management: true });
       } catch (error) {
@@ -13472,12 +13468,15 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onBack }) {
           stockCountSessions,
           stockMovements: [...(d.stockMovements || []), ...syncedAdjustments],
           countLog: [...(d.countLog || []), ...syncedLogs],
-          cashierJointDebts: automaticDebt ? [...(d.cashierJointDebts || []), { ...automaticDebt, synced: true }] : (d.cashierJointDebts || []),
+          cashierJointDebts: d.cashierJointDebts || [],
         };
       }, { skipSync: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await onSyncNow?.({ forceFullPull: true, source: "quick-inventory-commit" });
       setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: syncedAdjustments.length });
       setQ("");
-      setMessage(quickInventoryBatch.code + " applied. " + syncedAdjustments.length + " catalog adjustment(s) saved to the shared ledger." + (automaticDebt ? " The linked cashier debt is active and can be reversed by correcting this count." : " No shortage debt was created."));
+      const debtCreated = (syncResult.automaticCashierDebtIds || []).length > 0;
+      setMessage(quickInventoryBatch.code + " applied. " + syncedAdjustments.length + " catalog adjustment(s) saved to the shared ledger." + (debtCreated ? " The server recorded the linked cashier debt; it can be reversed by correcting this count." : " No shortage debt was created."));
     } catch (error) {
       console.error("Quick inventory apply failed", error);
       setMessage("Quick inventory could not be applied. No selected counts were cleared; please retry.");
