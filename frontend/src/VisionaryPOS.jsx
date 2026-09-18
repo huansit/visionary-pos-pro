@@ -1807,10 +1807,9 @@ function isInventoryCountShortage(debt) {
 }
 function cashierJointDebtNeedsReview(data, debt) {
   if (!isInventoryCountShortage(debt) || cashierJointDebtReview(data, debt)) return false;
-  // New count shortages are deliberately reversible. They are visible to the
-  // branch immediately, but a manager can correct the linked count and the
-  // server will reverse both stock and the unpaid debt as one audit action.
-  if (debt?.autoReversible === true) return false;
+  // Count shortages remain reversible until any payment is recorded, but that
+  // must not bypass the manager review. Legacy "open" records are treated as
+  // pending too, so they cannot silently become active cashier liabilities.
   return ["", "open", "pending_review"].includes(String(debt?.status || "").trim().toLowerCase());
 }
 function cashierJointDebtStatus(data, debt) {
@@ -2902,6 +2901,11 @@ function stockCountSessions(data) {
 }
 function activeStockCountSession(data, branchId) {
   return stockCountSessions(data).find((s) => s.kind !== "quick" && s.branchId === branchId && ["open", "paused"].includes(s.status)) || null;
+}
+function activeBranchStockCountSession(data, branchId) {
+  return stockCountSessions(data)
+    .filter((session) => session.branchId === branchId && ["draft", "open", "paused"].includes(String(session.status || "").toLowerCase()))
+    .sort((left, right) => Number(left.startedAt || left.updatedAt || 0) - Number(right.startedAt || right.updatedAt || 0))[0] || null;
 }
 function nextStockCountCode(data) {
   const max = stockCountSessions(data).filter((s) => s.kind !== "quick").reduce((m, s) => {
@@ -12426,9 +12430,10 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
     return { ...d, stockCountSessions: found ? existing.map((s) => s.id === nextSession.id ? nextSession : s) : [...existing, nextSession] };
   });
   const startSession = () => {
-    const existing = activeStockCountSession(data, bId);
+    const existing = activeBranchStockCountSession(data, bId);
     if (existing) {
-      setScanMsg(existing.code + " is already " + existing.status + " for " + bname + ".");
+      const label = existing.kind === "quick" ? "Quick inventory" : existing.code;
+      setScanMsg(label + " is already " + existing.status + " for " + bname + ". Resume or discard it before starting another count.");
       return;
     }
     const next = createStockCountSession(data, bId, operator);

@@ -2449,21 +2449,10 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
     .send({ events: [quickDraft] }))
     .expect(200)
     .expect((res) => {
-      assert.deepEqual(res.body.rejected, []);
-      assert.ok(res.body.accepted.includes(quickDraftId));
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0].reason, "stock_count_session_locked");
+      assert.equal(res.body.rejected[0].sessionId, sessionId);
     });
-  await withAdminSession(request(app)
-    .post("/api/sync/push")
-    .send({ events: [{
-      ...quickDraft,
-      clientTs: startedAt + 3,
-      updatedAt: startedAt + 3,
-      payload: { ...quickDraft.payload, items: [{ productId: "prod-stock-count-1", countedQty: 8 }] },
-    }] }))
-    .expect(200);
-  const storedQuickDraft = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [quickDraftId]);
-  assert.equal(storedQuickDraft.rows[0].payload.status, "draft");
-  assert.equal(storedQuickDraft.rows[0].payload.items[0].countedQty, 8);
 
   const stockCountTerminal = await activateTestTerminal("Stock Count Lock Till");
 
@@ -2508,6 +2497,44 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
       assert.ok(res.body.accepted.includes("mv-stock-count-commit"));
       assert.ok(res.body.accepted.includes("cl-stock-count-commit"));
   });
+
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({ events: [quickDraft] }))
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(quickDraftId));
+    });
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{
+      ...quickDraft,
+      clientTs: startedAt + 4,
+      updatedAt: startedAt + 4,
+      payload: { ...quickDraft.payload, items: [{ productId: "prod-stock-count-1", countedQty: 8 }] },
+    }] }))
+    .expect(200);
+  const storedQuickDraft = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [quickDraftId]);
+  assert.equal(storedQuickDraft.rows[0].payload.status, "draft");
+  assert.equal(storedQuickDraft.rows[0].payload.items[0].countedQty, 8);
+
+  const cancelledAt = Date.now() + 1000;
+  await withAdminSession(request(app)
+    .post("/api/sync/push")
+    .send({ events: [{
+      ...quickDraft,
+      clientTs: cancelledAt,
+      updatedAt: cancelledAt,
+      payload: { ...quickDraft.payload, status: "cancelled", cancelledAt },
+    }] }))
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.ok(res.body.accepted.includes(quickDraftId));
+    });
+  const cancelledQuickDraft = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [quickDraftId]);
+  assert.equal(cancelledQuickDraft.rows[0].payload.status, "cancelled");
 });
 
 test("9b. reversible stock-count debts sync by branch and cannot be created by terminals", async () => {
@@ -2812,8 +2839,23 @@ test("9d. committed terminal stock counts create one reversible debt for active 
     });
   const automaticDebt = await pool.query("SELECT payload FROM events WHERE id = $1 AND type = 'cashierJointDebt'", [`cjd-${sessionId}`]);
   assert.equal(automaticDebt.rows[0].payload.autoReversible, true);
+  assert.equal(automaticDebt.rows[0].payload.status, "pending_review");
   assert.equal(automaticDebt.rows[0].payload.totalCents, 5000);
   assert.equal(automaticDebt.rows[0].payload.shares[0].cashierId, "cashier-stock-count-auto");
+
+  const approval = {
+    id: "cjdr-stock-count-auto-debt-a",
+    type: "cashierJointDebtReview",
+    branchId: "b_sip",
+    clientTs: ts + 3,
+    payload: { debtId: `cjd-${sessionId}`, branchId: "b_sip", decision: "approved", reviewedAt: ts + 3 },
+  };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [approval] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(approval.id)));
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [{ ...approval, id: "cjdr-stock-count-auto-debt-repeat", clientTs: ts + 4 }] }))
+    .expect(200)
+    .expect((res) => assert.equal(res.body.rejected[0].reason, "cashier_debt_already_reviewed"));
 
   const correction = {
     id: "scc-test-server-auto-debt-a",

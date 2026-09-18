@@ -976,8 +976,11 @@ async function validateStockCountSessionWrite(client, ev) {
     const productId = String(item?.productId || "").trim();
     const countedQty = item?.countedQty;
     const expectedQty = Number(item?.expectedQty);
+    // Quick-count drafts and cancelled drafts deliberately carry only the
+    // products the operator touched. A cancelled draft must always be able to
+    // release the branch lock even though it has no frozen expected snapshot.
     if (!productId || itemIds.has(productId)
-      || (status !== "draft" && (!Number.isInteger(expectedQty) || expectedQty < 0))) {
+      || (["open", "paused", "committed"].includes(status) && (!Number.isInteger(expectedQty) || expectedQty < 0))) {
       return { ok: false, reason: "stock_count_items_invalid" };
     }
     if (countedQty !== null && countedQty !== undefined && countedQty !== "" && (!Number.isInteger(Number(countedQty)) || Number(countedQty) < 0)) {
@@ -1011,7 +1014,11 @@ async function validateStockCountSessionWrite(client, ev) {
   } else if (["committed", "corrected", "cancelled"].includes(status)) {
     return { ok: false, reason: "stock_count_session_not_started" };
   }
-  if (["open", "paused"].includes(status) && !ev.deleted) {
+  // A branch has one count ledger at a time. This includes an in-progress
+  // quick-count draft: allowing a second device to start a full count while a
+  // draft is active would snapshot the same stock twice and make the final
+  // adjustments non-deterministic.
+  if (["draft", "open", "paused"].includes(status) && !ev.deleted) {
     const existing = await client.query(
       `SELECT id, payload
          FROM records
@@ -1019,7 +1026,7 @@ async function validateStockCountSessionWrite(client, ev) {
           AND deleted = false
           AND id <> $1
           AND COALESCE(branch_id, payload->>'branchId') = $2
-          AND payload->>'status' IN ('open', 'paused')
+          AND payload->>'status' IN ('draft', 'open', 'paused')
         LIMIT 1`,
       [ev.id, branchId]
     );
@@ -1128,7 +1135,10 @@ async function createAutomaticStockCountDebt(client, sessionEvent, req, deviceId
       stockCountSessionId: sessionId,
       stockCountCode: String(session.code || sessionId),
       source: String(session.kind || "").toLowerCase() === "quick" ? "quick_inventory" : "stock_count",
-      status: "open",
+      // A stock-count shortage is never an immediate staff charge. It first
+      // enters the manager review queue; only an explicit approval makes it
+      // chargeable to the listed cashier accounts.
+      status: "pending_review",
       autoReversible: true,
       shortageUnits: items.reduce((sum, item) => sum + item.missingQty, 0),
       totalCents,
@@ -2052,11 +2062,20 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             throw syncEventError("cashier_debt_review_invalid");
           }
           const debtResult = await client.query(
-            "SELECT branch_id FROM events WHERE id = $1 AND type = 'cashierJointDebt' LIMIT 1",
+            "SELECT branch_id, payload FROM events WHERE id = $1 AND type = 'cashierJointDebt' LIMIT 1",
             [debtId]
           );
           const debtBranchId = String(debtResult.rows[0]?.branch_id || "").trim();
           if (!debtBranchId) throw syncEventError("cashier_debt_not_found");
+          const debtPayload = recordPayload(debtResult.rows[0]?.payload);
+          if (!["stock_count", "quick_inventory"].includes(String(debtPayload.source || "").trim().toLowerCase())) {
+            throw syncEventError("cashier_debt_review_not_supported");
+          }
+          const existingReview = await client.query(
+            "SELECT id FROM events WHERE type = 'cashierJointDebtReview' AND payload->>'debtId' = $1 LIMIT 1",
+            [debtId]
+          );
+          if (existingReview.rows.length) throw syncEventError("cashier_debt_already_reviewed");
           if (eventBranchId(guardedEvent) && String(eventBranchId(guardedEvent)) !== debtBranchId) {
             throw syncEventError("cashier_debt_branch_mismatch");
           }
