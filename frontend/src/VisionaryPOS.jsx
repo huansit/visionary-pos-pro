@@ -7239,7 +7239,7 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onSyncNow={runSync} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -8901,7 +8901,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, onSyncNow, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -9025,7 +9025,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} onSyncNow={runSync} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} onSyncNow={onSyncNow} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
