@@ -5475,6 +5475,20 @@ body{overscroll-behavior:none}
 .inventory-debt-picker-head b{font-size:13px}
 .inventory-debt-picker-head span{color:var(--muted-2);font-size:11.5px}
 .inventory-debt-list{max-height:210px;overflow:auto;border:1px solid var(--border-soft);border-radius:8px}
+.inventory-debt-review-row{align-items:center}
+.inventory-debt-review-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.inventory-count-correct{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);font:750 12px var(--font);cursor:pointer;transition:.16s;touch-action:manipulation}
+.inventory-count-correct:hover:not(:disabled),.inventory-count-correct:focus-visible{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--surface));color:var(--accent);outline:none}
+.inventory-count-correct:disabled,.inventory-debt-decision button:disabled{opacity:.54;cursor:not-allowed}
+.inventory-count-correct svg{width:15px;height:15px}
+.inventory-debt-decision{display:inline-flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+.inventory-debt-decision-label{padding:0 5px 0 6px;color:var(--muted-2);font-size:10px;font-weight:800;letter-spacing:.055em;text-transform:uppercase;white-space:nowrap}
+.inventory-debt-decision button{height:30px;border:0;border-radius:7px;padding:0 10px;font:800 11px var(--font);cursor:pointer;transition:.16s;touch-action:manipulation}
+.inventory-debt-variance{background:transparent;color:var(--text)}
+.inventory-debt-variance:hover:not(:disabled),.inventory-debt-variance:focus-visible{background:var(--surface-3);outline:none}
+.inventory-debt-charge{display:inline-flex;align-items:center;gap:5px;background:var(--accent);color:#fff;box-shadow:0 2px 7px color-mix(in srgb,var(--accent) 24%,transparent)}
+.inventory-debt-charge:hover:not(:disabled),.inventory-debt-charge:focus-visible{background:var(--accent-strong);outline:none}
+.inventory-debt-charge svg{width:13px;height:13px}
 .inventory-debt-choice{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border-soft);cursor:pointer;transition:.15s}
 .inventory-debt-choice:last-child{border-bottom:0}
 .inventory-debt-choice:hover{background:var(--surface-2)}
@@ -5525,6 +5539,7 @@ body{overscroll-behavior:none}
 @media (max-width:900px){.invoice-summary-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.invoice-summary-strip.three{grid-template-columns:repeat(3,minmax(0,1fr))}.invoice-summary-strip>div:nth-child(2){border-right:0}.invoice-summary-strip>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div{border-bottom:0}.invoice-summary-strip.three>div:nth-child(2){border-right:1px solid var(--border-soft)}.invoice-compact-summary{grid-template-columns:auto auto 1fr}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr 1fr}.invoice-period-label{grid-column:1/-1}.invoice-period-filter .btn{grid-column:1/-1}.invoice-filter-grid{grid-template-columns:1fr 1fr}.invoice-filter-grid .settlesearch{grid-column:1/-1}.invoice-more-filter-grid{grid-template-columns:1fr 1fr 1fr}.invoice-more-filter-grid .btn{grid-column:1/-1}.invoice-table-wrap{max-height:calc(100dvh - 350px)}}
 @media (max-width:760px){.inventory-payment-toolbar{align-items:stretch;flex-direction:column}.inventory-payment-toolbar>span{white-space:normal}.inventory-payment-cashier{width:100%}.inventory-payment-methods{grid-template-columns:1fr 1fr}.inventory-payment-entry{grid-template-columns:1fr}.inventory-payment-entry .btn{width:100%}}
 @media (max-width:620px){.invoice-summary-strip,.invoice-summary-strip.three{grid-template-columns:1fr 1fr}.invoice-summary-strip.three>div:nth-child(2){border-right:0}.invoice-summary-strip.three>div:nth-child(-n+2){border-bottom:1px solid var(--border-soft)}.invoice-summary-strip.three>div:last-child{grid-column:1/-1}.invoice-summary-strip>div{padding:11px 10px}.invoice-summary-strip b{font-size:15px}.invoice-compact-summary{grid-template-columns:1fr 1fr;gap:10px}.invoice-compact-summary .invoice-mpesa-total{grid-column:1/-1;padding:10px 0 0;border-left:0;border-top:1px solid var(--border-soft)}.invoice-compact-summary .btn{grid-column:1/-1;width:100%}.invoice-period-filter{grid-template-columns:1fr}.invoice-period-label,.invoice-period-filter .btn{grid-column:auto}.invoice-section-head{align-items:stretch;flex-direction:column}.invoice-section-head .btn{width:100%}.invoice-filter-grid{grid-template-columns:1fr}.invoice-filter-grid .settlesearch{grid-column:auto}.invoice-more-filter-grid{grid-template-columns:1fr}.invoice-more-filter-grid .btn{grid-column:auto}.invoice-selection-bar{align-items:stretch;flex-direction:column}.invoice-selection-bar>div:last-child{display:grid;grid-template-columns:1fr 1fr}.invoice-payroll-entry{grid-template-columns:1fr}.inventory-debt-detail{margin-left:0}.inventory-payment-workspace{padding:12px}.inventory-selected-cashier{grid-template-columns:auto minmax(0,1fr) auto}.inventory-selected-cashier .metric{min-width:76px}.inventory-debt-picker-head{align-items:flex-start;flex-direction:column}.inventory-debt-picker-head .btn{width:100%}.inventory-debt-choice{grid-template-columns:auto minmax(0,1fr)}.inventory-debt-choice .amount{grid-column:2;text-align:left}.inventory-debt-selection{align-items:flex-start;flex-direction:column}.inventory-payment-options .grid2{grid-template-columns:1fr}.day-close-list .row .btn{width:100%}}
+@media (max-width:620px){.inventory-debt-review-row{align-items:flex-start;flex-wrap:wrap}.inventory-debt-review-actions{width:100%;margin-left:0;justify-content:space-between}.inventory-debt-decision{flex:1;justify-content:flex-end}.inventory-debt-decision button{padding:0 9px}.inventory-debt-decision-label{display:none}}
 /* Keep the desktop invoice header ordered as one compact control band. */
 @media (min-width:1101px){
   .invoice-list-active .invoice-compact-summary{grid-template-columns:120px 165px 185px minmax(240px,1fr);gap:0;padding:0;margin-bottom:7px;border:1px solid var(--border-soft);border-radius:7px;background:var(--surface);overflow:hidden}
@@ -9913,13 +9928,16 @@ function CashierDebtTab({ data, update, branch, user }) {
           <span className="pill warn">Action required</span>
         </div>
         {debtReviewError ? <div className="formerr">{debtReviewError}</div> : null}
-        <div className="list mini inventory-debt-list">{pendingInventoryDebts.map((debt) => <div className="row" key={debt.id}>
+        <div className="list mini inventory-debt-list">{pendingInventoryDebts.map((debt) => <div className="row inventory-debt-review-row" key={debt.id}>
           <div className="avatar"><Boxes style={{ width: 17, height: 17 }} /></div>
           <div className="meta"><div className="nm">{debt.stockCountCode}</div><div className="mt2">{debt.shortageUnits} missing unit(s) · {fmt(debt.totalCents, cur)} · {dt(debt.ts)}</div></div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id || countCorrectingId === debt.stockCountSessionId} onClick={() => openCountCorrection(completedCountSessions.find((session) => session.id === debt.stockCountSessionId))}><RotateCcw /> Correct count</button>
-            <button type="button" className="btn sm btn-ghost" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Business variance</button>
-            <button type="button" className="btn sm btn-primary" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}>Approve charge</button>
+          <div className="inventory-debt-review-actions">
+            <button type="button" className="inventory-count-correct" title="Correct this count and reverse its unpaid liability" disabled={debtReviewingId === debt.id || countCorrectingId === debt.stockCountSessionId} onClick={() => openCountCorrection(completedCountSessions.find((session) => session.id === debt.stockCountSessionId))}><RotateCcw /> Correct count</button>
+            <div className="inventory-debt-decision" role="group" aria-label={`Resolve ${debt.stockCountCode} shortage`}>
+              <span className="inventory-debt-decision-label">Resolve as</span>
+              <button type="button" className="inventory-debt-variance" title="Record the shortage as a business variance" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "written_off")}>Variance</button>
+              <button type="button" className="inventory-debt-charge" title="Approve a cashier charge for this shortage" disabled={debtReviewingId === debt.id} onClick={() => reviewInventoryDebt(debt, "approved")}><Check /> Charge</button>
+            </div>
           </div>
         </div>)}</div>
       </section> : null}
