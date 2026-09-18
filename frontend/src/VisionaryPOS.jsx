@@ -2226,11 +2226,21 @@ function mergeSyncEvents(data, events) {
     }
     const existing = (next[collection] || []).find((x) => x.id === ev.id);
     if (SYNC_MUTABLE.has(collection) && existing) {
+      // A count that is already closed on the server is never allowed to
+      // reappear as an editable local draft. Device clocks and delayed draft
+      // writes can otherwise make an older local draft look newer than the
+      // committed server record after a refresh.
+      const serverClosedCountSession = collection === "stockCountSessions"
+        && ["committed", "corrected", "cancelled"].includes(String(ev.payload?.status || "").toLowerCase());
+      const localOpenCountSession = collection === "stockCountSessions"
+        && ["draft", "open", "paused"].includes(String(existing.status || "").toLowerCase());
       const incomingServerTs = Number(ev.serverTs || 0);
       const existingServerTs = Number(existing._serverTs || existing.serverTs || 0);
-      if (incomingServerTs > 0 && existingServerTs >= incomingServerTs) continue;
-      if (existing.synced === false
-        && Number(existing.updatedAt || existing.ts || 0) > Number(ev.updatedAt || ev.serverTs || 0)) continue;
+      if (!(serverClosedCountSession && localOpenCountSession)) {
+        if (incomingServerTs > 0 && existingServerTs >= incomingServerTs) continue;
+        if (existing.synced === false
+          && Number(existing.updatedAt || existing.ts || 0) > Number(ev.updatedAt || ev.serverTs || 0)) continue;
+      }
     }
     const record = { ...(ev.payload || {}), id: ev.id, branchId: ev.branchId ?? ev.payload?.branchId, synced: true };
     if (SYNC_MUTABLE.has(collection)) {
@@ -2286,6 +2296,12 @@ function removeRejectedInventoryChanges(data, rejected = []) {
 }
 async function loadOutbox() { return await loadJson(OUTBOX_KEY, []); }
 async function saveOutbox(outbox) { await saveJson(OUTBOX_KEY, outbox || []); }
+async function removeQueuedSyncEvents(predicate) {
+  const outbox = await loadOutbox();
+  const next = outbox.filter((event) => !predicate(event));
+  if (next.length !== outbox.length) await saveOutbox(next);
+  return next;
+}
 function hasCredentialLikePayload(ev) {
   const payload = ev?.payload || {};
   if (!payload || typeof payload !== "object") return false;
@@ -12543,7 +12559,11 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
         cashierJointDebts: d.cashierJointDebts || [],
       };
     }, { skipSync: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The opening draft may already be queued by the automatic-save path.
+    // Once the server has accepted the committed version, that older draft
+    // must never be replayed and make the count appear editable again.
+    await removeQueuedSyncEvents((event) => event.type === "stockCountSession" && event.id === session.id);
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await onSyncNow?.({ forceFullPull: true, source: "stock-count-commit" });
     setReport(buildStockCountReport(committed, rows, syncedMovements, data, bname));
     const debtCreated = (syncResult.automaticCashierDebtIds || []).length > 0;
@@ -13471,7 +13491,10 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
           cashierJointDebts: d.cashierJointDebts || [],
         };
       }, { skipSync: true });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Remove the debounced draft event before the forced pull. Otherwise a
+      // browser refresh can replay the old draft after this committed count.
+      await removeQueuedSyncEvents((event) => event.type === "stockCountSession" && event.id === quickInventoryId);
+      await new Promise((resolve) => setTimeout(resolve, 50));
       await onSyncNow?.({ forceFullPull: true, source: "quick-inventory-commit" });
       setReport({ ts, branchName: bname, code: quickInventoryBatch.code, rows: selectedRows, adjustments: syncedAdjustments.length });
       setQ("");
