@@ -685,10 +685,10 @@ function isInventoryCountShortage(debt: CashierJointDebt) {
 
 function cashierDebtIsChargeable(debt: CashierJointDebt) {
   const status = String(debt.status || "open").trim().toLowerCase();
-  if (["pending_review", "written_off", "rejected", "cancelled", "canceled"].includes(status)) return false;
+  if (["pending_review", "written_off", "reversed", "rejected", "cancelled", "canceled"].includes(status)) return false;
   // A legacy count record may still say "open". It is a branch variance, not
   // a cashier liability, until the server has returned an approved review.
-  if (isInventoryCountShortage(debt)) return status === "approved";
+  if (isInventoryCountShortage(debt)) return debt.autoReversible === true ? status === "open" : status === "approved";
   return ["open", "approved"].includes(status);
 }
 
@@ -2038,7 +2038,7 @@ export default function App() {
             onClose={() => { setStockCountOpen(false); focusSearch(); }}
             onApply={async (rows) => {
               const result = await applySupervisorStockCount(sessionToken, account, terminal.branchId, rows);
-              setStatus(`Stock count saved at ${formatBusinessDateTime(result.committedAt)}. ${result.changes} adjustment${result.changes === 1 ? "" : "s"} synced.`);
+              setStatus(`Stock count saved at ${formatBusinessDateTime(result.committedAt)}. ${result.changes} adjustment${result.changes === 1 ? "" : "s"} synced.${result.automaticDebtCreated ? " A reversible shortage debt was created." : ""}`);
               await refreshCatalog(terminal, { silent: true });
             }}
           />

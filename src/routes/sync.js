@@ -797,6 +797,7 @@ const EVENT_TYPES = new Set([
   "cashMovement",
   "order",
   "countLog",
+  "stockCountCorrection",
   "cashierJointDebt",
   "cashierJointDebtReview",
   "cashierJointDebtPayment",
@@ -853,6 +854,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "invoiceVoidDecision",
   "invoiceLineVoidDecision",
   "stockTransferDecision",
+  "stockCountCorrection",
   "cashierJointDebt",
   "cashierJointDebtReview",
   "cashierJointDebtPayment",
@@ -963,8 +965,49 @@ async function validateStockCountSessionWrite(client, ev) {
   const branchId = ev.branchId || payload.branchId;
   const status = String(payload.status || "").toLowerCase();
   if (!branchId) return { ok: false, reason: "stock_count_branch_required" };
-  if (!["draft", "open", "paused", "committed", "cancelled"].includes(status)) {
+  if (!["draft", "open", "paused", "committed", "corrected", "cancelled"].includes(status)) {
     return { ok: false, reason: "stock_count_status_invalid" };
+  }
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const itemIds = new Set();
+  for (const item of items) {
+    const productId = String(item?.productId || "").trim();
+    const countedQty = item?.countedQty;
+    const expectedQty = Number(item?.expectedQty);
+    if (!productId || itemIds.has(productId)
+      || (status !== "draft" && (!Number.isInteger(expectedQty) || expectedQty < 0))) {
+      return { ok: false, reason: "stock_count_items_invalid" };
+    }
+    if (countedQty !== null && countedQty !== undefined && countedQty !== "" && (!Number.isInteger(Number(countedQty)) || Number(countedQty) < 0)) {
+      return { ok: false, reason: "stock_count_quantity_invalid" };
+    }
+    itemIds.add(productId);
+  }
+  if (["open", "paused", "committed"].includes(status) && !items.length) {
+    return { ok: false, reason: "stock_count_items_required" };
+  }
+  const current = await client.query(
+    "SELECT branch_id, payload FROM records WHERE type = 'stockCountSession' AND id = $1 AND deleted = false LIMIT 1",
+    [ev.id]
+  );
+  const existing = current.rows[0];
+  if (existing) {
+    const previous = recordPayload(existing.payload);
+    const previousStatus = String(previous.status || "").toLowerCase();
+    const previousBranchId = String(existing.branch_id || previous.branchId || "").trim();
+    if (previousBranchId && previousBranchId !== String(branchId)) return { ok: false, reason: "stock_count_branch_immutable" };
+    if (["committed", "corrected", "cancelled"].includes(previousStatus)) {
+      return { ok: false, reason: "stock_count_session_closed" };
+    }
+    const previousItems = Array.isArray(previous.items) ? previous.items : [];
+    if (previousItems.length && status !== "draft" && previousStatus !== "draft") {
+      const previousExpected = new Map(previousItems.map((item) => [String(item?.productId || ""), Number(item?.expectedQty)]));
+      if (previousExpected.size !== itemIds.size || [...previousExpected].some(([productId, expectedQty]) => !itemIds.has(productId) || expectedQty !== Number(items.find((item) => String(item?.productId || "") === productId)?.expectedQty))) {
+        return { ok: false, reason: "stock_count_snapshot_immutable" };
+      }
+    }
+  } else if (["committed", "corrected", "cancelled"].includes(status)) {
+    return { ok: false, reason: "stock_count_session_not_started" };
   }
   if (["open", "paused"].includes(status) && !ev.deleted) {
     const existing = await client.query(
@@ -983,6 +1026,197 @@ async function validateStockCountSessionWrite(client, ev) {
     }
   }
   return { ok: true };
+}
+
+async function validateStockCountMovement(client, event) {
+  const payload = event.payload || {};
+  if (String(payload.mode || "").trim().toLowerCase() !== "count") return;
+  const sessionId = String(payload.stockCountSessionId || "").trim();
+  const branchId = stockMovementBranchId(event);
+  const productId = stockMovementProductId(event);
+  // Historical count movements did not have a session identifier. Preserve
+  // their ledger compatibility; every new count flow supplies one and is
+  // therefore subject to the stronger session checks below.
+  if (!sessionId) return;
+  if (!branchId || !productId) throw syncEventError("stock_count_session_required");
+  const sessionResult = await client.query(
+    "SELECT branch_id, payload FROM records WHERE type = 'stockCountSession' AND id = $1 AND deleted = false LIMIT 1",
+    [sessionId]
+  );
+  const session = sessionResult.rows[0];
+  const sessionPayload = recordPayload(session?.payload);
+  if (!session || String(session.branch_id || sessionPayload.branchId || "") !== branchId) throw syncEventError("stock_count_session_not_found");
+  if (!["open", "paused"].includes(String(sessionPayload.status || "").toLowerCase())) throw syncEventError("stock_count_session_closed");
+  const line = (Array.isArray(sessionPayload.items) ? sessionPayload.items : []).find((item) => String(item?.productId || "") === productId);
+  if (!line) throw syncEventError("stock_count_product_not_in_session");
+  const previousQty = Number(payload.previousQty);
+  const correctedQty = Number(payload.correctedQty);
+  const quantity = stockMovementQuantity(event);
+  if (!Number.isInteger(previousQty) || previousQty < 0 || !Number.isInteger(correctedQty) || correctedQty < 0 || correctedQty !== previousQty + quantity) {
+    throw syncEventError("stock_count_movement_invalid");
+  }
+  const priorMovements = await client.query("SELECT id, payload FROM events WHERE type = 'stockMovement'");
+  if (priorMovements.rows.some((row) => String(row.payload?.stockCountSessionId || "") === sessionId && String(row.payload?.productId || row.payload?.product_id || "") === productId && String(row.payload?.mode || "").toLowerCase() === "count")) {
+    throw syncEventError("stock_count_product_already_committed");
+  }
+}
+
+async function createAutomaticStockCountDebt(client, sessionEvent, req, deviceId, ts) {
+  const session = recordPayload(sessionEvent?.payload);
+  const sessionId = String(sessionEvent?.id || session.id || "").trim();
+  const branchId = String(sessionEvent?.branchId || session.branchId || "").trim();
+  if (!sessionId || !branchId || String(session.status || "").toLowerCase() !== "committed") return null;
+
+  const existingDebt = await client.query("SELECT id, payload FROM events WHERE type = 'cashierJointDebt'");
+  if (existingDebt.rows.some((row) => String(recordPayload(row.payload).stockCountSessionId || "") === sessionId)) return null;
+
+  const movementResult = await client.query("SELECT payload FROM events WHERE type = 'stockMovement'");
+  const shortagesByProduct = new Map();
+  for (const row of movementResult.rows) {
+    const movement = recordPayload(row.payload);
+    if (String(movement.stockCountSessionId || "") !== sessionId || String(movement.mode || "").toLowerCase() !== "count") continue;
+    const quantity = Number(movement.qty);
+    const productId = String(movement.productId || "").trim();
+    if (!productId || !Number.isFinite(quantity) || quantity >= 0) continue;
+    shortagesByProduct.set(productId, (shortagesByProduct.get(productId) || 0) + Math.abs(quantity));
+  }
+  if (!shortagesByProduct.size) return null;
+
+  const productResult = await client.query("SELECT id, payload FROM records WHERE type = 'product' AND deleted = false");
+  const products = new Map(productResult.rows.map((row) => [String(row.id), recordPayload(row.payload)]));
+  const sessionItems = new Map((Array.isArray(session.items) ? session.items : []).map((item) => [String(item?.productId || ""), item]));
+  const items = Array.from(shortagesByProduct, ([productId, missingQty]) => {
+    const product = products.get(productId) || {};
+    const item = sessionItems.get(productId) || {};
+    const unitCostCents = Math.max(0, Math.round(Number(productOverlayFromPayload(product, branchId).costCents || 0)));
+    return {
+      productId,
+      productName: String(productDisplayName(product) || item.productName || "Product"),
+      sku: String(product.sku || item.sku || ""),
+      missingQty,
+      unitCostCents,
+      amountCents: missingQty * unitCostCents,
+    };
+  }).filter((item) => item.amountCents > 0);
+  const totalCents = items.reduce((sum, item) => sum + item.amountCents, 0);
+  if (!items.length || totalCents <= 0) return null;
+
+  const cashierResult = await client.query(
+    "SELECT id, name, kind, rights FROM credentials WHERE branch_id = $1 AND status = 'active'",
+    [branchId]
+  );
+  const cashiers = cashierResult.rows
+    .filter((row) => syncRole({ kind: row.kind, rights: recordPayload(row.rights) }) === "cashier")
+    .map((row) => ({ id: String(row.id), name: String(row.name || "Cashier") }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  if (!cashiers.length) return null;
+
+  const baseShare = Math.floor(totalCents / cashiers.length);
+  const remainder = totalCents % cashiers.length;
+  const debtId = `cjd-${sessionId}`;
+  const now = Date.now();
+  const debtEvent = {
+    id: debtId,
+    type: "cashierJointDebt",
+    branchId,
+    clientTs: now,
+    payload: {
+      id: debtId,
+      branchId,
+      stockCountSessionId: sessionId,
+      stockCountCode: String(session.code || sessionId),
+      source: String(session.kind || "").toLowerCase() === "quick" ? "quick_inventory" : "stock_count",
+      status: "open",
+      autoReversible: true,
+      shortageUnits: items.reduce((sum, item) => sum + item.missingQty, 0),
+      totalCents,
+      cashierCount: cashiers.length,
+      items,
+      shares: cashiers.map((cashier, index) => ({
+        cashierId: cashier.id,
+        cashierName: cashier.name,
+        amountCents: baseShare + (index < remainder ? 1 : 0),
+        paidCents: 0,
+      })),
+      createdBy: req.account?.name || req.account?.email || "Supervisor",
+      createdAt: now,
+      ts: now,
+    },
+  };
+  const serverTs = await insertAppendOnlyEvent(client, debtEvent, "cashierJointDebt", deviceId, ts);
+  return { id: debtId, serverTs };
+}
+
+async function processStockCountCorrection(client, ev, req, deviceId, ts) {
+  if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) throw syncEventError("supervisor_authorization_required");
+  const duplicate = await existingEvent(client, ev.id);
+  if (duplicate) return { id: duplicate.id, ts: duplicate.server_ts };
+  const sessionId = String(ev.payload?.stockCountSessionId || "").trim();
+  const reason = String(ev.payload?.reason || "").trim();
+  if (!sessionId || !reason) throw syncEventError("stock_count_correction_details_required");
+  const sessionResult = await client.query("SELECT id, branch_id, payload FROM records WHERE type = 'stockCountSession' AND id = $1 AND deleted = false LIMIT 1", [sessionId]);
+  const session = sessionResult.rows[0];
+  const sessionPayload = recordPayload(session?.payload);
+  const branchId = String(session?.branch_id || sessionPayload.branchId || "").trim();
+  if (!session || !branchId) throw syncEventError("stock_count_session_not_found");
+  if (eventBranchId(ev) && String(eventBranchId(ev)) !== branchId) throw syncEventError("stock_count_correction_branch_mismatch");
+  if (String(sessionPayload.status || "").toLowerCase() !== "committed") throw syncEventError("stock_count_not_correctable");
+
+  return withInventoryWriteLock(client, `stock-count-correction:${branchId}:${sessionId}`, async () => {
+    const previousCorrections = await client.query("SELECT id, payload FROM events WHERE type = 'stockCountCorrection'");
+    if (previousCorrections.rows.some((row) => String(row.payload?.stockCountSessionId || "") === sessionId)) throw syncEventError("stock_count_already_corrected");
+
+    const movementResult = await client.query("SELECT id, payload FROM events WHERE type = 'stockMovement'");
+    const movements = movementResult.rows.filter((row) => String(row.payload?.stockCountSessionId || "") === sessionId && String(row.payload?.mode || "").toLowerCase() === "count");
+    const debtResult = await client.query("SELECT id, branch_id, payload FROM events WHERE type = 'cashierJointDebt'");
+    const debts = debtResult.rows.filter((row) => String(row.payload?.stockCountSessionId || "") === sessionId);
+    const paymentResult = await client.query("SELECT payload FROM events WHERE type = 'cashierJointDebtPayment'");
+    const debtIds = new Set(debts.map((debt) => String(debt.id)));
+    if (paymentResult.rows.some((row) => debtIds.has(String(row.payload?.debtId || "")) && String(row.payload?.status || "captured").toLowerCase() === "captured" && Number(row.payload?.amountCents || 0) > 0)) {
+      throw syncEventError("stock_count_debt_has_payment");
+    }
+
+    const correctionEvent = {
+      ...ev,
+      branchId,
+      payload: { ...(ev.payload || {}), stockCountSessionId: sessionId, branchId, reason, correctedBy: req.account.name || req.account.email || "Supervisor", correctedAt: Date.now() },
+    };
+    const acceptedTs = await insertAppendOnlyEvent(client, correctionEvent, "stockCountCorrection", deviceId, ts);
+    for (const movement of movements) {
+      const original = recordPayload(movement.payload);
+      const delta = stockMovementQuantity({ payload: original });
+      if (!delta) continue;
+      await insertAppendOnlyEvent(client, {
+        id: `stock-count-reversal:${ev.id}:${movement.id}`,
+        type: "stockMovement",
+        branchId,
+        clientTs: Date.now(),
+        payload: {
+          productId: stockMovementProductId({ payload: original }), branchId, qty: -delta,
+          mode: "count_reversal", reason: `Stock count correction ${sessionPayload.code || sessionId}`,
+          stockCountSessionId: sessionId, correctionId: ev.id, reversalOf: movement.id,
+          source: "stock_count_correction", ts: Date.now(),
+        },
+      }, "stockMovement", deviceId, ts + 1);
+    }
+    for (const debt of debts) {
+      await insertAppendOnlyEvent(client, {
+        id: `stock-count-debt-reversal:${ev.id}:${debt.id}`,
+        type: "cashierJointDebtReview",
+        branchId,
+        clientTs: Date.now(),
+        payload: { debtId: debt.id, branchId, decision: "reversed", reviewedBy: req.account.name || req.account.email || "Supervisor", reviewedAt: Date.now(), correctionId: ev.id },
+      }, "cashierJointDebtReview", deviceId, ts + 2);
+    }
+    await upsertMutableRecord(client, {
+      id: session.id,
+      type: "stockCountSession",
+      branchId,
+      updatedAt: Date.now(),
+      payload: { ...sessionPayload, status: "corrected", correctedBy: req.account.name || req.account.email || "Supervisor", correctedAt: Date.now(), correctionId: ev.id, correctionReason: reason },
+    }, "stockCountSession", deviceId, ts + 3);
+    return { id: correctionEvent.id, ts: acceptedTs };
+  });
 }
 
 function syncEventError(code) {
@@ -1494,6 +1728,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const accepted = [];
   const serverTs = {};
   const rejected = [];
+  const automaticCashierDebtIds = [];
   const invoiceNumbers = {};
   const transferNumbers = {};
   const client = await pool.connect();
@@ -1588,13 +1823,17 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           );
           acceptedTs = result.ts;
           acceptedId = result.id;
+        } else if (type === "stockCountCorrection") {
+          const result = await processStockCountCorrection(client, guardedEvent, req, recordDeviceId, nextServerTs());
+          acceptedTs = result.ts;
+          acceptedId = result.id;
         } else if (type === "cashierJointDebtReview") {
           if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
             throw syncEventError("supervisor_authorization_required");
           }
           const debtId = String(guardedEvent.payload?.debtId || "").trim();
           const decision = String(guardedEvent.payload?.decision || "").trim().toLowerCase();
-          if (!debtId || !["approved", "written_off"].includes(decision)) {
+          if (!debtId || !["approved", "written_off", "reversed"].includes(decision)) {
             throw syncEventError("cashier_debt_review_invalid");
           }
           const debtResult = await client.query(
@@ -1629,8 +1868,26 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             }
             const source = String(eventToStore.payload?.source || "").trim().toLowerCase();
             const status = String(eventToStore.payload?.status || "").trim().toLowerCase();
-            if (["stock_count", "quick_inventory"].includes(source) && status !== "pending_review") {
-              throw syncEventError("cashier_debt_requires_manager_review");
+            if (["stock_count", "quick_inventory"].includes(source)) {
+              const sessionId = String(eventToStore.payload?.stockCountSessionId || "").trim();
+              if (!sessionId || !["open", "pending_review"].includes(status)) {
+                throw syncEventError("cashier_debt_requires_reversible_stock_count");
+              }
+              if (status === "open" && eventToStore.payload?.autoReversible !== true) {
+                throw syncEventError("cashier_debt_requires_reversible_stock_count");
+              }
+              const countSession = await client.query(
+                "SELECT branch_id, payload FROM records WHERE type = 'stockCountSession' AND id = $1 AND deleted = false LIMIT 1",
+                [sessionId]
+              );
+              const countBranchId = String(countSession.rows[0]?.branch_id || countSession.rows[0]?.payload?.branchId || "").trim();
+              if (!countBranchId || countBranchId !== String(eventToStore.branchId || eventToStore.payload?.branchId || "")) {
+                throw syncEventError("cashier_debt_stock_count_mismatch");
+              }
+              const existingCountDebt = await client.query("SELECT id, payload FROM events WHERE type = 'cashierJointDebt'");
+              if (existingCountDebt.rows.some((row) => row.id !== eventToStore.id && String(row.payload?.stockCountSessionId || "") === sessionId)) {
+                throw syncEventError("cashier_debt_stock_count_exists");
+              }
             }
           }
           if (type === "cashierJointDebtPayment") {
@@ -1638,6 +1895,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           }
           if (type === "borrowing" || type === "stockMovement") {
             await validateApprovedStockTransferEvent(client, eventToStore, type);
+          }
+          if (type === "stockMovement") {
+            await validateStockCountMovement(client, eventToStore);
           }
           if (type === "invoice") {
             const numberedInvoice = await assignInvoiceNumber(client, eventToStore);
@@ -1695,6 +1955,13 @@ router.post("/push", requireSyncWrite, async (req, res) => {
               ? remapEventProductReferences(guardedEvent, await getProductAliases())
               : guardedEvent;
           acceptedTs = await upsertMutableRecord(client, recordToStore, type, recordDeviceId, nextServerTs());
+          if (type === "stockCountSession" && String(recordToStore.payload?.status || "").toLowerCase() === "committed") {
+            const automaticDebt = await createAutomaticStockCountDebt(client, recordToStore, req, recordDeviceId, nextServerTs());
+            if (automaticDebt) {
+              automaticCashierDebtIds.push(automaticDebt.id);
+              serverTs[automaticDebt.id] = automaticDebt.serverTs;
+            }
+          }
           if (type === "expense" || type === "purchase") {
             // Older builds stored these status-changing records as append-only
             // events. The mutable record is now their canonical copy.
@@ -1740,7 +2007,10 @@ router.post("/push", requireSyncWrite, async (req, res) => {
     await client.query("COMMIT");
     const cursor = Object.values(serverTs).reduce((max, ts) => Math.max(max, ts), Number(req.body?.cursor || 0));
     if (accepted.length) {
-      const changedTypes = [...new Set(events.filter((ev) => accepted.includes(ev.id)).map((ev) => normalizeType(ev.type)))];
+      const changedTypes = [...new Set([
+        ...events.filter((ev) => accepted.includes(ev.id)).map((ev) => normalizeType(ev.type)),
+        ...(automaticCashierDebtIds.length ? ["cashierJointDebt"] : []),
+      ])];
       publishSyncChange({
         sourceDeviceId: actorId,
         branchId: req.deviceBranchId || req.account?.branchId || null,
@@ -1749,7 +2019,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
         types: changedTypes,
       });
     }
-    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch, invoiceNumbers, transferNumbers });
+    return res.json({ accepted, serverTs, rejected, cursor, resetEpoch, invoiceNumbers, transferNumbers, automaticCashierDebtIds });
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("push failed:", error);

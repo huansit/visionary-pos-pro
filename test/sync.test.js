@@ -2481,12 +2481,6 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
     .send({
       events: [
         {
-          ...openSession,
-          clientTs: startedAt + 3,
-          updatedAt: startedAt + 3,
-          payload: { ...openSession.payload, status: "committed", committedBy: "Admin", committedAt: startedAt + 3 },
-        },
-        {
           id: "mv-stock-count-commit",
           type: "stockMovement",
           branchId: "b_sip",
@@ -2500,6 +2494,12 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
           clientTs: startedAt + 3,
           payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: 6, mode: "count", stockCountSessionId: sessionId },
         },
+        {
+          ...openSession,
+          clientTs: startedAt + 3,
+          updatedAt: startedAt + 3,
+          payload: { ...openSession.payload, status: "committed", committedBy: "Admin", committedAt: startedAt + 3 },
+        },
       ],
     }))
     .expect(200)
@@ -2510,7 +2510,7 @@ test("9a. stock count sessions are branch-locked, resumable, and terminal-restri
   });
 });
 
-test("9b. inventory shortage joint debts sync by branch and cannot be created by terminals", async () => {
+test("9b. reversible stock-count debts sync by branch and cannot be created by terminals", async () => {
   const debtId = "cjd_sc-test-lock-a";
   const createdAt = Date.now();
   const jointDebt = {
@@ -2523,7 +2523,8 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       stockCountSessionId: "sc-test-lock-a",
       stockCountCode: "SC-TEST",
       source: "stock_count",
-      status: "pending_review",
+      status: "open",
+      autoReversible: true,
       shortageUnits: 2,
       totalCents: 10001,
       cashierCount: 2,
@@ -2551,12 +2552,12 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
     .send({ events: [{
       ...jointDebt,
       id: "cjd-stock-count-auto-charge-blocked",
-      payload: { ...jointDebt.payload, status: "open" }
+      payload: { ...jointDebt.payload }
     }] }))
     .expect(200)
     .expect((res) => {
       assert.deepEqual(res.body.accepted, []);
-      assert.equal(res.body.rejected[0].reason, "cashier_debt_requires_manager_review");
+      assert.equal(res.body.rejected[0].reason, "cashier_debt_stock_count_exists");
     });
 
   await request(app)
@@ -2700,6 +2701,136 @@ test("9b. inventory shortage joint debts sync by branch and cannot be created by
       assert.deepEqual(res.body.accepted, []);
       assert.equal(res.body.rejected[0].reason, "terminal_write_not_allowed");
     });
+});
+
+test("9c. correcting a stock count reverses its stock movements and unpaid automatic debt", async () => {
+  const ts = Date.now();
+  const sessionId = "sc-test-correct-a";
+  const session = {
+    id: sessionId,
+    type: "stockCountSession",
+    branchId: "b_sip",
+    clientTs: ts,
+    updatedAt: ts,
+    payload: {
+      id: sessionId,
+      branchId: "b_sip",
+      code: "SC-CORRECT",
+      status: "open",
+      startedBy: "Admin",
+      startedAt: ts,
+      snapshotAt: ts,
+      items: [{ productId: "prod-stock-count-1", expectedQty: 1, countedQty: 0 }],
+    },
+  };
+  const movement = {
+    id: "mv-stock-count-correct-a",
+    type: "stockMovement",
+    branchId: "b_sip",
+    clientTs: ts + 1,
+    payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: -1, mode: "count", stockCountSessionId: sessionId, previousQty: 1, correctedQty: 0 },
+  };
+  const debt = {
+    id: "cjd-sc-test-correct-a",
+    type: "cashierJointDebt",
+    branchId: "b_sip",
+    clientTs: ts + 1,
+    payload: {
+      branchId: "b_sip", stockCountSessionId: sessionId, stockCountCode: "SC-CORRECT", source: "stock_count", status: "open", autoReversible: true,
+      shortageUnits: 1, totalCents: 5000, cashierCount: 1,
+      items: [{ productId: "prod-stock-count-1", productName: "Counted Product", missingQty: 1, unitCostCents: 5000, amountCents: 5000 }],
+      shares: [{ cashierId: "cashier-a", cashierName: "Cashier A", amountCents: 5000, paidCents: 0 }], ts,
+    },
+  };
+  const committed = { ...session, clientTs: ts + 2, updatedAt: ts + 2, payload: { ...session.payload, status: "committed", committedAt: ts + 2 } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [session, movement, debt, committed] }))
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, []));
+
+  const correction = { id: "scc-test-correct-a", type: "stockCountCorrection", branchId: "b_sip", clientTs: ts + 3, payload: { stockCountSessionId: sessionId, branchId: "b_sip", reason: "Wrong quantity entered" } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [correction] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(correction.id)));
+
+  const correctedSession = await pool.query("SELECT payload FROM records WHERE id = $1 AND type = 'stockCountSession'", [sessionId]);
+  assert.equal(correctedSession.rows[0].payload.status, "corrected");
+  const correctionEvents = await pool.query("SELECT type, payload FROM events WHERE id IN ($1, $2)", [
+    `stock-count-reversal:${correction.id}:${movement.id}`,
+    `stock-count-debt-reversal:${correction.id}:${debt.id}`,
+  ]);
+  assert.equal(correctionEvents.rows.find((row) => row.type === "stockMovement")?.payload.qty, 1);
+  assert.equal(correctionEvents.rows.find((row) => row.type === "cashierJointDebtReview")?.payload.decision, "reversed");
+});
+
+test("9d. committed terminal stock counts create one reversible debt for active branch cashiers", async () => {
+  const ts = Date.now();
+  const sessionId = "sc-test-server-auto-debt-a";
+  await pool.query(
+    `INSERT INTO credentials (id, kind, name, branch_id, rights, password_hash, status)
+     VALUES ($1, 'cashier', $2, 'b_sip', $3::jsonb, $4, 'active')
+     ON CONFLICT (id) DO UPDATE SET
+       kind = EXCLUDED.kind,
+       name = EXCLUDED.name,
+       branch_id = EXCLUDED.branch_id,
+       rights = EXCLUDED.rights,
+       password_hash = EXCLUDED.password_hash,
+       status = 'active'`,
+    ["cashier-stock-count-auto", "Stock Count Cashier", JSON.stringify({ role: "Cashier" }), await bcrypt.hash("Cashier@123", 10)]
+  );
+  await pool.query(
+    `INSERT INTO records (id, type, branch_id, updated_at, server_ts, deleted, payload)
+     VALUES ($1, 'product', NULL, $2, $2, false, $3::jsonb)
+     ON CONFLICT (type, id) DO UPDATE SET
+       payload = EXCLUDED.payload,
+       deleted = false`,
+    ["prod-stock-count-1", ts, JSON.stringify({ id: "prod-stock-count-1", name: "Counted Product", costCents: 5000 })]
+  );
+  const opening = {
+    id: sessionId,
+    type: "stockCountSession",
+    branchId: "b_sip",
+    clientTs: ts,
+    updatedAt: ts,
+    payload: {
+      id: sessionId, branchId: "b_sip", code: "SC-AUTO-DEBT", status: "open", startedBy: "Supervisor", startedAt: ts, snapshotAt: ts,
+      items: [{ productId: "prod-stock-count-1", productName: "Counted Product", expectedQty: 1, countedQty: 0 }],
+    },
+  };
+  const movement = {
+    id: "mv-stock-count-auto-debt-a",
+    type: "stockMovement",
+    branchId: "b_sip",
+    clientTs: ts + 1,
+    payload: { productId: "prod-stock-count-1", branchId: "b_sip", qty: -1, mode: "count", stockCountSessionId: sessionId, previousQty: 1, correctedQty: 0 },
+  };
+  const committed = { ...opening, clientTs: ts + 2, updatedAt: ts + 2, payload: { ...opening.payload, status: "committed", committedAt: ts + 2 } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [opening, movement, committed] }))
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.rejected, []);
+      assert.deepEqual(res.body.automaticCashierDebtIds, [`cjd-${sessionId}`]);
+    });
+  const automaticDebt = await pool.query("SELECT payload FROM events WHERE id = $1 AND type = 'cashierJointDebt'", [`cjd-${sessionId}`]);
+  assert.equal(automaticDebt.rows[0].payload.autoReversible, true);
+  assert.equal(automaticDebt.rows[0].payload.totalCents, 5000);
+  assert.equal(automaticDebt.rows[0].payload.shares[0].cashierId, "cashier-stock-count-auto");
+
+  const correction = {
+    id: "scc-test-server-auto-debt-a",
+    type: "stockCountCorrection",
+    branchId: "b_sip",
+    clientTs: ts + 3,
+    payload: { stockCountSessionId: sessionId, branchId: "b_sip", reason: "Correcting a counted quantity" },
+  };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [correction] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(correction.id)));
+  const reversalEvents = await pool.query("SELECT type, payload FROM events WHERE id IN ($1, $2)", [
+    `stock-count-reversal:${correction.id}:${movement.id}`,
+    `stock-count-debt-reversal:${correction.id}:cjd-${sessionId}`,
+  ]);
+  assert.equal(reversalEvents.rows.find((row) => row.type === "stockMovement")?.payload.qty, 1);
+  assert.equal(reversalEvents.rows.find((row) => row.type === "cashierJointDebtReview")?.payload.decision, "reversed");
 });
 
 test("9c. payroll recovery is limited to an admin and cashier debts older than 30 days", async () => {

@@ -26,11 +26,16 @@ export function quickInventoryDraftCounts(session) {
     .map((item) => [item.productId, String(Math.max(0, Number(item.countedQty)))]));
 }
 
-export function updateQuickInventoryDraftCount(session, productId, countedQty, operator, timestamp) {
+export function updateQuickInventoryDraftCount(session, productId, countedQty, operator, timestamp, expectedQty = null) {
   const items = (session?.items || []).filter((item) => item?.productId !== productId);
+  const existing = (session?.items || []).find((item) => item?.productId === productId) || {};
   if (countedQty !== null && countedQty !== undefined && countedQty !== "") {
     items.push({
       productId,
+      // The expected quantity is captured the first time a product enters the
+      // draft. It must never follow later stock changes while the user is
+      // counting, otherwise a retry could silently overwrite real movement.
+      expectedQty: Number.isInteger(Number(existing.expectedQty)) ? Number(existing.expectedQty) : Math.max(0, Number(expectedQty) || 0),
       countedQty: Math.max(0, Number(countedQty) || 0),
       countedBy: operator,
       countedAt: timestamp,

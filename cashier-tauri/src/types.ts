@@ -109,6 +109,7 @@ export type CashierJointDebt = {
   items: CashierJointDebtItem[];
   shares: CashierJointDebtShare[];
   source?: string;
+  autoReversible?: boolean;
   ts: number;
 };
 

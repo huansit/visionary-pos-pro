@@ -818,7 +818,7 @@ export async function applySupervisorStockCount(
   branchId: string,
   rows: Array<{ productId: string; productName: string; previousQty: number; countedQty: number }>,
   startedAt = Date.now()
-): Promise<{ sessionId: string; changes: number; committedAt: number }> {
+): Promise<{ sessionId: string; changes: number; committedAt: number; automaticDebtCreated: boolean }> {
   const role = String(account.role || account.kind || "").trim().toLowerCase();
   if (!["owner", "admin", "manager", "supervisor"].includes(role)) {
     throw new Error("supervisor_authorization_required");
@@ -830,7 +830,40 @@ export async function applySupervisorStockCount(
   const changes = reviewedRows.filter((row) => row.previousQty !== row.countedQty);
   const ts = Date.now();
   const sessionId = uid("terminal-stock-count");
+  const sessionItems = reviewedRows.map((row) => ({
+    productId: row.productId,
+    productName: row.productName,
+    expectedQty: row.previousQty,
+    countedQty: row.countedQty,
+    varianceQty: row.countedQty - row.previousQty,
+    countedBy: account.name,
+    countedAt: ts,
+    approvedBy: account.name,
+    approvedAt: ts
+  }));
   const events = [
+    // Persist the fixed baseline before any adjustment. This makes a retry
+    // safe: the API can reject an adjustment if another device changed stock
+    // after this count began instead of applying a stale quantity.
+    {
+      id: sessionId,
+      type: "stockCountSession",
+      branchId,
+      clientTs: ts - 2,
+      updatedAt: ts - 2,
+      payload: {
+        id: sessionId,
+        branchId,
+        code: `TSC-${String(ts).slice(-6)}`,
+        status: "open",
+        startedBy: account.name,
+        startedAt: Math.min(ts, Math.max(0, Math.floor(startedAt))) || ts,
+        snapshotAt: Math.min(ts, Math.max(0, Math.floor(startedAt))) || ts,
+        source: "cashier_terminal",
+        items: sessionItems,
+        updatedAt: ts - 2
+      }
+    },
     ...changes.map((row) => ({
       id: uid("stock-movement"),
       type: "stockMovement",
@@ -899,29 +932,28 @@ export async function applySupervisorStockCount(
         // Keep every reviewed line, including quantities that did not change.
         // This is the evidence that a physical count occurred; only the stock
         // ledger rows above are allowed to amend on-hand stock.
-        items: reviewedRows.map((row) => ({
-          productId: row.productId,
-          productName: row.productName,
-          expectedQty: row.previousQty,
-          countedQty: row.countedQty,
-          varianceQty: row.countedQty - row.previousQty,
-          countedBy: account.name,
-          countedAt: ts,
-          approvedBy: account.name,
-          approvedAt: ts
-        })),
+        items: sessionItems,
         summary: { products: reviewedRows.length, adjustments: changes.length },
         updatedAt: ts
       }
     }
   ];
-  const result = await jsonFetch<{ accepted?: string[]; rejected?: Array<{ id?: string; reason?: string }> }>("/api/sync/push", {
+  const result = await jsonFetch<{
+    accepted?: string[];
+    rejected?: Array<{ id?: string; reason?: string }>;
+    automaticCashierDebtIds?: string[];
+  }>("/api/sync/push", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Session-Token": sessionToken },
     body: JSON.stringify({ events })
   });
   assertSyncAccepted(result, events);
-  return { sessionId, changes: changes.length, committedAt: ts };
+  return {
+    sessionId,
+    changes: changes.length,
+    committedAt: ts,
+    automaticDebtCreated: Array.isArray(result?.automaticCashierDebtIds) && result.automaticCashierDebtIds.length > 0
+  };
 }
 
 /**
@@ -1372,6 +1404,7 @@ export async function pullCatalog(
             paidCents: Number(share.paidCents || 0)
           })) : [],
           source: String(payload.source || "stock_count"),
+          autoReversible: payload.autoReversible === true,
           ts: Number(payload.ts || item.clientTs || item.serverTs || 0)
         };
         if (debt.id && debt.branchId === targetBranchId) cashierJointDebtRecords.set(debt.id, debt);
@@ -1393,7 +1426,7 @@ export async function pullCatalog(
       const debtId = String(payload.debtId || "").trim();
       const decision = String(payload.decision || "").trim().toLowerCase();
       const reviewedAt = Number(payload.reviewedAt || payload.ts || item.clientTs || item.serverTs || 0);
-      if (debtId && ["approved", "written_off"].includes(decision)) {
+      if (debtId && ["approved", "written_off", "reversed"].includes(decision)) {
         const previous = cashierJointDebtReviews.get(debtId);
         if (!previous || reviewedAt >= previous.reviewedAt) cashierJointDebtReviews.set(debtId, { decision, reviewedAt });
       }
@@ -1527,6 +1560,7 @@ export async function pullCatalog(
       const storedStatus = String(debt.status || "open").trim().toLowerCase();
       const pendingLegacyCountShortage = ["stock_count", "quick_inventory"].includes(source)
         && !review
+        && debt.autoReversible !== true
         && ["", "open", "pending_review"].includes(storedStatus);
       return {
         ...debt,
