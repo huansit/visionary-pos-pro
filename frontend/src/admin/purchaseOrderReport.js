@@ -57,6 +57,7 @@ function invoiceUnitRevenueCents(invoice, productId) {
 function movementKind(movement) {
   const reason = String(movement?.reason || "").trim();
   const quantity = number(movement?.qty);
+  if (movement?.mode === "purchase_reversal") return "purchase_reversal";
   if (movement?.source === "invoice_line_void" && quantity > 0) return "void_return";
   if (movement?.purchaseId && quantity > 0) return "received";
   if (movement?.transferId) return quantity < 0 ? "transfer_out" : "transfer_in";
@@ -71,6 +72,7 @@ function displayMovementKind(kind, voided = false) {
   if (voided) return "Voided sale";
   return ({
     received: "Received",
+    purchase_reversal: "Purchase reversed",
     transfer_out: "Transfer out",
     transfer_in: "Transfer in",
     sale: "Sale",
@@ -111,6 +113,7 @@ function emptyLine(purchase, product, branch) {
     status: String(purchase.status || "ordered").toLowerCase(),
     orderedQty,
     receivedQty: 0,
+    reversedQty: 0,
     soldQty: 0,
     recognizedSoldQty: 0,
     pendingSoldQty: 0,
@@ -126,6 +129,7 @@ function emptyLine(purchase, product, branch) {
     unitCostCents,
     orderedCostCents: orderedQty * unitCostCents,
     receivedCostCents: 0,
+    reversedCostCents: 0,
     recognizedRevenueCents: 0,
     recognizedCogsCents: 0,
     recognizedGrossProfitCents: 0,
@@ -292,6 +296,10 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
         }
       } else if (kind === "transfer_out") line.transferOutQty += quantity;
       else if (kind === "transfer_in") line.transferInQty += quantity;
+      else if (kind === "purchase_reversal") {
+        line.reversedQty += quantity;
+        line.reversedCostCents += costValueCents;
+      }
       else if (kind === "loss") {
         line.lossQty += quantity;
         line.lossValueCents += costValueCents;
@@ -353,7 +361,8 @@ export function buildPurchaseOrderReports(data = {}, options = {}) {
     report.suppliers = [...report.suppliers];
     report.branchIds = [...report.branchIds];
     report.branchNames = report.branchIds.map((branchId) => branchById.get(branchId)?.name || branchId);
-    report.status = report.lines.every((line) => line.status === "received") ? "received"
+    report.status = report.lines.every((line) => line.status === "reversed") ? "reversed"
+      : report.lines.every((line) => line.status === "received") ? "received"
       : report.lines.some((line) => line.status === "received") ? "partial" : "ordered";
     report.productCount = report.lines.length;
     report.orderedUnits = sumLines(report.lines, "orderedQty");

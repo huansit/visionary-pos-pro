@@ -797,6 +797,7 @@ const EVENT_TYPES = new Set([
   "cashMovement",
   "order",
   "countLog",
+  "purchaseReversal",
   "stockCountCorrection",
   "cashierJointDebt",
   "cashierJointDebtReview",
@@ -851,6 +852,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "payment",
   "invoiceSettlement",
   "purchase",
+  "purchaseReversal",
   "invoiceVoidDecision",
   "invoiceLineVoidDecision",
   "stockTransferDecision",
@@ -1610,6 +1612,198 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
   return { id: decisionEvent.id, ts: acceptedTs };
 }
 
+function withBranchProductCostPayload(payload = {}, branchId, costCents) {
+  const branchCosts = payload.branchCosts && typeof payload.branchCosts === "object" && !Array.isArray(payload.branchCosts)
+    ? payload.branchCosts
+    : {};
+  const existingBranchCost = branchCosts[branchId] && typeof branchCosts[branchId] === "object" && !Array.isArray(branchCosts[branchId])
+    ? branchCosts[branchId]
+    : {};
+  return {
+    ...payload,
+    branchCosts: {
+      ...branchCosts,
+      [branchId]: { ...existingBranchCost, costCents: preciseCentValue(costCents) },
+    },
+  };
+}
+
+async function purchaseReversalRows(client, purchaseIds = []) {
+  const ids = new Set(purchaseIds.map((id) => String(id || "").trim()).filter(Boolean));
+  if (!ids.size) return [];
+  const result = await client.query("SELECT id, branch_id, payload, server_ts FROM records WHERE type = 'purchase' AND deleted = false");
+  return (result.rows || []).filter((row) => ids.has(String(row.id)));
+}
+
+async function processPurchaseReversalEvent(client, event, req, deviceId, ts) {
+  const role = syncRole(req.account);
+  if (!req.account || !["owner", "admin"].includes(role)) throw syncEventError("owner_or_admin_authorization_required");
+
+  const payload = event.payload || {};
+  const reason = String(payload.reason || "").trim();
+  const purchaseIds = [...new Set((Array.isArray(payload.purchaseIds) ? payload.purchaseIds : []).map((id) => String(id || "").trim()).filter(Boolean))];
+  const requestedBatchId = String(payload.purchaseBatchId || "").trim();
+  if (reason.length < 5) throw syncEventError("purchase_reversal_reason_required");
+  if (!purchaseIds.length || !requestedBatchId) throw syncEventError("purchase_reversal_purchase_required");
+
+  const existing = await existingEvent(client, event.id);
+  if (existing) return { id: existing.id, ts: existing.server_ts };
+
+  return withInventoryWriteLock(client, `purchase-reversal:${requestedBatchId}`, async () => {
+    const rows = await purchaseReversalRows(client, purchaseIds);
+    if (rows.length !== purchaseIds.length) throw syncEventError("purchase_reversal_purchase_not_found");
+    const purchases = rows.map((row) => ({ ...row, payload: recordPayload(row.payload) }));
+    const branchIds = new Set(purchases.map((row) => String(row.branch_id || row.payload.branchId || "").trim()));
+    if (branchIds.size !== 1 || !branchIds.has(String(event.branchId || payload.branchId || "").trim())) {
+      throw syncEventError("purchase_reversal_branch_mismatch");
+    }
+    const branchId = [...branchIds][0];
+    if (purchases.some((row) => String(row.payload.batchId || row.id) !== requestedBatchId)) {
+      throw syncEventError("purchase_reversal_batch_mismatch");
+    }
+    if (purchases.some((row) => String(row.payload.status || "").toLowerCase() !== "received")) {
+      throw syncEventError("purchase_reversal_requires_received_purchase");
+    }
+
+    const priorReversals = await client.query("SELECT id, payload FROM events WHERE type = 'purchaseReversal'");
+    if ((priorReversals.rows || []).some((row) => String(recordPayload(row.payload).purchaseBatchId || "") === requestedBatchId)) {
+      throw syncEventError("purchase_already_reversed");
+    }
+
+    const purchaseIdSet = new Set(purchases.map((row) => String(row.id)));
+    const movementsResult = await client.query("SELECT id, branch_id, server_ts, payload FROM events WHERE type = 'stockMovement' ORDER BY server_ts ASC, id ASC");
+    const allMovements = (movementsResult.rows || []).map((row) => ({ ...row, payload: recordPayload(row.payload) }));
+    const receipts = allMovements.filter((row) => purchaseIdSet.has(String(row.payload.purchaseId || "")) && stockMovementQuantity({ payload: row.payload }) > 0);
+    if (receipts.length !== purchases.length) throw syncEventError("purchase_reversal_receipt_missing");
+    const receiptIds = new Set(receipts.map((row) => row.id));
+
+    // Reversal is deliberately strict: it is safe only while the received
+    // stock has not been sold, transferred, counted or otherwise touched.
+    // This prevents a negative ledger correction from hiding a real sale.
+    for (const receipt of receipts) {
+      const receiptBranchId = String(receipt.branch_id || receipt.payload.branchId || "").trim();
+      const productId = String(receipt.payload.productId || "").trim();
+      const laterMovement = allMovements.find((candidate) => {
+        if (receiptIds.has(candidate.id)) return false;
+        if (Number(candidate.server_ts || 0) <= Number(receipt.server_ts || 0)) return false;
+        return String(candidate.branch_id || candidate.payload.branchId || "").trim() === receiptBranchId
+          && String(candidate.payload.productId || "").trim() === productId
+          && stockMovementQuantity({ payload: candidate.payload }) !== 0;
+      });
+      if (laterMovement) throw syncEventError("purchase_stock_already_used_create_stock_correction");
+    }
+
+    const receiptsByProduct = new Map();
+    for (const receipt of receipts) {
+      const productId = String(receipt.payload.productId || "").trim();
+      if (!productId) throw syncEventError("purchase_reversal_product_missing");
+      const list = receiptsByProduct.get(productId) || [];
+      list.push(receipt);
+      receiptsByProduct.set(productId, list);
+    }
+
+    const restoredCosts = new Map();
+    for (const [productId, productReceipts] of receiptsByProduct) {
+      const totalReceived = productReceipts.reduce((sum, receipt) => sum + stockMovementQuantity({ payload: receipt.payload }), 0);
+      const snapshot = await currentStockSnapshot(client, branchId, productId);
+      if (snapshot.quantity < totalReceived) throw syncEventError("purchase_stock_insufficient_for_reversal");
+      const productResult = await client.query("SELECT id, payload FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1", [productId]);
+      const productRow = productResult.rows[0];
+      if (!productRow) throw syncEventError("purchase_reversal_product_not_found");
+      const productPayload = recordPayload(productRow.payload);
+      const earliestReceipt = [...productReceipts].sort((a, b) => Number(a.server_ts || 0) - Number(b.server_ts || 0))[0];
+      let restoredCost = Number(earliestReceipt.payload.previousCostCents);
+      if (!Number.isFinite(restoredCost) || restoredCost < 0) {
+        // Legacy receipts did not store a pre-receipt cost. We can recover it
+        // only for one untouched receipt using the WAC equation; otherwise we
+        // stop rather than guessing a cost price.
+        if (productReceipts.length !== 1) throw syncEventError("purchase_reversal_cost_baseline_missing");
+        const oldQty = Number(snapshot.quantity) - totalReceived;
+        const currentCost = Number(productOverlayFromPayload(productPayload, branchId).costCents || 0);
+        const incomingCost = Number(earliestReceipt.payload.costCents || 0);
+        if (!(oldQty > 0) || !Number.isFinite(currentCost) || !Number.isFinite(incomingCost)) {
+          throw syncEventError("purchase_reversal_cost_baseline_missing");
+        }
+        restoredCost = preciseCentValue(((Number(snapshot.quantity) * currentCost) - (totalReceived * incomingCost)) / oldQty);
+        if (!Number.isFinite(restoredCost) || restoredCost < 0) throw syncEventError("purchase_reversal_cost_baseline_missing");
+      }
+      restoredCosts.set(productId, preciseCentValue(restoredCost));
+    }
+
+    const reversalEvent = {
+      ...event,
+      branchId,
+      payload: {
+        ...payload,
+        purchaseIds,
+        purchaseBatchId: requestedBatchId,
+        branchId,
+        reason,
+        reversedBy: req.account.name || req.account.email || "Administrator",
+        reversedAt: ts,
+        restoredCosts: Object.fromEntries(restoredCosts),
+      },
+    };
+    const reversalTs = await insertAppendOnlyEvent(client, reversalEvent, "purchaseReversal", deviceId, ts);
+
+    for (const receipt of receipts) {
+      const receiptPayload = receipt.payload;
+      const quantity = stockMovementQuantity({ payload: receiptPayload });
+      const reverseMovement = {
+        id: `purchase-reversal-stock:${event.id}:${receipt.id}`,
+        type: "stockMovement",
+        branchId,
+        clientTs: ts,
+        payload: {
+          productId: receiptPayload.productId,
+          branchId,
+          qty: -quantity,
+          costCents: receiptPayload.costCents,
+          valueCents: -Math.abs(Number(receiptPayload.valueCents || quantity * Number(receiptPayload.costCents || 0))),
+          mode: "purchase_reversal",
+          source: "purchase_reversal",
+          reason: `Purchase reversal ${payload.purchaseBatchNo || requestedBatchId}: ${reason}`,
+          purchaseId: receiptPayload.purchaseId,
+          purchaseBatchId: requestedBatchId,
+          purchaseBatchNo: payload.purchaseBatchNo || receiptPayload.purchaseBatchNo || "",
+          purchaseReversalId: event.id,
+          reversalOfMovementId: receipt.id,
+          ts,
+        },
+      };
+      await insertAppendOnlyEvent(client, reverseMovement, "stockMovement", deviceId, ts);
+    }
+
+    for (const purchase of purchases) {
+      await upsertMutableRecord(client, {
+        id: purchase.id,
+        branchId,
+        updatedAt: ts,
+        payload: {
+          ...purchase.payload,
+          status: "reversed",
+          purchaseReversalId: event.id,
+          reversalReason: reason,
+          reversedAt: ts,
+          reversedBy: req.account.name || req.account.email || "Administrator",
+        },
+      }, "purchase", deviceId, ts);
+    }
+
+    for (const [productId, restoredCost] of restoredCosts) {
+      const productResult = await client.query("SELECT payload FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1", [productId]);
+      const currentPayload = recordPayload(productResult.rows[0]?.payload);
+      await upsertMutableRecord(client, {
+        id: productId,
+        branchId: null,
+        updatedAt: ts,
+        payload: withBranchProductCostPayload(currentPayload, branchId, restoredCost),
+      }, "product", deviceId, ts);
+    }
+    return { id: reversalEvent.id, ts: reversalTs };
+  });
+}
+
 async function processInvoiceLineVoidEvent(client, ev, type, req, deviceId, ts) {
   const duplicate = await existingEvent(client, ev.id);
   if (duplicate) {
@@ -1825,6 +2019,10 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           acceptedId = result.id;
         } else if (type === "stockCountCorrection") {
           const result = await processStockCountCorrection(client, guardedEvent, req, recordDeviceId, nextServerTs());
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+        } else if (type === "purchaseReversal") {
+          const result = await processPurchaseReversalEvent(client, guardedEvent, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
           acceptedId = result.id;
         } else if (type === "cashierJointDebtReview") {

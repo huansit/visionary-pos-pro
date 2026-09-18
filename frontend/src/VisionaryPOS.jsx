@@ -9025,7 +9025,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
       case "products": return <ProductsTab data={data} update={update} branch={branch} isAdmin={isAdmin} onNavigate={activateWorkspace} />;
       case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} />;
-      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} />;
+      case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} onSyncNow={runSync} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
       case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
@@ -13852,7 +13852,7 @@ function StockTabLegacy({ data, update, branch }) {
     </div>
   );
 }
-function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
+function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSyncNow }) {
   const cur = data.settings.currency;
   const [delConfirm, setDelConfirm] = useState(null); // { mode:"line"|"file", po?, key?, label }
   const [receiptCorrection, setReceiptCorrection] = useState(null);
@@ -13860,6 +13860,9 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
   const [costRepairError, setCostRepairError] = useState("");
   const [poLineAdd, setPoLineAdd] = useState(null);
   const [poLineAddError, setPoLineAddError] = useState("");
+  const [purchaseReversal, setPurchaseReversal] = useState(null);
+  const [purchaseReversalError, setPurchaseReversalError] = useState("");
+  const [reversingPurchase, setReversingPurchase] = useState(false);
   const sp = data.supplierPrices || [];
   const quotesFor = (pid) => sp.filter((x) => x.productId === pid).map((x) => ({ ...x, supplier: data.suppliers.find((s) => s.id === x.supplierId) })).filter((x) => x.supplier).sort((a, b) => a.costCents - b.costCents);
   const recommend = (pid) => quotesFor(pid)[0] || null;
@@ -13975,10 +13978,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
       const po = { id: uid("po"), batchId, batchNo, supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: received ? ts : null, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
       const cur = d.products.find((p) => p.id === f.productId);
-      const newCost = wacCost(onHand(d, f.productId, lbr), cur ? branchInventoryCostCents(d, cur, lbr) : cost, qty, cost);
+      const previousCostCents = cur ? branchInventoryCostCents(d, cur, lbr) : 0;
+      const newCost = wacCost(onHand(d, f.productId, lbr), previousCostCents || cost, qty, cost);
       return { ...d,
         purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty, costCents: cost, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty, costCents: cost, previousCostCents, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -14015,7 +14019,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
           const newCost = wacCost(oh, curCost, l.qty, l.costCents);
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
+          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, previousCostCents: curCost, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
         }
       }
       return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
@@ -14046,7 +14050,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
       movements.push({
         id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null, purchaseBatchNo: po.batchNo || null,
         productId: po.productId, branchId: targetBranchId, qty: po.qty,
-        costCents: receivedUnitCost, valueCents: purchaseLineTotalCents(po),
+        costCents: receivedUnitCost, previousCostCents: currentCost, valueCents: purchaseLineTotalCents(po),
         reason: "Purchase " + po.supplierName, ts: receivedAt, synced: false,
       });
     }
@@ -14078,6 +14082,33 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
   const removeBatch = (key) => update((d) => d.purchases.some((purchase) => (purchase.batchId || purchase.id) === key && purchase.status === "received")
     ? d
     : ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
+  const reverseReceivedBatch = async () => {
+    if (!purchaseReversal || reversingPurchase) return;
+    const items = data.purchases.filter((purchase) => (purchase.batchId || purchase.id) === purchaseReversal.key);
+    const reason = String(purchaseReversal.reason || "").trim();
+    if (reason.length < 5) { setPurchaseReversalError("Enter a brief reason for this reversal."); return; }
+    setReversingPurchase(true); setPurchaseReversalError("");
+    try {
+      await publishSyncEvents([{
+        id: uid("purchase-reversal"), type: "purchaseReversal", branchId: items[0]?.branchId, clientTs: now(),
+        payload: {
+          purchaseIds: items.map((purchase) => purchase.id), purchaseBatchId: purchaseReversal.key,
+          purchaseBatchNo: purchaseReversal.batchNo, branchId: items[0]?.branchId, reason,
+        },
+      }], data, { management: true });
+      setPurchaseReversal(null); setPoView(null);
+      await onSyncNow?.({ forceFullPull: true });
+    } catch (error) {
+      const code = String(error?.message || "purchase_reversal_failed");
+      const messages = {
+        purchase_stock_already_used_create_stock_correction: "This receipt has later stock activity. Use a stock correction instead.",
+        purchase_stock_insufficient_for_reversal: "The received stock is no longer fully available. Use a stock correction instead.",
+        purchase_reversal_cost_baseline_missing: "This legacy receipt has no recoverable prior cost. Use a stock correction and record the correct cost.",
+        purchase_already_reversed: "This purchase was already reversed.",
+      };
+      setPurchaseReversalError(messages[code] || code.replaceAll("_", " "));
+    } finally { setReversingPurchase(false); }
+  };
   const openCostCorrection = (purchase) => {
     setCostRepairError("");
     setCostRepair({
@@ -14519,10 +14550,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
         const items = data.purchases.filter((po) => (po.batchId || po.id) === poView);
         if (items.length === 0) { setPoView(null); return null; }
         const total = items.reduce((s, i) => s + purchaseLineTotalCents(i), 0);
-        const anyOrdered = items.some((i) => i.status !== "received");
+        const anyOrdered = items.some((i) => i.status === "ordered");
         const head = items[0];
         const recoverableLines = isAdmin ? recoverableDeletedPurchaseLines(data, poView) : [];
-        const canDeleteFile = items.every((item) => item.status !== "received");
+        const canDeleteFile = items.every((item) => item.status === "ordered");
+        const canReverseFile = isAdmin && items.length > 0 && items.every((item) => item.status === "received");
         return (
           <div className="scrim" onClick={() => setPoView(null)}>
             <div className="modal supplier-invoice-modal" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
@@ -14546,7 +14578,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
               <div className="supplier-invoice-mobile" aria-label="Purchase line items">
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
-                  <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
+                  <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
                   <div><span>Quantity</span><b>{po.qty}</b>{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</small>}</div>
                   <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
@@ -14559,7 +14591,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
                     <td style={{ textAlign: "right" }}>{po.qty}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
-                    <td>{po.status === "received" ? <span className="ist paid">received</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
+                    <td>{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td>{po.status === "received"
                       ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
                       : <div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-ghost" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button></div>}</td>}
@@ -14571,6 +14603,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => openPendingLineAdd(items)}><Plus /> Add product</button>}
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => setReceiptCorrection({ ids: items.filter((po) => po.status !== "received").map((po) => po.id), label: head.batchNo || "this purchase" })}><Wrench /> Fix stale status</button>}
                   {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive stock</button>}
+                  {canReverseFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => { setPurchaseReversalError(""); setPurchaseReversal({ key: poView, batchNo: head.batchNo || "Purchase", reason: "" }); }}><Trash2 /> Reverse receipt</button>}
                   {isAdmin && canDeleteFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
                 </div>
               </div>
@@ -14578,6 +14611,23 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate }) {
           </div>
         );
       })()}
+      {purchaseReversal && (
+        <div className="scrim" onClick={() => !reversingPurchase && setPurchaseReversal(null)}>
+          <div className="modal" style={{ maxWidth: 500 }} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>Inventory correction</div><div className="title" style={{ fontSize: 19 }}>Reverse {purchaseReversal.batchNo}?</div></div>
+              <button className="iconbtn" disabled={reversingPurchase} onClick={() => setPurchaseReversal(null)}><X /></button></div>
+            <div className="notice" style={{ margin: "8px 0 14px", borderColor: "var(--warn)" }}>
+              This retains the purchase audit trail, removes only its untouched received stock, and restores the prior branch cost price. It will stop if the stock was used after receipt.
+            </div>
+            <label className="field"><span>Reason</span><textarea value={purchaseReversal.reason} autoFocus rows={3} placeholder="For example: duplicate supplier receipt" onChange={(event) => setPurchaseReversal((current) => ({ ...current, reason: event.target.value }))} /></label>
+            {purchaseReversalError && <div className="error" style={{ marginTop: 10 }}>{purchaseReversalError}</div>}
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <button className="btn btn-ghost" disabled={reversingPurchase} onClick={() => setPurchaseReversal(null)}>Cancel</button>
+              <button className="btn btn-primary" disabled={reversingPurchase} onClick={reverseReceivedBatch}>{reversingPurchase ? "Reversing…" : "Reverse receipt"}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {poReportView && <PurchaseOrderPerformanceModal report={purchaseReports.find((entry) => entry.key === poReportView)} currency={cur} onClose={() => setPoReportView(null)} />}
       {cameraOpen && (
         <CameraBarcodeScanner

@@ -2833,6 +2833,32 @@ test("9d. committed terminal stock counts create one reversible debt for active 
   assert.equal(reversalEvents.rows.find((row) => row.type === "cashierJointDebtReview")?.payload.decision, "reversed");
 });
 
+test("9e. a received purchase reversal removes only untouched stock and restores branch cost", async () => {
+  const ts = Date.now();
+  const product = { id: "purchase-reversal-product", type: "product", updatedAt: ts, payload: { id: "purchase-reversal-product", sku: "REV-COST", name: "Reversal Cost Product", branchCosts: { b_sip: { costCents: 4000 } } } };
+  const purchase = { id: "purchase-reversal-line", type: "purchase", branchId: "b_sip", updatedAt: ts + 1, payload: { id: "purchase-reversal-line", batchId: "purchase-reversal-batch", batchNo: "PO-REV", branchId: "b_sip", productId: product.id, productName: "Reversal Cost Product", qty: 5, costCents: 6000, lineTotalCents: 30000, status: "received", receivedAt: ts + 1 } };
+  const receipt = { id: "purchase-reversal-receipt", type: "stockMovement", branchId: "b_sip", clientTs: ts + 2, payload: { productId: product.id, branchId: "b_sip", purchaseId: purchase.id, purchaseBatchId: "purchase-reversal-batch", purchaseBatchNo: "PO-REV", qty: 5, costCents: 6000, previousCostCents: 4000, valueCents: 30000, reason: "Purchase supplier", ts: ts + 2 } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [product, purchase, receipt] }))
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, []));
+
+  const reversal = { id: "purchase-reversal-event", type: "purchaseReversal", branchId: "b_sip", clientTs: ts + 3, payload: { purchaseIds: [purchase.id], purchaseBatchId: "purchase-reversal-batch", purchaseBatchNo: "PO-REV", branchId: "b_sip", reason: "Supplier receipt was entered twice" } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [reversal] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(reversal.id)));
+
+  const reversedPurchase = await pool.query("SELECT payload FROM records WHERE type = 'purchase' AND id = $1", [purchase.id]);
+  assert.equal(reversedPurchase.rows[0].payload.status, "reversed");
+  const reversalMovement = await pool.query("SELECT payload FROM events WHERE id = $1", [`purchase-reversal-stock:${reversal.id}:${receipt.id}`]);
+  assert.equal(reversalMovement.rows[0].payload.qty, -5);
+  assert.equal(reversalMovement.rows[0].payload.mode, "purchase_reversal");
+  const updatedProduct = await pool.query("SELECT payload FROM records WHERE type = 'product' AND id = $1", [product.id]);
+  assert.equal(updatedProduct.rows[0].payload.branchCosts.b_sip.costCents, 4000);
+
+  const replay = await withAdminSession(request(app).post("/api/sync/push").send({ events: [reversal] })).expect(200);
+  assert.deepEqual(replay.body.rejected, []);
+});
+
 test("9c. payroll recovery is limited to an admin and cashier debts older than 30 days", async () => {
   const oldDebtId = "cjd-payroll-old";
   const oldCreatedAt = Date.now() - (31 * 24 * 60 * 60 * 1000);

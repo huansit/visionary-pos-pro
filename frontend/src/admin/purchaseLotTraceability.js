@@ -59,6 +59,28 @@ function consumeLots(queue, requestedQty) {
   return consumed;
 }
 
+// A cancelled receipt must remove its own lot, never consume an older lot by
+// FIFO. The server permits this only before later stock activity, but keeping
+// the trace exact protects reports and future audit exports as well.
+function consumePurchaseLot(queue, purchaseId, requestedQty) {
+  let remaining = positiveNumber(requestedQty);
+  const consumed = [];
+  for (let index = 0; index < queue.length && remaining > 0; index += 1) {
+    const lot = queue[index];
+    if (!lot.tracked || String(lot.purchaseId || "") !== String(purchaseId || "")) continue;
+    const available = positiveNumber(lot.qtyRemaining);
+    const qty = Math.min(available, remaining);
+    if (!(qty > 0)) continue;
+    consumed.push({ ...lot, qty, qtyRemaining: qty });
+    lot.qtyRemaining = available - qty;
+    remaining -= qty;
+  }
+  for (let index = queue.length - 1; index >= 0; index -= 1) {
+    if (!(positiveNumber(queue[index].qtyRemaining) > 0)) queue.splice(index, 1);
+  }
+  return { consumed, remaining };
+}
+
 export function buildPurchaseLotTrace(data = {}) {
   const purchases = new Map((data.purchases || []).map((purchase) => [purchase.id, purchase]));
   const invoiceByNumber = new Map((data.invoices || []).flatMap((invoice) => [invoice.number, invoice.receiptNo]
@@ -92,6 +114,11 @@ export function buildPurchaseLotTrace(data = {}) {
     const queue = queueFor(movement.branchId, movement.productId);
 
     if (qty < 0) {
+      if (String(movement?.mode || "") === "purchase_reversal") {
+        const result = consumePurchaseLot(queue, movement.purchaseId, Math.abs(qty));
+        allocations.set(movement.id, result.consumed);
+        continue;
+      }
       const consumed = consumeLots(queue, Math.abs(qty));
       allocations.set(movement.id, consumed);
       if (/^sale\s+/i.test(String(movement.reason || ""))) {
