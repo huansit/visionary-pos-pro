@@ -1643,6 +1643,9 @@ async function processPurchaseReversalEvent(client, event, req, deviceId, ts) {
   const reason = String(payload.reason || "").trim();
   const purchaseIds = [...new Set((Array.isArray(payload.purchaseIds) ? payload.purchaseIds : []).map((id) => String(id || "").trim()).filter(Boolean))];
   const requestedBatchId = String(payload.purchaseBatchId || "").trim();
+  const manualPreviousCosts = payload.manualPreviousCosts && typeof payload.manualPreviousCosts === "object" && !Array.isArray(payload.manualPreviousCosts)
+    ? payload.manualPreviousCosts
+    : {};
   if (reason.length < 5) throw syncEventError("purchase_reversal_reason_required");
   if (!purchaseIds.length || !requestedBatchId) throw syncEventError("purchase_reversal_purchase_required");
 
@@ -1717,15 +1720,20 @@ async function processPurchaseReversalEvent(client, event, req, deviceId, ts) {
         // Legacy receipts did not store a pre-receipt cost. We can recover it
         // only for one untouched receipt using the WAC equation; otherwise we
         // stop rather than guessing a cost price.
-        if (productReceipts.length !== 1) throw syncEventError("purchase_reversal_cost_baseline_missing");
-        const oldQty = Number(snapshot.quantity) - totalReceived;
-        const currentCost = Number(productOverlayFromPayload(productPayload, branchId).costCents || 0);
-        const incomingCost = Number(earliestReceipt.payload.costCents || 0);
-        if (!(oldQty > 0) || !Number.isFinite(currentCost) || !Number.isFinite(incomingCost)) {
-          throw syncEventError("purchase_reversal_cost_baseline_missing");
+        const manualPreviousCost = Number(manualPreviousCosts[productId]);
+        if (Number.isFinite(manualPreviousCost) && manualPreviousCost >= 0) {
+          restoredCost = preciseCentValue(manualPreviousCost);
+        } else {
+          if (productReceipts.length !== 1) throw syncEventError("purchase_reversal_cost_baseline_missing");
+          const oldQty = Number(snapshot.quantity) - totalReceived;
+          const currentCost = Number(productOverlayFromPayload(productPayload, branchId).costCents || 0);
+          const incomingCost = Number(earliestReceipt.payload.costCents || 0);
+          if (!(oldQty > 0) || !Number.isFinite(currentCost) || !Number.isFinite(incomingCost)) {
+            throw syncEventError("purchase_reversal_cost_baseline_missing");
+          }
+          restoredCost = preciseCentValue(((Number(snapshot.quantity) * currentCost) - (totalReceived * incomingCost)) / oldQty);
+          if (!Number.isFinite(restoredCost) || restoredCost < 0) throw syncEventError("purchase_reversal_cost_baseline_missing");
         }
-        restoredCost = preciseCentValue(((Number(snapshot.quantity) * currentCost) - (totalReceived * incomingCost)) / oldQty);
-        if (!Number.isFinite(restoredCost) || restoredCost < 0) throw syncEventError("purchase_reversal_cost_baseline_missing");
       }
       restoredCosts.set(productId, preciseCentValue(restoredCost));
     }
@@ -1742,6 +1750,9 @@ async function processPurchaseReversalEvent(client, event, req, deviceId, ts) {
         reversedBy: req.account.name || req.account.email || "Administrator",
         reversedAt: ts,
         restoredCosts: Object.fromEntries(restoredCosts),
+        manualPreviousCosts: Object.keys(manualPreviousCosts).length
+          ? Object.fromEntries(Object.entries(manualPreviousCosts).map(([productId, cost]) => [productId, preciseCentValue(Number(cost))]))
+          : undefined,
       },
     };
     const reversalTs = await insertAppendOnlyEvent(client, reversalEvent, "purchaseReversal", deviceId, ts);

@@ -2859,6 +2859,25 @@ test("9e. a received purchase reversal removes only untouched stock and restores
   assert.deepEqual(replay.body.rejected, []);
 });
 
+test("9f. a legacy purchase reversal records an admin-entered prior cost instead of guessing", async () => {
+  const ts = Date.now();
+  const product = { id: "legacy-purchase-reversal-product", type: "product", updatedAt: ts, payload: { id: "legacy-purchase-reversal-product", sku: "LEGACY-REV", name: "Legacy Reversal Product", branchCosts: { b_sip: { costCents: 6100 } } } };
+  const purchase = { id: "legacy-purchase-reversal-line", type: "purchase", branchId: "b_sip", updatedAt: ts + 1, payload: { id: "legacy-purchase-reversal-line", batchId: "legacy-purchase-reversal-batch", batchNo: "PO-LEGACY-REV", branchId: "b_sip", productId: product.id, productName: "Legacy Reversal Product", qty: 3, costCents: 6100, lineTotalCents: 18300, status: "received", receivedAt: ts + 1 } };
+  // Older receipts did not contain previousCostCents, which must never be guessed.
+  const receipt = { id: "legacy-purchase-reversal-receipt", type: "stockMovement", branchId: "b_sip", clientTs: ts + 2, payload: { productId: product.id, branchId: "b_sip", purchaseId: purchase.id, purchaseBatchId: "legacy-purchase-reversal-batch", purchaseBatchNo: "PO-LEGACY-REV", qty: 3, costCents: 6100, valueCents: 18300, reason: "Purchase supplier", ts: ts + 2 } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [product, purchase, receipt] })).expect(200);
+
+  const reversal = { id: "legacy-purchase-reversal-event", type: "purchaseReversal", branchId: "b_sip", clientTs: ts + 3, payload: { purchaseIds: [purchase.id], purchaseBatchId: "legacy-purchase-reversal-batch", purchaseBatchNo: "PO-LEGACY-REV", branchId: "b_sip", reason: "Supplier receipt was entered twice", manualPreviousCosts: { [product.id]: 4200 } } };
+  await withAdminSession(request(app).post("/api/sync/push").send({ events: [reversal] }))
+    .expect(200)
+    .expect((res) => assert.ok(res.body.accepted.includes(reversal.id)));
+
+  const updatedProduct = await pool.query("SELECT payload FROM records WHERE type = 'product' AND id = $1", [product.id]);
+  assert.equal(updatedProduct.rows[0].payload.branchCosts.b_sip.costCents, 4200);
+  const audit = await pool.query("SELECT payload FROM events WHERE id = $1", [reversal.id]);
+  assert.equal(audit.rows[0].payload.manualPreviousCosts[product.id], 4200);
+});
+
 test("9c. payroll recovery is limited to an admin and cashier debts older than 30 days", async () => {
   const oldDebtId = "cjd-payroll-old";
   const oldCreatedAt = Date.now() - (31 * 24 * 60 * 60 * 1000);

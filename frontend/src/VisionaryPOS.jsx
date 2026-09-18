@@ -14082,18 +14082,26 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
   const removeBatch = (key) => update((d) => d.purchases.some((purchase) => (purchase.batchId || purchase.id) === key && purchase.status === "received")
     ? d
     : ({ ...d, purchases: d.purchases.filter((p) => (p.batchId || p.id) !== key) }));
+  const reversalProducts = purchaseReversal ? [...new Map(
+    data.purchases
+      .filter((purchase) => (purchase.batchId || purchase.id) === purchaseReversal.key)
+      .map((purchase) => [purchase.productId, purchase])
+  ).values()] : [];
   const reverseReceivedBatch = async () => {
     if (!purchaseReversal || reversingPurchase) return;
     const items = data.purchases.filter((purchase) => (purchase.batchId || purchase.id) === purchaseReversal.key);
     const reason = String(purchaseReversal.reason || "").trim();
     if (reason.length < 5) { setPurchaseReversalError("Enter a brief reason for this reversal."); return; }
+    const manualPreviousCosts = Object.fromEntries(Object.entries(purchaseReversal.manualPreviousCosts || {})
+      .filter(([, value]) => String(value).trim() !== "")
+      .map(([productId, value]) => [productId, centsFromInput(value)]));
     setReversingPurchase(true); setPurchaseReversalError("");
     try {
       await publishSyncEvents([{
         id: uid("purchase-reversal"), type: "purchaseReversal", branchId: items[0]?.branchId, clientTs: now(),
         payload: {
           purchaseIds: items.map((purchase) => purchase.id), purchaseBatchId: purchaseReversal.key,
-          purchaseBatchNo: purchaseReversal.batchNo, branchId: items[0]?.branchId, reason,
+          purchaseBatchNo: purchaseReversal.batchNo, branchId: items[0]?.branchId, reason, manualPreviousCosts,
         },
       }], data, { management: true });
       setPurchaseReversal(null); setPoView(null);
@@ -14103,9 +14111,12 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const messages = {
         purchase_stock_already_used_create_stock_correction: "This receipt has later stock activity. Use a stock correction instead.",
         purchase_stock_insufficient_for_reversal: "The received stock is no longer fully available. Use a stock correction instead.",
-        purchase_reversal_cost_baseline_missing: "This legacy receipt has no recoverable prior cost. Use a stock correction and record the correct cost.",
+        purchase_reversal_cost_baseline_missing: "This legacy receipt has no recoverable prior cost. Enter the verified prior cost below before reversing it.",
         purchase_already_reversed: "This purchase was already reversed.",
       };
+      if (code === "purchase_reversal_cost_baseline_missing") {
+        setPurchaseReversal((current) => ({ ...current, needsManualPriorCost: true }));
+      }
       setPurchaseReversalError(messages[code] || code.replaceAll("_", " "));
     } finally { setReversingPurchase(false); }
   };
@@ -14603,7 +14614,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => openPendingLineAdd(items)}><Plus /> Add product</button>}
                   {anyOrdered && isAdmin && <button className="btn btn-ghost" onClick={() => setReceiptCorrection({ ids: items.filter((po) => po.status !== "received").map((po) => po.id), label: head.batchNo || "this purchase" })}><Wrench /> Fix stale status</button>}
                   {anyOrdered && <button className="btn btn-primary" onClick={() => receiveBatch(items)}><Check /> Receive stock</button>}
-                  {canReverseFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => { setPurchaseReversalError(""); setPurchaseReversal({ key: poView, batchNo: head.batchNo || "Purchase", reason: "" }); }}><Trash2 /> Reverse receipt</button>}
+                  {canReverseFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => { setPurchaseReversalError(""); setPurchaseReversal({ key: poView, batchNo: head.batchNo || "Purchase", reason: "", manualPreviousCosts: {}, needsManualPriorCost: false }); }}><Trash2 /> Reverse receipt</button>}
                   {isAdmin && canDeleteFile && <button className="btn btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setDelConfirm({ mode: "file", key: poView, label: head.batchNo || "this purchase" })}><Trash2 /> Delete order</button>}
                 </div>
               </div>
@@ -14620,6 +14631,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
               This retains the purchase audit trail, removes only its untouched received stock, and restores the prior branch cost price. It will stop if the stock was used after receipt.
             </div>
             <label className="field"><span>Reason</span><textarea value={purchaseReversal.reason} autoFocus rows={3} placeholder="For example: duplicate supplier receipt" onChange={(event) => setPurchaseReversal((current) => ({ ...current, reason: event.target.value }))} /></label>
+            {purchaseReversal.needsManualPriorCost && <div className="notice" style={{ marginTop: 12 }}>
+              <b>Verified prior cost required</b><br />This older receipt did not preserve the branch cost before it was received. Enter the cost that applied immediately before this purchase. The value will be recorded in the reversal audit trail.
+              <div className="formgrid" style={{ marginTop: 10 }}>
+                {reversalProducts.map((purchase) => {
+                  const product = data.products.find((item) => item.id === purchase.productId);
+                  return <label className="field" key={purchase.productId}><span>{product?.name || purchase.productName || purchase.productId}</span><input className="input" inputMode="decimal" type="number" min="0" step="0.01" placeholder={`Current: ${fmt(branchInventoryCostCents(data, product, purchase.branchId || branch.id), cur)}`} value={purchaseReversal.manualPreviousCosts?.[purchase.productId] ?? ""} onChange={(event) => setPurchaseReversal((current) => ({ ...current, manualPreviousCosts: { ...(current.manualPreviousCosts || {}), [purchase.productId]: event.target.value } }))} /></label>;
+                })}
+              </div>
+            </div>}
             {purchaseReversalError && <div className="error" style={{ marginTop: 10 }}>{purchaseReversalError}</div>}
             <div className="modal-actions" style={{ marginTop: 16 }}>
               <button className="btn btn-ghost" disabled={reversingPurchase} onClick={() => setPurchaseReversal(null)}>Cancel</button>
