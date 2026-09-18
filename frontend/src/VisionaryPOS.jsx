@@ -2709,6 +2709,11 @@ function branchProductCostCents(product, branchId) {
   return mapped.hasMap ? (mapped.value ?? 0) : preciseCents(product?.costCents);
 }
 function branchInventoryCostCents(data, product, branchId) {
+  // A recorded branch cost of zero is meaningful after a purchase reversal.
+  // Only use historical receipts as a fallback when this branch has no cost
+  // entry at all; otherwise a reversed receipt would reappear as its cost.
+  const mappedCost = branchMappedCentsState(product, branchId, BRANCH_COST_MAP_FIELDS, ["costCents", "movingAverageCostCents", "averageCostCents", "cost", "movingAverageCost", "averageCost"], true);
+  if (mappedCost.value !== null) return preciseCents(mappedCost.value);
   const directCost = branchProductCostCents(product, branchId);
   if (directCost > 0 || !data || !product || !branchId) return directCost;
 
@@ -5185,6 +5190,7 @@ body{overscroll-behavior:none}
 .ist.void-pending{background:rgba(220,38,38,.14);color:#DC2626}
 .ist.partial{background:rgba(46,120,199,.14);color:#2E78C7}
 .ist.paid{background:rgba(52,211,153,.16);color:var(--ok)}
+.ist.reversed{background:rgba(220,38,38,.14);color:#DC2626}
 .ist.line-voided{background:rgba(217,138,28,.14);color:var(--warn)}
 .paycell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .paycell select{height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;padding:0 6px}
@@ -14538,7 +14544,8 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
           const recd = items.filter((i) => i.status === "received").length;
           const suppliers = Array.from(new Set(items.map((i) => i.supplierName).filter(Boolean)));
           const branches = Array.from(new Set(items.map((i) => data.branches.find((b) => b.id === i.branchId)?.name).filter(Boolean)));
-          return { key, items, ts, total, units, recd, suppliers, branches, no: items[0].batchNo, date: items[0].date };
+          const reversed = items.every((item) => String(item.status || "").toLowerCase() === "reversed");
+          return { key, items, ts, total, units, recd, reversed, suppliers, branches, no: items[0].batchNo, date: items[0].date };
         }).sort((a, b) => b.ts - a.ts);
         return (
           <div className="list">{rows.map((g) => (
@@ -14546,7 +14553,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
               <div className="avatar"><ShoppingBag style={{ width: 17, height: 17 }} /></div>
               <div className="meta"><div className="nm">{g.no ? g.no + " · " : ""}{g.items.length} item{g.items.length > 1 ? "s" : ""} · {g.units} unit{g.units > 1 ? "s" : ""}</div>
                 <div className="mt2">{g.suppliers.join(", ") || "—"} · {g.branches.join(", ")} · {dt(g.ts)} · {fmt(g.total, cur)}</div></div>
-              {g.recd === g.items.length ? <span className="ist paid">received</span> : <span className="ist">{g.recd}/{g.items.length} received</span>}
+              {g.reversed ? <span className="ist reversed">reversed</span> : g.recd === g.items.length ? <span className="ist paid">received</span> : <span className="ist">{g.recd}/{g.items.length} received</span>}
               <div className="po-report-row-actions">
                 <button className="btn xs btn-ghost" onClick={(e) => { e.stopPropagation(); setPoView(g.key); }}><Eye /> View</button>
                 <button className="btn xs btn-primary" onClick={(e) => { e.stopPropagation(); setPoReportView(g.key); }}><BarChart3 /> Report</button>
@@ -14589,7 +14596,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
               <div className="supplier-invoice-mobile" aria-label="Purchase line items">
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
-                  <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
+                  <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist reversed">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
                   <div><span>Quantity</span><b>{po.qty}</b>{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</small>}</div>
                   <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
@@ -14602,7 +14609,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
                     <td style={{ textAlign: "right" }}>{po.qty}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
-                    <td>{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
+                    <td>{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist reversed">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td>{po.status === "received"
                       ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
                       : <div style={{ display: "flex", alignItems: "center", gap: 6 }}><button className="btn xs btn-ghost" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button><button className="smdel" onClick={() => setDelConfirm({ mode: "line", po, label: po.qty + " x " + po.productName })}><Trash2 /></button></div>}</td>}
