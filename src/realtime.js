@@ -95,6 +95,12 @@ export function publishSyncChange(change) {
     ...change,
   };
   latestChange = payload;
-  const branchId = String(change?.branchId || "").trim();
-  broadcast("sync", payload, (client) => !branchId || !client.branchId || client.branchId === branchId);
+  const branchIds = new Set([
+    ...(Array.isArray(change?.branchIds) ? change.branchIds : []),
+    change?.branchId,
+  ].map((branchId) => String(branchId || "").trim()).filter(Boolean));
+  // A single management action can affect both ends of a stock transfer.
+  // Notify every affected branch immediately; waiting for the periodic poll
+  // leaves an already approved request looking pending on another device.
+  broadcast("sync", payload, (client) => !branchIds.size || !client.branchId || branchIds.has(client.branchId));
 }

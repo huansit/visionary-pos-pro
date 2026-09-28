@@ -92,6 +92,11 @@ const DASHBOARD_SYNC_REPAIR_VERSION = "2026-09-17-monotonic-sync-cursor-v3";
 // cached inventory and reconstructs it from the authoritative event stream.
 const INVENTORY_SYNC_REPAIR_KEY = "visionary:pos:sync:inventory-repair:v1";
 const INVENTORY_SYNC_REPAIR_VERSION = "2026-09-17-authoritative-inventory-v1";
+// Prior builds could receive a transfer decision without folding it into the
+// cached request state. Replay once so every existing device rebuilds transfer
+// status from the server's append-only decision history.
+const TRANSFER_SYNC_REPAIR_KEY = "visionary:pos:sync:transfer-repair:v1";
+const TRANSFER_SYNC_REPAIR_VERSION = "2026-09-28-transfer-decision-state-v1";
 const INVOICE_SETTLEMENT_REPAIR_KEY = "visionary:pos:sync:invoice-settlement-repair:v1";
 const INVOICE_SETTLEMENT_REPAIR_VERSION = "2026-09-11-invoice-settlement-events-v4";
 // Earlier desktop and mobile builds could retain an inventory-debt payment only
@@ -118,7 +123,7 @@ const CACHE_KEY_PREFIXES = ["visionary:cache:", "visionary:api-cache:", "visiona
 const SETTINGS_KEYS = [API_BASE_KEY, DEVICE_TOKEN_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"];
 const AUTH_KEYS = [SESSION_KEY, DEVICE_TOKEN_KEY];
 const SYNC_QUEUE_KEYS = [OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY];
-const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
+const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURSOR_KEY, RESET_EPOCH_KEY, INVOICE_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_KEY, TRANSFER_SYNC_REPAIR_KEY, INVOICE_SETTLEMENT_REPAIR_KEY, CASHIER_DEBT_PAYMENT_REPAIR_KEY, INVOICE_LINE_VOID_REPAIR_KEY, API_BASE_KEY, DEVICE_TOKEN_KEY, BARCODE_CACHE_KEY, BARCODE_LOG_KEY, MAINTENANCE_META_KEY, MAINTENANCE_LOG_KEY, ADMIN_BRANCH_KEY, DEVICE_THEME_KEY, "visionary:sync:deviceId"]);
 // Realtime events trigger an immediate sync. This timer is only a fallback
 // for devices that temporarily lose their EventSource connection.
 // EventSource delivers normal changes immediately. This is only a recovery
@@ -2192,6 +2197,38 @@ function collectionForType(type) {
   if (canonicalType === "setting") return "settings";
   return null;
 }
+function reconcileTransferRequestStates(data) {
+  const latestDecisionByRequest = new Map();
+  (data?.stockTransferDecisions || []).forEach((decision) => {
+    const requestId = String(decision?.requestId || "").trim();
+    const status = String(decision?.decision || decision?.status || "").trim().toLowerCase();
+    if (!requestId || !["approved", "rejected"].includes(status)) return;
+    const previous = latestDecisionByRequest.get(requestId);
+    const decisionTs = Number(decision?.decidedAt || decision?.ts || 0);
+    const previousTs = Number(previous?.decidedAt || previous?.ts || 0);
+    if (!previous || decisionTs >= previousTs) latestDecisionByRequest.set(requestId, decision);
+  });
+  if (!latestDecisionByRequest.size) return data;
+  return {
+    ...data,
+    // Transfer decisions are append-only and may reach a slow device before
+    // or after the original request. Keep the request's visible state derived
+    // from that authoritative decision so it can never remain "pending".
+    stockTransferRequests: (data.stockTransferRequests || []).map((request) => {
+      const decision = latestDecisionByRequest.get(String(request?.id || ""));
+      if (!decision) return request;
+      const status = String(decision.decision || decision.status).toLowerCase();
+      return {
+        ...request,
+        status,
+        decidedAt: Math.max(Number(request.decidedAt || 0), Number(decision.decidedAt || decision.ts || 0)),
+        decidedBy: decision.decidedBy || request.decidedBy,
+        decidedByName: decision.decidedByName || request.decidedByName,
+        decisionId: decision.id,
+      };
+    }),
+  };
+}
 function mergeSyncEvents(data, events) {
   let next = { ...data };
   for (const ev of events || []) {
@@ -2258,7 +2295,7 @@ function mergeSyncEvents(data, events) {
     else record.ts = record.ts || ev.clientTs || ev.serverTs || now();
     next = { ...next, [collection]: mergeById(next[collection], record) };
   }
-  return reconcileInvoicePayments(next);
+  return reconcileInvoicePayments(reconcileTransferRequestStates(next));
 }
 function markAcceptedSynced(data, acceptedIds) {
   const ids = new Set(acceptedIds || []);
@@ -2635,7 +2672,8 @@ async function cloudBootstrapData(localData, options = {}) {
     // A previously advanced cursor may have skipped a historical supervisor close.
     const dashboardRepairPending = await kvGet(DASHBOARD_SYNC_REPAIR_KEY) !== DASHBOARD_SYNC_REPAIR_VERSION;
     const inventoryRepairPending = await kvGet(INVENTORY_SYNC_REPAIR_KEY) !== INVENTORY_SYNC_REPAIR_VERSION;
-    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || dashboardRepairPending || inventoryRepairPending || !localHasBranches || !localHasProducts);
+    const transferRepairPending = await kvGet(TRANSFER_SYNC_REPAIR_KEY) !== TRANSFER_SYNC_REPAIR_VERSION;
+    const needsFullBootstrap = Boolean(options.forceFullPull || invoiceRepairPending || dashboardRepairPending || inventoryRepairPending || transferRepairPending || !localHasBranches || !localHasProducts);
     if (needsFullBootstrap) await saveCursor(0);
     const first = (await runSyncClient(base, { ...options, forceFullPull: needsFullBootstrap })).data;
     if (!Array.isArray(first.branches) || first.branches.length === 0 || !Array.isArray(first.products) || first.products.length === 0) {
@@ -2646,6 +2684,7 @@ async function cloudBootstrapData(localData, options = {}) {
         await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
         await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
         await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
+        await kvSet(TRANSFER_SYNC_REPAIR_KEY, TRANSFER_SYNC_REPAIR_VERSION);
       }
       const bootstrapComplete = Array.isArray(retried.branches) && retried.branches.length > 0
         && Array.isArray(retried.products) && retried.products.length > 0;
@@ -2664,6 +2703,7 @@ async function cloudBootstrapData(localData, options = {}) {
     if (invoiceRepairPending) await kvSet(INVOICE_SYNC_REPAIR_KEY, INVOICE_SYNC_REPAIR_VERSION);
     if (dashboardRepairPending) await kvSet(DASHBOARD_SYNC_REPAIR_KEY, DASHBOARD_SYNC_REPAIR_VERSION);
     if (inventoryRepairPending) await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
+    if (transferRepairPending) await kvSet(TRANSFER_SYNC_REPAIR_KEY, TRANSFER_SYNC_REPAIR_VERSION);
     return first;
   } catch (error) {
     return { ...base, _sync: { ...(base._sync || await syncStatus()), error: error.message } };

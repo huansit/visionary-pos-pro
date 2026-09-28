@@ -900,6 +900,7 @@ test("4b. cashier stock transfer requests require management approval", async ()
       assert.equal(decisionEvent?.payload?.decision, "approved");
       assert.equal(decisionEvent?.payload?.requestId, transferRequest.id);
       assert.equal(decisionEvent?.payload?.decidedBy, "admin-owner");
+      assert.equal(decisionEvent?.branchId, "b_sip");
       assert.equal(res.body.events.filter((event) => event.type === "borrowing" && event.payload?.cashierRequestId === transferRequest.id).length, 1);
       // A branch-bound device sees its source movement; the destination
       // movement is delivered only to the Cape Town branch.

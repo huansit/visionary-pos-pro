@@ -1604,7 +1604,7 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
       },
     };
     const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
-    return { id: requestEvent.id, ts: acceptedTs };
+    return { id: requestEvent.id, ts: acceptedTs, branchId: fromBranchId };
   }
 
   if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
@@ -1646,7 +1646,7 @@ async function processStockTransferApprovalEvent(client, ev, type, req, deviceId
     },
   };
   const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
-  return { id: decisionEvent.id, ts: acceptedTs };
+  return { id: decisionEvent.id, ts: acceptedTs, branchId: fromBranchId };
 }
 
 function withBranchProductCostPayload(payload = {}, branchId, costCents) {
@@ -1912,7 +1912,7 @@ async function processInvoiceLineVoidEvent(client, ev, type, req, deviceId, ts) 
       },
     };
     const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
-    return { id: requestEvent.id, ts: acceptedTs };
+    return { id: requestEvent.id, ts: acceptedTs, branchId: invoiceBranchId };
   }
   const requestId = String(payload.requestId || "").trim();
   const decision = String(payload.decision || "").trim().toLowerCase();
@@ -1941,7 +1941,7 @@ async function processInvoiceLineVoidEvent(client, ev, type, req, deviceId, ts) 
         invoiceId, voidRequestId: requestId, source: "invoice_line_void", ts: Date.now() },
     }, "stockMovement", deviceId, ts + 1);
   }
-  return { id: decisionEvent.id, ts: acceptedTs };
+  return { id: decisionEvent.id, ts: acceptedTs, branchId: invoiceBranchId };
 }
 
 async function validateApprovedStockTransferEvent(client, ev, type) {
@@ -1976,6 +1976,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
   const accepted = [];
   const serverTs = {};
   const rejected = [];
+  const acceptedBranchIds = new Set();
   const automaticCashierDebtIds = [];
   const invoiceNumbers = {};
   const transferNumbers = {};
@@ -2041,6 +2042,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       try {
         let acceptedId = null;
         let acceptedTs = null;
+        let acceptedBranchId = eventBranchId(guardedEvent);
 
         if (type === "invoiceVoidRequest" || type === "invoiceVoidDecision") {
           const result = await processInvoiceVoidEvent(
@@ -2053,10 +2055,12 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           );
           acceptedTs = result.ts;
           acceptedId = result.id;
+          acceptedBranchId = result.branchId || acceptedBranchId;
         } else if (type === "invoiceLineVoidRequest" || type === "invoiceLineVoidDecision") {
           const result = await processInvoiceLineVoidEvent(client, guardedEvent, type, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
           acceptedId = result.id;
+          acceptedBranchId = result.branchId || acceptedBranchId;
         } else if (type === "stockTransferRequest" || type === "stockTransferDecision") {
           const transferApprovalEvent = type === "stockTransferRequest"
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
@@ -2071,6 +2075,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           );
           acceptedTs = result.ts;
           acceptedId = result.id;
+          acceptedBranchId = result.branchId || acceptedBranchId;
         } else if (type === "stockCountCorrection") {
           const result = await processStockCountCorrection(client, guardedEvent, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
@@ -2119,6 +2124,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           };
           acceptedTs = await insertAppendOnlyEvent(client, reviewEvent, type, recordDeviceId, nextServerTs());
           acceptedId = reviewEvent.id;
+          acceptedBranchId = debtBranchId;
         } else if (isAppendOnlyEvent) {
           let eventToStore = ["stockMovement", "invoice", "purchase", "borrowing", "countLog"].includes(type)
             ? remapEventProductReferences(guardedEvent, await getProductAliases())
@@ -2204,6 +2210,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             ? await insertGuardedStockMovement(client, eventToStore, type, recordDeviceId, nextServerTs())
             : await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
           acceptedId = eventToStore.id;
+          acceptedBranchId = eventBranchId(eventToStore) || acceptedBranchId;
         } else {
           if (type === "stockCountSession") {
             const stockCountValidation = await validateStockCountSessionWrite(client, guardedEvent);
@@ -2237,11 +2244,13 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             productAliases = null;
           }
           acceptedId = guardedEvent.id;
+          acceptedBranchId = eventBranchId(recordToStore) || acceptedBranchId;
         }
 
         if (!isPgMem) await client.query(`RELEASE SAVEPOINT ${savepoint}`);
         accepted.push(acceptedId);
         serverTs[acceptedId] = acceptedTs;
+        if (acceptedBranchId) acceptedBranchIds.add(String(acceptedBranchId));
       } catch (eventError) {
         if (!isPgMem) {
           try {
@@ -2277,7 +2286,8 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       ])];
       publishSyncChange({
         sourceDeviceId: actorId,
-        branchId: req.deviceBranchId || req.account?.branchId || null,
+        branchId: acceptedBranchIds.size === 1 ? [...acceptedBranchIds][0] : null,
+        branchIds: [...acceptedBranchIds],
         cursor,
         accepted: accepted.length,
         types: changedTypes,
