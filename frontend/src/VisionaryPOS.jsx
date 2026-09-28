@@ -126,6 +126,15 @@ const PROTECTED_STORAGE_KEYS = new Set([STORE_KEY, SESSION_KEY, OUTBOX_KEY, CURS
 const REALTIME_SYNC_MS = 2 * 60 * 1000;
 const RESUME_SYNC_STALE_MS = 60 * 1000;
 const REALTIME_RECONNECT_MS = 4000;
+// Background replication must never become a long task on the admin UI
+// thread. Financial actions use their own server-authoritative request; this
+// queue only catches up the local read model in small, interruptible slices.
+const SYNC_REQUEST_TIMEOUT_MS = 12 * 1000;
+const SYNC_ADMIN_COMMAND_TIMEOUT_MS = 20 * 1000;
+const SYNC_PUSH_BATCH_SIZE = 24;
+const SYNC_PULL_PAGE_SIZE = 120;
+const SYNC_PULL_PAGES_PER_RUN = 2;
+const SYNC_FOLLOWUP_DELAY_MS = 450;
 const AUTO_LOGOUT_MS = 15 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_MS = 5000;
 const LIGHT_MAINTENANCE_MS = 60 * 60 * 1000;
@@ -2367,6 +2376,30 @@ async function enqueueChanges(prev, next) {
   await saveOutbox(outbox);
   return { outboxLength: outbox.length, cursor: await loadCursor() };
 }
+async function syncFetch(url, options = {}, timeoutMs = SYNC_REQUEST_TIMEOUT_MS) {
+  // Browsers can leave fetch pending for a long time while moving between a
+  // weak Wi-Fi network and mobile data. Abort the request so the UI can keep
+  // operating and the retry policy can decide when to try again.
+  if (typeof AbortController === "undefined") return fetch(url, options);
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  let timedOut = false;
+  const abortFromOutside = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", abortFromOutside, { once: true });
+  }
+  const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, Math.max(1000, Number(timeoutMs) || SYNC_REQUEST_TIMEOUT_MS));
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (timedOut) throw new Error("sync_request_timeout");
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal) externalSignal.removeEventListener("abort", abortFromOutside);
+  }
+}
 async function publishSyncEvents(events, data, { management = false } = {}) {
   const list = (events || []).filter(Boolean);
   if (!list.length) return { accepted: [], rejected: [] };
@@ -2377,12 +2410,12 @@ async function publishSyncEvents(events, data, { management = false } = {}) {
   const headers = management
     ? sessionAuthHeaders({ "Content-Type": "application/json" }, managementToken)
     : await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
-  const response = await fetch(cfg.apiBaseUrl + "/api/sync/push", {
+  const response = await syncFetch(cfg.apiBaseUrl + "/api/sync/push", {
     method: "POST",
     headers,
     cache: "no-store",
     body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch() }),
-  });
+  }, management ? SYNC_ADMIN_COMMAND_TIMEOUT_MS : SYNC_REQUEST_TIMEOUT_MS);
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `push_failed_${response.status}`);
   const rejected = Array.isArray(result.rejected) ? result.rejected : [];
@@ -2450,7 +2483,11 @@ async function runSyncClient(currentData, options = {}) {
   let pushErrorText = "";
   if (outbox.length) {
     try {
-      const pushed = await fetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: outbox, resetEpoch }) });
+      // Do not drain a large offline queue in one HTTP transaction. A small
+      // idempotent batch keeps the admin workspace responsive and lets other
+      // devices receive each committed change quickly.
+      const batch = outbox.slice(0, SYNC_PUSH_BATCH_SIZE);
+      const pushed = await syncFetch(cfg.apiBaseUrl + "/api/sync/push", { method: "POST", headers, cache: "no-store", body: JSON.stringify({ events: batch, resetEpoch }) });
       if (!pushed.ok) {
         const errorBody = await pushed.json().catch(() => ({}));
         if (pushed.status === 409 && errorBody?.error === "operational_reset_required") {
@@ -2495,8 +2532,9 @@ async function runSyncClient(currentData, options = {}) {
     }
   }
   let hasMore = true;
-  while (hasMore) {
-    const pulled = await fetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor) + "&t=" + Date.now(), { headers, cache: "no-store" });
+  let pulledPages = 0;
+  while (hasMore && pulledPages < SYNC_PULL_PAGES_PER_RUN) {
+    const pulled = await syncFetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor) + "&limit=" + SYNC_PULL_PAGE_SIZE + "&t=" + Date.now(), { headers, cache: "no-store" });
     if (!pulled.ok) {
       const errorBody = await pulled.json().catch(() => ({}));
       throw new Error(errorBody?.error ? `pull_failed_${pulled.status}_${errorBody.error}` : "pull_failed_" + pulled.status);
@@ -2519,6 +2557,7 @@ async function runSyncClient(currentData, options = {}) {
     const nextCursor = Number(body.cursor || cursor || 0);
     hasMore = !!body.hasMore && nextCursor > cursor;
     cursor = nextCursor;
+    pulledPages += 1;
   }
   const visibleRejected = rejected.filter((item) => item?.reason !== "auth_records_do_not_sync");
   // Rejected events are removed from the queue above, so they are not an
@@ -2528,6 +2567,7 @@ async function runSyncClient(currentData, options = {}) {
   if (credentialProvision.failed) console.warn("staff credential provisioning skipped from sync status", credentialProvision);
   const credentialText = "";
   const nextSyncError = [pushErrorText, credentialText].filter(Boolean).join(" ");
+  const needsFollowUp = !pushErrorText && (outbox.length > 0 || hasMore);
   const nextStatus = {
     outboxLength: outbox.length,
     cursor,
@@ -2552,13 +2592,13 @@ async function runSyncClient(currentData, options = {}) {
       const cached = await saveData(data);
       if (!cached) {
         const cacheLimited = { ...data, _sync: { ...data._sync, cacheWarning: "offline_cache_unavailable" } };
-        return { data: cacheLimited, status: cacheLimited._sync };
+      return { data: cacheLimited, status: cacheLimited._sync, needsFollowUp };
       }
       await saveCursor(cursor);
       await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
-      return { data, status: data._sync };
+      return { data, status: data._sync, needsFollowUp };
     }
-    return { data: currentData, status: previousStatus };
+    return { data: currentData, status: previousStatus, needsFollowUp };
   }
   data = { ...data, lastSyncedAt: now(), _sync: nextStatus };
   // Commit the cache before the cursor. If iOS rejects the larger cache write,
@@ -2570,11 +2610,11 @@ async function runSyncClient(currentData, options = {}) {
     // not as a false cloud-sync failure. Keep the cursor unchanged so a later
     // successful cache write safely replays the same cloud events.
     data = { ...data, _sync: { ...nextStatus, cacheWarning: "offline_cache_unavailable" } };
-    return { data, status: data._sync };
+    return { data, status: data._sync, needsFollowUp };
   }
   await saveCursor(cursor);
   if (inventoryRepairPending) await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
-  return { data, status: data._sync };
+  return { data, status: data._sync, needsFollowUp };
 }
 async function syncStreamUrl(branchId = null) {
   const cfg = syncConfig();
@@ -7036,7 +7076,7 @@ export default function VisionPOS() {
     syncRequestRef.current = false;
     setSyncing(true);
     try {
-      const transientSyncFailure = (value) => /(?:failed to fetch|networkerror|load failed|network request failed|(?:push|pull)_failed_(?:408|425|429|5\d\d))/i.test(String(value || ""));
+      const transientSyncFailure = (value) => /(?:failed to fetch|networkerror|load failed|network request failed|sync_request_timeout|(?:push|pull)_failed_(?:408|425|429|5\d\d))/i.test(String(value || ""));
       let result;
       try {
         result = await runSyncClient(dataRef.current, opts);
@@ -7053,6 +7093,12 @@ export default function VisionPOS() {
         result = await runSyncClient(dataRef.current, { ...opts, retry: true });
       }
       setData(result.data);
+      // Continue a large catch-up in another short slice. This deliberately
+      // yields between pages so actions on the admin workspace never wait
+      // behind an old multi-device history replay.
+      if (result?.needsFollowUp) {
+        setTimeout(() => runSync({ source: "background-follow-up" }), SYNC_FOLLOWUP_DELAY_MS);
+      }
     } catch (error) {
       const message = String(error?.message || "");
       if (session && /(?:pull|push)_failed_(?:401|403)|invalid_or_missing_user_session|session_(?:expired|revoked)/i.test(message)) {
