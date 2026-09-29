@@ -4564,6 +4564,11 @@ body{overscroll-behavior:none}
 .possearch:focus-within{border-color:var(--accent);box-shadow:0 0 0 4px rgba(14,165,181,.14)}
 .possearch svg{width:19px;height:19px;color:var(--muted-2)}
 .possearch input{flex:1;border:none;background:none;outline:none;font-size:15px;color:var(--text);font-family:inherit}
+.purchase-product-results{position:absolute;z-index:24;top:calc(100% + 6px);left:0;right:0;max-height:300px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 18px 36px rgba(15,23,42,.18);padding:6px}
+.purchase-product-selected{margin-top:6px;color:var(--muted);font-size:12px}
+.purchase-product-result{width:100%;display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 12px;font:inherit;cursor:pointer}
+.purchase-product-result:hover,.purchase-product-result:focus-visible{background:var(--surface-2);outline:none}
+.purchase-product-result span:first-child{min-width:0;display:grid;gap:2px}.purchase-product-result b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.purchase-product-result small{color:var(--muted);font-size:12px}.purchase-product-result span:last-child{flex:none;color:var(--muted);font-size:12px;white-space:nowrap}.purchase-product-empty{padding:12px;color:var(--muted);font-size:13px}
 .posgridwrap{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
 .posgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
 .pn2{font-size:12.5px;font-weight:650;line-height:1.25;min-height:31px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -7078,6 +7083,7 @@ body{overscroll-behavior:none}
 .external-stock-message{margin-top:10px;font-size:12px}
 .external-stock-action{display:flex;justify-content:flex-end;margin-top:11px}
 .external-stock-action .btn{min-height:38px}
+.external-stock-document-actions{display:flex;justify-content:flex-end;margin:0 0 8px}
 @media(max-width:980px){
   .external-stock-filterbar{grid-template-columns:repeat(2,minmax(0,1fr))}
   .external-stock-statuses{grid-column:1/-1}
@@ -14591,6 +14597,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
   const [adding, setAdding] = useState(false);
   const [list, setList] = useState([]); // batch of purchase lines to save at once
   const [f, setF] = useState({ supplierId: rec0 ? rec0.supplierId : (data.suppliers[0]?.id || ""), productId: initProd, branchId: branch.id, qty: "", cost: rec0 ? String(rec0.costCents / 100) : "", lineTotal: "", amountMode: "unit", received: true });
+  const [productQuery, setProductQuery] = useState("");
   const [scannerOn, setScannerOn] = useState(true);
   const [scanCode, setScanCode] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -14667,7 +14674,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
         ...purchase,
         externalBorrowedOutstandingQty: initialQty,
         externalBorrowedSettledQty: nextSettledQty,
-        externalBorrowedStatus: nextSettledQty >= initialQty ? "settled" : "partial",
+        externalBorrowedStatus: nextSettledQty >= initialQty ? "returned" : "partial",
         externalBorrowedSettlements: [
           ...(purchase.externalBorrowedSettlements || []),
           { purchaseId, qty: allocatedQty, settledAt },
@@ -14679,11 +14686,19 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
     const settledQty = Math.max(0, Number(qty) || 0) - remaining;
     return { purchases: updatedPurchases, settledQty, inventoryQty: Math.max(0, Number(qty) || 0) - settledQty, allocations };
   };
-  const onProduct = (pid) => { const r = recommend(pid); setF((s) => applyQuotedCost({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId }, r ? r.costCents : Number.parseFloat(s.cost) * 100)); };
+  const onProduct = (pid) => {
+    const r = recommend(pid);
+    setProductQuery("");
+    setF((s) => applyQuotedCost({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId }, r ? r.costCents : Number.parseFloat(s.cost) * 100));
+  };
   const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => e ? applyQuotedCost({ ...s, supplierId: sid }, e.costCents) : ({ ...s, supplierId: sid })); };
   const rec = recommend(f.productId);
   const qlist = quotesFor(f.productId);
   const purchaseProducts = sortProductsAZ(branchProductsUnique(data, f.branchId || branch.id));
+  const selectedPurchaseProduct = purchaseProducts.find((product) => product.id === f.productId);
+  const productMatches = productQuery.trim()
+    ? purchaseProducts.filter((product) => `${product.name} ${product.sku || ""} ${product.barcode || ""}`.toLowerCase().includes(productQuery.trim().toLowerCase())).slice(0, 8)
+    : [];
   const focusPurchaseScan = () => window.setTimeout(() => scanInputRef.current?.focus(), 0);
   const handlePurchaseScan = (raw) => {
     const barcode = normalizeBarcode(raw);
@@ -15154,9 +15169,14 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       ) : (
         <div className="addpanel fade"><div className="grid2">
           <div><label className="label">Supplier</label><select className="select" value={f.supplierId} onChange={(e) => onSupplier(e.target.value)}>{data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
-          <div><label className="label">Product</label><select className="select" value={f.productId} onChange={(e) => onProduct(e.target.value)}>{purchaseProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
+          <div style={{ position: "relative" }}>
+            <label className="label">Find product</label>
+            <div className="possearch"><Search /><input value={productQuery} onChange={(event) => { const value = event.target.value; setProductQuery(value); if (!value || value !== selectedPurchaseProduct?.name) setF((current) => ({ ...current, productId: "" })); }} onKeyDown={(event) => { if (event.key === "Enter" && productMatches.length === 1) { event.preventDefault(); onProduct(productMatches[0].id); window.setTimeout(() => qtyInputRef.current?.focus(), 0); } }} placeholder={selectedPurchaseProduct ? `Selected: ${selectedPurchaseProduct.name}` : "Search name, SKU, or barcode"} autoComplete="off" /></div>
+            {productQuery.trim() && <div className="purchase-product-results">{productMatches.length ? productMatches.map((product) => <button type="button" key={product.id} className="purchase-product-result" onClick={() => { onProduct(product.id); window.setTimeout(() => qtyInputRef.current?.focus(), 0); }}><span><b>{product.name}</b><small>{product.sku || "No SKU"}</small></span><span>{productOnHand(data, product, f.branchId || branch.id)} in stock</span></button>) : <div className="purchase-product-empty">No matching product.</div>}</div>}
+            {selectedPurchaseProduct && !productQuery.trim() && <div className="purchase-product-selected">Selected: <b>{selectedPurchaseProduct.name}</b>{selectedPurchaseProduct.sku ? ` · ${selectedPurchaseProduct.sku}` : ""}</div>}
+          </div></div>
           <div className="field" style={{ marginTop: 12 }}>
-            <label className="label">Scan product barcode</label>
+            <label className="label">Barcode scan <span className="sub">(optional)</span></label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <input ref={scanInputRef} className="input" style={{ flex: "1 1 220px", minWidth: 0 }} inputMode="numeric" autoComplete="off" value={scanCode} onChange={(e) => setScanCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); handlePurchaseScan(e.currentTarget.value); } }} placeholder="Scan barcode to select product" />
               <button className={"btn sm " + (scannerOn ? "btn-primary" : "btn-ghost")} onClick={() => setScannerOn((v) => { const next = !v; if (next) focusPurchaseScan(); return next; })}><Barcode /> USB scanner</button>
@@ -16597,6 +16617,7 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const [receiptError, setReceiptError] = useState("");
   const [receiptNotice, setReceiptNotice] = useState("");
   const [receiptSaving, setReceiptSaving] = useState(false);
+  const [ledgerDirection, setLedgerDirection] = useState("all");
   const branchName = data.branches.find((entry) => entry.id === branchId)?.name || "Branch";
   const ledgerBranchName = ledgerBranchId ? (data.branches.find((entry) => entry.id === ledgerBranchId)?.name || "Branch") : "All branches";
   const availableProducts = branchProductsUnique(data, branchId).filter(productIsEnabled);
@@ -16628,27 +16649,50 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   }).sort((a, b) => Number(b.issuedAt || b.ts || 0) - Number(a.issuedAt || a.ts || 0)), [data.externalStockLoans, returnsByLoan]);
   const ledgerFromTs = ledgerDateFrom ? new Date(`${ledgerDateFrom}T00:00:00`).getTime() : -Infinity;
   const ledgerToTs = ledgerDateTo ? new Date(`${ledgerDateTo}T23:59:59.999`).getTime() : Infinity;
-  const ledger = allBranchLoans.filter((loan) => {
-    const issuedAt = Number(loan.issuedAt || loan.ts || 0);
-    return (!ledgerBranchId || loan.branchId === ledgerBranchId)
-      && (filter === "all" || (filter === "open" ? loan.outstandingQty > 0 : loan.status === filter))
+  const borrowedStockRecords = useMemo(() => (data.purchases || [])
+    .filter((purchase) => purchase?.source === "external_stock_borrowing")
+    .map((purchase) => {
+      const borrowedQty = Math.max(0, Number(purchase.externalBorrowedOutstandingQty ?? purchase.qty) || 0);
+      const returnedQty = Math.min(borrowedQty, Math.max(0, Number(purchase.externalBorrowedSettledQty) || 0));
+      const outstandingQty = Math.max(0, borrowedQty - returnedQty);
+      const settlement = (purchase.externalBorrowedSettlements || []).at(-1);
+      return {
+        id: purchase.id, kind: "borrowed", branchId: purchase.branchId, shopName: purchase.externalShopName || purchase.supplierName || "Outside shop",
+        contact: purchase.externalContact || "", borrowerName: purchase.externalShopName || purchase.supplierName || "Outside shop", borrowerContact: purchase.externalContact || "",
+        issuedAt: Number(purchase.receivedAt || purchase.ts || 0), productName: purchase.productName, sku: purchase.sku || "", borrowedQty, returnedQty, outstandingQty,
+        openItems: [{ productName: purchase.productName || "Product", sku: purchase.sku || "", qty: borrowedQty, returnedQty, outstandingQty }], notes: "Borrowed stock",
+        status: outstandingQty === 0 ? "returned" : "open", returnedAt: outstandingQty === 0 ? Number(settlement?.settledAt || 0) : 0,
+        settlementPurchaseId: settlement?.purchaseId || "", auditFileId: purchase.auditFileId || `EXT-BORROW-${String(purchase.id || "").slice(-8).toUpperCase()}`,
+      };
+    }), [data.purchases]);
+  const ledgerEntries = useMemo(() => [
+    ...allBranchLoans.map((loan) => ({ ...loan, kind: "lent", shopName: loan.borrowerName, contact: loan.borrowerContact || loan.borrowerPhone || "", auditFileId: loan.auditFileId || `EXT-LEND-${String(loan.id || "").slice(-8).toUpperCase()}` })),
+    ...borrowedStockRecords,
+  ].sort((left, right) => Number(right.issuedAt || right.ts || 0) - Number(left.issuedAt || left.ts || 0)), [allBranchLoans, borrowedStockRecords]);
+  const ledger = ledgerEntries.filter((entry) => {
+    const issuedAt = Number(entry.issuedAt || entry.ts || 0);
+    return (!ledgerBranchId || entry.branchId === ledgerBranchId)
+      && (ledgerDirection === "all" || entry.kind === ledgerDirection)
+      && (filter === "all" || (filter === "open" ? entry.outstandingQty > 0 : entry.status === filter))
       && issuedAt >= ledgerFromTs && issuedAt <= ledgerToTs;
   });
-  const pendingLoanCount = allBranchLoans.filter((loan) => (!ledgerBranchId || loan.branchId === ledgerBranchId) && loan.outstandingQty > 0).length;
+  const pendingLoanCount = ledgerEntries.filter((entry) => (!ledgerBranchId || entry.branchId === ledgerBranchId) && entry.outstandingQty > 0).length;
   const savedBorrowers = useMemo(() => {
     const borrowers = new Map();
-    allBranchLoans.forEach((loan) => {
-      if (loan.branchId !== branchId) return;
-      const name = String(loan.borrowerName || "").trim();
-      if (!name) return;
-      const id = name.toLocaleLowerCase();
+    const remember = (name, contact, lastUsedAt = 0) => {
+      const cleanName = String(name || "").trim();
+      if (!cleanName) return;
+      const id = cleanName.toLocaleLowerCase();
       const existing = borrowers.get(id);
-      if (!existing || Number(loan.issuedAt || loan.ts || 0) > Number(existing.lastUsedAt || 0)) {
-        borrowers.set(id, { id, name, contact: String(loan.borrowerContact || loan.borrowerPhone || "").trim(), lastUsedAt: Number(loan.issuedAt || loan.ts || 0) });
+      if (!existing || Number(lastUsedAt || 0) >= Number(existing.lastUsedAt || 0)) {
+        borrowers.set(id, { id, name: cleanName, contact: String(contact || "").trim(), lastUsedAt: Number(lastUsedAt || 0) });
       }
-    });
+    };
+    allBranchLoans.forEach((loan) => remember(loan.borrowerName, loan.borrowerContact || loan.borrowerPhone, loan.issuedAt || loan.ts));
+    (data.purchases || []).filter((purchase) => purchase.source === "external_stock_borrowing").forEach((purchase) => remember(purchase.externalShopName || purchase.supplierName, purchase.externalContact, purchase.receivedAt || purchase.ts));
+    (data.suppliers || []).filter((supplier) => supplier.externalStockBorrowing === true).forEach((supplier) => remember(supplier.name, supplier.contact || supplier.phone, supplier.updatedAt || supplier.createdAt));
     return Array.from(borrowers.values()).sort((left, right) => left.name.localeCompare(right.name));
-  }, [allBranchLoans, branchId]);
+  }, [allBranchLoans, data.purchases, data.suppliers]);
   const receiptProducts = branchProductsUnique(data, receiptBranchId).filter(productIsEnabled);
   const receiptProduct = receiptProducts.find((entry) => entry.id === receiptProductId);
   const receiptMatches = receiptSearch.trim() && !receiptProduct
@@ -16663,9 +16707,10 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
       if (!suppliers.has(id)) suppliers.set(id, { id, name: cleanName, contact: String(contact || "").trim() });
     };
     (data.suppliers || []).filter((supplier) => supplier.externalStockBorrowing === true).forEach((supplier) => remember(supplier.name, supplier.contact || supplier.phone));
-    (data.purchases || []).filter((purchase) => purchase.source === "external_stock_borrowing").forEach((purchase) => remember(purchase.supplierName, purchase.externalContact));
+    (data.purchases || []).filter((purchase) => purchase.source === "external_stock_borrowing").forEach((purchase) => remember(purchase.externalShopName || purchase.supplierName, purchase.externalContact));
+    allBranchLoans.forEach((loan) => remember(loan.borrowerName, loan.borrowerContact || loan.borrowerPhone));
     return Array.from(suppliers.values()).sort((left, right) => left.name.localeCompare(right.name));
-  }, [data.suppliers, data.purchases]);
+  }, [data.suppliers, data.purchases, allBranchLoans]);
 
   const addLine = () => {
     setError("");
@@ -16687,9 +16732,11 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     if (!borrowerName.trim()) return setError("Enter the outside shop name.");
     if (!borrowerContact.trim()) return setError("Enter the contact person's name.");
     if (!lines.length) return setError("Add at least one product to this loan.");
+    const savedShop = savedBorrowers.find((entry) => entry.name.toLocaleLowerCase() === borrowerName.trim().toLocaleLowerCase());
+    const canonicalBorrowerName = savedShop?.name || borrowerName.trim();
     const loanId = uid("external-loan");
     const issuedAt = now();
-    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerContact: borrowerContact.trim(), notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
+    const record = { id: loanId, auditFileId: `EXT-LEND-${loanId.slice(-8).toUpperCase()}`, branchId, borrowerName: canonicalBorrowerName, borrowerContact: borrowerContact.trim(), notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
     const movements = lines.map((line) => ({ id: `external-loan-issue:${loanId}:${line.productId}`, productId: line.productId, branchId, qty: -line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: loanId, borrowerName: record.borrowerName, mode: "external_loan_issue", reason: `External loan to ${record.borrowerName}`, ts: issuedAt, synced: true }));
     setSaving(true);
     try {
@@ -16712,7 +16759,8 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     if (!returnLines.length) return setError("Enter at least one returned quantity.");
     if (returnLines.some((line) => line.qty > line.outstandingQty)) return setError("A returned quantity cannot exceed the open quantity.");
     const returnedAt = now();
-    const record = { id: uid("external-loan-return"), branchId, externalStockLoanId: returnLoan.id, returnedBy: actor?.name || actor?.email || "Management", returnedAt, notes: returnNotes.trim(), ts: returnedAt, items: returnLines.map((line) => ({ productId: line.productId, productName: line.productName, sku: line.sku, qty: line.qty, unitCostCents: line.unitCostCents || 0 })), synced: true };
+    const returnId = uid("external-loan-return");
+    const record = { id: returnId, auditFileId: `EXT-RETURN-${returnId.slice(-8).toUpperCase()}`, branchId, externalStockLoanId: returnLoan.id, returnedBy: actor?.name || actor?.email || "Management", returnedAt, notes: returnNotes.trim(), ts: returnedAt, items: returnLines.map((line) => ({ productId: line.productId, productName: line.productName, sku: line.sku, qty: line.qty, unitCostCents: line.unitCostCents || 0 })), synced: true };
     const movements = record.items.map((line) => ({ id: `external-loan-return:${record.id}:${line.productId}`, productId: line.productId, branchId, qty: line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: returnLoan.id, externalStockLoanReturnId: record.id, borrowerName: returnLoan.borrowerName, mode: "external_loan_return", reason: `External loan return from ${returnLoan.borrowerName}`, ts: returnedAt, synced: true }));
     setSaving(true);
     try {
@@ -16740,7 +16788,9 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   };
   const receiveBorrowedStock = async () => {
     setReceiptError(""); setReceiptNotice("");
-    const supplierName = receiptSupplierName.trim();
+    const typedSupplierName = receiptSupplierName.trim();
+    const savedShop = savedExternalSuppliers.find((entry) => entry.name.toLocaleLowerCase() === typedSupplierName.toLocaleLowerCase());
+    const supplierName = savedShop?.name || typedSupplierName;
     if (!supplierName) return setReceiptError("Enter the outside shop name.");
     if (!receiptContact.trim()) return setReceiptError("Enter the contact person's name.");
     if (!receiptLines.length) return setReceiptError("Add at least one product to receive.");
@@ -16765,8 +16815,9 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
       const currentOnHand = onHandByProduct[stockKey] ?? productOnHand(data, product, receiptBranchId);
       const previousCostCents = branchInventoryCostCents({ ...data, products }, product, receiptBranchId);
       const newCostCents = wacCost(currentOnHand, previousCostCents || line.costCents, line.qty, line.costCents);
+      const purchaseId = uid("po");
       const purchase = {
-        id: uid("po"), batchId, batchNo, supplierId: supplier.id, supplierName: supplier.name,
+        id: purchaseId, auditFileId: `EXT-BORROW-${purchaseId.slice(-8).toUpperCase()}`, batchId, batchNo, supplierId: supplier.id, supplierName: supplier.name,
         productId: line.productId, productName: line.productName, sku: line.sku,
         qty: line.qty, costCents: line.costCents, lineTotalCents: line.qty * line.costCents,
         status: "received", branchId: receiptBranchId, date: todayStr(), ts: receivedAt, updatedAt: receivedAt, receivedAt,
@@ -16809,12 +16860,42 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
       setReceiptError("The borrowed-stock purchase was not saved. Refresh cloud data and try again.");
     } finally { setReceiptSaving(false); }
   };
+  const downloadLedgerFile = (entry) => {
+    const lines = entry.kind === "lent"
+      ? entry.openItems.map((line) => ({ product: line.productName, sku: line.sku || "", issuedQty: line.qty, returnedQty: line.returnedQty || 0, outstandingQty: line.outstandingQty || 0 }))
+      : [{ product: entry.productName, sku: entry.sku || "", borrowedQty: entry.borrowedQty, returnedQty: entry.returnedQty, outstandingQty: entry.outstandingQty }];
+    downloadFile(`${entry.auditFileId || entry.id}.json`, JSON.stringify({
+      reference: entry.auditFileId || entry.id,
+      direction: entry.kind,
+      status: entry.status,
+      branch: data.branches.find((branchEntry) => branchEntry.id === entry.branchId)?.name || entry.branchId,
+      outsideShop: entry.shopName,
+      contactPerson: entry.contact,
+      recordedAt: new Date(Number(entry.issuedAt || entry.ts || 0)).toISOString(),
+      returnedAt: entry.returnedAt ? new Date(entry.returnedAt).toISOString() : null,
+      items: lines,
+    }, null, 2), "application/json");
+  };
+  const downloadLedgerReport = () => {
+    const headers = ["Reference", "Direction", "Status", "Branch", "Outside shop", "Contact person", "Product", "Issued / borrowed", "Returned", "Outstanding", "Recorded at", "Returned at"];
+    const rows = ledger.flatMap((entry) => (entry.kind === "lent" ? entry.openItems.map((line) => [
+      entry.auditFileId || entry.id, "Lent", entry.status, data.branches.find((branchEntry) => branchEntry.id === entry.branchId)?.name || entry.branchId, entry.shopName, entry.contact,
+      line.productName, line.qty, line.returnedQty || 0, line.outstandingQty || 0, dt(entry.issuedAt || entry.ts), entry.returnedAt ? dt(entry.returnedAt) : "",
+    ]) : [[
+      entry.auditFileId || entry.id, "Borrowed", entry.status, data.branches.find((branchEntry) => branchEntry.id === entry.branchId)?.name || entry.branchId, entry.shopName, entry.contact,
+      entry.productName, entry.borrowedQty, entry.returnedQty, entry.outstandingQty, dt(entry.issuedAt || entry.ts), entry.returnedAt ? dt(entry.returnedAt) : "",
+    ]]));
+    downloadFile(`visionary-external-stock-ledger-${todayStr()}.csv`, [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n"), "text/csv;charset=utf-8");
+  };
 
   return <div className="fade external-stock-page">
     <PageHead title="External shop stock" sub="Auditable stock lent to, or borrowed from, outside shops. It never becomes sales or cashier debt." />
     <section className="panel external-stock-filters">
-      <div className="external-stock-filter-head"><div><div className="title">Loan ledger</div><div className="sub">Filter the branch loan register.</div></div>{(filter !== "open" || ledgerBranchId !== branch.id || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerBranchId(branch.id); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear</button>}</div>
+      <div className="external-stock-filter-head"><div><div className="title">Loan ledger</div><div className="sub">Filter the branch loan register.</div></div>{(filter !== "open" || ledgerDirection !== "all" || ledgerBranchId !== branch.id || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerDirection("all"); setLedgerBranchId(branch.id); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear</button>}</div>
       <div className="external-stock-filterbar">
+        <div className="external-stock-statuses" role="tablist" aria-label="Loan direction">
+          {[["all", "All"], ["lent", "Lent"], ["borrowed", "Borrowed"]].map(([id, label]) => <button type="button" key={id} className={ledgerDirection === id ? "active" : ""} onClick={() => setLedgerDirection(id)}>{label}</button>)}
+        </div>
         <div className="external-stock-statuses" role="tablist">
           {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
         </div>
@@ -16866,11 +16947,14 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     </section>
     </div>
     <DocumentFile title="External loan ledger" count={ledger.length} meta={`${ledgerBranchName} · stock issued and returned through the shared inventory ledger`}>
-      <div className="list">{ledger.map((loan) => <div className="row" key={loan.id}>
+      <div className="external-stock-document-actions"><button type="button" className="btn xs" onClick={downloadLedgerReport}><Download /> Download report</button></div>
+      <div className="list">{ledger.map((loan) => <div className="row" key={`${loan.kind}-${loan.id}`}>
+        <span className="pill plain">{loan.kind === "borrowed" ? "Borrowed" : "Lent"}</span>
         <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.borrowerContact || loan.borrowerPhone ? `Contact: ${loan.borrowerContact || loan.borrowerPhone} · ` : ""}{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
         <span className={`ist ${loan.status === "returned" ? "paid" : "open"}`}>{loan.status === "returned" ? "Returned" : `${loan.outstandingQty} out`}</span>
         <span className="pill plain">{dt(loan.issuedAt || loan.ts)}</span>
-        {loan.outstandingQty > 0 && <button type="button" className="btn xs btn-primary" onClick={() => openReturn(loan)}><RotateCcw /> Return</button>}
+        <button type="button" className="btn xs" onClick={() => downloadLedgerFile(loan)}><Download /> File</button>
+        {loan.kind === "lent" && loan.outstandingQty > 0 && <button type="button" className="btn xs btn-primary" onClick={() => openReturn(loan)}><RotateCcw /> Return</button>}
       </div>)}{ledger.length === 0 && <div className="notice">No {filter === "all" ? "external stock loans" : filter + " loans"} for {ledgerBranchName}.</div>}</div>
     </DocumentFile>
     {returnLoan && <div className="scrim" onClick={() => !saving && setReturnLoan(null)}><div className="modal" style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
