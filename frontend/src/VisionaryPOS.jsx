@@ -9401,7 +9401,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const canAccess = (tabId) => {
     if (isAdmin) return true;
     if (tabId === "dashboard" || tabId === "ai") return true;
-    if (["borrowing", "mpesa", "audit"].includes(tabId) && accountRole === "supervisor") return true;
+    if (["borrowing", "mpesa", "audit", "externalLoans"].includes(tabId) && accountRole === "supervisor") return true;
     if (tabId === "cash") return hasRight(rights, "cash") || hasRight(rights, "expenses");
     const req = TAB_RIGHT[tabId];
     if (req === "__admin_only") return false;
@@ -14644,6 +14644,41 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
     const quantity = parseInt(draft.qty, 10) || 0;
     return { ...draft, cost, amountMode: "unit", lineTotal: quantity > 0 ? decimalText(quantity * (Number(costCents) || 0) / 100, 2) : "" };
   };
+  const settleExternalBorrowedStock = (purchases, { branchId, productId, qty, purchaseId, settledAt }) => {
+    let remaining = Math.max(0, Number(qty) || 0);
+    const allocations = [];
+    const candidates = (purchases || [])
+      .filter((purchase) => purchase?.source === "external_stock_borrowing"
+        && String(purchase.branchId || "") === String(branchId || "")
+        && String(purchase.productId || "") === String(productId || "")
+        && String(purchase.status || "").toLowerCase() === "received")
+      .sort((left, right) => Number(left.receivedAt || left.ts || 0) - Number(right.receivedAt || right.ts || 0));
+    const updatedPurchases = (purchases || []).map((purchase) => {
+      if (!remaining || !candidates.some((candidate) => candidate.id === purchase.id)) return purchase;
+      const initialQty = Math.max(0, Number(purchase.externalBorrowedOutstandingQty ?? purchase.qty) || 0);
+      const settledQty = Math.max(0, Number(purchase.externalBorrowedSettledQty) || 0);
+      const outstandingQty = Math.max(0, initialQty - settledQty);
+      const allocatedQty = Math.min(remaining, outstandingQty);
+      if (!allocatedQty) return purchase;
+      remaining -= allocatedQty;
+      allocations.push({ borrowedPurchaseId: purchase.id, qty: allocatedQty });
+      const nextSettledQty = settledQty + allocatedQty;
+      return {
+        ...purchase,
+        externalBorrowedOutstandingQty: initialQty,
+        externalBorrowedSettledQty: nextSettledQty,
+        externalBorrowedStatus: nextSettledQty >= initialQty ? "settled" : "partial",
+        externalBorrowedSettlements: [
+          ...(purchase.externalBorrowedSettlements || []),
+          { purchaseId, qty: allocatedQty, settledAt },
+        ],
+        updatedAt: settledAt,
+        synced: false,
+      };
+    });
+    const settledQty = Math.max(0, Number(qty) || 0) - remaining;
+    return { purchases: updatedPurchases, settledQty, inventoryQty: Math.max(0, Number(qty) || 0) - settledQty, allocations };
+  };
   const onProduct = (pid) => { const r = recommend(pid); setF((s) => applyQuotedCost({ ...s, productId: pid, supplierId: r ? r.supplierId : s.supplierId }, r ? r.costCents : Number.parseFloat(s.cost) * 100)); };
   const onSupplier = (sid) => { const e = sp.find((x) => x.supplierId === sid && x.productId === f.productId); setF((s) => e ? applyQuotedCost({ ...s, supplierId: sid }, e.costCents) : ({ ...s, supplierId: sid })); };
   const rec = recommend(f.productId);
@@ -14697,12 +14732,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const batchNo = nextPurchaseOrderNumber(d.purchases);
       const po = { id: uid("po"), batchId, batchNo, supplierId: f.supplierId, supplierName: sup?.name || "", productId: f.productId, productName: prod?.name || "", qty, costCents: cost, lineTotalCents, status: received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: received ? ts : null, synced: false };
       if (!received) return { ...d, purchases: [po, ...d.purchases] };
+      const settlement = settleExternalBorrowedStock(d.purchases, { branchId: lbr, productId: f.productId, qty, purchaseId: po.id, settledAt: ts });
+      const inventoryQty = settlement.inventoryQty;
+      const receivedPurchase = { ...po, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, inventoryQty };
       const cur = d.products.find((p) => p.id === f.productId);
       const previousCostCents = cur ? branchInventoryCostCents(d, cur, lbr) : 0;
-      const newCost = wacCost(onHand(d, f.productId, lbr), previousCostCents || cost, qty, cost);
+      const newCost = inventoryQty > 0 ? wacCost(onHand(d, f.productId, lbr), previousCostCents || cost, inventoryQty, cost) : previousCostCents;
       return { ...d,
-        purchases: [po, ...d.purchases],
-        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty, costCents: cost, previousCostCents, valueCents: lineTotalCents, reason: "Purchase " + (sup?.name || ""), ts, synced: false }],
+        purchases: [receivedPurchase, ...settlement.purchases],
+        stockMovements: inventoryQty > 0 ? [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty: inventoryQty, costCents: cost, previousCostCents, valueCents: inventoryQty * cost, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: "Purchase " + (sup?.name || ""), ts, synced: false }] : d.stockMovements,
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -14720,7 +14758,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
   const saveAll = () => {
     if (!list.length) return; const ts = now();
     update((d) => {
-      let products = [...d.products]; const purchases = []; const movements = []; const ohCache = {};
+      let products = [...d.products]; let existingPurchases = [...d.purchases]; const purchases = []; const movements = []; const ohCache = {};
       const batchId = uid("pb");
       const batchNo = nextPurchaseOrderNumber(d.purchases);
       const getOH = (pid, bid) => {
@@ -14731,18 +14769,23 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       for (const l of list) {
         const lbr = l.branchId || branch.id;
         const po = { id: uid("po"), batchId, batchNo, supplierId: l.supplierId, supplierName: l.supplierName, productId: l.productId, productName: l.productName, qty: l.qty, costCents: l.costCents, lineTotalCents: purchaseLineTotalCents(l), status: l.received ? "received" : "ordered", branchId: lbr, date: todayStr(), ts, updatedAt: ts, receivedAt: l.received ? ts : null, synced: false };
-        purchases.push(po);
+        let receivedPurchase = po;
         if (l.received) {
+          const settlement = settleExternalBorrowedStock(existingPurchases, { branchId: lbr, productId: l.productId, qty: l.qty, purchaseId: po.id, settledAt: ts });
+          existingPurchases = settlement.purchases;
+          const inventoryQty = settlement.inventoryQty;
+          receivedPurchase = { ...po, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, inventoryQty };
           const idx = products.findIndex((p) => p.id === l.productId);
           const curCost = idx >= 0 ? branchInventoryCostCents({ ...d, products }, products[idx], lbr) : l.costCents;
           const oh = getOH(l.productId, lbr);
-          const newCost = wacCost(oh, curCost, l.qty, l.costCents);
+          const newCost = inventoryQty > 0 ? wacCost(oh, curCost, inventoryQty, l.costCents) : curCost;
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
-          ohCache[lbr + ":" + l.productId] = oh + l.qty;
-          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: l.qty, costCents: l.costCents, previousCostCents: curCost, valueCents: purchaseLineTotalCents(l), reason: "Purchase " + l.supplierName, ts, synced: false });
+          ohCache[lbr + ":" + l.productId] = oh + inventoryQty;
+          if (inventoryQty > 0) movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: inventoryQty, costCents: l.costCents, previousCostCents: curCost, valueCents: inventoryQty * l.costCents, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: "Purchase " + l.supplierName, ts, synced: false });
         }
+        purchases.push(receivedPurchase);
       }
-      return { ...d, purchases: [...purchases, ...d.purchases], stockMovements: [...d.stockMovements, ...movements], products };
+      return { ...d, purchases: [...purchases, ...existingPurchases], stockMovements: [...d.stockMovements, ...movements], products };
     });
     setList([]); setAdding(false);
   };
@@ -14751,10 +14794,10 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
     const pending = d.purchases.filter((po) => requested.has(po.id) && po.status !== "received");
     if (pending.length === 0) return d;
     const receivedAt = now();
-    const receivedIds = new Set(pending.map((po) => po.id));
     const onHandByProduct = {};
     const movements = [];
     let products = [...d.products];
+    let purchases = [...d.purchases];
 
     for (const po of pending) {
       const targetBranchId = po.branchId || branch.id;
@@ -14762,24 +14805,29 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const currentOnHand = onHandByProduct[stockKey] ?? onHand(d, po.productId, targetBranchId);
       const currentProduct = products.find((product) => product.id === po.productId);
       const receivedUnitCost = purchaseUnitCostCents(po);
+      const settlement = settleExternalBorrowedStock(purchases, { branchId: targetBranchId, productId: po.productId, qty: po.qty, purchaseId: po.id, settledAt: receivedAt });
+      const inventoryQty = settlement.inventoryQty;
+      purchases = settlement.purchases;
       const workingData = { ...d, products };
       const currentCost = currentProduct ? branchInventoryCostCents(workingData, currentProduct, targetBranchId) : receivedUnitCost;
-      const newCost = wacCost(currentOnHand, currentCost, po.qty, receivedUnitCost);
+      const newCost = inventoryQty > 0 ? wacCost(currentOnHand, currentCost, inventoryQty, receivedUnitCost) : currentCost;
       if (currentProduct) products = withBranchProductCostForKey(products, currentProduct, targetBranchId, newCost);
-      onHandByProduct[stockKey] = currentOnHand + Number(po.qty || 0);
-      movements.push({
+      onHandByProduct[stockKey] = currentOnHand + inventoryQty;
+      purchases = purchases.map((entry) => entry.id === po.id
+        ? { ...entry, status: "received", receivedAt, updatedAt: receivedAt, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, inventoryQty, synced: false }
+        : entry);
+      if (inventoryQty > 0) movements.push({
         id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null, purchaseBatchNo: po.batchNo || null,
-        productId: po.productId, branchId: targetBranchId, qty: po.qty,
-        costCents: receivedUnitCost, previousCostCents: currentCost, valueCents: purchaseLineTotalCents(po),
+        productId: po.productId, branchId: targetBranchId, qty: inventoryQty,
+        costCents: receivedUnitCost, previousCostCents: currentCost, valueCents: inventoryQty * receivedUnitCost,
+        externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations,
         reason: "Purchase " + po.supplierName, ts: receivedAt, synced: false,
       });
     }
 
     return {
       ...d,
-      purchases: d.purchases.map((po) => receivedIds.has(po.id)
-        ? { ...po, status: "received", receivedAt, updatedAt: receivedAt, synced: false }
-        : po),
+      purchases,
       products,
       stockMovements: [...d.stockMovements, ...movements],
     };
@@ -15311,7 +15359,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
                 {items.map((po) => <article key={po.id}>
                   <div className="supplier-invoice-product"><strong>{po.productName}</strong><span>{po.supplierName || "No supplier"} / {data.branches.find((b) => b.id === po.branchId)?.name || "Branch"}</span></div>
                   <div className="supplier-invoice-line-status">{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist reversed">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</div>
-                  <div><span>Quantity</span><b>{po.qty}</b>{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</small>}</div>
+                  <div><span>Quantity</span><b>{po.qty}</b>{Number(po.externalBorrowedOffsetQty || 0) > 0 && <small className="mt2">Borrowed settled: {po.externalBorrowedOffsetQty} · Stock added: {po.inventoryQty}</small>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <small className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</small>}</div>
                   <div><span>Unit cost</span><b>{fmtExact(purchaseUnitCostCents(po), cur, 6)}</b>{po.costCorrections?.length > 0 && <small className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</small>}{isAdmin && po.status !== "received" && <button className="linknum" onClick={() => openOrderedCostEdit(po)}><Edit /> Edit order</button>}</div>
                   <div><span>Line total</span><b>{fmtExact(purchaseLineTotalCents(po), cur)}</b></div>
                   {isAdmin && po.status === "received" && <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>}
@@ -15322,7 +15370,7 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
                 <table className="tbl"><thead><tr><th>Product</th><th>Supplier</th><th>Branch</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Unit cost</th><th style={{ textAlign: "right" }}>Line total</th><th>Status</th>{isAdmin && <th />}</tr></thead>
                   <tbody>{items.map((po) => (<tr key={po.id}>
                     <td>{po.productName}</td><td>{po.supplierName}</td><td>{data.branches.find((b) => b.id === po.branchId)?.name || "—"}</td>
-                    <td style={{ textAlign: "right" }}>{po.qty}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
+                    <td style={{ textAlign: "right" }}>{po.qty}{Number(po.externalBorrowedOffsetQty || 0) > 0 && <div className="mt2">Borrowed settled: {po.externalBorrowedOffsetQty} · Stock added: {po.inventoryQty}</div>}{po.orderCostEdits?.length > 0 && po.status !== "received" && <div className="mt2">Edited by {po.orderCostEdits.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseUnitCostCents(po), cur, 6)}{po.costCorrections?.length > 0 && <div className="mt2">Corrected by {po.costCorrections.at(-1).actorName}</div>}</td><td style={{ textAlign: "right" }}>{fmtExact(purchaseLineTotalCents(po), cur)}</td>
                     <td>{po.status === "received" ? <span className="ist paid">received</span> : po.status === "reversed" ? <span className="ist reversed">reversed</span> : <button className="btn xs btn-primary" onClick={() => receive(po)}><Check /> Receive</button>}</td>
                     {isAdmin && <td>{po.status === "received"
                       ? <button className="btn xs btn-ghost" onClick={() => openCostCorrection(po)}><Edit /> Correct cost</button>
@@ -16723,6 +16771,7 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
         qty: line.qty, costCents: line.costCents, lineTotalCents: line.qty * line.costCents,
         status: "received", branchId: receiptBranchId, date: todayStr(), ts: receivedAt, updatedAt: receivedAt, receivedAt,
         source: "external_stock_borrowing", externalShopName: supplier.name, externalContact: receiptContact.trim(),
+        externalBorrowedOutstandingQty: line.qty, externalBorrowedSettledQty: 0, externalBorrowedStatus: "open",
         receivedBy: actor?.name || actor?.email || "Management", synced: true,
       };
       const nextProduct = { ...withBranchProductCostForKey(products, product, receiptBranchId, newCostCents), updatedAt: receivedAt, synced: true };
