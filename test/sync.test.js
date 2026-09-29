@@ -661,6 +661,20 @@ test("3. pulls from device B via /api/sync/pull and receives the invoice", async
     });
 });
 
+test("3a. a cloud snapshot returns the complete authorised branch baseline in one response", async () => {
+  await request(app)
+    .get("/api/sync/snapshot")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      assert.ok(Number(res.body.cursor) > 0);
+      const invoice = res.body.events.find((event) => event.id === "inv-001");
+      assert.ok(invoice);
+      assert.equal(invoice.type, "invoice");
+      assert.equal(invoice.payload.number, state.assignedInvoiceNumber);
+    });
+});
+
 test("4. pushing the same event again is idempotent with no duplicate", async () => {
   await request(app)
     .post("/api/sync/push")

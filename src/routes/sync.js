@@ -2521,6 +2521,76 @@ function attachCanonicalTransferNumber(event, transferNumbers) {
   };
 }
 
+function visibleSyncRows(req, rows = []) {
+  const branchScopeId = req.deviceBranchId || req.syncBranchId || null;
+  const branchScopedSharedRecordTypes = new Set(["product", "expenseCategory"]);
+  return rows
+    .filter((event) => !["cashierJointDebt", "cashierJointDebtReview", "cashierJointDebtPayment"].includes(event.type)
+      || !req.deviceBranchId
+      || event.branchId === req.deviceBranchId)
+    .filter((event) => !branchScopeId
+      || event.branchId === branchScopeId
+      || (!event.branchId && branchScopedSharedRecordTypes.has(event.type)))
+    // Older supervisor clients stored their close as `day_closed`. The
+    // admin UI consumes the canonical `endOfDay` stream type, so normalize
+    // historical rows on read instead of leaving them invisible forever.
+    .map((event) => ({ ...event, type: normalizeType(event.type) }));
+}
+
+async function readSyncRows({ since = 0, through = null, limit = null } = {}) {
+  const predicate = through == null ? "server_ts > $1" : "server_ts > $1 AND server_ts <= $2";
+  const values = through == null ? [since] : [since, through];
+  const limitSql = limit == null ? "" : ` LIMIT $${values.length + 1}`;
+  if (limit != null) values.push(limit);
+  const [evs, recs] = await Promise.all([
+    q(
+      isMySql
+        ? `SELECT e.id, e.type, e.branch_id AS branchId, e.device_id AS deviceId,
+                  e.client_ts AS clientTs, e.server_ts AS serverTs, e.payload
+             FROM events e
+            WHERE ${predicate}
+            ORDER BY e.server_ts ASC, e.id ASC${limitSql}`
+        : `SELECT e.id, e.type, e.branch_id AS "branchId", e.device_id AS "deviceId",
+                  e.client_ts AS "clientTs", e.server_ts AS "serverTs", e.payload
+             FROM events e
+            WHERE ${predicate}
+            ORDER BY e.server_ts ASC, e.id ASC${limitSql}`,
+      values
+    ),
+    q(
+      isMySql
+        ? `SELECT id, type, branch_id AS branchId, device_id AS deviceId,
+                  updated_at AS updatedAt, server_ts AS serverTs, deleted, payload
+             FROM records
+            WHERE ${predicate}
+            ORDER BY server_ts ASC, type ASC, id ASC${limitSql}`
+        : `SELECT id, type, branch_id AS "branchId", device_id AS "deviceId",
+                  updated_at AS "updatedAt", server_ts AS "serverTs", deleted, payload
+             FROM records
+            WHERE ${predicate}
+            ORDER BY "serverTs" ASC, type ASC, id ASC${limitSql}`,
+      values
+    ),
+  ]);
+  return { evs: evs.rows, recs: recs.rows };
+}
+
+router.get("/snapshot", requireSyncRead, async (req, res) => {
+  try {
+    // `serverNow` is a process-wide monotonic cursor. Capturing it before
+    // reading means every later write has a higher cursor and will be picked
+    // up by normal incremental sync, so this response is one coherent cloud
+    // baseline rather than a partially replayed device cache.
+    const cursor = serverNow();
+    const { evs, recs } = await readSyncRows({ through: cursor });
+    const rows = [...evs, ...recs].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
+    res.json({ events: visibleSyncRows(req, rows), cursor, resetEpoch: await operationalResetEpoch() });
+  } catch (error) {
+    console.error("snapshot failed:", error);
+    res.status(500).json({ error: "snapshot_failed" });
+  }
+});
+
 router.get("/pull", requireSyncRead, async (req, res) => {
   const since = Number(req.query.since || 0);
   const limit = Math.min(Number(req.query.limit || 500), 2000);
@@ -2528,55 +2598,12 @@ router.get("/pull", requireSyncRead, async (req, res) => {
   if (!Number.isFinite(limit) || limit < 1) return res.status(400).json({ error: "invalid_limit" });
 
   try {
-    const evs = await q(
-      isMySql
-        ? `SELECT e.id, e.type, e.branch_id AS branchId, e.device_id AS deviceId,
-                  e.client_ts AS clientTs, e.server_ts AS serverTs, e.payload
-             FROM events e
-            WHERE e.server_ts > $1
-            ORDER BY e.server_ts ASC, e.id ASC
-            LIMIT $2`
-        : `SELECT e.id, e.type, e.branch_id AS "branchId", e.device_id AS "deviceId",
-                  e.client_ts AS "clientTs", e.server_ts AS "serverTs", e.payload
-             FROM events e
-            WHERE e.server_ts > $1
-            ORDER BY e.server_ts ASC, e.id ASC
-            LIMIT $2`,
-      [since, limit]
-    );
-    const recs = await q(
-      isMySql
-        ? `SELECT id, type, branch_id AS branchId, device_id AS deviceId,
-                  updated_at AS updatedAt, server_ts AS serverTs, deleted, payload
-             FROM records
-            WHERE server_ts > $1
-            ORDER BY server_ts ASC, type ASC, id ASC
-            LIMIT $2`
-        : `SELECT id, type, branch_id AS "branchId", device_id AS "deviceId",
-                  updated_at AS "updatedAt", server_ts AS "serverTs", deleted, payload
-             FROM records
-            WHERE server_ts > $1
-            ORDER BY server_ts ASC, type ASC, id ASC
-            LIMIT $2`,
-      [since, limit]
-    );
-    const all = [...evs.rows, ...recs.rows].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
+    const { evs, recs } = await readSyncRows({ since, limit });
+    const all = [...evs, ...recs].sort((a, b) => a.serverTs - b.serverTs || String(a.id).localeCompare(String(b.id)));
     const rawPage = all.slice(0, limit);
-    const branchScopeId = req.deviceBranchId || req.syncBranchId || null;
-    const branchScopedSharedRecordTypes = new Set(["product", "expenseCategory"]);
-    const page = rawPage
-      .filter((event) => !["cashierJointDebt", "cashierJointDebtReview", "cashierJointDebtPayment"].includes(event.type)
-        || !req.deviceBranchId
-        || event.branchId === req.deviceBranchId)
-      .filter((event) => !branchScopeId
-        || event.branchId === branchScopeId
-        || (!event.branchId && branchScopedSharedRecordTypes.has(event.type)))
-      // Older supervisor clients stored their close as `day_closed`. The
-      // admin UI consumes the canonical `endOfDay` stream type, so normalize
-      // historical rows on read instead of leaving them invisible forever.
-      .map((event) => ({ ...event, type: normalizeType(event.type) }));
+    const page = visibleSyncRows(req, rawPage);
     const cursor = rawPage.length ? rawPage[rawPage.length - 1].serverTs : since;
-    const hasMore = all.length > limit || evs.rows.length === limit || recs.rows.length === limit;
+    const hasMore = all.length > limit || evs.length === limit || recs.length === limit;
     res.json({ events: page, cursor, hasMore, resetEpoch: await operationalResetEpoch() });
   } catch (error) {
     console.error("pull failed:", error);

@@ -136,6 +136,7 @@ const REALTIME_RECONNECT_MS = 4000;
 // queue only catches up the local read model in small, interruptible slices.
 const SYNC_REQUEST_TIMEOUT_MS = 12 * 1000;
 const SYNC_ADMIN_COMMAND_TIMEOUT_MS = 20 * 1000;
+const SYNC_SNAPSHOT_TIMEOUT_MS = 60 * 1000;
 const SYNC_PUSH_BATCH_SIZE = 24;
 const SYNC_PULL_PAGE_SIZE = 120;
 const SYNC_PULL_PAGES_PER_RUN = 2;
@@ -2596,7 +2597,7 @@ async function runSyncClient(currentData, options = {}) {
       pushErrorText = error?.message || "push_failed";
     }
   }
-  let hasMore = true;
+  let hasMore = !options.skipPull;
   let pulledPages = 0;
   while (hasMore && pulledPages < SYNC_PULL_PAGES_PER_RUN) {
     const pulled = await syncFetch(cfg.apiBaseUrl + "/api/sync/pull?since=" + encodeURIComponent(cursor) + "&limit=" + SYNC_PULL_PAGE_SIZE + "&t=" + Date.now(), { headers, cache: "no-store" });
@@ -2682,6 +2683,61 @@ async function runSyncClient(currentData, options = {}) {
   await saveCursor(cursor);
   if (inventoryRepairPending) await kvSet(INVENTORY_SYNC_REPAIR_KEY, INVENTORY_SYNC_REPAIR_VERSION);
   return { data, status: data._sync, needsFollowUp };
+}
+function cloudSnapshotBase(currentData) {
+  const clean = CLEAN_SETUP();
+  const environmentMode = normalizeEnvironmentMode(currentData?.settings?.environmentMode || clean.settings.environmentMode);
+  // Snapshot records replace every cloud-synchronised collection. Keep only
+  // local presentation preferences that are not operational data.
+  const base = {
+    ...clean,
+    settings: { ...clean.settings, environmentMode },
+    admin: { ...clean.admin, ...(currentData?.admin || {}) },
+    _sync: {},
+  };
+  for (const collection of SYNC_ARRAYS) base[collection] = [];
+  base.branchPricing = {};
+  return base;
+}
+
+async function cloudSnapshotData(currentData, options = {}) {
+  let data = currentData;
+  // Never discard a local operation. Flush the device queue first, then take
+  // the complete cloud baseline only after every accepted change is durable.
+  while (true) {
+    const pushed = await runSyncClient(data, { ...options, skipPull: true });
+    if (pushed.status?.error) return pushed;
+    data = pushed.data;
+    if (!Number(pushed.status?.outboxLength || 0)) break;
+  }
+  const cfg = syncConfig();
+  const branchId = data?.settings?.activeBranchId || data?.branches?.[0]?.id || null;
+  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" }, options.sessionToken || "");
+  const response = await syncFetch(cfg.apiBaseUrl + "/api/sync/snapshot?t=" + Date.now(), { headers, cache: "no-store" }, SYNC_SNAPSHOT_TIMEOUT_MS);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.error ? `snapshot_failed_${response.status}_${body.error}` : "snapshot_failed_" + response.status);
+  const cursor = Number(body.cursor || 0);
+  const resetEpoch = String(body.resetEpoch || "").trim();
+  const rebuilt = mergeSyncEvents(cloudSnapshotBase(data), body.events || []);
+  const snapshot = {
+    ...rebuilt,
+    lastSyncedAt: now(),
+    _sync: {
+      outboxLength: 0,
+      cursor,
+      error: "",
+      cacheWarning: "",
+      repairWarning: "",
+      settingsServerTs: cursor,
+    },
+  };
+  const cached = await saveData(snapshot);
+  if (!cached) {
+    return { data: { ...snapshot, _sync: { ...snapshot._sync, cacheWarning: "offline_cache_unavailable" } }, status: snapshot._sync, needsFollowUp: false };
+  }
+  await saveCursor(cursor);
+  if (resetEpoch) await saveResetEpoch(resetEpoch);
+  return { data: snapshot, status: snapshot._sync, needsFollowUp: false };
 }
 async function syncStreamUrl(branchId = null) {
   const cfg = syncConfig();
@@ -6923,6 +6979,7 @@ export default function VisionPOS() {
   const [terminalLoginAvailable, setTerminalLoginAvailable] = useState(false);
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [syncing, setSyncing] = useState(false);
+  const [restoringWorkspace, setRestoringWorkspace] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [maintenance, setMaintenance] = useState(null);
   const [environmentInfo, setEnvironmentInfo] = useState(null);
@@ -6975,6 +7032,7 @@ export default function VisionPOS() {
       setData(loaded);
       return;
     }
+    let refreshRestoredWorkspace = false;
     if (savedSession?.sessionToken) {
       try {
         const active = await cloudSession(savedSession.sessionToken);
@@ -6990,6 +7048,7 @@ export default function VisionPOS() {
           activeSessionRole = restored.role || restored.kind || "";
           setSession({ ...restored, sessionToken: savedSession.sessionToken });
           setView(savedSession.view === "register" && restored.kind === "cashier" ? "register" : "admin");
+          refreshRestoredWorkspace = true;
         } else {
           activeSessionToken = "";
           activeSessionRole = "";
@@ -7001,7 +7060,19 @@ export default function VisionPOS() {
         await clearSessionState();
       }
     }
+    if (refreshRestoredWorkspace) setRestoringWorkspace(true);
     setData(loaded);
+    if (refreshRestoredWorkspace) {
+      try {
+        const refreshed = await cloudSnapshotData(loaded, { source: "session-restore" });
+        setData(refreshed.data);
+      } catch (_) {
+        // The cached workspace remains available if the connection drops
+        // during login; normal sync will retry once the network is stable.
+      } finally {
+        setRestoringWorkspace(false);
+      }
+    }
   })(); }, []);
   const signInSession = (nextView, emp = null, sessionToken = "") => {
     const signedIn = emp || null;
@@ -7201,16 +7272,41 @@ export default function VisionPOS() {
     if (!navigator.onLine || !dataRef.current) return;
     setSyncing(true);
     try {
-      const recovered = await cloudBootstrapData({ ...dataRef.current, _sync: await syncStatus() }, { forceFullPull: true });
-      const recoveryError = String(recovered?._sync?.error || "");
+      const recovered = await cloudSnapshotData({ ...dataRef.current, _sync: await syncStatus() }, { source: "workspace-recovery" });
+      const recoveryError = String(recovered?.status?.error || "");
       if (session && /(?:pull|push)_failed_(?:401|403)|invalid_or_missing_user_session|session_(?:expired|revoked)/i.test(recoveryError)) {
         signOutSession({ sessionToken: session.sessionToken });
         return;
       }
-      setData(recovered);
+      setData(recovered.data);
+      return recovered.data;
+    } catch (error) {
+      setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
+      return null;
+    } finally {
+      setSyncing(false);
+    }
+  };
+  const syncAllCloudSessions = async () => {
+    if (!navigator.onLine || syncInFlightRef.current || !dataRef.current) return;
+    syncInFlightRef.current = true;
+    setSyncing(true);
+    setMenuOpen(false);
+    try {
+      let result;
+      try {
+        result = await cloudSnapshotData(dataRef.current, { source: "manual-cloud-snapshot" });
+      } catch (firstError) {
+        const transient = /(?:failed to fetch|networkerror|load failed|network request failed|sync_request_timeout|snapshot_failed_(?:408|425|429|5\d\d))/i.test(String(firstError?.message || ""));
+        if (!transient) throw firstError;
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        result = await cloudSnapshotData(dataRef.current, { source: "manual-cloud-snapshot-retry" });
+      }
+      setData(result.data);
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
     } finally {
+      syncInFlightRef.current = false;
       setSyncing(false);
     }
   };
@@ -7364,9 +7460,13 @@ export default function VisionPOS() {
     return (<div className={"vpos auth-root" + themeCls}><style>{css}</style><div className="authstage">
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
       {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignedIn={(emp) => {
+        setRestoringWorkspace(true);
         signInSession("admin", emp || null);
         if (emp?.branchId) selectAdminBranch(emp.branchId);
-        setTimeout(() => recoverCloudData(), 100);
+        setTimeout(async () => {
+          try { await recoverCloudData(); }
+          finally { setRestoringWorkspace(false); }
+        }, 0);
       }} />}
     </div></div>);
   }
@@ -7400,7 +7500,8 @@ export default function VisionPOS() {
               {menuOpen && (<>
                 <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
-                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ forceFullPull: true }); }}>Sync now</button>}</div>
+                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ source: "manual-refresh" }); }}>Refresh</button>}</div>
+                  {view === "admin" && online && <button className="topmenu-row" disabled={syncing} onClick={syncAllCloudSessions}><RefreshCw /><span>{syncing ? "Syncing all cloud data…" : "Sync all cloud data"}</span></button>}
                   <button className="topmenu-row" onClick={() => selectDeviceTheme(deviceTheme === "dark" ? "light" : "dark")}>{deviceTheme === "dark" ? <Sun /> : <Moon />}<span>{deviceTheme === "dark" ? "Light mode" : "Dark mode"}</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
@@ -7417,7 +7518,9 @@ export default function VisionPOS() {
           {view === "register" && (session && cashierBranch
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
-          {view === "admin" && (adminBranch
+          {view === "admin" && (restoringWorkspace
+            ? <CloudDataRecovery title="Loading current workspace" message="Loading the latest complete cloud snapshot before opening your admin workspace." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />
+            : adminBranch
             ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onSyncNow={runSync} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
         </div>
