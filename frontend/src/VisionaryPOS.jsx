@@ -1094,6 +1094,44 @@ function productOnHand(data, product, branchId) {
   if (!ids.length) return onHand(data, product?.id, branchId);
   return ids.reduce((sum, id) => sum + onHand(data, id, branchId), 0);
 }
+function externalLoanOutstandingByProduct(data, branchId) {
+  const loans = new Map();
+  const seenLoans = new Set();
+  for (const loan of data?.externalStockLoans || []) {
+    const loanId = String(loan?.id || "").trim();
+    if (!loanId || seenLoans.has(loanId) || String(loan?.branchId || "") !== String(branchId || "")) continue;
+    seenLoans.add(loanId);
+    loans.set(loanId, loan);
+  }
+  const issued = new Map();
+  const returned = new Map();
+  const add = (map, productId, qty) => map.set(productId, (map.get(productId) || 0) + qty);
+  for (const loan of loans.values()) {
+    for (const line of loan.items || []) {
+      const productId = String(line?.productId || "").trim();
+      const qty = Math.max(0, Number(line?.qty) || 0);
+      if (productId && qty) add(issued, productId, qty);
+    }
+  }
+  const seenReturns = new Set();
+  for (const receipt of data?.externalStockLoanReturns || []) {
+    const returnId = String(receipt?.id || "").trim();
+    const loanId = String(receipt?.externalStockLoanId || receipt?.loanId || "").trim();
+    if (!loanId || !loans.has(loanId) || (returnId && seenReturns.has(returnId))) continue;
+    if (returnId) seenReturns.add(returnId);
+    for (const line of receipt.items || []) {
+      const productId = String(line?.productId || "").trim();
+      const qty = Math.max(0, Number(line?.qty) || 0);
+      if (productId && qty) add(returned, productId, qty);
+    }
+  }
+  const outstanding = new Map();
+  issued.forEach((qty, productId) => {
+    const remaining = Math.max(0, qty - (returned.get(productId) || 0));
+    if (remaining) outstanding.set(productId, remaining);
+  });
+  return outstanding;
+}
 function findProductByBarcode(data, code, branchId, { enabledOnly = false } = {}) {
   const normalized = normalizeBarcode(code);
   if (!normalized) return null;
@@ -3018,6 +3056,29 @@ function branchInventoryCostCents(data, product, branchId) {
 
   return preciseCents(product.costCents);
 }
+function lastBuyingPriceCents(data, product, branchId) {
+  if (!data || !product || !branchId) return 0;
+  const productKey = productDedupeKey(product);
+  const matchingIds = new Set((data.products || [])
+    .filter((candidate) => productDedupeKey(candidate) === productKey)
+    .map((candidate) => String(candidate.id)));
+  const sku = normalizeBarcode(product.sku).toLowerCase();
+  const name = String(product.name || "").trim().toLowerCase();
+  const matches = (purchase) => {
+    if (!purchase) return false;
+    if (matchingIds.has(String(purchase.productId || purchase.id || ""))) return true;
+    const purchaseSku = normalizeBarcode(purchase.sku || purchase.productSku).toLowerCase();
+    if (sku && purchaseSku && sku === purchaseSku) return true;
+    return !!(name && String(purchase.productName || purchase.name || "").trim().toLowerCase() === name);
+  };
+  const latest = (data.purchases || [])
+    .filter((purchase) => purchase.branchId === branchId
+      && matches(purchase)
+      && String(purchase.status || "").toLowerCase() === "received"
+      && Number(purchaseUnitCostCents(purchase)) > 0)
+    .sort((left, right) => Number(right.receivedAt || right.ts || 0) - Number(left.receivedAt || left.ts || 0))[0];
+  return latest ? preciseCents(purchaseUnitCostCents(latest)) : 0;
+}
 function movementUnitCostCents(data, movement, product) {
   const snapshot = Number(movement?.unitCostCents ?? movement?.costCentsAtMovement ?? 0);
   if (Number.isFinite(snapshot) && snapshot >= 0 && (snapshot > 0 || movement?.unitCostCents === 0)) return preciseCents(snapshot);
@@ -3103,9 +3164,11 @@ function stockCountOperator(data) {
 }
 function createStockCountSession(data, branchId, operator) {
   const ts = now();
+  const externalLoanQtyByProduct = externalLoanOutstandingByProduct(data, branchId);
   const items = branchProductsUnique(data, branchId).map((product) => ({
     productId: product.id,
     expectedQty: productOnHand(data, product, branchId),
+    externalLoanQty: externalLoanQtyByProduct.get(product.id) || 0,
     countedQty: null,
     countedAt: null,
     countedBy: "",
@@ -3142,11 +3205,20 @@ function salesSinceStockCount(data, session, productId) {
 function stockCountRows(data, session) {
   if (!session) return [];
   const productsById = new Map((data?.products || []).map((p) => [p.id, p]));
+  const externalLoanQtyByProduct = externalLoanOutstandingByProduct(data, session.branchId);
   return (session.items || []).map((item) => {
     const product = productsById.get(item.productId);
     const expectedQty = Number(item.expectedQty) || 0;
     const countedRaw = item.countedQty === null || item.countedQty === undefined || item.countedQty === "" ? null : Number(item.countedQty);
     const countedQty = Number.isFinite(countedRaw) ? countedRaw : null;
+    const externalLoanQty = externalLoanQtyByProduct.get(item.productId) || 0;
+    // A loan or return can happen after a count starts. The physical count
+    // should reconcile to that live ledger state rather than treating a
+    // legitimate external-loan movement as a staff shortage.
+    const externalLoanQtyAtStart = Number.isInteger(Number(item.externalLoanQty))
+      ? Math.max(0, Number(item.externalLoanQty))
+      : externalLoanQty;
+    const expectedAfterExternalLoans = Math.max(0, expectedQty - (externalLoanQty - externalLoanQtyAtStart));
     const soldSince = salesSinceStockCount(data, session, item.productId);
     const finalQty = countedQty === null ? null : Math.max(0, countedQty - soldSince);
     const liveQty = product ? productOnHand(data, product, session.branchId) : onHand(data, item.productId, session.branchId);
@@ -3154,13 +3226,16 @@ function stockCountRows(data, session) {
       ...item,
       product,
       expectedQty,
+      expectedAfterExternalLoans,
+      externalLoanQty,
+      externalLoanQtyAtStart,
       countedQty,
       soldSince,
       finalQty,
       liveQty,
-      varianceQty: countedQty === null ? null : countedQty - expectedQty,
+      varianceQty: countedQty === null ? null : countedQty - expectedAfterExternalLoans,
       commitDelta: finalQty === null ? 0 : finalQty - liveQty,
-      valueImpact: countedQty === null ? 0 : (countedQty - expectedQty) * branchInventoryCostCents(data, product, session.branchId),
+      valueImpact: countedQty === null ? 0 : (countedQty - expectedAfterExternalLoans) * branchInventoryCostCents(data, product, session.branchId),
     };
   }).filter((row) => row.product);
 }
@@ -12879,6 +12954,12 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
   const session = activeStockCountSession(data, bId);
   const operator = stockCountOperator(data);
   const rows = stockCountRows(data, session);
+  const externalLoanQtyByProduct = useMemo(
+    () => externalLoanOutstandingByProduct(data, bId),
+    [data.externalStockLoans, data.externalStockLoanReturns, bId]
+  );
+  const externalLoanUnits = [...externalLoanQtyByProduct.values()].reduce((sum, qty) => sum + qty, 0);
+  const externalLoanProducts = externalLoanQtyByProduct.size;
   const progress = stockCountProgress(session);
   const uniqueProducts = branchProductsUnique(data, bId);
   const templateProducts = sortProductsAZ(uniqueProducts.filter((product) => productIsEnabled(product) || productOnHand(data, product, bId) > 0));
@@ -13019,6 +13100,9 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
       reason: "Stock count " + session.code,
       stockCountSessionId: session.id,
       expectedQty: row.expectedQty,
+      expectedAfterExternalLoans: row.expectedAfterExternalLoans,
+      externalLoanQty: row.externalLoanQty,
+      externalLoanQtyAtStart: row.externalLoanQtyAtStart,
       previousQty: row.liveQty,
       countedQty: row.countedQty,
       soldSince: row.soldSince,
@@ -13034,7 +13118,13 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
       qty: row.countedQty,
       mode: "count",
       stockCountSessionId: session.id,
-      system: row.expectedQty,
+      system: row.expectedAfterExternalLoans,
+      snapshotSystem: row.expectedQty,
+      externalLoanQty: row.externalLoanQty || 0,
+      externalLoanQtyAtStart: row.externalLoanQtyAtStart || 0,
+      expectedAfterExternalLoans: row.expectedAfterExternalLoans,
+      externalLoanQty: row.externalLoanQty,
+      externalLoanQtyAtStart: row.externalLoanQtyAtStart,
       counted: row.countedQty,
       soldSince: row.soldSince,
       finalQty: row.finalQty,
@@ -13493,10 +13583,11 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
         <button className="btn sm btn-ghost" onClick={openStockTemplate}><Download /> Stock template</button>
       </div>
       {scanMsg && <div className="notice" style={{ marginBottom: 12 }}>{scanMsg} <button className="linknum" onClick={() => setScanMsg("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
-      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
+      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", marginBottom: 16 }}>
         <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Total products</div><div className="cv">{totalProducts}</div></div></div>
         <div className="ctile"><div className="ic"><Package /></div><div><div className="cl">Live units</div><div className="cv">{totalUnits}</div></div></div>
         <div className="ctile"><div className="ic"><Wallet /></div><div><div className="cl">Stock value</div><div className="cv">{fmt(stockValue, cur)}</div></div></div>
+        <div className="ctile"><div className="ic"><ArrowLeftRight /></div><div><div className="cl">With outside shops</div><div className="cv">{externalLoanUnits}</div><div className="cs">{externalLoanProducts} product{externalLoanProducts === 1 ? "" : "s"}</div></div></div>
         <div className={"ctile" + (lossValue > 0 ? " warn" : "")}><div className="ic"><TrendingDown /></div><div><div className="cl">Loss &amp; damage</div><div className="cv">{fmt(lossValue, cur)}</div><div className="cs">{lossList.length} write-off{lossList.length === 1 ? "" : "s"}</div></div></div>
       </div>
 
@@ -13564,27 +13655,30 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
             <div className="stat"><div className="sl">Progress</div><div className="sv">{progress.counted}/{progress.total}</div></div>
             <div className="stat"><div className="sl">Variances</div><div className={"sv" + (varianceRows.length ? " warn" : "")}>{varianceRows.length}</div></div>
             <div className="stat"><div className="sl">Sales during count</div><div className={"sv" + (salesDuringCount ? " warn" : "")}>{salesDuringCount}</div></div>
+            <div className="stat"><div className="sl">With outside shops</div><div className="sv">{externalLoanUnits}</div></div>
             <div className="stat"><div className="sl">Value impact</div><div className="sv">{fmt(rows.reduce((s, row) => s + row.valueImpact, 0), cur)}</div></div>
           </div>
           <div style={{ height: 8, borderRadius: 99, background: "var(--line)", overflow: "hidden", marginBottom: 12 }}><div style={{ width: progress.percent + "%", height: "100%", background: "var(--accent)" }} /></div>
           {salesDuringCount > 0 && <div className="notice" style={{ marginBottom: 12 }}>Sales happened after the snapshot. Commit will reconcile final stock as counted minus sold since start.</div>}
+          {externalLoanUnits > 0 && <div className="notice" style={{ marginBottom: 12 }}><ArrowLeftRight /> {externalLoanUnits} unit{externalLoanUnits === 1 ? " is" : "s are"} currently with outside shops. They are shown below and already excluded from physical branch stock; do not count them as a cashier shortage.</div>}
           <div className="cfilter">
             {[["all", "All"], ["uncounted", "Uncounted"], ["counted", "Counted"], ["variance", "Variances"]].map(([k, l]) => <button key={k} className={"seg" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{l}</button>)}
             <span className="cfilthint">{visibleRows.length} shown</span>
           </div>
           <div className="tablewrap tblscroll" style={{ marginTop: 12 }}>
-            <table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Value</th><th>Final</th></tr></thead>
+            <table className="tbl"><thead><tr><th>Product</th><th>Expected</th><th>With shops</th><th>Counted</th><th>Variance</th><th>Value</th><th>Final</th></tr></thead>
               <tbody>{visibleRows.map((row) => (
                 <tr key={row.productId} className={row.countedQty !== null ? "rowsel" : ""}>
                   <td><div className="nm">{row.product.name}</div><div className="mt2">{row.product.sku} / {row.product.size}</div></td>
                   <td style={{ fontWeight: 700 }}>{row.expectedQty}</td>
+                  <td style={{ fontWeight: 700, color: row.externalLoanQty ? "var(--accent)" : "var(--muted-2)" }}>{row.externalLoanQty || "-"}</td>
                   <td><input ref={(node) => { if (node) countInputRefs.current.set(row.productId, node); else countInputRefs.current.delete(row.productId); }} className="input" disabled={session.status !== "open"} style={{ width: 92, height: 38, fontFamily: "var(--font-mono)" }} inputMode="numeric" placeholder="Count" value={row.countedQty ?? ""} onChange={(e) => setCount(row.productId, e.target.value)} /></td>
                   <td style={{ fontWeight: 700, color: row.varianceQty < 0 ? "var(--danger)" : row.varianceQty > 0 ? "var(--ok)" : "var(--muted-2)" }}>{row.countedQty === null ? "-" : (row.varianceQty > 0 ? "+" : "") + row.varianceQty}</td>
                   <td className="amt">{fmt(row.valueImpact, cur)}</td>
                   <td><div className="nm">{row.finalQty === null ? "-" : row.finalQty}</div>{row.soldSince > 0 && <div className="mt2">{row.soldSince} sold after snapshot</div>}</td>
                 </tr>
               ))}
-              {visibleRows.length === 0 && <tr><td colSpan="6"><div className="notice">No products match.</div></td></tr>}</tbody></table>
+              {visibleRows.length === 0 && <tr><td colSpan="7"><div className="notice">No products match.</div></td></tr>}</tbody></table>
           </div>
         </div>
       )}
@@ -13789,6 +13883,11 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
   const lockedSession = activeStockCountSession(data, bId);
   const draft = activeQuickInventoryDraft(data.stockCountSessions, bId);
   const counts = quickInventoryDraftCounts(draft);
+  const draftItemsByProduct = new Map((draft?.items || []).map((item) => [item.productId, item]));
+  const externalLoanQtyByProduct = useMemo(
+    () => externalLoanOutstandingByProduct(data, bId),
+    [data.externalStockLoans, data.externalStockLoanReturns, bId]
+  );
   const products = sortProductsAZ(branchProductsUnique(data, bId));
   const term = q.trim().toLowerCase();
   const matches = term ? products.filter((p) => (
@@ -13804,19 +13903,21 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
   const selectedRows = selectedProducts.map((product) => {
     const current = productOnHand(data, product, bId);
     const counted = Number(counts[product.id]);
-    return { product, current, counted, variance: counted - current };
+    const item = draftItemsByProduct.get(product.id) || {};
+    return { product, current, counted, externalLoanQty: externalLoanQtyByProduct.get(product.id) || 0, externalLoanQtyAtStart: Math.max(0, Number(item.externalLoanQty) || 0), variance: counted - current };
   });
   const currentUnits = selectedRows.reduce((sum, row) => sum + row.current, 0);
   const countedUnits = selectedRows.reduce((sum, row) => sum + row.counted, 0);
   const varianceUnits = selectedRows.reduce((sum, row) => sum + row.variance, 0);
   const adjustmentCount = selectedRows.filter((row) => row.variance !== 0).length;
+  const externalLoanUnits = [...externalLoanQtyByProduct.values()].reduce((sum, qty) => sum + qty, 0);
 
   const persistDraftCount = (productId, countedQty) => update((d) => {
     const sessions = d.stockCountSessions || [];
     const existing = activeQuickInventoryDraft(sessions, bId);
     const base = existing || createQuickInventoryDraft({ id: uid("qid"), branchId: bId, operator, timestamp: now() });
     const product = products.find((entry) => entry.id === productId);
-    const next = updateQuickInventoryDraftCount(base, productId, countedQty, operator, now(), product ? productOnHand(data, product, bId) : 0);
+    const next = updateQuickInventoryDraftCount(base, productId, countedQty, operator, now(), product ? productOnHand(data, product, bId) : 0, externalLoanQtyByProduct.get(productId) || 0);
     return {
       ...d,
       stockCountSessions: existing
@@ -13947,6 +14048,8 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
         quickInventoryId,
         quickInventoryCode: quickInventoryBatch.code,
         expectedQty: row.current,
+        externalLoanQty: row.externalLoanQty,
+        externalLoanQtyAtStart: row.externalLoanQtyAtStart,
         countedQty: row.counted,
         previousQty: row.current,
         correctedQty: row.counted,
@@ -13961,6 +14064,8 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
         mode: "quick_count",
         stockCountSessionId: quickInventoryId,
         system: row.current,
+        externalLoanQty: row.externalLoanQty,
+        externalLoanQtyAtStart: row.externalLoanQtyAtStart,
         counted: row.counted,
         variance: row.variance,
         kind: "quick",
@@ -13982,6 +14087,8 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
           productId: row.product.id,
           productName: row.product.name,
           expectedQty: row.current,
+          externalLoanQty: row.externalLoanQty,
+          externalLoanQtyAtStart: row.externalLoanQtyAtStart,
           countedQty: row.counted,
           varianceQty: row.variance,
           countedBy: operator,
@@ -13996,7 +14103,7 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
         id: quickInventoryId,
         code: quickInventoryBatch.code,
         status: "open",
-        items: selectedRows.map((row) => ({ productId: row.product.id, productName: row.product.name, expectedQty: row.current, countedQty: row.counted, countedBy: operator, countedAt: ts })),
+        items: selectedRows.map((row) => ({ productId: row.product.id, productName: row.product.name, expectedQty: row.current, externalLoanQty: row.externalLoanQty, externalLoanQtyAtStart: row.externalLoanQtyAtStart, countedQty: row.counted, countedBy: operator, countedAt: ts })),
         updatedAt: ts - 2,
       };
       const syncedAdjustments = adjustments.map((movement) => ({ ...movement, synced: true }));
@@ -14066,10 +14173,11 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
       )}
       {message && <div className="notice" style={{ marginBottom: 14 }}>{message} <button className="linknum" onClick={() => setMessage("")} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
-      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(4,1fr)", marginBottom: 16 }}>
+      <div className="cashtiles" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", marginBottom: 16 }}>
         <div className="ctile"><div className="ic"><ClipboardCheck /></div><div><div className="cl">Selected products</div><div className="cv">{selectedRows.length}</div></div></div>
         <div className="ctile"><div className="ic"><Package /></div><div><div className="cl">Current units</div><div className="cv">{currentUnits}</div></div></div>
         <div className="ctile"><div className="ic"><Boxes /></div><div><div className="cl">Counted units</div><div className="cv">{countedUnits}</div></div></div>
+        <div className="ctile"><div className="ic"><ArrowLeftRight /></div><div><div className="cl">With outside shops</div><div className="cv">{externalLoanUnits}</div></div></div>
         <div className={"ctile" + (varianceUnits !== 0 ? " warn" : "")}><div className="ic"><TrendingDown /></div><div><div className="cl">Net difference</div><div className="cv">{varianceUnits > 0 ? "+" : ""}{varianceUnits}</div><div className="cs">{adjustmentCount} adjustment{adjustmentCount === 1 ? "" : "s"}</div></div></div>
       </div>
 
@@ -14078,19 +14186,22 @@ function QuickInventoryTab({ data, update, branch, initialBranchId, onSyncNow, o
           <div><div className="title" style={{ fontSize: 18 }}>Selected product counts</div><div className="sub">Search to find a product, then enter the physical quantity on hand.</div></div>
           <button className="btn sm btn-primary" disabled={!!lockedSession || !selectedRows.length} onClick={applyCounts}><Check /> Apply selected counts</button>
         </div>
+        {externalLoanUnits > 0 && <div className="notice" style={{ margin: "0 18px 12px" }}><ArrowLeftRight /> Products with outside shops are shown separately below and are not counted as cashier shortages.</div>}
         <div className="tablewrap">
           <table className="table">
-            <thead><tr><th>Product</th><th>Current</th><th style={{ width: 170 }}>Physical count</th><th>Difference</th><th style={{ width: 70 }}></th></tr></thead>
+            <thead><tr><th>Product</th><th>Current</th><th>With shops</th><th style={{ width: 170 }}>Physical count</th><th>Difference</th><th style={{ width: 70 }}></th></tr></thead>
             <tbody>
-              {!displayedProducts.length && <tr><td colSpan="5"><div className="empty"><Search /><b>{term ? "No matching products" : "Search or scan a product to begin"}</b><span>Quick inventory changes only the products you count.</span></div></td></tr>}
+              {!displayedProducts.length && <tr><td colSpan="6"><div className="empty"><Search /><b>{term ? "No matching products" : "Search or scan a product to begin"}</b><span>Quick inventory changes only the products you count.</span></div></td></tr>}
               {displayedProducts.map((p) => {
                 const selected = Object.prototype.hasOwnProperty.call(counts, p.id);
                 const current = productOnHand(data, p, bId);
                 const counted = selected ? Number(counts[p.id]) : null;
                 const difference = selected ? counted - current : null;
+                const externalLoanQty = externalLoanQtyByProduct.get(p.id) || 0;
                 return <tr key={p.id}>
                   <td><div className="prodname"><b>{p.name}</b><span>{p.sku}{p.size ? " - " + p.size : ""}</span></div></td>
                   <td><b>{current}</b></td>
+                  <td><b style={{ color: externalLoanQty ? "var(--accent)" : "var(--muted-2)" }}>{externalLoanQty || "-"}</b></td>
                   <td><input ref={(node) => { if (node) countInputRefs.current.set(p.id, node); else countInputRefs.current.delete(p.id); }} className="input" style={{ height: 40, width: 130 }} inputMode="numeric" placeholder="Count" value={selected ? counts[p.id] : ""} disabled={!!lockedSession} onChange={(e) => setCount(p.id, e.target.value)} /></td>
                   <td><b className={difference === null ? "" : difference < 0 ? "bad" : difference > 0 ? "good" : ""}>{difference === null ? "-" : (difference > 0 ? "+" : "") + difference}</b></td>
                   <td>{selected && <button className="iconbtn" title="Remove from quick inventory" onClick={() => clearSelection(p.id)}><Trash2 /></button>}</td>
@@ -16365,7 +16476,8 @@ function BorrowingTab({ data, update, approver, approverRole }) {
 function ExternalStockLoansTab({ data, update, branch, actor }) {
   const [branchId, setBranchId] = useState(branch.id);
   const [borrowerName, setBorrowerName] = useState("");
-  const [borrowerPhone, setBorrowerPhone] = useState("");
+  const [borrowerContact, setBorrowerContact] = useState("");
+  const [savedBorrowerId, setSavedBorrowerId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [search, setSearch] = useState("");
@@ -16373,13 +16485,28 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const [qty, setQty] = useState("");
   const [lines, setLines] = useState([]);
   const [filter, setFilter] = useState("open");
+  const [ledgerBranchId, setLedgerBranchId] = useState(branch.id);
+  const [ledgerDateFrom, setLedgerDateFrom] = useState("");
+  const [ledgerDateTo, setLedgerDateTo] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [returnLoan, setReturnLoan] = useState(null);
   const [returnQty, setReturnQty] = useState({});
   const [returnNotes, setReturnNotes] = useState("");
+  const [receiptBranchId, setReceiptBranchId] = useState(branch.id);
+  const [receiptSupplierName, setReceiptSupplierName] = useState("");
+  const [receiptContact, setReceiptContact] = useState("");
+  const [receiptDueDate, setReceiptDueDate] = useState("");
+  const [receiptSearch, setReceiptSearch] = useState("");
+  const [receiptProductId, setReceiptProductId] = useState("");
+  const [receiptQty, setReceiptQty] = useState("");
+  const [receiptLines, setReceiptLines] = useState([]);
+  const [receiptError, setReceiptError] = useState("");
+  const [receiptNotice, setReceiptNotice] = useState("");
+  const [receiptSaving, setReceiptSaving] = useState(false);
   const branchName = data.branches.find((entry) => entry.id === branchId)?.name || "Branch";
+  const ledgerBranchName = ledgerBranchId ? (data.branches.find((entry) => entry.id === ledgerBranchId)?.name || "Branch") : "All branches";
   const availableProducts = branchProductsUnique(data, branchId).filter(productIsEnabled);
   const selectedProduct = availableProducts.find((entry) => entry.id === productId);
   const productMatches = search.trim() && !selectedProduct
@@ -16399,14 +16526,54 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     });
     return grouped;
   }, [data.externalStockLoanReturns]);
-  const ledger = useMemo(() => (data.externalStockLoans || []).map((loan) => {
+  const allBranchLoans = useMemo(() => (data.externalStockLoans || []).map((loan) => {
     const returned = returnsByLoan.get(loan.id) || new Map();
     const openItems = (loan.items || []).map((line) => ({ ...line, returnedQty: returned.get(String(line.productId)) || 0, outstandingQty: Math.max(0, Number(line.qty || 0) - (returned.get(String(line.productId)) || 0)) }));
     const outstandingQty = openItems.reduce((sum, line) => sum + line.outstandingQty, 0);
     const dueAt = Number(loan.dueAt || 0);
     const overdue = outstandingQty > 0 && dueAt > 0 && dueAt < Date.now();
     return { ...loan, openItems, outstandingQty, overdue, status: outstandingQty === 0 ? "returned" : overdue ? "overdue" : "open" };
-  }).filter((loan) => loan.branchId === branchId).filter((loan) => filter === "all" || loan.status === filter).sort((a, b) => Number(b.issuedAt || b.ts || 0) - Number(a.issuedAt || a.ts || 0)), [data.externalStockLoans, returnsByLoan, branchId, filter]);
+  }).sort((a, b) => Number(b.issuedAt || b.ts || 0) - Number(a.issuedAt || a.ts || 0)), [data.externalStockLoans, returnsByLoan]);
+  const ledgerFromTs = ledgerDateFrom ? new Date(`${ledgerDateFrom}T00:00:00`).getTime() : -Infinity;
+  const ledgerToTs = ledgerDateTo ? new Date(`${ledgerDateTo}T23:59:59.999`).getTime() : Infinity;
+  const ledger = allBranchLoans.filter((loan) => {
+    const issuedAt = Number(loan.issuedAt || loan.ts || 0);
+    return (!ledgerBranchId || loan.branchId === ledgerBranchId)
+      && (filter === "all" || loan.status === filter)
+      && issuedAt >= ledgerFromTs && issuedAt <= ledgerToTs;
+  });
+  const pendingLoanCount = allBranchLoans.filter((loan) => (!ledgerBranchId || loan.branchId === ledgerBranchId) && loan.outstandingQty > 0).length;
+  const savedBorrowers = useMemo(() => {
+    const borrowers = new Map();
+    allBranchLoans.forEach((loan) => {
+      if (loan.branchId !== branchId) return;
+      const name = String(loan.borrowerName || "").trim();
+      if (!name) return;
+      const id = name.toLocaleLowerCase();
+      const existing = borrowers.get(id);
+      if (!existing || Number(loan.issuedAt || loan.ts || 0) > Number(existing.lastUsedAt || 0)) {
+        borrowers.set(id, { id, name, contact: String(loan.borrowerContact || loan.borrowerPhone || "").trim(), lastUsedAt: Number(loan.issuedAt || loan.ts || 0) });
+      }
+    });
+    return Array.from(borrowers.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }, [allBranchLoans, branchId]);
+  const receiptProducts = branchProductsUnique(data, receiptBranchId).filter(productIsEnabled);
+  const receiptProduct = receiptProducts.find((entry) => entry.id === receiptProductId);
+  const receiptMatches = receiptSearch.trim() && !receiptProduct
+    ? sortProductsAZ(receiptProducts.filter((entry) => entry.name.toLowerCase().includes(receiptSearch.trim().toLowerCase()) || entry.sku.toLowerCase().includes(receiptSearch.trim().toLowerCase()))).slice(0, 7)
+    : [];
+  const savedExternalSuppliers = useMemo(() => {
+    const suppliers = new Map();
+    const remember = (name, contact) => {
+      const cleanName = String(name || "").trim();
+      if (!cleanName) return;
+      const id = cleanName.toLocaleLowerCase();
+      if (!suppliers.has(id)) suppliers.set(id, { id, name: cleanName, contact: String(contact || "").trim() });
+    };
+    (data.suppliers || []).filter((supplier) => supplier.externalStockBorrowing === true).forEach((supplier) => remember(supplier.name, supplier.contact || supplier.phone));
+    (data.purchases || []).filter((purchase) => purchase.source === "external_stock_borrowing").forEach((purchase) => remember(purchase.supplierName, purchase.externalContact));
+    return Array.from(suppliers.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }, [data.suppliers, data.purchases]);
 
   const addLine = () => {
     setError("");
@@ -16429,13 +16596,13 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     if (!lines.length) return setError("Add at least one product to this loan.");
     const loanId = uid("external-loan");
     const issuedAt = now();
-    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerPhone: borrowerPhone.trim(), dueAt: dueDate ? new Date(`${dueDate}T23:59:59`).getTime() : null, notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
+    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerContact: borrowerContact.trim(), dueAt: dueDate ? new Date(`${dueDate}T23:59:59`).getTime() : null, notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
     const movements = lines.map((line) => ({ id: `external-loan-issue:${loanId}:${line.productId}`, productId: line.productId, branchId, qty: -line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: loanId, borrowerName: record.borrowerName, mode: "external_loan_issue", reason: `External loan to ${record.borrowerName}`, ts: issuedAt, synced: true }));
     setSaving(true);
     try {
       await publishSyncEvents([eventFromRecord("externalStockLoans", record, data)], data, { management: true });
       update((current) => ({ ...current, externalStockLoans: [...(current.externalStockLoans || []), record], stockMovements: [...(current.stockMovements || []), ...movements] }), { skipSync: true });
-      setBorrowerName(""); setBorrowerPhone(""); setDueDate(""); setNotes(""); setLines([]);
+      setBorrowerName(""); setBorrowerContact(""); setSavedBorrowerId(""); setDueDate(""); setNotes(""); setLines([]);
       setNotice("External stock loan recorded. The issued quantities have been removed from available stock.");
     } catch (requestError) {
       setError("The loan was not saved. Refresh the cloud data and try again.");
@@ -16463,18 +16630,113 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
       setError("The return was not saved. Refresh the cloud data and try again.");
     } finally { setSaving(false); }
   };
+  const addReceiptLine = () => {
+    setReceiptError("");
+    const units = Number(receiptQty);
+    if (!receiptProduct) return setReceiptError("Choose a product to receive.");
+    if (!Number.isInteger(units) || units <= 0) return setReceiptError("Enter a whole quantity greater than zero.");
+    const unitCostCents = lastBuyingPriceCents(data, receiptProduct, receiptBranchId);
+    if (unitCostCents <= 0) return setReceiptError(`${receiptProduct.name} has no prior buying price in this branch. Record a normal purchase price first.`);
+    setReceiptLines((current) => {
+      const existing = current.find((line) => line.productId === receiptProduct.id);
+      return existing
+        ? current.map((line) => line.productId === receiptProduct.id ? { ...line, qty: line.qty + units } : line)
+        : [...current, { productId: receiptProduct.id, productName: receiptProduct.name, sku: receiptProduct.sku, qty: units, costCents: unitCostCents }];
+    });
+    setReceiptSearch(""); setReceiptProductId(""); setReceiptQty("");
+  };
+  const receiveBorrowedStock = async () => {
+    setReceiptError(""); setReceiptNotice("");
+    const supplierName = receiptSupplierName.trim();
+    if (!supplierName) return setReceiptError("Enter the outside shop name.");
+    if (!receiptLines.length) return setReceiptError("Add at least one product to receive.");
+    const receivedAt = now();
+    const existingSupplier = (data.suppliers || []).find((supplier) => String(supplier.name || "").trim().toLocaleLowerCase() === supplierName.toLocaleLowerCase());
+    const supplier = existingSupplier || {
+      id: uid("sup"), name: supplierName, contact: receiptContact.trim(), phone: receiptContact.trim(),
+      externalStockBorrowing: true, createdAt: receivedAt, updatedAt: receivedAt, synced: true,
+    };
+    const batchId = uid("pb");
+    const batchNo = nextPurchaseOrderNumber(data.purchases);
+    let products = [...data.products];
+    const purchases = [];
+    const movements = [];
+    const productUpdates = [];
+    const onHandByProduct = {};
+    for (const line of receiptLines) {
+      const productIndex = products.findIndex((product) => product.id === line.productId);
+      const product = products[productIndex];
+      if (!product) return setReceiptError(`${line.productName} is no longer available. Refresh the page and try again.`);
+      const stockKey = `${receiptBranchId}:${line.productId}`;
+      const currentOnHand = onHandByProduct[stockKey] ?? productOnHand(data, product, receiptBranchId);
+      const previousCostCents = branchInventoryCostCents({ ...data, products }, product, receiptBranchId);
+      const newCostCents = wacCost(currentOnHand, previousCostCents || line.costCents, line.qty, line.costCents);
+      const purchase = {
+        id: uid("po"), batchId, batchNo, supplierId: supplier.id, supplierName: supplier.name,
+        productId: line.productId, productName: line.productName, sku: line.sku,
+        qty: line.qty, costCents: line.costCents, lineTotalCents: line.qty * line.costCents,
+        status: "received", branchId: receiptBranchId, date: todayStr(), ts: receivedAt, updatedAt: receivedAt, receivedAt,
+        source: "external_stock_borrowing", externalShopName: supplier.name, externalContact: receiptContact.trim(),
+        expectedReturnAt: receiptDueDate ? new Date(`${receiptDueDate}T23:59:59`).getTime() : null,
+        receivedBy: actor?.name || actor?.email || "Management", synced: true,
+      };
+      const nextProduct = { ...withBranchProductCostForKey(products, product, receiptBranchId, newCostCents), updatedAt: receivedAt, synced: true };
+      products[productIndex] = nextProduct;
+      productUpdates.push(nextProduct);
+      onHandByProduct[stockKey] = currentOnHand + line.qty;
+      purchases.push(purchase);
+      movements.push({
+        id: uid("mv"), purchaseId: purchase.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo,
+        productId: line.productId, branchId: receiptBranchId, qty: line.qty, costCents: line.costCents,
+        previousCostCents, valueCents: line.qty * line.costCents, source: "external_stock_borrowing",
+        externalShopName: supplier.name, expectedReturnAt: purchase.expectedReturnAt,
+        reason: `External borrowed stock from ${supplier.name}`, ts: receivedAt, synced: true,
+      });
+    }
+    const events = [
+      ...(!existingSupplier ? [eventFromRecord("suppliers", supplier, data)] : []),
+      ...purchases.map((purchase) => eventFromRecord("purchases", purchase, data)),
+      ...movements.map((movement) => eventFromRecord("stockMovements", movement, data)),
+      ...productUpdates.map((product) => eventFromRecord("products", product, data)),
+    ].filter(Boolean);
+    setReceiptSaving(true);
+    try {
+      await publishSyncEvents(events, data, { management: true });
+      update((current) => ({
+        ...current,
+        suppliers: existingSupplier ? current.suppliers : [...(current.suppliers || []), supplier],
+        purchases: [...purchases, ...(current.purchases || [])],
+        stockMovements: [...(current.stockMovements || []), ...movements],
+        products: current.products.map((product) => productUpdates.find((entry) => entry.id === product.id) || product),
+      }), { skipSync: true });
+      setReceiptSupplierName(""); setReceiptContact(""); setReceiptDueDate(""); setReceiptLines([]);
+      setReceiptNotice(`Borrowed stock was received as purchase ${batchNo}. It used each product's last buying price.`);
+    } catch (requestError) {
+      setReceiptError("The borrowed-stock purchase was not saved. Refresh cloud data and try again.");
+    } finally { setReceiptSaving(false); }
+  };
 
   return <div className="fade">
-    <PageHead title="External stock loans" sub="Auditable products lent to outside shops. Loans never become sales or cashier debt." />
-    <div className="tabbar" role="tablist" style={{ marginBottom: 14 }}>
-      {[['open', 'Open'], ['overdue', 'Overdue'], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
-    </div>
+    <PageHead title="External shop stock" sub="Auditable stock lent to, or borrowed from, outside shops. It never becomes sales or cashier debt." />
+    <section className="panel" style={{ padding: 14, marginBottom: 14 }}>
+      <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 17 }}>Loan ledger filters</div><div className="sub">Review pending, overdue, returned, or all outside-shop stock loans.</div></div>{(filter !== "open" || ledgerBranchId || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerBranchId(""); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear filters</button>}</div>
+      <div className="tabbar" role="tablist" style={{ marginBottom: 12 }}>
+        {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['overdue', 'Overdue'], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
+      </div>
+      <div className="formgrid" style={{ gridTemplateColumns: "minmax(180px, 1.25fr) repeat(2, minmax(150px, 1fr))" }}>
+        <label className="label">Branch<select className="select" value={ledgerBranchId} onChange={(event) => setLedgerBranchId(event.target.value)}><option value="">All branches</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <label className="label">Issued from<input className="input" type="date" value={ledgerDateFrom} max={ledgerDateTo || undefined} onChange={(event) => setLedgerDateFrom(event.target.value)} /></label>
+        <label className="label">Issued to<input className="input" type="date" value={ledgerDateTo} min={ledgerDateFrom || undefined} onChange={(event) => setLedgerDateTo(event.target.value)} /></label>
+      </div>
+    </section>
+    {pendingLoanCount > 0 && <div className="alert error" style={{ marginBottom: 14 }}><AlertCircle />{pendingLoanCount} outside-shop loan{pendingLoanCount === 1 ? " is" : "s are"} still pending return in the selected ledger view.</div>}
     <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
       <div className="section-title"><ClipboardCheck /> Issue external stock loan</div>
       <div className="formgrid" style={{ marginTop: 12 }}>
-        <label className="label">Branch<select className="select" value={branchId} onChange={(event) => { setBranchId(event.target.value); setLines([]); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
-        <label className="label">Outside shop<input className="input" value={borrowerName} onChange={(event) => setBorrowerName(event.target.value)} placeholder="Shop name" /></label>
-        <label className="label">Contact (optional)<input className="input" value={borrowerPhone} onChange={(event) => setBorrowerPhone(event.target.value)} placeholder="Phone number" /></label>
+        <label className="label">Branch<select className="select" value={branchId} onChange={(event) => { setBranchId(event.target.value); setSavedBorrowerId(""); setLines([]); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <label className="label">Saved outside shop<select className="select" value={savedBorrowerId} onChange={(event) => { const selected = savedBorrowers.find((entry) => entry.id === event.target.value); setSavedBorrowerId(event.target.value); if (selected) { setBorrowerName(selected.name); setBorrowerContact(selected.contact); } }}><option value="">New shop or select saved</option>{savedBorrowers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.contact ? ` — ${entry.contact}` : ""}</option>)}</select></label>
+        <label className="label">Outside shop<input className="input" value={borrowerName} onChange={(event) => { setBorrowerName(event.target.value); setSavedBorrowerId(""); }} placeholder="Shop name" /></label>
+        <label className="label">Borrowed by (optional)<input className="input" value={borrowerContact} onChange={(event) => setBorrowerContact(event.target.value)} placeholder="Person's name" /></label>
         <label className="label">Expected return (optional)<input className="input" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
       </div>
       <div className="formgrid" style={{ marginTop: 12, gridTemplateColumns: "minmax(0, 1fr) 120px auto" }}>
@@ -16488,13 +16750,33 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
       {notice && <div className="notice" style={{ marginTop: 12 }}>{notice}</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" className="btn btn-primary" disabled={saving || !lines.length} onClick={issueLoan}><ArrowRight /> {saving ? "Saving…" : "Record loan"}</button></div>
     </section>
-    <DocumentFile title="External loan ledger" count={ledger.length} meta={`${branchName} · stock issued and returned through the shared inventory ledger`}>
+    <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
+      <div className="section-title"><ShoppingBag /> Receive borrowed stock</div>
+      <div className="sub" style={{ marginTop: 4 }}>Borrowed items are received as a normal purchase, using the last buying price already recorded for each product.</div>
+      <div className="formgrid" style={{ marginTop: 12 }}>
+        <label className="label">Branch<select className="select" value={receiptBranchId} onChange={(event) => { setReceiptBranchId(event.target.value); setReceiptLines([]); setReceiptProductId(""); setReceiptSearch(""); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <label className="label">Saved outside shop<select className="select" value="" onChange={(event) => { const selected = savedExternalSuppliers.find((entry) => entry.id === event.target.value); if (selected) { setReceiptSupplierName(selected.name); setReceiptContact(selected.contact); } }}><option value="">New shop or select saved</option>{savedExternalSuppliers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.contact ? ` — ${entry.contact}` : ""}</option>)}</select></label>
+        <label className="label">Outside shop<input className="input" value={receiptSupplierName} onChange={(event) => setReceiptSupplierName(event.target.value)} placeholder="Shop name" /></label>
+        <label className="label">Contact person (optional)<input className="input" value={receiptContact} onChange={(event) => setReceiptContact(event.target.value)} placeholder="Person's name" /></label>
+        <label className="label">Expected return (optional)<input className="input" type="date" value={receiptDueDate} onChange={(event) => setReceiptDueDate(event.target.value)} /></label>
+      </div>
+      <div className="formgrid" style={{ marginTop: 12, gridTemplateColumns: "minmax(0, 1fr) 120px auto" }}>
+        <label className="label">Product<input className="input" value={receiptSearch} onChange={(event) => { setReceiptSearch(event.target.value); setReceiptProductId(""); }} placeholder="Search product or SKU" />{receiptMatches.length > 0 && <div className="suggestions">{receiptMatches.map((entry) => <button type="button" key={entry.id} onClick={() => { setReceiptProductId(entry.id); setReceiptSearch(entry.name); }}>{entry.name} <span>{entry.sku} · last buy {fmt(lastBuyingPriceCents(data, entry, receiptBranchId), data.settings.currency)}</span></button>)}</div>}</label>
+        <label className="label">Quantity<input className="input" inputMode="numeric" value={receiptQty} onChange={(event) => setReceiptQty(event.target.value.replace(/\D/g, ""))} /></label>
+        <button type="button" className="btn btn-ghost" style={{ alignSelf: "end" }} onClick={addReceiptLine}><Plus /> Add</button>
+      </div>
+      {receiptLines.length > 0 && <div className="list" style={{ marginTop: 12 }}>{receiptLines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku} · last buying price {fmt(line.costCents, data.settings.currency)}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setReceiptLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
+      {receiptError && <div className="alert error" style={{ marginTop: 12 }}><AlertCircle />{receiptError}</div>}
+      {receiptNotice && <div className="notice" style={{ marginTop: 12 }}>{receiptNotice}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" className="btn btn-primary" disabled={receiptSaving || !receiptLines.length} onClick={receiveBorrowedStock}><ShoppingBag /> {receiptSaving ? "Saving…" : "Receive as purchase"}</button></div>
+    </section>
+    <DocumentFile title="External loan ledger" count={ledger.length} meta={`${ledgerBranchName} · stock issued and returned through the shared inventory ledger`}>
       <div className="list">{ledger.map((loan) => <div className="row" key={loan.id}>
-        <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.dueAt ? ` · due ${dt(loan.dueAt)}` : ""}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
+        <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.borrowerContact || loan.borrowerPhone ? `Borrowed by ${loan.borrowerContact || loan.borrowerPhone} · ` : ""}{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.dueAt ? ` · due ${dt(loan.dueAt)}` : ""}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
         <span className={`ist ${loan.status === "returned" ? "paid" : loan.status === "overdue" ? "danger" : "open"}`}>{loan.status === "returned" ? "Returned" : loan.status === "overdue" ? "Overdue" : `${loan.outstandingQty} out`}</span>
         <span className="pill plain">{dt(loan.issuedAt || loan.ts)}</span>
         {loan.outstandingQty > 0 && <button type="button" className="btn xs btn-primary" onClick={() => openReturn(loan)}><RotateCcw /> Return</button>}
-      </div>)}{ledger.length === 0 && <div className="notice">No {filter === "all" ? "external stock loans" : filter + " loans"} for {branchName}.</div>}</div>
+      </div>)}{ledger.length === 0 && <div className="notice">No {filter === "all" ? "external stock loans" : filter + " loans"} for {ledgerBranchName}.</div>}</div>
     </DocumentFile>
     {returnLoan && <div className="scrim" onClick={() => !saving && setReturnLoan(null)}><div className="modal" style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
       <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>External stock return</div><div className="title" style={{ fontSize: 21 }}>{returnLoan.borrowerName}</div></div><button type="button" className="iconbtn" disabled={saving} onClick={() => setReturnLoan(null)}><X /></button></div>

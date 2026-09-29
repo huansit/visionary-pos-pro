@@ -26,7 +26,7 @@ export function quickInventoryDraftCounts(session) {
     .map((item) => [item.productId, String(Math.max(0, Number(item.countedQty)))]));
 }
 
-export function updateQuickInventoryDraftCount(session, productId, countedQty, operator, timestamp, expectedQty = null) {
+export function updateQuickInventoryDraftCount(session, productId, countedQty, operator, timestamp, expectedQty = null, externalLoanQty = 0) {
   const items = (session?.items || []).filter((item) => item?.productId !== productId);
   const existing = (session?.items || []).find((item) => item?.productId === productId) || {};
   if (countedQty !== null && countedQty !== undefined && countedQty !== "") {
@@ -36,6 +36,10 @@ export function updateQuickInventoryDraftCount(session, productId, countedQty, o
       // draft. It must never follow later stock changes while the user is
       // counting, otherwise a retry could silently overwrite real movement.
       expectedQty: Number.isInteger(Number(existing.expectedQty)) ? Number(existing.expectedQty) : Math.max(0, Number(expectedQty) || 0),
+      // Keep the number lent outside the business at the instant this product
+      // joined the count. It is audit context only: loans already affect the
+      // authoritative stock ledger and must never become a cashier shortage.
+      externalLoanQty: Number.isInteger(Number(existing.externalLoanQty)) ? Number(existing.externalLoanQty) : Math.max(0, Number(externalLoanQty) || 0),
       countedQty: Math.max(0, Number(countedQty) || 0),
       countedBy: operator,
       countedAt: timestamp,
