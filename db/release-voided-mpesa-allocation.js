@@ -192,7 +192,11 @@ async function main() {
       await client.query(
         `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
          VALUES ($1, 'paymentRelease', $2, $3, $4, $5, $6)`,
-        [`payment-release:${allocation.id}`, allocation.branch_id, "voided-mpesa-allocation-repair", releaseTs, releaseTs, {
+        // This is a server-side repair, not an action from a registered
+        // terminal. `events.device_id` is a foreign key, so recording a
+        // made-up repair device makes the whole transaction fail. Keep it
+        // null and preserve the repair provenance in the immutable payload.
+        [`payment-release:${allocation.id}`, allocation.branch_id, null, releaseTs, releaseTs, {
           paymentId: payment?.id || String(allocation.local_payment_id || ""),
           invoiceId: current.resolvedInvoiceId,
           branchId: allocation.branch_id,
@@ -200,6 +204,7 @@ async function main() {
           allocationId: allocation.id,
           amountCents: Number(allocation.amount_cents || 0),
           reason,
+          releaseSource: "server_repair",
           releasedBy: "voided-mpesa-allocation-repair",
           releasedByName: "M-Pesa void correction",
           releasedAt: releaseTs,
