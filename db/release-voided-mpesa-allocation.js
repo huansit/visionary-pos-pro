@@ -24,31 +24,39 @@ function providerMpesa(payment) {
 }
 
 async function loadRepairContext(client) {
-  const [events, allocations] = await Promise.all([
-    client.query("SELECT id, type, branch_id, payload FROM events WHERE type IN ('invoice', 'invoiceVoidDecision', 'payment', 'paymentRelease')"),
-    client.query(
-      `SELECT a.id, a.transaction_id, a.invoice_id, a.branch_id, a.amount_cents, a.local_payment_id, a.status,
-              t.reference_last4, t.amount_cents AS transaction_amount_cents, t.allocated_cents AS transaction_allocated_cents
-         FROM kopokopo_allocations a
-         JOIN kopokopo_transactions t ON t.id = a.transaction_id
-        WHERE a.invoice_id = $1
-          AND UPPER(t.reference_last4) = $2`,
-      [invoiceId, codeLast4]
-    ),
-  ]);
+  const events = await client.query(
+    "SELECT id, type, branch_id, payload FROM events WHERE type IN ('invoice', 'invoiceVoidDecision', 'payment', 'paymentRelease')"
+  );
   const rows = events.rows.map((row) => ({ ...row, payload: payloadOf(row) }));
-  const invoice = rows.find((row) => row.type === "invoice" && row.id === invoiceId);
+  // Admin screens show the human receipt number, while allocations use the
+  // immutable internal invoice event id. Accept either without guessing.
+  const invoice = rows.find((row) => {
+    if (row.type !== "invoice") return false;
+    const payload = row.payload || {};
+    return [row.id, payload.id, payload.number, payload.invoiceNumber, payload.receiptNumber]
+      .some((value) => String(value || "").trim().toUpperCase() === invoiceId.toUpperCase());
+  });
+  const resolvedInvoiceId = String(invoice?.id || invoiceId).trim();
+  const allocations = await client.query(
+    `SELECT a.id, a.transaction_id, a.invoice_id, a.branch_id, a.amount_cents, a.local_payment_id, a.status,
+            t.reference_last4, t.amount_cents AS transaction_amount_cents, t.allocated_cents AS transaction_allocated_cents
+       FROM kopokopo_allocations a
+       JOIN kopokopo_transactions t ON t.id = a.transaction_id
+      WHERE a.invoice_id = $1
+        AND UPPER(t.reference_last4) = $2`,
+    [resolvedInvoiceId, codeLast4]
+  );
   const voided = Boolean(invoice && (
     ["void", "voided", "cancelled", "canceled"].includes(String(invoice.payload?.status || "").toLowerCase())
     || rows.some((row) => row.type === "invoiceVoidDecision"
-      && String(row.payload?.invoiceId || "") === invoiceId
+      && String(row.payload?.invoiceId || "") === resolvedInvoiceId
       && String(row.payload?.decision || "").toLowerCase() === "approved")
   ));
   const releasedPaymentIds = new Set(rows.filter((row) => row.type === "paymentRelease")
     .map((row) => String(row.payload?.paymentId || "").trim()).filter(Boolean));
   const payments = rows.filter((row) => row.type === "payment")
     .map((row) => ({ id: String(row.payload?.id || row.id || "").trim(), payload: row.payload || {} }))
-    .filter((payment) => (payment.payload.invoiceId === invoiceId || payment.payload.orderId === invoiceId)
+    .filter((payment) => (payment.payload.invoiceId === resolvedInvoiceId || payment.payload.orderId === resolvedInvoiceId)
       && String(payment.payload.status || "captured").toLowerCase() === "captured"
       && !releasedPaymentIds.has(payment.id));
   const activeAllocations = allocations.rows.filter((row) => String(row.status || "active").toLowerCase() === "active");
@@ -65,7 +73,7 @@ async function loadRepairContext(client) {
       && linked.length > 0
       && linked.reduce((total, allocation) => total + Number(allocation.amount_cents || 0), 0) === paymentCents(payment.payload);
   });
-  return { invoice, voided, payments, activeAllocations, releasesMatchPayments };
+  return { invoice, resolvedInvoiceId, voided, payments, activeAllocations, releasesMatchPayments };
 }
 
 async function main() {
@@ -75,6 +83,7 @@ async function main() {
   const preview = await tx(async (client) => loadRepairContext(client));
   const report = {
     invoiceId,
+    resolvedInvoiceId: preview.resolvedInvoiceId,
     codeLast4,
     voided: preview.voided,
     payments: preview.payments.map((payment) => ({ id: payment.id, amountCents: paymentCents(payment.payload), method: payment.payload.method })),
@@ -122,7 +131,7 @@ async function main() {
          VALUES ($1, 'paymentRelease', $2, $3, $4, $5, $6)`,
         [`payment-release:${allocation.id}`, allocation.branch_id, "voided-mpesa-allocation-repair", releaseTs, releaseTs, {
           paymentId: payment?.id || String(allocation.local_payment_id || ""),
-          invoiceId,
+          invoiceId: current.resolvedInvoiceId,
           branchId: allocation.branch_id,
           transactionId: allocation.transaction_id,
           allocationId: allocation.id,
