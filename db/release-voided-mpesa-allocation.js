@@ -37,21 +37,6 @@ async function loadRepairContext(client) {
       .some((value) => String(value || "").trim().toUpperCase() === invoiceId.toUpperCase());
   });
   const resolvedInvoiceId = String(invoice?.id || invoiceId).trim();
-  const allocations = await client.query(
-    `SELECT a.id, a.transaction_id, a.invoice_id, a.branch_id, a.amount_cents, a.local_payment_id, a.status,
-            t.reference_last4, t.amount_cents AS transaction_amount_cents, t.allocated_cents AS transaction_allocated_cents
-       FROM kopokopo_allocations a
-       JOIN kopokopo_transactions t ON t.id = a.transaction_id
-      WHERE a.invoice_id = $1
-        AND UPPER(t.reference_last4) = $2`,
-    [resolvedInvoiceId, codeLast4]
-  );
-  const voided = Boolean(invoice && (
-    ["void", "voided", "cancelled", "canceled"].includes(String(invoice.payload?.status || "").toLowerCase())
-    || rows.some((row) => row.type === "invoiceVoidDecision"
-      && String(row.payload?.invoiceId || "") === resolvedInvoiceId
-      && String(row.payload?.decision || "").toLowerCase() === "approved")
-  ));
   const releasedPaymentIds = new Set(rows.filter((row) => row.type === "paymentRelease")
     .map((row) => String(row.payload?.paymentId || "").trim()).filter(Boolean));
   const payments = rows.filter((row) => row.type === "payment")
@@ -59,6 +44,33 @@ async function loadRepairContext(client) {
     .filter((payment) => (payment.payload.invoiceId === resolvedInvoiceId || payment.payload.orderId === resolvedInvoiceId)
       && String(payment.payload.status || "captured").toLowerCase() === "captured"
       && !releasedPaymentIds.has(payment.id));
+  const paymentIds = payments.map((payment) => payment.id).filter(Boolean);
+  const allocationIds = payments
+    .map((payment) => String(payment.payload?.kopokopoAllocationId || "").trim())
+    .filter(Boolean);
+  const paymentPlaceholders = paymentIds.map((_, index) => `$${index + 3}`).join(", ");
+  const allocationIdPlaceholders = allocationIds
+    .map((_, index) => `$${index + 3 + paymentIds.length}`).join(", ");
+  const allocationScope = [
+    "a.invoice_id = $1",
+    paymentPlaceholders && `a.local_payment_id IN (${paymentPlaceholders})`,
+    allocationIdPlaceholders && `a.id IN (${allocationIdPlaceholders})`,
+  ].filter(Boolean).join(" OR ");
+  const allocations = await client.query(
+    `SELECT a.id, a.transaction_id, a.invoice_id, a.branch_id, a.amount_cents, a.local_payment_id, a.status,
+            t.reference_last4, t.amount_cents AS transaction_amount_cents, t.allocated_cents AS transaction_allocated_cents
+       FROM kopokopo_allocations a
+       JOIN kopokopo_transactions t ON t.id = a.transaction_id
+      WHERE (${allocationScope})
+        AND (UPPER(t.reference_last4) = $2 OR RIGHT(UPPER(t.reference), 4) = $2)`,
+    [resolvedInvoiceId, codeLast4, ...paymentIds, ...allocationIds]
+  );
+  const voided = Boolean(invoice && (
+    ["void", "voided", "cancelled", "canceled"].includes(String(invoice.payload?.status || "").toLowerCase())
+    || rows.some((row) => row.type === "invoiceVoidDecision"
+      && String(row.payload?.invoiceId || "") === resolvedInvoiceId
+      && String(row.payload?.decision || "").toLowerCase() === "approved")
+  ));
   const activeAllocations = allocations.rows.filter((row) => String(row.status || "active").toLowerCase() === "active");
   const byPaymentId = new Map();
   for (const allocation of activeAllocations) {
@@ -68,12 +80,16 @@ async function loadRepairContext(client) {
     byPaymentId.set(key, list);
   }
   const releasesMatchPayments = payments.length > 0 && payments.every((payment) => {
-    const linked = byPaymentId.get(payment.id) || [];
+    const allocationId = String(payment.payload?.kopokopoAllocationId || "").trim();
+    const linked = [
+      ...(byPaymentId.get(payment.id) || []),
+      ...activeAllocations.filter((allocation) => allocation.id === allocationId),
+    ].filter((allocation, index, values) => values.findIndex((entry) => entry.id === allocation.id) === index);
     return providerMpesa(payment.payload)
       && linked.length > 0
       && linked.reduce((total, allocation) => total + Number(allocation.amount_cents || 0), 0) === paymentCents(payment.payload);
   });
-  return { invoice, resolvedInvoiceId, voided, payments, activeAllocations, releasesMatchPayments };
+  return { invoice, resolvedInvoiceId, voided, payments, allocations: allocations.rows, activeAllocations, releasesMatchPayments };
 }
 
 async function main() {
@@ -87,6 +103,14 @@ async function main() {
     codeLast4,
     voided: preview.voided,
     payments: preview.payments.map((payment) => ({ id: payment.id, amountCents: paymentCents(payment.payload), method: payment.payload.method })),
+    allocations: preview.allocations.map((allocation) => ({
+      id: allocation.id,
+      invoiceId: allocation.invoice_id,
+      paymentId: allocation.local_payment_id,
+      status: allocation.status,
+      amountCents: Number(allocation.amount_cents || 0),
+      transactionId: allocation.transaction_id,
+    })),
     activeAllocations: preview.activeAllocations.map((allocation) => ({ id: allocation.id, transactionId: allocation.transaction_id, amountCents: Number(allocation.amount_cents || 0), branchId: allocation.branch_id })),
     eligible: preview.voided && preview.releasesMatchPayments,
   };
