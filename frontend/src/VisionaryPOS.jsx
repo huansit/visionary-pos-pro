@@ -1613,7 +1613,10 @@ function syncUsesSessionAuth(tokenOverride = "") {
   return Boolean(token && hasManagementSessionSync());
 }
 async function syncAuthHeaders(branchId = null, base = {}, tokenOverride = "") {
-  return syncUsesSessionAuth(tokenOverride) ? sessionAuthHeaders(base, tokenOverride) : await deviceAuthHeaders(branchId, base);
+  // A caller that has just completed a verified login can explicitly supply
+  // that session while the React state is still settling. Never fall back to
+  // browser device registration in that window.
+  return tokenOverride || syncUsesSessionAuth() ? sessionAuthHeaders(base, tokenOverride) : await deviceAuthHeaders(branchId, base);
 }
 function clearSessionStateSync() {
   activeSessionToken = "";
@@ -2416,7 +2419,11 @@ async function loadEnvironmentAwareData(env) {
   const storedMode = loaded?.settings?.environmentMode;
   const needsEnvironmentReset = !!loaded && (!storedMode || normalizeEnvironmentMode(storedMode) !== mode);
   const base = needsEnvironmentReset ? await resetEnvironmentSyncState(mode) : { ...applyEnvironmentMode(loaded || CLEAN_SETUP(), mode), _sync: await syncStatus() };
-  return await cloudBootstrapData(base);
+  // A browser has no device setup key. It must first authenticate as an
+  // employee, then it can read its authorised cloud workspace with the
+  // session token. Only a registered desktop terminal can safely bootstrap
+  // before login.
+  return await hasDesktopTerminalAuth() ? cloudBootstrapData(base) : base;
 }
 async function enqueueChanges(prev, next) {
   const changes = diffToSyncEvents(prev, next).filter((ev) => !isAuthSyncEvent(ev));
@@ -2702,17 +2709,20 @@ function cloudSnapshotBase(currentData) {
 
 async function cloudSnapshotData(currentData, options = {}) {
   let data = currentData;
+  const sessionToken = options.sessionToken || syncSessionToken();
   // Never discard a local operation. Flush the device queue first, then take
   // the complete cloud baseline only after every accepted change is durable.
   while (true) {
-    const pushed = await runSyncClient(data, { ...options, skipPull: true });
+    const pushed = await runSyncClient(data, { ...options, sessionToken, skipPull: true });
     if (pushed.status?.error) return pushed;
     data = pushed.data;
     if (!Number(pushed.status?.outboxLength || 0)) break;
   }
   const cfg = syncConfig();
   const branchId = data?.settings?.activeBranchId || data?.branches?.[0]?.id || null;
-  const headers = await syncAuthHeaders(branchId, { "Content-Type": "application/json" }, options.sessionToken || "");
+  const headers = sessionToken
+    ? sessionAuthHeaders({ "Content-Type": "application/json" }, sessionToken)
+    : await syncAuthHeaders(branchId, { "Content-Type": "application/json" });
   const response = await syncFetch(cfg.apiBaseUrl + "/api/sync/snapshot?t=" + Date.now(), { headers, cache: "no-store" }, SYNC_SNAPSHOT_TIMEOUT_MS);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body?.error ? `snapshot_failed_${response.status}_${body.error}` : "snapshot_failed_" + response.status);
@@ -6219,6 +6229,20 @@ body{overscroll-behavior:none}
 @media (max-width:760px){.eodgrid{grid-template-columns:repeat(2,1fr)}}
 .fade{animation:fade .25s ease}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.cloud-snapshot{width:min(100%,440px);padding:34px 28px 28px;text-align:center;overflow:hidden}
+.cloud-snapshot-scanner{width:176px;height:176px;margin:0 auto 24px;border-radius:50%;position:relative;display:grid;place-items:center;background:conic-gradient(var(--accent) var(--cloud-progress),rgba(14,165,181,.12) 0);box-shadow:0 0 0 10px rgba(14,165,181,.06),0 18px 45px -28px rgba(14,165,181,.7);transition:background .35s ease}
+.cloud-snapshot-scanner::before{content:"";position:absolute;inset:11px;border-radius:50%;background:var(--surface);border:1px solid var(--border-soft)}
+.cloud-snapshot-scanner::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid rgba(14,165,181,.28);animation:cloud-snapshot-orbit 2.2s linear infinite}
+.cloud-snapshot-scanner.error{background:conic-gradient(var(--danger) var(--cloud-progress),rgba(229,72,77,.12) 0)}
+.cloud-snapshot-scanner.complete::after{animation:none;border-color:rgba(21,168,107,.42)}
+.cloud-snapshot-readout{position:relative;z-index:1;display:grid;place-items:center;gap:3px;line-height:1}
+.cloud-snapshot-readout b{font-family:var(--font-mono);font-size:33px;letter-spacing:-.08em}
+.cloud-snapshot-readout span{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-2);font-weight:800}
+.cloud-snapshot-track{height:5px;border-radius:99px;background:var(--surface-2);overflow:hidden;margin:19px 0 11px}
+.cloud-snapshot-track>i{display:block;height:100%;width:var(--cloud-progress);border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .35s ease}
+.cloud-snapshot-stage{font-size:13px;color:var(--muted);font-weight:700;min-height:20px}
+.cloud-snapshot-error{margin:20px 0 0;padding:13px 14px;border:1px solid rgba(229,72,77,.28);border-radius:14px;background:rgba(229,72,77,.07);color:var(--danger);font-size:13px;line-height:1.45;text-align:left}
+@keyframes cloud-snapshot-orbit{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.vpos *{animation:none!important;transition:none!important}}
 @media (max-width:760px){
   .vpos{padding:12px}
@@ -6980,6 +7004,7 @@ export default function VisionPOS() {
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
   const [syncing, setSyncing] = useState(false);
   const [restoringWorkspace, setRestoringWorkspace] = useState(false);
+  const [workspaceSnapshotComplete, setWorkspaceSnapshotComplete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [maintenance, setMaintenance] = useState(null);
   const [environmentInfo, setEnvironmentInfo] = useState(null);
@@ -7060,17 +7085,27 @@ export default function VisionPOS() {
         await clearSessionState();
       }
     }
-    if (refreshRestoredWorkspace) setRestoringWorkspace(true);
+    if (refreshRestoredWorkspace) {
+      setWorkspaceSnapshotComplete(false);
+      setRestoringWorkspace(true);
+    }
     setData(loaded);
     if (refreshRestoredWorkspace) {
+      let snapshotLoaded = false;
       try {
         const refreshed = await cloudSnapshotData(loaded, { source: "session-restore" });
+        if (refreshed?.status?.error) throw new Error(refreshed.status.error);
         setData(refreshed.data);
-      } catch (_) {
-        // The cached workspace remains available if the connection drops
-        // during login; normal sync will retry once the network is stable.
+        snapshotLoaded = true;
+        setWorkspaceSnapshotComplete(true);
+        await new Promise((resolve) => setTimeout(resolve, 320));
+      } catch (error) {
+        // Do not open a possibly stale workspace after a failed cloud read.
+        // The recovery panel gives the user a clear retry path instead.
+        setData((current) => current ? { ...current, _sync: { ...(current._sync || {}), error: String(error?.message || "cloud_snapshot_failed") } } : current);
       } finally {
-        setRestoringWorkspace(false);
+        setWorkspaceSnapshotComplete(false);
+        if (snapshotLoaded) setRestoringWorkspace(false);
       }
     }
   })(); }, []);
@@ -7268,8 +7303,12 @@ export default function VisionPOS() {
       setSyncing(false);
     }
   };
-  const recoverCloudData = async () => {
+  const recoverCloudData = async ({ workspace = false } = {}) => {
     if (!navigator.onLine || !dataRef.current) return;
+    if (workspace) {
+      setWorkspaceSnapshotComplete(false);
+      setRestoringWorkspace(true);
+    }
     setSyncing(true);
     try {
       const recovered = await cloudSnapshotData({ ...dataRef.current, _sync: await syncStatus() }, { source: "workspace-recovery" });
@@ -7279,6 +7318,12 @@ export default function VisionPOS() {
         return;
       }
       setData(recovered.data);
+      if (workspace) {
+        setWorkspaceSnapshotComplete(true);
+        await new Promise((resolve) => setTimeout(resolve, 320));
+        setRestoringWorkspace(false);
+        setWorkspaceSnapshotComplete(false);
+      }
       return recovered.data;
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
@@ -7461,11 +7506,11 @@ export default function VisionPOS() {
       {view === "pin" && terminalLoginAvailable && <PinScreen employees={data.employees} branchId={data.settings.activeBranchId} onAdmin={() => setView("adminLogin")} onSuccess={(e) => signInSession("register", e)} />}
       {(view === "adminLogin" || (view === "pin" && !terminalLoginAvailable)) && <AdminLogin onBack={terminalLoginAvailable ? () => setView("pin") : null} onSignedIn={(emp) => {
         setRestoringWorkspace(true);
+        setWorkspaceSnapshotComplete(false);
         signInSession("admin", emp || null);
         if (emp?.branchId) selectAdminBranch(emp.branchId);
         setTimeout(async () => {
-          try { await recoverCloudData(); }
-          finally { setRestoringWorkspace(false); }
+          await recoverCloudData({ workspace: true });
         }, 0);
       }} />}
     </div></div>);
@@ -7519,10 +7564,10 @@ export default function VisionPOS() {
             ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (restoringWorkspace
-            ? <CloudDataRecovery title="Loading current workspace" message="Loading the latest complete cloud snapshot before opening your admin workspace." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />
+            ? <CloudDataRecovery title="Loading current workspace" message="Your latest cloud workspace is being verified before opening." loading={!syncError} complete={workspaceSnapshotComplete} syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />
             : adminBranch
             ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onSyncNow={runSync} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
-            : <CloudDataRecovery title="Restoring admin workspace" message="Your login worked, but this device has not received any branch records from the cloud database yet. VISIONPOS is syncing automatically; if this remains here, the VPS database may not contain branch/product records." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
+            : <CloudDataRecovery title="Restoring admin workspace" message="Your workspace will open after the latest cloud data is verified." syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
     </div>
@@ -9402,17 +9447,50 @@ function DocumentFile({ title, count = 0, meta, children, defaultOpen = false })
   );
 }
 
-function CloudDataRecovery({ title, message, syncError, onSync, onSignOut }) {
+function cloudRecoveryMessage(error) {
+  const value = String(error || "");
+  if (/invalid_setup_key|device_registration/i.test(value)) return "This device needs a fresh, signed-in cloud connection. Try again below.";
+  if (/session_(?:expired|revoked)|invalid_or_missing_user_session|(?:pull|push|snapshot)_failed_(?:401|403)/i.test(value)) return "Your secure session needs to be refreshed. Sign in again, then retry.";
+  if (/failed to fetch|network|timeout|snapshot_failed/i.test(value)) return "The cloud connection was interrupted. Check your internet, then try again.";
+  return "The latest cloud data could not be verified. Try again before opening the workspace.";
+}
+function CloudDataRecovery({ title, message, loading = false, complete = false, syncError, onSync, onSignOut }) {
+  const [progress, setProgress] = useState(loading ? 8 : 0);
+  useEffect(() => {
+    if (complete) {
+      setProgress(100);
+      return undefined;
+    }
+    if (!loading) {
+      setProgress(syncError ? 0 : 8);
+      return undefined;
+    }
+    setProgress((current) => Math.max(8, Math.min(current || 8, 94)));
+    const timer = setInterval(() => {
+      setProgress((current) => current >= 94 ? current : Math.min(94, current + Math.max(1, Math.ceil((95 - current) * .08))));
+    }, 170);
+    return () => clearInterval(timer);
+  }, [loading, complete, syncError]);
+  const stage = complete ? "Cloud data verified — opening workspace" : syncError ? "Cloud connection needs attention" : progress < 34 ? "Connecting to VisionPOS cloud" : progress < 72 ? "Retrieving current business data" : "Verifying latest changes";
+  const scannerClass = "cloud-snapshot-scanner" + (syncError ? " error" : "") + (complete ? " complete" : "");
+  const progressStyle = { "--cloud-progress": `${progress}%` };
   return (
     <div className="fade" style={{ minHeight: "calc(100dvh - 170px)", display: "grid", placeItems: "center", padding: 24 }}>
-      <div className="poscard" style={{ maxWidth: 560, padding: 24, textAlign: "center" }}>
+      <div className="poscard cloud-snapshot">
+        <div className={scannerClass} style={progressStyle} role="progressbar" aria-label="Loading cloud workspace" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progress}>
+          <div className="cloud-snapshot-readout"><b>{progress}%</b><span>Cloud scan</span></div>
+        </div>
         <div className="title" style={{ fontSize: 22 }}>{title}</div>
         <div className="sub" style={{ marginTop: 8 }}>{message}</div>
-        {syncError && <div className="alert" style={{ marginTop: 16, textAlign: "left" }}><AlertCircle />{syncError}</div>}
-        <div className="grid2" style={{ marginTop: 18 }}>
-          <button className="btn btn-primary" onClick={onSync}><RefreshCw />Sync now</button>
-          <button className="btn btn-ghost" onClick={onSignOut}><LogOut />Sign out</button>
-        </div>
+        <div className="cloud-snapshot-track" style={progressStyle}><i /></div>
+        <div className="cloud-snapshot-stage">{stage}</div>
+        {!loading && !complete ? <>
+          {syncError ? <div className="cloud-snapshot-error">{cloudRecoveryMessage(syncError)}</div> : null}
+          <div className="grid2" style={{ marginTop: 18 }}>
+            <button className="btn btn-primary" onClick={onSync}><RefreshCw />{syncError ? "Try again" : "Load workspace"}</button>
+            <button className="btn btn-ghost" onClick={onSignOut}><LogOut />Sign out</button>
+          </div>
+        </> : null}
       </div>
     </div>
   );
