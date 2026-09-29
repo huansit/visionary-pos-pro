@@ -2261,8 +2261,24 @@ function mergeSyncEvents(data, events) {
     const collection = collectionForType(ev.type);
     if (!collection) continue;
     if (collection === "settings") {
+      // Full-history repairs deliberately replay from cursor zero. Do not let
+      // an older settings record replace a newer cached business-day boundary
+      // while that replay is still catching up. This was able to make recent
+      // invoices look like they belonged to a closed period until the next
+      // pages arrived.
+      const incomingServerTs = Number(ev.serverTs || ev.updatedAt || 0);
+      const appliedServerTs = Number(next._sync?.settingsServerTs || 0);
+      if (incomingServerTs > 0 && appliedServerTs > incomingServerTs) continue;
       const { branchPricing, ...settings } = ev.payload || {};
-      next = { ...next, settings: { ...next.settings, ...settings }, branchPricing: branchPricing || next.branchPricing || {} };
+      next = {
+        ...next,
+        settings: { ...next.settings, ...settings },
+        branchPricing: branchPricing || next.branchPricing || {},
+        _sync: {
+          ...(next._sync || {}),
+          settingsServerTs: Math.max(appliedServerTs, incomingServerTs),
+        },
+      };
       continue;
     }
     if (ev.deleted) {
@@ -2512,6 +2528,18 @@ async function runSyncClient(currentData, options = {}) {
   let resetEpoch = await loadResetEpoch();
   const forceFullPull = Boolean(options.forceFullPull || inventoryRepairPending);
   if (forceFullPull) {
+    // Protect the latest settings snapshot while a one-time repair reads
+    // history from zero. The old cursor is a server revision known to already
+    // be represented in this cache, so a settings event at or before it must
+    // not roll `lastEndDayByBranch` back and hide invoices.
+    const cachedSettingsServerTs = Number(data?._sync?.settingsServerTs || 0);
+    if (cursor > cachedSettingsServerTs) {
+      data = {
+        ...data,
+        _sync: { ...(data._sync || {}), settingsServerTs: cursor },
+      };
+      dataChanged = true;
+    }
     cursor = 0;
     await saveCursor(0);
   }
@@ -2611,13 +2639,15 @@ async function runSyncClient(currentData, options = {}) {
     error: nextSyncError,
     cacheWarning: "",
     repairWarning: managementRepairWarning,
+    settingsServerTs: Number(data?._sync?.settingsServerTs || 0),
   };
   const previousStatus = currentData?._sync || {};
   const syncStatusChanged = previousStatus.outboxLength !== nextStatus.outboxLength
     || previousStatus.cursor !== nextStatus.cursor
     || previousStatus.error !== nextStatus.error
     || previousStatus.cacheWarning !== nextStatus.cacheWarning
-    || previousStatus.repairWarning !== nextStatus.repairWarning;
+    || previousStatus.repairWarning !== nextStatus.repairWarning
+    || previousStatus.settingsServerTs !== nextStatus.settingsServerTs;
   // A no-op fallback poll must not clone and write the whole POS cache. On
   // lower-powered mobile devices that write was the primary source of UI jank.
   if (!dataChanged && !syncStatusChanged) {
@@ -3658,11 +3688,20 @@ function aggregateInvoiceSoldLines(data, invoices, branchId) {
   return Array.from(grouped.values()).sort((a, b) => b.totalCents - a.totalCents || a.name.localeCompare(b.name));
 }
 function lastEndFor(settings, branchId) { return (settings.lastEndDayByBranch && settings.lastEndDayByBranch[branchId]) || settings.lastEndDay || 0; }
-function branchLastEndDay(data, branchId) {
-  const mapped = Number(data?.settings?.lastEndDayByBranch?.[branchId] || 0);
+function branchLastEndDay(data, branchId, referenceTs = now()) {
+  // A close is submitted from a workstation, so an incorrect device clock
+  // must never create a future boundary and make valid current invoices
+  // disappear. Keep the record for audit, but do not use an implausible
+  // timestamp as a visibility boundary.
+  const latestAllowed = Number(referenceTs || now()) + 5 * 60 * 1000;
+  const validBoundary = (value) => {
+    const timestamp = Number(value || 0);
+    return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= latestAllowed ? timestamp : 0;
+  };
+  const mapped = validBoundary(data?.settings?.lastEndDayByBranch?.[branchId]);
   const recorded = (data?.endOfDays || [])
     .filter((entry) => entry.branchId === branchId)
-    .reduce((latest, entry) => Math.max(latest, Number(entry.periodEndedAt || entry.closedAt || entry.ts || 0)), 0);
+    .reduce((latest, entry) => Math.max(latest, validBoundary(entry.periodEndedAt || entry.closedAt || entry.ts)), 0);
   return Math.max(mapped, recorded);
 }
 function branchBusinessDayPeriods(data, branchId, timeZone = DEFAULT_BUSINESS_TIME_ZONE) {
@@ -3676,21 +3715,28 @@ function branchBusinessDayPeriods(data, branchId, timeZone = DEFAULT_BUSINESS_TI
       }, 0);
       return { entry, endedAt, startedAt: Number(entry.periodStartedAt || 0), invoiceStartedAt };
     })
-    .filter((period) => period.endedAt > 0)
+    // Preserve every audit record, but only a close at or before the current
+    // time can define an invoice period. A future client clock is otherwise
+    // enough to hide an entire business day on every device.
+    .filter((period) => period.endedAt > 0 && period.endedAt <= now() + 5 * 60 * 1000)
     .sort((a, b) => a.endedAt - b.endedAt);
   let previousEnd = 0;
   return records.map((period, index) => {
+    const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(period.entry.businessDate || ""))
+      ? String(period.entry.businessDate)
+      : businessDateValue(period.endedAt, timeZone);
+    // Legacy closes sometimes have neither a saved period start nor an
+    // invoice snapshot. Use that business date's calendar boundary instead
+    // of dropping the day from the selector and hiding its invoices.
+    const calendarStart = Date.parse(businessDateTimeBoundary(`${businessDate}T00:00`, timeZone, "start"));
     const startedAt = period.startedAt > 0
       ? period.startedAt
       : previousEnd > 0
         ? previousEnd
         : period.invoiceStartedAt > 0
           ? period.invoiceStartedAt - 1
-          : 0;
+          : (Number.isFinite(calendarStart) ? calendarStart - 1 : 0);
     previousEnd = period.endedAt;
-    const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(String(period.entry.businessDate || ""))
-      ? String(period.entry.businessDate)
-      : businessDateValue(period.endedAt, timeZone);
     return {
       id: String(period.entry.id || `${branchId}:${period.endedAt}:${index}`),
       branchId,
@@ -9159,7 +9205,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     switch (tab) {
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={openDebtPayments} />;
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
-      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "open"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
+      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "all"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "glovo": return <GlovoOrdersTab data={data} update={update} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
@@ -9332,7 +9378,7 @@ function MpesaSettlementRail({ branch, timeZone, businessDayStart, readyCode, on
     </div>
   </aside>;
 }
-function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "open", environmentMode = "test", onOpenDebtPayments }) {
+function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "all", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
   const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [filter, setFilter] = useState(initialFilter), [query, setQuery] = useState(""), [sortMode, setSortMode] = useState("oldest");
@@ -9763,7 +9809,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-filter-grid simple">
           <label className="invoice-sort-filter"><span>Sort</span><select className="select" value={sortMode} onChange={(e) => setSortMode(e.target.value)} aria-label="Sort invoices"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
         </div>
-        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("open"); setCashierFilter("all"); setSortMode("oldest"); setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); setMobileFiltersOpen(false); }}><X /> Clear filters</button> : null}
+        {activeInvoiceFilterCount > 0 ? <button type="button" className="btn sm btn-ghost invoice-filter-clear" onClick={() => { setQuery(""); setFilter("all"); setCashierFilter("all"); setSortMode("oldest"); setBusinessDayFilter("current"); setDateFrom(""); setDateTo(""); setMobileFiltersOpen(false); }}><X /> Clear filters</button> : null}
         </div>
         </div>
 
