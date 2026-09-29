@@ -7045,6 +7045,54 @@ body{overscroll-behavior:none}
   .invoice-list-active.mobile-filters-open .invoice-results-scroll{display:block}
   .invoice-list-active .invoice-results-scroll{display:block;min-height:0;overflow:visible;padding-right:0;scrollbar-gutter:auto;touch-action:pan-y pinch-zoom}
 }
+
+/* External shop stock: compact operational workspace */
+.external-stock-page{padding-bottom:20px}
+.external-stock-filters{padding:12px 14px;margin-bottom:12px}
+.external-stock-filter-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.external-stock-filter-head .title{font-size:16px}
+.external-stock-filter-head .sub{font-size:12px;margin-top:2px}
+.external-stock-filterbar{display:grid;grid-template-columns:minmax(230px,1.2fr) minmax(160px,.8fr) minmax(130px,.65fr) minmax(130px,.65fr);gap:8px;align-items:end}
+.external-stock-statuses{display:flex;gap:5px;align-items:center;min-height:38px;overflow:auto;padding-bottom:1px}
+.external-stock-statuses button{appearance:none;border:1px solid var(--line);background:var(--card);color:var(--muted);font:inherit;font-size:12px;font-weight:800;line-height:1;padding:9px 11px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:.15s ease}
+.external-stock-statuses button:hover{border-color:var(--accent);color:var(--ink)}
+.external-stock-statuses button.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong)}
+.external-stock-workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:16px;align-items:start}
+.external-stock-card{padding:15px;min-width:0}
+.external-stock-card .section-title{font-size:16px;gap:8px}
+.external-stock-card-sub{font-size:12px;margin-top:4px;min-height:18px}
+.external-stock-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}
+.external-stock-form .label{min-width:0;font-size:11px;gap:4px}
+.external-stock-form .input,.external-stock-form .select{min-width:0;height:38px;font-size:13px}
+.external-stock-product-entry{display:grid;grid-template-columns:minmax(0,1fr) 92px auto;gap:8px;align-items:end;margin-top:10px}
+.external-stock-product-entry .label{min-width:0;font-size:11px;gap:4px}
+.external-stock-product-entry .input{min-width:0;height:38px;font-size:13px}
+.external-stock-product-entry .btn{height:38px;min-height:38px;padding-inline:11px;white-space:nowrap}
+.external-stock-lines{margin-top:10px;max-height:180px;overflow:auto}
+.external-stock-lines .row{padding:8px 9px;gap:8px}
+.external-stock-lines .nm{font-size:12px}
+.external-stock-lines .mt2{font-size:10px}
+.external-stock-lines b{font-size:12px;white-space:nowrap}
+.external-stock-notes{display:block;margin-top:10px;font-size:11px}
+.external-stock-notes textarea{min-height:58px;padding:8px;font-size:12px;resize:vertical}
+.external-stock-message{margin-top:10px;font-size:12px}
+.external-stock-action{display:flex;justify-content:flex-end;margin-top:11px}
+.external-stock-action .btn{min-height:38px}
+@media(max-width:980px){
+  .external-stock-filterbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .external-stock-statuses{grid-column:1/-1}
+  .external-stock-workspace{grid-template-columns:1fr}
+}
+@media(max-width:620px){
+  .external-stock-filters{padding:11px}
+  .external-stock-filterbar{grid-template-columns:1fr}
+  .external-stock-statuses{grid-column:auto}
+  .external-stock-card{padding:12px}
+  .external-stock-form{grid-template-columns:1fr}
+  .external-stock-product-entry{grid-template-columns:minmax(0,1fr) 78px}
+  .external-stock-product-entry>.btn{grid-column:1/-1;width:100%}
+  .external-stock-action .btn{width:100%}
+}
 `;
 
 /* ================================================================== */
@@ -13123,8 +13171,6 @@ function StockTab({ data, update, branch, onNavigate, onSyncNow }) {
       externalLoanQty: row.externalLoanQty || 0,
       externalLoanQtyAtStart: row.externalLoanQtyAtStart || 0,
       expectedAfterExternalLoans: row.expectedAfterExternalLoans,
-      externalLoanQty: row.externalLoanQty,
-      externalLoanQtyAtStart: row.externalLoanQtyAtStart,
       counted: row.countedQty,
       soldSince: row.soldSince,
       finalQty: row.finalQty,
@@ -16478,7 +16524,6 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const [borrowerName, setBorrowerName] = useState("");
   const [borrowerContact, setBorrowerContact] = useState("");
   const [savedBorrowerId, setSavedBorrowerId] = useState("");
-  const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [search, setSearch] = useState("");
   const [productId, setProductId] = useState("");
@@ -16497,7 +16542,6 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const [receiptBranchId, setReceiptBranchId] = useState(branch.id);
   const [receiptSupplierName, setReceiptSupplierName] = useState("");
   const [receiptContact, setReceiptContact] = useState("");
-  const [receiptDueDate, setReceiptDueDate] = useState("");
   const [receiptSearch, setReceiptSearch] = useState("");
   const [receiptProductId, setReceiptProductId] = useState("");
   const [receiptQty, setReceiptQty] = useState("");
@@ -16539,7 +16583,7 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const ledger = allBranchLoans.filter((loan) => {
     const issuedAt = Number(loan.issuedAt || loan.ts || 0);
     return (!ledgerBranchId || loan.branchId === ledgerBranchId)
-      && (filter === "all" || loan.status === filter)
+      && (filter === "all" || (filter === "open" ? loan.outstandingQty > 0 : loan.status === filter))
       && issuedAt >= ledgerFromTs && issuedAt <= ledgerToTs;
   });
   const pendingLoanCount = allBranchLoans.filter((loan) => (!ledgerBranchId || loan.branchId === ledgerBranchId) && loan.outstandingQty > 0).length;
@@ -16593,16 +16637,17 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
   const issueLoan = async () => {
     setError(""); setNotice("");
     if (!borrowerName.trim()) return setError("Enter the outside shop name.");
+    if (!borrowerContact.trim()) return setError("Enter the contact person's name.");
     if (!lines.length) return setError("Add at least one product to this loan.");
     const loanId = uid("external-loan");
     const issuedAt = now();
-    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerContact: borrowerContact.trim(), dueAt: dueDate ? new Date(`${dueDate}T23:59:59`).getTime() : null, notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
+    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerContact: borrowerContact.trim(), notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
     const movements = lines.map((line) => ({ id: `external-loan-issue:${loanId}:${line.productId}`, productId: line.productId, branchId, qty: -line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: loanId, borrowerName: record.borrowerName, mode: "external_loan_issue", reason: `External loan to ${record.borrowerName}`, ts: issuedAt, synced: true }));
     setSaving(true);
     try {
       await publishSyncEvents([eventFromRecord("externalStockLoans", record, data)], data, { management: true });
       update((current) => ({ ...current, externalStockLoans: [...(current.externalStockLoans || []), record], stockMovements: [...(current.stockMovements || []), ...movements] }), { skipSync: true });
-      setBorrowerName(""); setBorrowerContact(""); setSavedBorrowerId(""); setDueDate(""); setNotes(""); setLines([]);
+      setBorrowerName(""); setBorrowerContact(""); setSavedBorrowerId(""); setNotes(""); setLines([]);
       setNotice("External stock loan recorded. The issued quantities have been removed from available stock.");
     } catch (requestError) {
       setError("The loan was not saved. Refresh the cloud data and try again.");
@@ -16649,6 +16694,7 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     setReceiptError(""); setReceiptNotice("");
     const supplierName = receiptSupplierName.trim();
     if (!supplierName) return setReceiptError("Enter the outside shop name.");
+    if (!receiptContact.trim()) return setReceiptError("Enter the contact person's name.");
     if (!receiptLines.length) return setReceiptError("Add at least one product to receive.");
     const receivedAt = now();
     const existingSupplier = (data.suppliers || []).find((supplier) => String(supplier.name || "").trim().toLocaleLowerCase() === supplierName.toLocaleLowerCase());
@@ -16677,7 +16723,6 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
         qty: line.qty, costCents: line.costCents, lineTotalCents: line.qty * line.costCents,
         status: "received", branchId: receiptBranchId, date: todayStr(), ts: receivedAt, updatedAt: receivedAt, receivedAt,
         source: "external_stock_borrowing", externalShopName: supplier.name, externalContact: receiptContact.trim(),
-        expectedReturnAt: receiptDueDate ? new Date(`${receiptDueDate}T23:59:59`).getTime() : null,
         receivedBy: actor?.name || actor?.email || "Management", synced: true,
       };
       const nextProduct = { ...withBranchProductCostForKey(products, product, receiptBranchId, newCostCents), updatedAt: receivedAt, synced: true };
@@ -16689,7 +16734,7 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
         id: uid("mv"), purchaseId: purchase.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo,
         productId: line.productId, branchId: receiptBranchId, qty: line.qty, costCents: line.costCents,
         previousCostCents, valueCents: line.qty * line.costCents, source: "external_stock_borrowing",
-        externalShopName: supplier.name, expectedReturnAt: purchase.expectedReturnAt,
+        externalShopName: supplier.name,
         reason: `External borrowed stock from ${supplier.name}`, ts: receivedAt, synced: true,
       });
     }
@@ -16709,71 +16754,72 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
         stockMovements: [...(current.stockMovements || []), ...movements],
         products: current.products.map((product) => productUpdates.find((entry) => entry.id === product.id) || product),
       }), { skipSync: true });
-      setReceiptSupplierName(""); setReceiptContact(""); setReceiptDueDate(""); setReceiptLines([]);
+      setReceiptSupplierName(""); setReceiptContact(""); setReceiptLines([]);
       setReceiptNotice(`Borrowed stock was received as purchase ${batchNo}. It used each product's last buying price.`);
     } catch (requestError) {
       setReceiptError("The borrowed-stock purchase was not saved. Refresh cloud data and try again.");
     } finally { setReceiptSaving(false); }
   };
 
-  return <div className="fade">
+  return <div className="fade external-stock-page">
     <PageHead title="External shop stock" sub="Auditable stock lent to, or borrowed from, outside shops. It never becomes sales or cashier debt." />
-    <section className="panel" style={{ padding: 14, marginBottom: 14 }}>
-      <div className="page-h" style={{ marginBottom: 10 }}><div><div className="title" style={{ fontSize: 17 }}>Loan ledger filters</div><div className="sub">Review pending, overdue, returned, or all outside-shop stock loans.</div></div>{(filter !== "open" || ledgerBranchId || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerBranchId(""); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear filters</button>}</div>
-      <div className="tabbar" role="tablist" style={{ marginBottom: 12 }}>
-        {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['overdue', 'Overdue'], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
-      </div>
-      <div className="formgrid" style={{ gridTemplateColumns: "minmax(180px, 1.25fr) repeat(2, minmax(150px, 1fr))" }}>
+    <section className="panel external-stock-filters">
+      <div className="external-stock-filter-head"><div><div className="title">Loan ledger</div><div className="sub">Filter the branch loan register.</div></div>{(filter !== "open" || ledgerBranchId !== branch.id || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerBranchId(branch.id); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear</button>}</div>
+      <div className="external-stock-filterbar">
+        <div className="external-stock-statuses" role="tablist">
+          {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
+        </div>
         <label className="label">Branch<select className="select" value={ledgerBranchId} onChange={(event) => setLedgerBranchId(event.target.value)}><option value="">All branches</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
         <label className="label">Issued from<input className="input" type="date" value={ledgerDateFrom} max={ledgerDateTo || undefined} onChange={(event) => setLedgerDateFrom(event.target.value)} /></label>
         <label className="label">Issued to<input className="input" type="date" value={ledgerDateTo} min={ledgerDateFrom || undefined} onChange={(event) => setLedgerDateTo(event.target.value)} /></label>
       </div>
     </section>
     {pendingLoanCount > 0 && <div className="alert error" style={{ marginBottom: 14 }}><AlertCircle />{pendingLoanCount} outside-shop loan{pendingLoanCount === 1 ? " is" : "s are"} still pending return in the selected ledger view.</div>}
-    <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
-      <div className="section-title"><ClipboardCheck /> Issue external stock loan</div>
-      <div className="formgrid" style={{ marginTop: 12 }}>
+    <div className="external-stock-workspace">
+    <section className="panel external-stock-card">
+      <div className="section-title"><ClipboardCheck /> Lend stock</div>
+      <div className="sub external-stock-card-sub">Record stock issued to an outside shop.</div>
+      <div className="external-stock-form">
         <label className="label">Branch<select className="select" value={branchId} onChange={(event) => { setBranchId(event.target.value); setSavedBorrowerId(""); setLines([]); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
         <label className="label">Saved outside shop<select className="select" value={savedBorrowerId} onChange={(event) => { const selected = savedBorrowers.find((entry) => entry.id === event.target.value); setSavedBorrowerId(event.target.value); if (selected) { setBorrowerName(selected.name); setBorrowerContact(selected.contact); } }}><option value="">New shop or select saved</option>{savedBorrowers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.contact ? ` — ${entry.contact}` : ""}</option>)}</select></label>
         <label className="label">Outside shop<input className="input" value={borrowerName} onChange={(event) => { setBorrowerName(event.target.value); setSavedBorrowerId(""); }} placeholder="Shop name" /></label>
-        <label className="label">Borrowed by (optional)<input className="input" value={borrowerContact} onChange={(event) => setBorrowerContact(event.target.value)} placeholder="Person's name" /></label>
-        <label className="label">Expected return (optional)<input className="input" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+        <label className="label">Contact person<input className="input" value={borrowerContact} onChange={(event) => setBorrowerContact(event.target.value)} placeholder="Person's name" required /></label>
       </div>
-      <div className="formgrid" style={{ marginTop: 12, gridTemplateColumns: "minmax(0, 1fr) 120px auto" }}>
+      <div className="external-stock-product-entry">
         <label className="label">Product<input className="input" value={search} onChange={(event) => { setSearch(event.target.value); setProductId(""); }} placeholder="Search product or SKU" />{productMatches.length > 0 && <div className="suggestions">{productMatches.map((entry) => <button type="button" key={entry.id} onClick={() => { setProductId(entry.id); setSearch(entry.name); }}>{entry.name} <span>{entry.sku} · {productOnHand(data, entry, branchId)} in stock</span></button>)}</div>}</label>
         <label className="label">Quantity<input className="input" inputMode="numeric" value={qty} onChange={(event) => setQty(event.target.value.replace(/\D/g, ""))} /></label>
         <button type="button" className="btn btn-ghost" style={{ alignSelf: "end" }} onClick={addLine}><Plus /> Add</button>
       </div>
-      {lines.length > 0 && <div className="list" style={{ marginTop: 12 }}>{lines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
-      <label className="label" style={{ display: "block", marginTop: 12 }}>Notes (optional)<textarea className="input" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Reason, contact person, or other reference" /></label>
-      {error && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{error}</div>}
-      {notice && <div className="notice" style={{ marginTop: 12 }}>{notice}</div>}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" className="btn btn-primary" disabled={saving || !lines.length} onClick={issueLoan}><ArrowRight /> {saving ? "Saving…" : "Record loan"}</button></div>
+      {lines.length > 0 && <div className="list external-stock-lines">{lines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
+      <label className="label external-stock-notes">Notes (optional)<textarea className="input" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Reference or reason" /></label>
+      {error && <div className="alert external-stock-message"><AlertCircle />{error}</div>}
+      {notice && <div className="notice external-stock-message">{notice}</div>}
+      <div className="external-stock-action"><button type="button" className="btn btn-primary" disabled={saving || !lines.length} onClick={issueLoan}><ArrowRight /> {saving ? "Saving…" : "Record loan"}</button></div>
     </section>
-    <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
+    <section className="panel external-stock-card">
       <div className="section-title"><ShoppingBag /> Receive borrowed stock</div>
-      <div className="sub" style={{ marginTop: 4 }}>Borrowed items are received as a normal purchase, using the last buying price already recorded for each product.</div>
-      <div className="formgrid" style={{ marginTop: 12 }}>
+      <div className="sub external-stock-card-sub">Creates a normal purchase at the last buying price.</div>
+      <div className="external-stock-form">
         <label className="label">Branch<select className="select" value={receiptBranchId} onChange={(event) => { setReceiptBranchId(event.target.value); setReceiptLines([]); setReceiptProductId(""); setReceiptSearch(""); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
         <label className="label">Saved outside shop<select className="select" value="" onChange={(event) => { const selected = savedExternalSuppliers.find((entry) => entry.id === event.target.value); if (selected) { setReceiptSupplierName(selected.name); setReceiptContact(selected.contact); } }}><option value="">New shop or select saved</option>{savedExternalSuppliers.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}{entry.contact ? ` — ${entry.contact}` : ""}</option>)}</select></label>
         <label className="label">Outside shop<input className="input" value={receiptSupplierName} onChange={(event) => setReceiptSupplierName(event.target.value)} placeholder="Shop name" /></label>
-        <label className="label">Contact person (optional)<input className="input" value={receiptContact} onChange={(event) => setReceiptContact(event.target.value)} placeholder="Person's name" /></label>
-        <label className="label">Expected return (optional)<input className="input" type="date" value={receiptDueDate} onChange={(event) => setReceiptDueDate(event.target.value)} /></label>
+        <label className="label">Contact person<input className="input" value={receiptContact} onChange={(event) => setReceiptContact(event.target.value)} placeholder="Person's name" required /></label>
       </div>
-      <div className="formgrid" style={{ marginTop: 12, gridTemplateColumns: "minmax(0, 1fr) 120px auto" }}>
+      <div className="external-stock-product-entry">
         <label className="label">Product<input className="input" value={receiptSearch} onChange={(event) => { setReceiptSearch(event.target.value); setReceiptProductId(""); }} placeholder="Search product or SKU" />{receiptMatches.length > 0 && <div className="suggestions">{receiptMatches.map((entry) => <button type="button" key={entry.id} onClick={() => { setReceiptProductId(entry.id); setReceiptSearch(entry.name); }}>{entry.name} <span>{entry.sku} · last buy {fmt(lastBuyingPriceCents(data, entry, receiptBranchId), data.settings.currency)}</span></button>)}</div>}</label>
         <label className="label">Quantity<input className="input" inputMode="numeric" value={receiptQty} onChange={(event) => setReceiptQty(event.target.value.replace(/\D/g, ""))} /></label>
         <button type="button" className="btn btn-ghost" style={{ alignSelf: "end" }} onClick={addReceiptLine}><Plus /> Add</button>
       </div>
-      {receiptLines.length > 0 && <div className="list" style={{ marginTop: 12 }}>{receiptLines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku} · last buying price {fmt(line.costCents, data.settings.currency)}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setReceiptLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
-      {receiptError && <div className="alert error" style={{ marginTop: 12 }}><AlertCircle />{receiptError}</div>}
-      {receiptNotice && <div className="notice" style={{ marginTop: 12 }}>{receiptNotice}</div>}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" className="btn btn-primary" disabled={receiptSaving || !receiptLines.length} onClick={receiveBorrowedStock}><ShoppingBag /> {receiptSaving ? "Saving…" : "Receive as purchase"}</button></div>
+      {receiptLines.length > 0 && <div className="list external-stock-lines">{receiptLines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku} · last buying price {fmt(line.costCents, data.settings.currency)}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setReceiptLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
+      {receiptError && <div className="alert error external-stock-message"><AlertCircle />{receiptError}</div>}
+      {receiptNotice && <div className="notice external-stock-message">{receiptNotice}</div>}
+      <div className="external-stock-action"><button type="button" className="btn btn-primary" disabled={receiptSaving || !receiptLines.length} onClick={receiveBorrowedStock}><ShoppingBag /> {receiptSaving ? "Saving…" : "Receive as purchase"}</button></div>
     </section>
+    </div>
     <DocumentFile title="External loan ledger" count={ledger.length} meta={`${ledgerBranchName} · stock issued and returned through the shared inventory ledger`}>
       <div className="list">{ledger.map((loan) => <div className="row" key={loan.id}>
-        <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.borrowerContact || loan.borrowerPhone ? `Borrowed by ${loan.borrowerContact || loan.borrowerPhone} · ` : ""}{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.dueAt ? ` · due ${dt(loan.dueAt)}` : ""}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
-        <span className={`ist ${loan.status === "returned" ? "paid" : loan.status === "overdue" ? "danger" : "open"}`}>{loan.status === "returned" ? "Returned" : loan.status === "overdue" ? "Overdue" : `${loan.outstandingQty} out`}</span>
+        <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.borrowerContact || loan.borrowerPhone ? `Contact: ${loan.borrowerContact || loan.borrowerPhone} · ` : ""}{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
+        <span className={`ist ${loan.status === "returned" ? "paid" : "open"}`}>{loan.status === "returned" ? "Returned" : `${loan.outstandingQty} out`}</span>
         <span className="pill plain">{dt(loan.issuedAt || loan.ts)}</span>
         {loan.outstandingQty > 0 && <button type="button" className="btn xs btn-primary" onClick={() => openReturn(loan)}><RotateCcw /> Return</button>}
       </div>)}{ledger.length === 0 && <div className="notice">No {filter === "all" ? "external stock loans" : filter + " loans"} for {ledgerBranchName}.</div>}</div>
