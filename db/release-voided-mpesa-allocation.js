@@ -56,6 +56,22 @@ async function loadRepairContext(client) {
     paymentPlaceholders && `a.local_payment_id IN (${paymentPlaceholders})`,
     allocationIdPlaceholders && `a.id IN (${allocationIdPlaceholders})`,
   ].filter(Boolean).join(" OR ");
+  const providerTransactionIds = payments
+    .map((payment) => String(payment.payload?.kopokopoTransactionId || "").trim())
+    .filter(Boolean);
+  const transactionIdPlaceholders = providerTransactionIds
+    .map((_, index) => `$${index + 2}`).join(", ");
+  const transactionScope = [
+    "UPPER(reference_last4) = $1",
+    "RIGHT(UPPER(reference), 4) = $1",
+    transactionIdPlaceholders && `id IN (${transactionIdPlaceholders})`,
+  ].filter(Boolean).join(" OR ");
+  const transactionRows = await client.query(
+    `SELECT id, reference_last4, amount_cents, allocated_cents, status, branch_id
+       FROM kopokopo_transactions
+      WHERE ${transactionScope}`,
+    [codeLast4, ...providerTransactionIds]
+  );
   const allocations = await client.query(
     `SELECT a.id, a.transaction_id, a.invoice_id, a.branch_id, a.amount_cents, a.local_payment_id, a.status,
             t.reference_last4, t.amount_cents AS transaction_amount_cents, t.allocated_cents AS transaction_allocated_cents
@@ -89,7 +105,16 @@ async function loadRepairContext(client) {
       && linked.length > 0
       && linked.reduce((total, allocation) => total + Number(allocation.amount_cents || 0), 0) === paymentCents(payment.payload);
   });
-  return { invoice, resolvedInvoiceId, voided, payments, allocations: allocations.rows, activeAllocations, releasesMatchPayments };
+  return {
+    invoice,
+    resolvedInvoiceId,
+    voided,
+    payments,
+    transactions: transactionRows.rows,
+    allocations: allocations.rows,
+    activeAllocations,
+    releasesMatchPayments,
+  };
 }
 
 async function main() {
@@ -102,7 +127,21 @@ async function main() {
     resolvedInvoiceId: preview.resolvedInvoiceId,
     codeLast4,
     voided: preview.voided,
-    payments: preview.payments.map((payment) => ({ id: payment.id, amountCents: paymentCents(payment.payload), method: payment.payload.method })),
+    payments: preview.payments.map((payment) => ({
+      id: payment.id,
+      amountCents: paymentCents(payment.payload),
+      method: payment.payload.method,
+      providerTransactionId: payment.payload?.kopokopoTransactionId || null,
+      providerAllocationId: payment.payload?.kopokopoAllocationId || null,
+    })),
+    transactions: preview.transactions.map((transaction) => ({
+      id: transaction.id,
+      codeLast4: transaction.reference_last4,
+      amountCents: Number(transaction.amount_cents || 0),
+      allocatedCents: Number(transaction.allocated_cents || 0),
+      status: transaction.status,
+      branchId: transaction.branch_id,
+    })),
     allocations: preview.allocations.map((allocation) => ({
       id: allocation.id,
       invoiceId: allocation.invoice_id,
