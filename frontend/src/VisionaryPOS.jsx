@@ -4696,14 +4696,16 @@ body{overscroll-behavior:none}
 .dash2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media (max-width:900px){.dash2{grid-template-columns:1fr}}
 .dcard{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:16px}
-.dashboard-cloud-health{display:grid;grid-template-columns:102px minmax(0,1fr) minmax(210px,260px);align-items:center;gap:20px;padding:18px 20px;border:1px solid rgba(14,165,181,.26);border-radius:18px;background:linear-gradient(120deg,rgba(14,165,181,.13),rgba(75,103,255,.08) 52%,var(--surface));box-shadow:0 14px 32px -30px rgba(14,165,181,.75)}
+.dashboard-cloud-health{display:grid;grid-template-columns:102px minmax(0,1fr);align-items:center;gap:20px;padding:16px 20px;border:1px solid rgba(14,165,181,.26);border-radius:18px;background:linear-gradient(120deg,rgba(14,165,181,.13),rgba(75,103,255,.08) 52%,var(--surface));box-shadow:0 14px 32px -30px rgba(14,165,181,.75)}
 .dashboard-cloud-health.attention{border-color:rgba(220,142,38,.38);background:linear-gradient(120deg,rgba(220,142,38,.11),rgba(14,165,181,.08) 58%,var(--surface))}
-.dashboard-cloud-scanner{width:88px;height:88px;border-radius:50%;position:relative;display:grid;place-items:center;background:conic-gradient(var(--accent) var(--cloud-progress),rgba(14,165,181,.13) 0);box-shadow:0 0 0 7px rgba(14,165,181,.07)}
+.dashboard-cloud-scanner{width:88px;height:88px;padding:0;border-radius:50%;position:relative;display:grid;place-items:center;background:conic-gradient(var(--accent) var(--cloud-progress),rgba(14,165,181,.13) 0);box-shadow:0 0 0 7px rgba(14,165,181,.07);border:0;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease}
+.dashboard-cloud-scanner:hover{transform:translateY(-2px);box-shadow:0 0 0 7px rgba(14,165,181,.11),0 12px 20px -14px rgba(14,165,181,.78)}.dashboard-cloud-scanner:focus-visible{outline:3px solid rgba(14,165,181,.42);outline-offset:4px}.dashboard-cloud-scanner:disabled{cursor:wait;transform:none;opacity:.72}
 .dashboard-cloud-scanner::after{content:"";position:absolute;inset:-4px;border-radius:inherit;border:1px solid rgba(14,165,181,.33);animation:cloud-snapshot-orbit 2.5s linear infinite}
 .dashboard-cloud-health.attention .dashboard-cloud-scanner{background:conic-gradient(#d18a28 var(--cloud-progress),rgba(209,138,40,.13) 0)}
 .dashboard-cloud-scanner-inner{position:relative;z-index:1;width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:1px solid var(--border-soft);font-family:var(--font-mono);font-size:19px;color:var(--accent)}
-.dashboard-cloud-health.attention .dashboard-cloud-scanner-inner{color:#bf7d1c}.dashboard-cloud-scanner-inner svg{width:24px;height:24px}.dashboard-cloud-copy{min-width:0}.dashboard-cloud-copy .eyebrow{display:flex;align-items:center;gap:6px;color:var(--accent);font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.09em}.dashboard-cloud-copy .eyebrow svg{width:14px;height:14px}.dashboard-cloud-copy h3{margin:4px 0 4px;font-size:17px;letter-spacing:-.02em}.dashboard-cloud-copy p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.dashboard-cloud-facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.dashboard-cloud-facts span{padding:4px 8px;border:1px solid var(--border-soft);border-radius:999px;background:rgba(255,255,255,.34);font-size:11px;color:var(--muted)}.dashboard-cloud-facts b{color:var(--text)}.dashboard-cloud-action{display:flex;flex-direction:column;align-items:stretch;gap:7px}.dashboard-cloud-action .btn{justify-content:center}.dashboard-cloud-action small{color:var(--muted-2);font-size:10.5px;line-height:1.35;text-align:center}.dashboard-cloud-action .spin{animation:ledger-spin .8s linear infinite}
-@media (max-width:760px){.dashboard-cloud-health{grid-template-columns:72px minmax(0,1fr);gap:13px;padding:14px}.dashboard-cloud-scanner{width:64px;height:64px}.dashboard-cloud-scanner-inner{width:52px;height:52px;font-size:13px}.dashboard-cloud-scanner-inner svg{width:18px;height:18px}.dashboard-cloud-copy h3{font-size:15px}.dashboard-cloud-copy p{font-size:12px}.dashboard-cloud-action{grid-column:1/-1}.dashboard-cloud-action small{text-align:left}.dashboard-cloud-facts{margin-top:7px}}
+.dashboard-cloud-health.attention .dashboard-cloud-scanner-inner{color:#bf7d1c}.dashboard-cloud-scanner-inner svg{width:24px;height:24px}.dashboard-cloud-copy{min-width:0}.dashboard-cloud-copy .eyebrow{display:flex;align-items:center;gap:6px;color:var(--accent);font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.09em}.dashboard-cloud-copy .eyebrow svg{width:14px;height:14px}.dashboard-cloud-copy h3{margin:4px 0 0;font-size:17px;letter-spacing:-.02em}.dashboard-cloud-facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.dashboard-cloud-facts span{padding:4px 8px;border:1px solid var(--border-soft);border-radius:999px;background:rgba(255,255,255,.34);font-size:11px;color:var(--muted)}.dashboard-cloud-facts b{color:var(--text)}.dashboard-cloud-scanner .spin{animation:ledger-spin .8s linear infinite}
+@media (max-width:760px){.dashboard-cloud-health{grid-template-columns:72px minmax(0,1fr);gap:13px;padding:14px}.dashboard-cloud-scanner{width:64px;height:64px}.dashboard-cloud-scanner-inner{width:52px;height:52px;font-size:13px}.dashboard-cloud-scanner-inner svg{width:18px;height:18px}.dashboard-cloud-copy h3{font-size:15px}.dashboard-cloud-facts{margin-top:7px}}
+.dashboard-sales-trend{grid-template-columns:1fr}
 .dcard .ht{display:flex;align-items:center;gap:8px;font-weight:750;font-size:14px;margin-bottom:14px}
 .dcard .ht svg{width:16px;height:16px;color:var(--accent)}
 .dcard .ht .rt{margin-left:auto;font-size:11.5px;color:var(--muted-2);font-weight:600}
@@ -7555,8 +7557,7 @@ export default function VisionPOS() {
               {menuOpen && (<>
                 <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
-                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}{online && <button className="topmenu-mini" onClick={() => { runSync({ source: "manual-refresh" }); }}>Refresh</button>}</div>
-                  {view === "admin" && online && <button className="topmenu-row" disabled={syncing} onClick={syncAllCloudSessions}><RefreshCw /><span>{syncing ? "Syncing all cloud data…" : "Sync all cloud data"}</span></button>}
+                  <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}</div>
                   <button className="topmenu-row" onClick={() => selectDeviceTheme(deviceTheme === "dark" ? "light" : "dark")}>{deviceTheme === "dark" ? <Sun /> : <Moon />}<span>{deviceTheme === "dark" ? "Light mode" : "Dark mode"}</span></button>
                   <div className="topmenu-div" />
                   <button className="topmenu-row signout" onClick={signOutSession}><LogOut /><span>Sign out</span></button>
@@ -12129,69 +12130,52 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
 function DashboardCloudHealth({ data, online, maintenance, onSyncAll, onRefreshMaintenance, onRunMaintenance }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(100);
-  const [stage, setStage] = useState("Cloud data is current");
   const [lastAction, setLastAction] = useState(0);
   const m = maintenance || {};
   const pendingUploads = Number(m.pendingUploads || data?._sync?.outboxLength || 0);
   const syncError = String(m.syncError || data?._sync?.error || "");
   const attentionNeeded = !online || pendingUploads > 0 || Boolean(syncError || m.cacheWarning || m.repairWarning);
-  const lastSync = Number(data?.lastSyncedAt || 0);
   useEffect(() => {
     if (!busy) setProgress(attentionNeeded ? 28 : 100);
   }, [attentionNeeded, busy]);
   const statusLabel = !online ? "Waiting for connection" : attentionNeeded ? "Cloud check recommended" : "Cloud data verified";
-  const statusDetail = !online
-    ? "Reconnect to safely check the latest branch data."
-    : attentionNeeded
-      ? "Run a safe cloud repair to refresh stale local read data."
-      : lastSync ? `Last cloud update ${new Date(lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Ready to verify this workspace.";
   const repair = async () => {
     if (busy) return;
     if (!online) {
       setProgress(0);
-      setStage("Reconnect to begin a cloud check");
       return;
     }
     setBusy(true);
     setProgress(8);
-    setStage("Preparing a safe local refresh");
     try {
       await onRunMaintenance?.("light");
       setProgress(42);
-      setStage("Checking the latest cloud records");
       const synced = await onSyncAll?.();
       if (synced === false) throw new Error("cloud_sync_failed");
       setProgress(78);
-      setStage("Verifying inventory, invoices, and transfers");
       await onRefreshMaintenance?.();
       setProgress(100);
-      setStage("Cloud data verified");
       setLastAction(Date.now());
     } catch (_) {
       setProgress(0);
-      setStage("Cloud check could not finish — try again when the connection is stable");
     } finally {
       setBusy(false);
     }
   };
   const meter = { "--cloud-progress": `${progress}%` };
+  const scannerLabel = busy ? "Refreshing cloud data" : attentionNeeded ? "Repair and sync cloud data" : "Refresh cloud data";
   return (
     <section className={"dashboard-cloud-health" + (attentionNeeded ? " attention" : "")} aria-label="Cloud health">
-      <div className="dashboard-cloud-scanner" style={meter} aria-hidden="true">
+      <button type="button" className="dashboard-cloud-scanner" style={meter} disabled={busy} onClick={repair} aria-label={scannerLabel} title={scannerLabel}>
         <div className="dashboard-cloud-scanner-inner">{busy ? <b>{progress}%</b> : attentionNeeded ? <AlertCircle /> : <Check />}</div>
-      </div>
+      </button>
       <div className="dashboard-cloud-copy">
         <div className="eyebrow"><Wifi /> Cloud health</div>
         <h3>{busy ? "Scanning your workspace" : statusLabel}</h3>
-        <p>{busy ? stage : statusDetail}</p>
         <div className="dashboard-cloud-facts">
           <span><b>{pendingUploads}</b> pending change{pendingUploads === 1 ? "" : "s"}</span>
           <span><b>{lastAction ? "Just now" : (m.lastMode || "Automatic")}</b> safe maintenance</span>
         </div>
-      </div>
-      <div className="dashboard-cloud-action">
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={repair}><RefreshCw className={busy ? "spin" : ""} />{busy ? "Checking cloud…" : attentionNeeded ? "Repair & sync" : "Run cloud check"}</button>
-        <small>Repairs cached views only. It never edits sales, stock, payments, or users.</small>
       </div>
     </section>
   );
@@ -12222,21 +12206,6 @@ function DashboardTab({ data, update, branch, online, maintenance, onSyncAll, on
   const inventoryDebtAssigned = inventoryDebtBalances.reduce((sum, row) => sum + row.assignedCents, 0);
   const inventoryDebtPaid = inventoryDebtBalances.reduce((sum, row) => sum + row.paidCents, 0);
   const inventoryDebtOutstanding = inventoryDebtBalances.reduce((sum, row) => sum + row.outstandingCents, 0);
-  // Fast-moving reorders: products with recent weekly demand that need restocking to cover the next 2 weeks.
-  const fastReorders = (() => {
-    const WEEKS_LOOKBACK = 8, weekMs = 7 * 864e5, TARGET = 2;
-    const start = Date.now() - WEEKS_LOOKBACK * weekMs;
-    const moves = data.stockMovements.filter((m) => isInvoiceSaleMovement(m) && saleMoveAccountingTs(data, m) >= start && m.branchId === branch.id && saleMoveOperational(data, m));
-    const sold = {}; let earliest = Date.now();
-    moves.forEach((m) => { sold[m.productId] = (sold[m.productId] || 0) + (-m.qty); if (m.ts < earliest) earliest = m.ts; });
-    const weeksObs = moves.length ? Math.max(1, Math.min(WEEKS_LOOKBACK, (Date.now() - earliest) / weekMs)) : 1;
-    return data.products.filter((p) => {
-      const wk = (sold[p.id] || 0) / weeksObs;
-      if (wk <= 0) return false; // idle product — excluded
-      return Math.max(0, Math.ceil(wk * TARGET - onHand(data, p.id, branch.id))) > 0;
-    });
-  })();
-
   const days = [];
   const businessToday = businessDateValue(Date.now(), timeZone);
   for (let i = 6; i >= 0; i--) {
@@ -12252,17 +12221,11 @@ function DashboardTab({ data, update, branch, online, maintenance, onSyncAll, on
   }
   const maxDay = Math.max(1, ...days.map((d) => d.total));
 
-  const since7 = Date.now() - 7 * 864e5; const catRev = {};
-  data.stockMovements.forEach((m) => { if (m.branchId === branch.id && isInvoiceSaleMovement(m) && saleMoveAccountingTs(data, m) >= since7 && saleMoveRecognized(data, m)) { const p = data.products.find((x) => x.id === m.productId); if (p) catRev[p.category] = (catRev[p.category] || 0) + (-m.qty) * priceFor(data, p); } });
-  const catArr = Object.entries(catRev).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const maxCat = Math.max(1, ...catArr.map((c) => c[1]));
-
   const localSummary = () => {
     const margin = todaySales > 0 ? Math.round((todayProfit / todaySales) * 100) : 0;
     let s = "Today's sales are " + fmt(todaySales, cur) + " with estimated gross profit of " + fmt(todayProfit, cur) + " (" + margin + "% before expenses and loss). ";
     s += creditTotal > 0 ? "Outstanding credit stands at " + fmt(creditTotal, cur) + ". " : "No outstanding credit. ";
     s += inventoryDebtOutstanding > 0 ? "Cashier inventory debt stands at " + fmt(inventoryDebtOutstanding, cur) + ". " : "Cashier inventory debt is clear. ";
-    s += fastReorders.length > 0 ? fastReorders.length + " fast-moving product(s) need reordering — prioritise the lowest cover." : "Fast movers are well stocked.";
     return s;
   };
   const genSummary = () => setSummary(localSummary());
@@ -12282,26 +12245,17 @@ function DashboardTab({ data, update, branch, online, maintenance, onSyncAll, on
         <div className={"ctile " + (inventoryDebtOutstanding > 0 ? "warn" : "good")} role="button" tabIndex={0} onClick={onOpenPayments} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpenPayments?.(); }} style={{ cursor: "pointer" }}>
           <div className="ic"><CreditCard /></div><div><div className="cl">Inventory joint debt</div><div className="cv">{fmt(inventoryDebtOutstanding, cur)}</div><div className="cs">paid {fmt(inventoryDebtPaid, cur)} of {fmt(inventoryDebtAssigned, cur)}</div></div>
         </div>
-        <div className={"ctile " + (fastReorders.length ? "warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Reorders</div><div className="cv">{fastReorders.length}</div><div className="cs">fast movers low</div></div></div>
       </div>
 
       <DashboardCloudHealth data={data} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />
 
-      <div className="dash2">
+      <div className="dash2 dashboard-sales-trend">
         <div className="dcard">
           <div className="ht"><BarChart3 /> Sales Trend <span className="rt">last 7 days</span></div>
           <div className="trend">{days.map((d, i) => (
             <div className="col" key={i}><div className="colv">{d.total ? fmt(d.total, cur).replace(/^KES\s?/, "") : ""}</div>
               <div className="colbar" style={{ height: Math.max(4, Math.round(d.total / maxDay * 100)) + "%" }} /><div className="cold">{d.label}</div></div>))}
           </div>
-        </div>
-        <div className="dcard">
-          <div className="ht"><Tags /> Revenue Breakdown <span className="rt">by category · 7d</span></div>
-          {catArr.length === 0 ? <div className="dempty">No sales recorded in the last 7 days yet.</div> : (
-            <div className="bars">{catArr.map(([c, v]) => (
-              <div className="bar-row" key={c}><span className="lbl">{c}</span><div className="bar-track"><div className="bar-fill" style={{ width: Math.round(v / maxCat * 100) + "%" }} /></div><span className="val">{fmt(v, cur)}</span></div>))}
-            </div>
-          )}
         </div>
       </div>
 
