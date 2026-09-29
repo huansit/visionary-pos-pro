@@ -4696,6 +4696,14 @@ body{overscroll-behavior:none}
 .dash2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media (max-width:900px){.dash2{grid-template-columns:1fr}}
 .dcard{background:var(--surface);border:1px solid var(--border-soft);border-radius:16px;padding:16px}
+.dashboard-cloud-health{display:grid;grid-template-columns:102px minmax(0,1fr) minmax(210px,260px);align-items:center;gap:20px;padding:18px 20px;border:1px solid rgba(14,165,181,.26);border-radius:18px;background:linear-gradient(120deg,rgba(14,165,181,.13),rgba(75,103,255,.08) 52%,var(--surface));box-shadow:0 14px 32px -30px rgba(14,165,181,.75)}
+.dashboard-cloud-health.attention{border-color:rgba(220,142,38,.38);background:linear-gradient(120deg,rgba(220,142,38,.11),rgba(14,165,181,.08) 58%,var(--surface))}
+.dashboard-cloud-scanner{width:88px;height:88px;border-radius:50%;position:relative;display:grid;place-items:center;background:conic-gradient(var(--accent) var(--cloud-progress),rgba(14,165,181,.13) 0);box-shadow:0 0 0 7px rgba(14,165,181,.07)}
+.dashboard-cloud-scanner::after{content:"";position:absolute;inset:-4px;border-radius:inherit;border:1px solid rgba(14,165,181,.33);animation:cloud-snapshot-orbit 2.5s linear infinite}
+.dashboard-cloud-health.attention .dashboard-cloud-scanner{background:conic-gradient(#d18a28 var(--cloud-progress),rgba(209,138,40,.13) 0)}
+.dashboard-cloud-scanner-inner{position:relative;z-index:1;width:72px;height:72px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:1px solid var(--border-soft);font-family:var(--font-mono);font-size:19px;color:var(--accent)}
+.dashboard-cloud-health.attention .dashboard-cloud-scanner-inner{color:#bf7d1c}.dashboard-cloud-scanner-inner svg{width:24px;height:24px}.dashboard-cloud-copy{min-width:0}.dashboard-cloud-copy .eyebrow{display:flex;align-items:center;gap:6px;color:var(--accent);font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.09em}.dashboard-cloud-copy .eyebrow svg{width:14px;height:14px}.dashboard-cloud-copy h3{margin:4px 0 4px;font-size:17px;letter-spacing:-.02em}.dashboard-cloud-copy p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}.dashboard-cloud-facts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.dashboard-cloud-facts span{padding:4px 8px;border:1px solid var(--border-soft);border-radius:999px;background:rgba(255,255,255,.34);font-size:11px;color:var(--muted)}.dashboard-cloud-facts b{color:var(--text)}.dashboard-cloud-action{display:flex;flex-direction:column;align-items:stretch;gap:7px}.dashboard-cloud-action .btn{justify-content:center}.dashboard-cloud-action small{color:var(--muted-2);font-size:10.5px;line-height:1.35;text-align:center}.dashboard-cloud-action .spin{animation:ledger-spin .8s linear infinite}
+@media (max-width:760px){.dashboard-cloud-health{grid-template-columns:72px minmax(0,1fr);gap:13px;padding:14px}.dashboard-cloud-scanner{width:64px;height:64px}.dashboard-cloud-scanner-inner{width:52px;height:52px;font-size:13px}.dashboard-cloud-scanner-inner svg{width:18px;height:18px}.dashboard-cloud-copy h3{font-size:15px}.dashboard-cloud-copy p{font-size:12px}.dashboard-cloud-action{grid-column:1/-1}.dashboard-cloud-action small{text-align:left}.dashboard-cloud-facts{margin-top:7px}}
 .dcard .ht{display:flex;align-items:center;gap:8px;font-weight:750;font-size:14px;margin-bottom:14px}
 .dcard .ht svg{width:16px;height:16px;color:var(--accent)}
 .dcard .ht .rt{margin-left:auto;font-size:11.5px;color:var(--muted-2);font-weight:600}
@@ -7333,7 +7341,7 @@ export default function VisionPOS() {
     }
   };
   const syncAllCloudSessions = async () => {
-    if (!navigator.onLine || syncInFlightRef.current || !dataRef.current) return;
+    if (!navigator.onLine || syncInFlightRef.current || !dataRef.current) return false;
     syncInFlightRef.current = true;
     setSyncing(true);
     setMenuOpen(false);
@@ -7348,8 +7356,10 @@ export default function VisionPOS() {
         result = await cloudSnapshotData(dataRef.current, { source: "manual-cloud-snapshot-retry" });
       }
       setData(result.data);
+      return true;
     } catch (error) {
       setData((cur) => cur ? { ...cur, _sync: { ...(cur._sync || {}), error: error.message } } : cur);
+      return false;
     } finally {
       syncInFlightRef.current = false;
       setSyncing(false);
@@ -7566,7 +7576,7 @@ export default function VisionPOS() {
           {view === "admin" && (restoringWorkspace
             ? <CloudDataRecovery title="Loading current workspace" message="Your latest cloud workspace is being verified before opening." loading={!syncError} complete={workspaceSnapshotComplete} syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />
             : adminBranch
-            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onSyncNow={runSync} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
+            ? <AdminWorkspace data={data} update={update} branch={adminBranch} user={session ? session.name : "VISIONPOS Admin"} role={session ? session.role : "Admin"} rights={session ? (session.rights || []) : null} sessionToken={session?.sessionToken || ""} online={online} onSyncNow={runSync} onSyncAll={syncAllCloudSessions} onCleanReset={cleanReset} maintenance={maintenance} onRefreshMaintenance={refreshMaintenance} onRunMaintenance={runMaintenance} environment={environmentInfo} onRefreshEnvironment={() => refreshEnvironment({ session: true })} deviceTheme={deviceTheme} onDeviceThemeChange={selectDeviceTheme} />
             : <CloudDataRecovery title="Restoring admin workspace" message="Your workspace will open after the latest cloud data is verified." syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />)}
         </div>
       </div>
@@ -9141,7 +9151,6 @@ const NAV_GROUPS = [
     { id: "users", label: "Users & Security", icon: ShieldCheck },
     { id: "terminals", label: "Terminals", icon: KeyRound },
     { id: "environment", label: "Environment", icon: ShieldCheck },
-    { id: "system", label: "System Health", icon: RefreshCw },
     { id: "settings", label: "Settings", icon: SettingsIcon },
   ] },
 ];
@@ -9228,7 +9237,7 @@ function InsightsTab({ data, online }) {
     </div>
   );
 }
-function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, onSyncNow, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
+function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, onSyncNow, onSyncAll, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -9349,9 +9358,9 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     );
   };
   const render = () => {
-    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={openDebtPayments} />;
+    if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
     switch (tab) {
-      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={openDebtPayments} />;
+      case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
       case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "all"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
@@ -9374,9 +9383,8 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "users": return <UsersTab data={data} update={update} isAdmin={isAdmin} />;
       case "terminals": return <TerminalsTab data={data} isAdmin={isAdmin} branch={branch} />;
       case "environment": return <EnvironmentTab data={data} environment={environment} role={role} onRefresh={onRefreshEnvironment} />;
-      case "system": return <SystemHealthTab data={data} online={online} maintenance={maintenance} onRefresh={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />;
       case "settings": return <SettingsTab data={data} update={update} isAdmin={isAdmin} onCleanReset={onCleanReset} deviceTheme={deviceTheme} onDeviceThemeChange={onDeviceThemeChange} />;
-      default: return <DashboardTab data={data} update={update} branch={branch} onOpenPayments={openDebtPayments} />;
+      default: return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
     }
   };
   return (
@@ -12118,7 +12126,78 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   );
 }
 /* ---- Dashboard ---- */
-function DashboardTab({ data, update, branch, onOpenPayments }) {
+function DashboardCloudHealth({ data, online, maintenance, onSyncAll, onRefreshMaintenance, onRunMaintenance }) {
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(100);
+  const [stage, setStage] = useState("Cloud data is current");
+  const [lastAction, setLastAction] = useState(0);
+  const m = maintenance || {};
+  const pendingUploads = Number(m.pendingUploads || data?._sync?.outboxLength || 0);
+  const syncError = String(m.syncError || data?._sync?.error || "");
+  const attentionNeeded = !online || pendingUploads > 0 || Boolean(syncError || m.cacheWarning || m.repairWarning);
+  const lastSync = Number(data?.lastSyncedAt || 0);
+  useEffect(() => {
+    if (!busy) setProgress(attentionNeeded ? 28 : 100);
+  }, [attentionNeeded, busy]);
+  const statusLabel = !online ? "Waiting for connection" : attentionNeeded ? "Cloud check recommended" : "Cloud data verified";
+  const statusDetail = !online
+    ? "Reconnect to safely check the latest branch data."
+    : attentionNeeded
+      ? "Run a safe cloud repair to refresh stale local read data."
+      : lastSync ? `Last cloud update ${new Date(lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Ready to verify this workspace.";
+  const repair = async () => {
+    if (busy) return;
+    if (!online) {
+      setProgress(0);
+      setStage("Reconnect to begin a cloud check");
+      return;
+    }
+    setBusy(true);
+    setProgress(8);
+    setStage("Preparing a safe local refresh");
+    try {
+      await onRunMaintenance?.("light");
+      setProgress(42);
+      setStage("Checking the latest cloud records");
+      const synced = await onSyncAll?.();
+      if (synced === false) throw new Error("cloud_sync_failed");
+      setProgress(78);
+      setStage("Verifying inventory, invoices, and transfers");
+      await onRefreshMaintenance?.();
+      setProgress(100);
+      setStage("Cloud data verified");
+      setLastAction(Date.now());
+    } catch (_) {
+      setProgress(0);
+      setStage("Cloud check could not finish — try again when the connection is stable");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const meter = { "--cloud-progress": `${progress}%` };
+  return (
+    <section className={"dashboard-cloud-health" + (attentionNeeded ? " attention" : "")} aria-label="Cloud health">
+      <div className="dashboard-cloud-scanner" style={meter} aria-hidden="true">
+        <div className="dashboard-cloud-scanner-inner">{busy ? <b>{progress}%</b> : attentionNeeded ? <AlertCircle /> : <Check />}</div>
+      </div>
+      <div className="dashboard-cloud-copy">
+        <div className="eyebrow"><Wifi /> Cloud health</div>
+        <h3>{busy ? "Scanning your workspace" : statusLabel}</h3>
+        <p>{busy ? stage : statusDetail}</p>
+        <div className="dashboard-cloud-facts">
+          <span><b>{pendingUploads}</b> pending change{pendingUploads === 1 ? "" : "s"}</span>
+          <span><b>{lastAction ? "Just now" : (m.lastMode || "Automatic")}</b> safe maintenance</span>
+        </div>
+      </div>
+      <div className="dashboard-cloud-action">
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={repair}><RefreshCw className={busy ? "spin" : ""} />{busy ? "Checking cloud…" : attentionNeeded ? "Repair & sync" : "Run cloud check"}</button>
+        <small>Repairs cached views only. It never edits sales, stock, payments, or users.</small>
+      </div>
+    </section>
+  );
+}
+
+function DashboardTab({ data, update, branch, online, maintenance, onSyncAll, onRefreshMaintenance, onRunMaintenance, onOpenPayments }) {
   const cur = data.settings.currency;
   const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
   const [detail, setDetail] = useState(null);
@@ -12205,6 +12284,8 @@ function DashboardTab({ data, update, branch, onOpenPayments }) {
         </div>
         <div className={"ctile " + (fastReorders.length ? "warn" : "")}><div className="ic"><AlertCircle /></div><div><div className="cl">Reorders</div><div className="cv">{fastReorders.length}</div><div className="cs">fast movers low</div></div></div>
       </div>
+
+      <DashboardCloudHealth data={data} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} />
 
       <div className="dash2">
         <div className="dcard">
