@@ -7060,15 +7060,23 @@ body{overscroll-behavior:none}
 
 /* External shop stock: compact operational workspace */
 .external-stock-page{padding-bottom:20px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .external-stock-filters{padding:12px 14px;margin-bottom:12px}
 .external-stock-filter-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
 .external-stock-filter-head .title{font-size:16px}
 .external-stock-filter-head .sub{font-size:12px;margin-top:2px}
-.external-stock-filterbar{display:grid;grid-template-columns:minmax(230px,1.2fr) minmax(160px,.8fr) minmax(130px,.65fr) minmax(130px,.65fr);gap:8px;align-items:end}
-.external-stock-statuses{display:flex;gap:5px;align-items:center;min-height:38px;overflow:auto;padding-bottom:1px}
+.external-stock-filterbar{display:grid;grid-template-columns:minmax(200px,.9fr) minmax(260px,1.15fr) minmax(165px,.72fr) minmax(250px,1.1fr);gap:10px;align-items:end;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--panel-soft,var(--soft))}
+.external-stock-filter-field{min-width:0}
+.external-stock-filter-caption{display:block;margin:0 0 6px;color:var(--muted);font-size:11px;font-weight:900;letter-spacing:.035em;text-transform:uppercase}
+.external-stock-statuses{display:flex;gap:5px;align-items:center;min-height:38px;overflow:auto;padding:1px}
 .external-stock-statuses button{appearance:none;border:1px solid var(--line);background:var(--card);color:var(--muted);font:inherit;font-size:12px;font-weight:800;line-height:1;padding:9px 11px;border-radius:999px;white-space:nowrap;cursor:pointer;transition:.15s ease}
 .external-stock-statuses button:hover{border-color:var(--accent);color:var(--ink)}
 .external-stock-statuses button.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong)}
+.external-stock-filter-branch .label{display:block;margin:0}
+.external-stock-filter-branch .select{min-height:38px}
+.external-stock-date-range{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.external-stock-date-range .label{display:block;margin:0}
+.external-stock-date-range .input{min-height:38px}
 .external-stock-workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:16px;align-items:start}
 .external-stock-card{padding:15px;min-width:0}
 .external-stock-card .section-title{font-size:16px;gap:8px}
@@ -7093,13 +7101,13 @@ body{overscroll-behavior:none}
 .external-stock-document-actions{display:flex;justify-content:flex-end;margin:0 0 8px}
 @media(max-width:980px){
   .external-stock-filterbar{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .external-stock-statuses{grid-column:1/-1}
+  .external-stock-filter-field{min-width:0}
   .external-stock-workspace{grid-template-columns:1fr}
 }
 @media(max-width:620px){
   .external-stock-filters{padding:11px}
   .external-stock-filterbar{grid-template-columns:1fr}
-  .external-stock-statuses{grid-column:auto}
+  .external-stock-date-range{grid-template-columns:1fr}
   .external-stock-card{padding:12px}
   .external-stock-form{grid-template-columns:1fr}
   .external-stock-product-entry{grid-template-columns:minmax(0,1fr) 78px}
@@ -16899,16 +16907,29 @@ function ExternalStockLoansTab({ data, update, branch, actor }) {
     <PageHead title="External shop stock" sub="Auditable stock lent to, or borrowed from, outside shops. It never becomes sales or cashier debt." />
     <section className="panel external-stock-filters">
       <div className="external-stock-filter-head"><div><div className="title">Loan ledger</div><div className="sub">Filter the branch loan register.</div></div>{(filter !== "open" || ledgerDirection !== "all" || ledgerBranchId !== branch.id || ledgerDateFrom || ledgerDateTo) && <button type="button" className="btn xs btn-ghost" onClick={() => { setFilter("open"); setLedgerDirection("all"); setLedgerBranchId(branch.id); setLedgerDateFrom(""); setLedgerDateTo(""); }}><X /> Clear</button>}</div>
-      <div className="external-stock-filterbar">
-        <div className="external-stock-statuses" role="tablist" aria-label="Loan direction">
-          {[["all", "All"], ["lent", "Lent"], ["borrowed", "Borrowed"]].map(([id, label]) => <button type="button" key={id} className={ledgerDirection === id ? "active" : ""} onClick={() => setLedgerDirection(id)}>{label}</button>)}
+      <div className="external-stock-filterbar" aria-label="Loan ledger filters">
+        <div className="external-stock-filter-field">
+          <span className="external-stock-filter-caption">Loan type</span>
+          <div className="external-stock-statuses" role="tablist" aria-label="Loan type">
+            {[["all", "All"], ["lent", "Lent"], ["borrowed", "Borrowed"]].map(([id, label]) => <button type="button" key={id} className={ledgerDirection === id ? "active" : ""} onClick={() => setLedgerDirection(id)}>{label}</button>)}
+          </div>
         </div>
-        <div className="external-stock-statuses" role="tablist">
-          {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
+        <div className="external-stock-filter-field">
+          <span className="external-stock-filter-caption">Status</span>
+          <div className="external-stock-statuses" role="tablist" aria-label="Loan status">
+            {[['open', `Pending${pendingLoanCount ? ` (${pendingLoanCount})` : ""}`], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
+          </div>
         </div>
-        <label className="label">Branch<select className="select" value={ledgerBranchId} onChange={(event) => setLedgerBranchId(event.target.value)}><option value="">All branches</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
-        <label className="label">Issued from<input className="input" type="date" value={ledgerDateFrom} max={ledgerDateTo || undefined} onChange={(event) => setLedgerDateFrom(event.target.value)} /></label>
-        <label className="label">Issued to<input className="input" type="date" value={ledgerDateTo} min={ledgerDateFrom || undefined} onChange={(event) => setLedgerDateTo(event.target.value)} /></label>
+        <div className="external-stock-filter-field external-stock-filter-branch">
+          <label className="label">Branch<select className="select" value={ledgerBranchId} onChange={(event) => setLedgerBranchId(event.target.value)}><option value="">All branches</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        </div>
+        <div className="external-stock-filter-field">
+          <span className="external-stock-filter-caption">Issued date</span>
+          <div className="external-stock-date-range">
+            <label className="label"><span className="sr-only">Issued from</span><input className="input" aria-label="Issued from" type="date" value={ledgerDateFrom} max={ledgerDateTo || undefined} onChange={(event) => setLedgerDateFrom(event.target.value)} /></label>
+            <label className="label"><span className="sr-only">Issued to</span><input className="input" aria-label="Issued to" type="date" value={ledgerDateTo} min={ledgerDateFrom || undefined} onChange={(event) => setLedgerDateTo(event.target.value)} /></label>
+          </div>
+        </div>
       </div>
     </section>
     {pendingLoanCount > 0 && <div className="alert error" style={{ marginBottom: 14 }}><AlertCircle />{pendingLoanCount} outside-shop loan{pendingLoanCount === 1 ? " is" : "s are"} still pending return in the selected ledger view.</div>}
