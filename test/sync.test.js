@@ -3566,7 +3566,104 @@ test("15. sync stream notifies clients after a committed push", async () => {
   }
 });
 
-test("15a. an approved partial item void restores stock once and reaches every branch device", async () => {
+test("15a. an approved fully verified M-Pesa invoice void releases its allocation exactly once", async () => {
+  const suffix = crypto.randomUUID();
+  const branchId = "b_sip";
+  const issuedAt = Date.now();
+  const invoiceId = `voided-mpesa-invoice-${suffix}`;
+  const paymentId = `voided-mpesa-payment-${suffix}`;
+  const transactionId = `voided-mpesa-transaction-${suffix}`;
+  const allocationId = `voided-mpesa-allocation-${suffix}`;
+  const requestId = `voided-mpesa-request-${suffix}`;
+  const decisionId = `voided-mpesa-decision-${suffix}`;
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: invoiceId,
+        type: "invoice",
+        branchId,
+        clientTs: issuedAt,
+        payload: { branchId, number: `RCP-VOID-${suffix.slice(0, 8)}`, totalCents: 12500, status: "open", items: [] },
+      }, {
+        id: paymentId,
+        type: "payment",
+        branchId,
+        clientTs: issuedAt + 1,
+        payload: {
+          id: paymentId,
+          invoiceId,
+          branchId,
+          method: "Mpesa",
+          amountCents: 12500,
+          status: "captured",
+          providerVerified: true,
+          kopokopoTransactionId: transactionId,
+          kopokopoAllocationId: allocationId,
+        },
+      }],
+    })
+    .expect(200);
+
+  await pool.query(
+    `INSERT INTO kopokopo_transactions
+      (id, webhook_event_id, reference, reference_last4, amount_cents, allocated_cents, currency, status, branch_id)
+     VALUES ($1, $2, $3, 'MPSA', 12500, 12500, 'KES', 'Received', $4)`,
+    [transactionId, `event-${suffix}`, `TESTMPSA${suffix}`, branchId]
+  );
+  await pool.query(
+    `INSERT INTO kopokopo_allocations
+      (id, transaction_id, invoice_id, branch_id, amount_cents, batch_idempotency_key, local_payment_id)
+     VALUES ($1, $2, $3, $4, 12500, $5, $6)`,
+    [allocationId, transactionId, invoiceId, branchId, `batch-${suffix}`, paymentId]
+  );
+
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({
+      events: [{
+        id: requestId,
+        type: "invoiceVoidRequest",
+        branchId,
+        clientTs: issuedAt + 2,
+        payload: { invoiceId, branchId, reason: "Wrong invoice entry" },
+      }],
+    })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [requestId]));
+
+  const approve = {
+    id: decisionId,
+    type: "invoiceVoidDecision",
+    branchId,
+    clientTs: issuedAt + 3,
+    payload: { invoiceId, branchId, requestId, decision: "approved" },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [approve] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [decisionId]));
+  // A retry after a lost response cannot release the receipt a second time.
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [approve] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [decisionId]));
+
+  const transaction = await pool.query(
+    "SELECT allocated_cents AS \"allocatedCents\" FROM kopokopo_transactions WHERE id = $1",
+    [transactionId]
+  );
+  const allocation = await pool.query("SELECT status FROM kopokopo_allocations WHERE id = $1", [allocationId]);
+  const release = await pool.query(
+    "SELECT payload FROM events WHERE id = $1 AND type = 'paymentRelease'",
+    [`payment-release:${allocationId}`]
+  );
+  assert.equal(Number(transaction.rows[0]?.allocatedCents), 0);
+  assert.equal(allocation.rows[0]?.status, "released");
+  assert.equal(release.rowCount, 1);
+  assert.equal(release.rows[0]?.payload?.paymentId, paymentId);
+});
+
+test("15b. an approved partial item void restores stock once and reaches every branch device", async () => {
   const suffix = crypto.randomUUID();
   const invoiceId = `partial-void-invoice-${suffix}`;
   const requestId = `partial-void-request-${suffix}`;
@@ -3636,7 +3733,7 @@ test("15a. an approved partial item void restores stock once and reaches every b
     });
 });
 
-test("15b. external stock loans use the shared stock ledger and cannot be duplicated or over-returned", async () => {
+test("15c. external stock loans use the shared stock ledger and cannot be duplicated or over-returned", async () => {
   const suffix = crypto.randomUUID();
   const branchId = "b_sip";
   const productId = `external-loan-product-${suffix}`;

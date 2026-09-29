@@ -641,6 +641,7 @@ const SEED = () => {
     stockCountSessions: [],
     orders: [],
     payments: [],
+    paymentReleases: [],
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
@@ -682,6 +683,7 @@ const CLEAN_SETUP = () => {
     stockCountSessions: [],
     orders: [],
     payments: [],
+    paymentReleases: [],
     invoices: [],
     invoiceVoidRequests: [],
     invoiceVoidDecisions: [],
@@ -1200,6 +1202,7 @@ const SYNC_APPEND = new Map([
   ["stockTransferRequests", "stockTransferRequest"],
   ["stockTransferDecisions", "stockTransferDecision"],
   ["payments", "payment"],
+  ["paymentReleases", "paymentRelease"],
   ["borrowings", "borrowing"],
   ["externalStockLoans", "externalStockLoan"],
   ["externalStockLoanReturns", "externalStockLoanReturn"],
@@ -2219,8 +2222,12 @@ function paymentInvoiceId(payment) {
 }
 function invoicePaymentTotals(data) {
   const totals = {};
+  const releasedPaymentIds = new Set((data?.paymentReleases || [])
+    .map((release) => String(release?.paymentId || "").trim())
+    .filter(Boolean));
   (data?.payments || []).forEach((payment) => {
     if (payment?.status && payment.status !== "captured") return;
+    if (releasedPaymentIds.has(String(payment?.id || "").trim())) return;
     const id = paymentInvoiceId(payment);
     if (!id) return;
     totals[id] = (totals[id] || 0) + (Number(payment.amountCents) || 0);

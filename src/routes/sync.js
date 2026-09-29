@@ -784,6 +784,7 @@ const EVENT_TYPES = new Set([
   "invoice",
   "invoiceSettlement",
   "payment",
+  "paymentRelease",
   "invoiceNote",
   "invoiceVoidRequest",
   "invoiceVoidDecision",
@@ -854,6 +855,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "cashMovement",
   "endOfDay",
   "payment",
+  "paymentRelease",
   "invoiceSettlement",
   "purchase",
   "purchaseReversal",
@@ -1450,11 +1452,111 @@ async function invoiceVoidState(client, invoiceId) {
 }
 
 async function invoicePaymentTotal(client, invoiceId) {
-  const result = await client.query("SELECT payload FROM events WHERE type = 'payment'");
+  const result = await client.query("SELECT type, payload FROM events WHERE type IN ('payment', 'paymentRelease')");
+  const releasedPaymentIds = new Set(result.rows
+    .filter((row) => row.type === "paymentRelease")
+    .map((row) => String(row.payload?.paymentId || "").trim())
+    .filter(Boolean));
   return result.rows.reduce((total, row) => {
+    if (row.type !== "payment") return total;
     if (row.payload?.invoiceId !== invoiceId && row.payload?.orderId !== invoiceId) return total;
+    const paymentId = String(row.payload?.id || row.id || "").trim();
+    if (paymentId && releasedPaymentIds.has(paymentId)) return total;
+    if (String(row.payload?.status || "captured").toLowerCase() !== "captured") return total;
     return total + centsFromPayload(row.payload, ["amountCents", "paidCents"], ["amount", "paid"], 0);
   }, 0);
+}
+
+function isProviderMpesaPayment(payload = {}) {
+  const method = String(payload.method || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return method === "mpesa" && Boolean(payload.providerVerified || payload.kopokopoTransactionId || payload.kopokopoAllocationId);
+}
+
+async function releasableKopokopoInvoicePayments(client, invoiceId, { lock = false } = {}) {
+  const paymentRows = await client.query("SELECT id, payload FROM events WHERE type = 'payment'");
+  const releaseRows = await client.query("SELECT payload FROM events WHERE type = 'paymentRelease'");
+  const releasedPaymentIds = new Set(releaseRows.rows
+    .map((row) => String(row.payload?.paymentId || "").trim())
+    .filter(Boolean));
+  const payments = paymentRows.rows
+    .map((row) => ({ id: String(row.payload?.id || row.id || "").trim(), payload: row.payload || {} }))
+    .filter((payment) => (payment.payload.invoiceId === invoiceId || payment.payload.orderId === invoiceId)
+      && String(payment.payload.status || "captured").toLowerCase() === "captured"
+      && !releasedPaymentIds.has(payment.id));
+  if (!payments.length || payments.some((payment) => !isProviderMpesaPayment(payment.payload))) {
+    return { releasable: false, payments: [], allocations: [] };
+  }
+
+  const allocationsResult = await client.query(
+    `SELECT id, transaction_id, invoice_id, branch_id, amount_cents, local_payment_id
+       FROM kopokopo_allocations
+      WHERE invoice_id = $1 AND lower(status) = 'active'${lock ? " FOR UPDATE" : ""}`,
+    [invoiceId]
+  );
+  const allocations = allocationsResult.rows;
+  const allocationsByPaymentId = new Map();
+  for (const allocation of allocations) {
+    const paymentId = String(allocation.local_payment_id || "").trim();
+    const list = allocationsByPaymentId.get(paymentId) || [];
+    list.push(allocation);
+    allocationsByPaymentId.set(paymentId, list);
+  }
+  const valid = payments.every((payment) => {
+    const linked = allocationsByPaymentId.get(payment.id) || [];
+    const allocated = linked.reduce((total, allocation) => total + Number(allocation.amount_cents || 0), 0);
+    return linked.length > 0 && allocated === centsFromPayload(payment.payload, ["amountCents"], ["amount"], 0);
+  });
+  return valid ? { releasable: true, payments, allocations } : { releasable: false, payments, allocations };
+}
+
+async function releaseKopokopoInvoicePayments(client, { invoiceId, branchId, account, deviceId, ts, reason }) {
+  const release = await releasableKopokopoInvoicePayments(client, invoiceId, { lock: true });
+  if (!release.releasable) throw syncEventError("paid_invoice_requires_refund");
+  const paymentById = new Map(release.payments.map((payment) => [payment.id, payment]));
+  const allocationsByTransactionId = new Map();
+  for (const allocation of release.allocations) {
+    const list = allocationsByTransactionId.get(allocation.transaction_id) || [];
+    list.push(allocation);
+    allocationsByTransactionId.set(allocation.transaction_id, list);
+  }
+  let releaseTs = Math.max(Date.now(), Number(ts || 0));
+  for (const allocations of allocationsByTransactionId.values()) {
+    const transactionId = allocations[0].transaction_id;
+    const amountCents = allocations.reduce((total, allocation) => total + Number(allocation.amount_cents || 0), 0);
+    await client.query("SELECT id FROM kopokopo_transactions WHERE id = $1 FOR UPDATE", [transactionId]);
+    await client.query(
+      `UPDATE kopokopo_transactions
+          SET allocated_cents = GREATEST(0, allocated_cents - $2), updated_at = ${isMySql ? "NOW()" : "now()"}
+        WHERE id = $1`,
+      [transactionId, amountCents]
+    );
+  }
+  for (const allocation of release.allocations) {
+    releaseTs += 1;
+    await client.query(
+      "UPDATE kopokopo_allocations SET status = 'released' WHERE id = $1 AND lower(status) = 'active'",
+      [allocation.id]
+    );
+    const payment = paymentById.get(String(allocation.local_payment_id || ""));
+    await insertAppendOnlyEvent(client, {
+      id: `payment-release:${allocation.id}`,
+      branchId,
+      clientTs: releaseTs,
+      payload: {
+        paymentId: payment?.id || String(allocation.local_payment_id || ""),
+        invoiceId,
+        branchId,
+        transactionId: allocation.transaction_id,
+        allocationId: allocation.id,
+        amountCents: Number(allocation.amount_cents || 0),
+        reason,
+        releasedBy: account?.id || "system",
+        releasedByName: account?.name || account?.email || "Supervisor",
+        releasedAt: releaseTs,
+      },
+    }, "paymentRelease", deviceId, releaseTs);
+  }
+  return release;
 }
 
 async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
@@ -1486,12 +1588,17 @@ async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
     const reason = String(payload.reason || "").trim();
     if (reason.length < 3) throw syncEventError("void_reason_required");
     if (state.pending) throw syncEventError("void_request_already_pending");
-    const totalCents = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
     const paidCents = Math.max(
       centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0),
       await invoicePaymentTotal(client, invoiceId)
     );
-    if (totalCents > 0 && paidCents >= totalCents) throw syncEventError("paid_invoice_requires_refund");
+    // A verified M-Pesa receipt on a wrongly entered invoice can be released
+    // only when every captured payment has a matching active provider
+    // allocation. Cash, payroll and manual payments still require a refund.
+    const paymentRelease = paidCents > 0
+      ? await releasableKopokopoInvoicePayments(client, invoiceId)
+      : { releasable: false };
+    if (paidCents > 0 && !paymentRelease.releasable) throw syncEventError("paid_invoice_requires_refund");
     const requestEvent = {
       ...ev,
       branchId: invoiceBranchId,
@@ -1505,6 +1612,7 @@ async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
         requestedByName: req.account?.name || payload.requestedByName || payload.cashierName || "Cashier",
         requestedByRole: syncRole(req.account) || (req.terminalUuid ? "cashier" : "unknown"),
         requestedAt: Date.now(),
+        requiresMpesaPaymentRelease: Boolean(paymentRelease.releasable),
       },
     };
     const acceptedTs = await insertAppendOnlyEvent(client, requestEvent, type, deviceId, ts);
@@ -1538,6 +1646,16 @@ async function processInvoiceVoidEvent(client, ev, type, req, deviceId, ts) {
   const acceptedTs = await insertAppendOnlyEvent(client, decisionEvent, type, deviceId, ts);
 
   if (decision === "approved") {
+    if (request.payload?.requiresMpesaPaymentRelease) {
+      await releaseKopokopoInvoicePayments(client, {
+        invoiceId,
+        branchId: invoiceBranchId,
+        account: req.account,
+        deviceId,
+        ts: acceptedTs,
+        reason: `Wrong invoice entry; void approved for ${invoice.payload?.number || invoiceId}`,
+      });
+    }
     const items = Array.isArray(invoice.payload?.items) ? invoice.payload.items : [];
     for (const [index, item] of items.entries()) {
       const productId = String(item?.productId || "").trim();
