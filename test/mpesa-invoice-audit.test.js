@@ -83,12 +83,12 @@ test("stored used amount must match active allocation and offset links", () => {
   assert.ok(audit.issues.some((entry) => entry.code === "ledger_link_mismatch" && entry.severity === "critical"));
 });
 
-test("orphan and unauthorized cross-branch allocations are flagged", () => {
+test("orphan allocations are flagged, while persisted cross-branch allocations remain auditable", () => {
   const missing = transaction({ id: "tx_missing", allocations: [{ id: "a_missing", invoiceId: "none", amountCents: 5000 }], amountCents: 5000, allocatedCents: 5000 });
   const crossBranch = transaction({ id: "tx_cross", referenceMasked: "****CROSS", branchId: "b_sip" });
   const audit = buildMpesaInvoiceAudit({ transactions: [missing, crossBranch], invoices: [invoice()], payments: [], branches, now: 5000 });
   assert.ok(audit.issues.some((entry) => entry.code === "orphan_allocation"));
-  assert.ok(audit.issues.some((entry) => entry.code === "allocation_without_cross_branch_whitelist"));
+  assert.ok(!audit.issues.some((entry) => entry.code === "allocation_without_cross_branch_whitelist"));
 });
 
 test("an authorized cross-branch settlement stays valid after its whitelist is revoked", () => {
@@ -302,6 +302,28 @@ test("selected-period M-Pesa is split between current invoices and older debt re
   assert.equal(audit.summary.recoveryTransactionCount, 1);
   assert.equal(audit.summary.reconciliationGapCents, 0);
   assert.match(audit.reconciliationComment, /recovered older invoice debt/i);
+});
+
+test("a verified payment from another M-Pesa branch is recognised in a branch audit", () => {
+  const settledElsewhere = invoice({ branchId: "b_sip", number: "RCP-SIP-000099" });
+  const payment = providerPayment({
+    invoiceId: settledElsewhere.id,
+    kopokopoTransactionId: "tx_cpt_source",
+  });
+  const audit = buildMpesaInvoiceAudit({
+    transactions: [],
+    invoices: [settledElsewhere],
+    referenceInvoices: [settledElsewhere],
+    payments: [payment],
+    branches,
+    transactionScopeComplete: false,
+    now: 5000,
+  });
+
+  assert.equal(audit.invoices[0].crossScopeProviderMpesaCents, 10000);
+  assert.ok(!audit.issues.some((entry) => entry.code === "provider_payment_allocation_mismatch"));
+  assert.ok(!audit.issues.some((entry) => String(entry.code).startsWith("missing_provider_transaction_")));
+  assert.match(audit.invoices[0].comment, /cross-branch or prior-business-day settlement/i);
 });
 
 test("paid invoice without a captured payment record is flagged", () => {

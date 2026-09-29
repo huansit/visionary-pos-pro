@@ -7018,11 +7018,29 @@ export default function VisionPOS() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [maintenance, setMaintenance] = useState(null);
   const [environmentInfo, setEnvironmentInfo] = useState(null);
+  const menuRef = useRef(null);
   const didInitialSync = useRef(false);
   const syncRequestRef = useRef(false);
   const syncInFlightRef = useRef(false);
   const lastActivityAtRef = useRef(0);
   useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const closeWhenOutside = (event) => {
+      if (!menuRef.current?.contains(event.target)) setMenuOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    // Capture phase avoids mobile browser event ordering leaving the menu
+    // behind after a tap on dashboard content.
+    document.addEventListener("pointerdown", closeWhenOutside, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeWhenOutside, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
   const selectAdminBranch = (branchId) => {
     setAdminBranchId(branchId);
     saveDeviceAdminBranchId(branchId);
@@ -7552,10 +7570,9 @@ export default function VisionPOS() {
             )}
             {view === "register" && session && <div className="who"><span className="nm">{session.name}</span><span className="rl">{session.role}</span></div>}
             {view === "admin" && <div className="who"><span className="nm">{session ? session.name : "Admin"}</span><span className="rl">{session ? session.role : data.admin.email}</span></div>}
-            <div className="usermenu-wrap">
+            <div className="usermenu-wrap" ref={menuRef}>
               <button className={"iconbtn" + (menuOpen ? " on" : "")} title="Menu" onClick={() => setMenuOpen((o) => !o)}><MoreVertical /></button>
               {menuOpen && (<>
-                <div className="menu-scrim" onClick={() => setMenuOpen(false)} />
                 <div className="topmenu">
                   <div className="topmenu-row status" title={syncTitle}><span className={"led" + syncCls} />{syncLabel}</div>
                   <button className="topmenu-row" onClick={() => selectDeviceTheme(deviceTheme === "dark" ? "light" : "dark")}>{deviceTheme === "dark" ? <Sun /> : <Moon />}<span>{deviceTheme === "dark" ? "Light mode" : "Dark mode"}</span></button>
@@ -20483,7 +20500,11 @@ function MpesaInvoiceAuditTab({ data, branch, onNavigate }) {
     invoiceVoidDecisions: data?.invoiceVoidDecisions || [],
     branches,
     branchAuditStarts: ledger.integrationStarts,
-    transactionScopeComplete: dateMode === "all",
+    // A branch audit is complete for that branch's invoices, but M-Pesa may
+    // legally originate in another branch and settle that invoice. Do not
+    // label the source transaction missing unless the audit explicitly spans
+    // every branch and all provider history.
+    transactionScopeComplete: dateMode === "all" && branchScope === "all",
     auditPeriod: dateMode === "all" || !rangeValid ? null : { startedAt: rangeFrom, endedAt: rangeTo },
   }), [ledger.transactions, ledger.integrationStarts, scopedInvoices, data?.invoices, data?.payments, data?.invoiceVoidRequests, data?.invoiceVoidDecisions, branches, dateMode, rangeValid, rangeFrom, rangeTo]);
   const transactionById = useMemo(() => new Map(audit.transactions.map((entry) => [entry.id, entry])), [audit.transactions]);

@@ -197,8 +197,6 @@ export function buildMpesaInvoiceAudit({
       const invoice = invoiceById.get(invoiceId);
       if (!invoice) {
         addIssue(issue({ code: "orphan_allocation", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation has no invoice", message: `${reference} allocates money to a missing invoice record.` }));
-      } else if (text(invoice.branchId) && text(transaction.branchId) && text(invoice.branchId) !== text(transaction.branchId) && !allocation.crossBranchAuthorized && !transaction.crossBranchAllowed) {
-        addIssue(issue({ code: "allocation_without_cross_branch_whitelist", severity: "critical", entityType: "transaction", entityId: id, title: "Cross-branch allocation was not authorized", message: `${reference} is assigned to ${invoiceReference(invoice)} in a different branch without an active exact-transaction whitelist.` }));
       } else if (text(allocation.branchId) && text(invoice.branchId) && text(allocation.branchId) !== text(invoice.branchId)) {
         addIssue(issue({ code: "allocation_target_branch_mismatch", severity: "critical", entityType: "transaction", entityId: id, title: "Allocation ledger branch is incorrect", message: `${reference} is assigned to ${invoiceReference(invoice)}, but its allocation is recorded against a different branch.` }));
       } else if (isVoidedInvoice(invoice)) {
@@ -335,7 +333,19 @@ export function buildMpesaInvoiceAudit({
     if (voided && allocationCents > 0) {
       addIssue(issue({ code: "voided_invoice_has_allocation", severity: "critical", entityType: "invoice", entityId: id, title: "Voided invoice has active M-Pesa money", message: `${reference} is voided but still has active provider allocations.` }));
     }
-    if (providerMpesaPayments.length > 0 && providerMpesaCents !== allocationCents) {
+    // A single-branch or date-limited audit intentionally does not load every
+    // M-Pesa source ledger. A verified payment may therefore be settled from
+    // another branch, or against a debt raised before the selected business
+    // day. It is still a valid payment record; only compare the part whose
+    // source transaction is in this audit scope.
+    const providerPaymentsOutsideLedgerScope = !transactionScopeComplete ? providerMpesaPayments.filter((payment) => {
+      const transactionId = text(payment.kopokopoTransactionId);
+      return transactionId && !transactionById.has(transactionId);
+    }) : [];
+    const crossScopeProviderMpesaCents = providerPaymentsOutsideLedgerScope
+      .reduce((sum, payment) => sum + Math.max(0, cents(payment.amountCents)), 0);
+    const scopedProviderMpesaCents = Math.max(0, providerMpesaCents - crossScopeProviderMpesaCents);
+    if (providerMpesaPayments.length > 0 && scopedProviderMpesaCents !== allocationCents) {
       addIssue(issue({ code: "provider_payment_allocation_mismatch", severity: "critical", entityType: "invoice", entityId: id, title: "M-Pesa payment is not fully traceable", message: `${reference} has ${kes(providerMpesaCents)} in verified M-Pesa payments but ${kes(allocationCents)} in active provider allocations.` }));
     }
     if (allocationCents > totalCents && totalCents > 0) {
@@ -354,6 +364,9 @@ export function buildMpesaInvoiceAudit({
     else if (balanceCents > 0) comment = `Outstanding balance remains. ${allocationCents > 0 ? "Verified M-Pesa allocation is shown in the trace." : "No active verified M-Pesa allocation is attached."}`;
     else if (offsetCents > 0 && cashCents > 0) comment = "Invoice is paid as cash. A later till deposit is linked separately for audit and does not change the payment method.";
     else comment = "Invoice payment total is fully settled and traceable in the captured payment records.";
+    if (crossScopeProviderMpesaCents > 0) {
+      comment = `${comment} ${kes(crossScopeProviderMpesaCents)} was verified in another M-Pesa ledger scope and is recognised here as a cross-branch or prior-business-day settlement.`;
+    }
 
     return {
       ...invoice,
@@ -365,6 +378,7 @@ export function buildMpesaInvoiceAudit({
       capturedPaymentCents,
       mpesaCents,
       providerMpesaCents,
+      crossScopeProviderMpesaCents,
       manualMpesaCents,
       cashCents,
       payrollCents,
