@@ -3636,6 +3636,101 @@ test("15a. an approved partial item void restores stock once and reaches every b
     });
 });
 
+test("15b. external stock loans use the shared stock ledger and cannot be duplicated or over-returned", async () => {
+  const suffix = crypto.randomUUID();
+  const branchId = "b_sip";
+  const productId = `external-loan-product-${suffix}`;
+  const issueId = `external-loan-issue-${suffix}`;
+  const returnId = `external-loan-return-${suffix}`;
+  const ts = Date.now();
+  const terminal = await activateTestTerminal(`External loan ledger ${suffix}`, branchId);
+  const product = {
+    id: productId,
+    type: "product",
+    updatedAt: ts,
+    payload: { name: "External loan test product", sku: `LOAN-${suffix.slice(0, 8)}`, costCents: 42500, priceCents: 70000 },
+  };
+  const branchProduct = {
+    id: `external-loan-branch-product-${suffix}`,
+    type: "branchProduct",
+    branchId,
+    updatedAt: ts + 1,
+    payload: { branchId, productId, stockQty: 10, movingAverageCostCents: 42500 },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [product, branchProduct] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.rejected, []));
+
+  const issue = {
+    id: issueId,
+    type: "externalStockLoan",
+    branchId,
+    clientTs: ts + 2,
+    payload: { branchId, borrowerName: "Outside Shop", borrowerPhone: "0700000000", dueAt: ts + 86400000, items: [{ productId, qty: 3 }] },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [issue] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [issueId]));
+  // A timed-out browser may retry the same request. It must not issue stock twice.
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [issue] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [issueId]));
+
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => assert.equal(res.body.products.find((item) => item.id === productId)?.stockQty, 7));
+  const issueMovements = await pool.query(
+    "SELECT payload FROM events WHERE type = 'stockMovement' AND payload->>'externalStockLoanId' = $1",
+    [issueId]
+  );
+  assert.equal(issueMovements.rowCount, 1);
+  assert.equal(issueMovements.rows[0].payload.qty, -3);
+  assert.equal(issueMovements.rows[0].payload.stockBaseQty, 10);
+
+  const returned = {
+    id: returnId,
+    type: "externalStockLoanReturn",
+    branchId,
+    clientTs: ts + 3,
+    payload: { branchId, externalStockLoanId: issueId, items: [{ productId, qty: 2 }], notes: "Two units returned" },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [returned] })
+    .expect(200)
+    .expect((res) => assert.deepEqual(res.body.accepted, [returnId]));
+  await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
+    .expect(200)
+    .expect((res) => assert.equal(res.body.products.find((item) => item.id === productId)?.stockQty, 9));
+
+  const invalidReturn = {
+    ...returned,
+    id: `external-loan-return-too-many-${suffix}`,
+    clientTs: ts + 4,
+    payload: { ...returned.payload, items: [{ productId, qty: 2 }] },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [invalidReturn] })
+    .expect(200)
+    .expect((res) => {
+      assert.deepEqual(res.body.accepted, []);
+      assert.equal(res.body.rejected[0]?.reason, "external_stock_loan_return_exceeds_open_quantity");
+    });
+
+  await request(app)
+    .get("/api/sync/pull?since=0")
+    .set("Authorization", `Bearer ${state.tokenB}`)
+    .expect(200)
+    .expect((res) => {
+      assert.ok(res.body.events.some((event) => event.id === issueId && event.type === "externalStockLoan"));
+      assert.ok(res.body.events.some((event) => event.id === returnId && event.type === "externalStockLoanReturn"));
+      const movements = res.body.events.filter((event) => event.type === "stockMovement" && event.payload?.externalStockLoanId === issueId);
+      assert.equal(movements.length, 2);
+    });
+});
+
 test("16. operational reset rejects stale terminal writes and exposes the new epoch", async () => {
   const terminal = await activateTestTerminal("Reset Epoch Till", "b_sip");
   const resetEpoch = `reset-${Date.now()}`;

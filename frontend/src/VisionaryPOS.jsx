@@ -649,6 +649,8 @@ const SEED = () => {
     stockTransferRequests: [],
     stockTransferDecisions: [],
     purchases: [],
+    externalStockLoans: [],
+    externalStockLoanReturns: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
     cashMovements: [],
@@ -688,6 +690,8 @@ const CLEAN_SETUP = () => {
     stockTransferRequests: [],
     stockTransferDecisions: [],
     purchases: [],
+    externalStockLoans: [],
+    externalStockLoanReturns: [],
     expenses: [],
     expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
     cashMovements: [],
@@ -960,6 +964,8 @@ function normalizeLoadedData(data) {
     stockTransferRequests: Array.isArray(data.stockTransferRequests) ? data.stockTransferRequests : [],
     stockTransferDecisions: Array.isArray(data.stockTransferDecisions) ? data.stockTransferDecisions : [],
     purchases: Array.isArray(data.purchases) ? data.purchases : [],
+    externalStockLoans: Array.isArray(data.externalStockLoans) ? data.externalStockLoans : [],
+    externalStockLoanReturns: Array.isArray(data.externalStockLoanReturns) ? data.externalStockLoanReturns : [],
     expenses: Array.isArray(data.expenses) ? data.expenses : [],
     expenseCategories: Array.isArray(data.expenseCategories) ? data.expenseCategories : DEFAULT_EXPENSE_CATEGORIES,
     cashMovements: Array.isArray(data.cashMovements) ? data.cashMovements : [],
@@ -1157,6 +1163,8 @@ const SYNC_APPEND = new Map([
   ["stockTransferDecisions", "stockTransferDecision"],
   ["payments", "payment"],
   ["borrowings", "borrowing"],
+  ["externalStockLoans", "externalStockLoan"],
+  ["externalStockLoanReturns", "externalStockLoanReturn"],
   ["stockMovements", "stockMovement"],
   ["endOfDays", "endOfDay"],
   ["cashMovements", "cashMovement"],
@@ -4096,7 +4104,8 @@ function countPending(data) {
   return u(data.orders) + u(data.payments) + u(data.stockMovements) + u(data.products) + u(data.employees)
     + u(data.invoices) + u(data.customers) + u(data.suppliers) + u(data.supplierPrices) + u(data.expenses) + u(data.purchases)
     + u(data.invoiceVoidRequests) + u(data.invoiceVoidDecisions) + u(data.invoiceLineVoidRequests) + u(data.invoiceLineVoidDecisions) + u(data.cashMovements) + u(data.borrowings)
-    + u(data.branches) + u(data.endOfDays) + u(data.stockCountSessions) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories);
+    + u(data.branches) + u(data.endOfDays) + u(data.stockCountSessions) + u(data.countLog) + u(data.barcodeCatalog) + u(data.expenseCategories)
+    + u(data.externalStockLoans) + u(data.externalStockLoanReturns);
 }
 function markSynced(data) {
   const m = (a) => (a || []).map((x) => (x && x.synced === false ? { ...x, synced: true } : x));
@@ -4104,7 +4113,7 @@ function markSynced(data) {
     products: m(data.products), employees: m(data.employees), invoices: m(data.invoices),
     invoiceVoidRequests: m(data.invoiceVoidRequests), invoiceVoidDecisions: m(data.invoiceVoidDecisions), invoiceLineVoidRequests: m(data.invoiceLineVoidRequests), invoiceLineVoidDecisions: m(data.invoiceLineVoidDecisions), customers: m(data.customers),
     suppliers: m(data.suppliers), expenses: m(data.expenses), purchases: m(data.purchases), cashMovements: m(data.cashMovements),
-    borrowings: m(data.borrowings), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
+    borrowings: m(data.borrowings), externalStockLoans: m(data.externalStockLoans), externalStockLoanReturns: m(data.externalStockLoanReturns), branches: m(data.branches), supplierPrices: m(data.supplierPrices), endOfDays: m(data.endOfDays),
     stockCountSessions: m(data.stockCountSessions), countLog: m(data.countLog), barcodeCatalog: m(data.barcodeCatalog), expenseCategories: m(data.expenseCategories), lastSyncedAt: now(), _sync: { ...(data._sync || {}), outboxLength: 0, error: "" } };
 }
 
@@ -9099,6 +9108,7 @@ const TABS = [
   { id: "suppliers", label: "Suppliers", icon: Truck, desc: "Supplier records and cost comparison" },
   { id: "branches", label: "Branches", icon: Building2, desc: "Manage shops, branch status, and branch inventory" },
   { id: "borrowing", label: "Stock Borrowing", icon: ArrowLeftRight, desc: "Move bottles between shops without sales, loss, or expense impact" },
+  { id: "externalLoans", label: "External Stock Loans", icon: ClipboardCheck, desc: "Record products lent to outside shops and every return" },
   { id: "pricing", label: "Branch Pricing", icon: Tags, desc: "View product pricing and margins (prices set in Products)" },
   { id: "customers", label: "Customers", icon: Users, desc: "Customer records and outstanding balances" },
   { id: "cash", label: "Daily Cash & Expenses", icon: Wallet, desc: "Daily cash flow, expenses, approvals, and audit-ready records" },
@@ -9131,7 +9141,7 @@ const NAV_TOP = [
 // Which access right each module requires. Tabs not listed (dashboard, ai) are open to anyone with admin-area access.
 const TAB_RIGHT = {
   invoices: "invoices", customers: "customers", pricing: "products",
-  products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", suppliers: "suppliers",
+  products: "products", stock: "stock", purchases: "purchases", borrowing: "transfers", externalLoans: "stock", suppliers: "suppliers",
   cash: "cash", payments: "cash", mpesa: "cash", glovo: "__admin_only", audit: "__admin_only", expenses: "expenses",
   branches: "branches", documents: "documents",
   reports: "financials", insights: "financials",
@@ -9149,6 +9159,7 @@ const NAV_GROUPS = [
     { id: "purchases", label: "Purchase Orders", mobileLabel: "Purchases", icon: ShoppingBag },
     { id: "suppliers", label: "Suppliers", icon: Truck },
     { id: "borrowing", label: "Transfers", icon: ArrowLeftRight },
+    { id: "externalLoans", label: "External Loans", icon: ClipboardCheck },
     { id: "pricing", label: "Branch Pricing", mobileLabel: "Pricing", icon: Tags },
   ] },
   { id: "fingrp", label: "Finance", icon: Banknote, tone: "#3478c7", items: [
@@ -9388,6 +9399,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "stock": return <StockTab data={data} update={update} branch={branch} onNavigate={activateWorkspace} onSyncNow={onSyncNow} />;
       case "purchases": return <PurchasesTab data={data} update={update} branch={branch} isAdmin={isAdmin} actor={user} onNavigate={activateWorkspace} onSyncNow={onSyncNow} />;
       case "borrowing": return <BorrowingTab data={data} update={update} approver={user} approverRole={role} />;
+      case "externalLoans": return <ExternalStockLoansTab data={data} update={update} branch={branch} actor={user} />;
       case "suppliers": return <SuppliersTab data={data} update={update} onNavigate={activateWorkspace} />;
       case "mpesa": return <MpesaTransactionsTab data={data} branch={branch} onNavigate={activateWorkspace} allowAllBranches={isAdmin} canClassifyFunding={["owner", "admin"].includes(accountRole)} canWhitelistCrossBranch={["owner", "admin"].includes(accountRole)} canFundWallet={["owner", "admin", "manager", "supervisor"].includes(accountRole)} />;
       case "audit": return <MpesaInvoiceAuditTab data={data} branch={branch} onNavigate={activateWorkspace} />;
@@ -16350,6 +16362,150 @@ function BorrowingTab({ data, update, approver, approverRole }) {
     </div>
   );
 }
+function ExternalStockLoansTab({ data, update, branch, actor }) {
+  const [branchId, setBranchId] = useState(branch.id);
+  const [borrowerName, setBorrowerName] = useState("");
+  const [borrowerPhone, setBorrowerPhone] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [search, setSearch] = useState("");
+  const [productId, setProductId] = useState("");
+  const [qty, setQty] = useState("");
+  const [lines, setLines] = useState([]);
+  const [filter, setFilter] = useState("open");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [returnLoan, setReturnLoan] = useState(null);
+  const [returnQty, setReturnQty] = useState({});
+  const [returnNotes, setReturnNotes] = useState("");
+  const branchName = data.branches.find((entry) => entry.id === branchId)?.name || "Branch";
+  const availableProducts = branchProductsUnique(data, branchId).filter(productIsEnabled);
+  const selectedProduct = availableProducts.find((entry) => entry.id === productId);
+  const productMatches = search.trim() && !selectedProduct
+    ? sortProductsAZ(availableProducts.filter((entry) => entry.name.toLowerCase().includes(search.trim().toLowerCase()) || entry.sku.toLowerCase().includes(search.trim().toLowerCase()))).slice(0, 7)
+    : [];
+  const returnsByLoan = useMemo(() => {
+    const grouped = new Map();
+    (data.externalStockLoanReturns || []).forEach((entry) => {
+      const loanId = String(entry.externalStockLoanId || entry.loanId || "");
+      if (!loanId) return;
+      const byProduct = grouped.get(loanId) || new Map();
+      (entry.items || []).forEach((line) => {
+        const product = String(line?.productId || "");
+        byProduct.set(product, (byProduct.get(product) || 0) + Math.max(0, Number(line?.qty) || 0));
+      });
+      grouped.set(loanId, byProduct);
+    });
+    return grouped;
+  }, [data.externalStockLoanReturns]);
+  const ledger = useMemo(() => (data.externalStockLoans || []).map((loan) => {
+    const returned = returnsByLoan.get(loan.id) || new Map();
+    const openItems = (loan.items || []).map((line) => ({ ...line, returnedQty: returned.get(String(line.productId)) || 0, outstandingQty: Math.max(0, Number(line.qty || 0) - (returned.get(String(line.productId)) || 0)) }));
+    const outstandingQty = openItems.reduce((sum, line) => sum + line.outstandingQty, 0);
+    const dueAt = Number(loan.dueAt || 0);
+    const overdue = outstandingQty > 0 && dueAt > 0 && dueAt < Date.now();
+    return { ...loan, openItems, outstandingQty, overdue, status: outstandingQty === 0 ? "returned" : overdue ? "overdue" : "open" };
+  }).filter((loan) => loan.branchId === branchId).filter((loan) => filter === "all" || loan.status === filter).sort((a, b) => Number(b.issuedAt || b.ts || 0) - Number(a.issuedAt || a.ts || 0)), [data.externalStockLoans, returnsByLoan, branchId, filter]);
+
+  const addLine = () => {
+    setError("");
+    const units = Number(qty);
+    if (!selectedProduct) return setError("Choose a product to lend.");
+    if (!Number.isInteger(units) || units <= 0) return setError("Enter a whole quantity greater than zero.");
+    const alreadyAdded = lines.find((line) => line.productId === selectedProduct.id)?.qty || 0;
+    const available = productOnHand(data, selectedProduct, branchId) - alreadyAdded;
+    if (units > available) return setError(`Only ${Math.max(0, available)} available at ${branchName}.`);
+    const unitCostCents = branchInventoryCostCents(data, selectedProduct, branchId);
+    setLines((current) => {
+      const existing = current.find((line) => line.productId === selectedProduct.id);
+      return existing ? current.map((line) => line.productId === selectedProduct.id ? { ...line, qty: line.qty + units } : line) : [...current, { productId: selectedProduct.id, productName: selectedProduct.name, sku: selectedProduct.sku, qty: units, unitCostCents }];
+    });
+    setSearch(""); setProductId(""); setQty("");
+  };
+  const issueLoan = async () => {
+    setError(""); setNotice("");
+    if (!borrowerName.trim()) return setError("Enter the outside shop name.");
+    if (!lines.length) return setError("Add at least one product to this loan.");
+    const loanId = uid("external-loan");
+    const issuedAt = now();
+    const record = { id: loanId, branchId, borrowerName: borrowerName.trim(), borrowerPhone: borrowerPhone.trim(), dueAt: dueDate ? new Date(`${dueDate}T23:59:59`).getTime() : null, notes: notes.trim(), issuedBy: actor?.name || actor?.email || "Management", issuedAt, ts: issuedAt, items: lines, synced: true };
+    const movements = lines.map((line) => ({ id: `external-loan-issue:${loanId}:${line.productId}`, productId: line.productId, branchId, qty: -line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: loanId, borrowerName: record.borrowerName, mode: "external_loan_issue", reason: `External loan to ${record.borrowerName}`, ts: issuedAt, synced: true }));
+    setSaving(true);
+    try {
+      await publishSyncEvents([eventFromRecord("externalStockLoans", record, data)], data, { management: true });
+      update((current) => ({ ...current, externalStockLoans: [...(current.externalStockLoans || []), record], stockMovements: [...(current.stockMovements || []), ...movements] }), { skipSync: true });
+      setBorrowerName(""); setBorrowerPhone(""); setDueDate(""); setNotes(""); setLines([]);
+      setNotice("External stock loan recorded. The issued quantities have been removed from available stock.");
+    } catch (requestError) {
+      setError("The loan was not saved. Refresh the cloud data and try again.");
+    } finally { setSaving(false); }
+  };
+  const openReturn = (loan) => {
+    const seed = {};
+    loan.openItems.forEach((line) => { seed[line.productId] = String(line.outstandingQty); });
+    setReturnQty(seed); setReturnNotes(""); setReturnLoan(loan); setError("");
+  };
+  const recordReturn = async () => {
+    if (!returnLoan) return;
+    const returnLines = returnLoan.openItems.map((line) => ({ ...line, qty: Number(returnQty[line.productId] || 0) })).filter((line) => Number.isInteger(line.qty) && line.qty > 0);
+    if (!returnLines.length) return setError("Enter at least one returned quantity.");
+    if (returnLines.some((line) => line.qty > line.outstandingQty)) return setError("A returned quantity cannot exceed the open quantity.");
+    const returnedAt = now();
+    const record = { id: uid("external-loan-return"), branchId, externalStockLoanId: returnLoan.id, returnedBy: actor?.name || actor?.email || "Management", returnedAt, notes: returnNotes.trim(), ts: returnedAt, items: returnLines.map((line) => ({ productId: line.productId, productName: line.productName, sku: line.sku, qty: line.qty, unitCostCents: line.unitCostCents || 0 })), synced: true };
+    const movements = record.items.map((line) => ({ id: `external-loan-return:${record.id}:${line.productId}`, productId: line.productId, branchId, qty: line.qty, unitCostCents: line.unitCostCents, externalStockLoanId: returnLoan.id, externalStockLoanReturnId: record.id, borrowerName: returnLoan.borrowerName, mode: "external_loan_return", reason: `External loan return from ${returnLoan.borrowerName}`, ts: returnedAt, synced: true }));
+    setSaving(true);
+    try {
+      await publishSyncEvents([eventFromRecord("externalStockLoanReturns", record, data)], data, { management: true });
+      update((current) => ({ ...current, externalStockLoanReturns: [...(current.externalStockLoanReturns || []), record], stockMovements: [...(current.stockMovements || []), ...movements] }), { skipSync: true });
+      setReturnLoan(null); setNotice("Returned stock was recorded in the same branch ledger.");
+    } catch (requestError) {
+      setError("The return was not saved. Refresh the cloud data and try again.");
+    } finally { setSaving(false); }
+  };
+
+  return <div className="fade">
+    <PageHead title="External stock loans" sub="Auditable products lent to outside shops. Loans never become sales or cashier debt." />
+    <div className="tabbar" role="tablist" style={{ marginBottom: 14 }}>
+      {[['open', 'Open'], ['overdue', 'Overdue'], ['returned', 'Returned'], ['all', 'All records']].map(([id, label]) => <button type="button" key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
+    </div>
+    <section className="panel" style={{ padding: 18, marginBottom: 16 }}>
+      <div className="section-title"><ClipboardCheck /> Issue external stock loan</div>
+      <div className="formgrid" style={{ marginTop: 12 }}>
+        <label className="label">Branch<select className="select" value={branchId} onChange={(event) => { setBranchId(event.target.value); setLines([]); }}><option value="">Choose branch</option>{data.branches.filter((entry) => entry.active !== false).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
+        <label className="label">Outside shop<input className="input" value={borrowerName} onChange={(event) => setBorrowerName(event.target.value)} placeholder="Shop name" /></label>
+        <label className="label">Contact (optional)<input className="input" value={borrowerPhone} onChange={(event) => setBorrowerPhone(event.target.value)} placeholder="Phone number" /></label>
+        <label className="label">Expected return (optional)<input className="input" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+      </div>
+      <div className="formgrid" style={{ marginTop: 12, gridTemplateColumns: "minmax(0, 1fr) 120px auto" }}>
+        <label className="label">Product<input className="input" value={search} onChange={(event) => { setSearch(event.target.value); setProductId(""); }} placeholder="Search product or SKU" />{productMatches.length > 0 && <div className="suggestions">{productMatches.map((entry) => <button type="button" key={entry.id} onClick={() => { setProductId(entry.id); setSearch(entry.name); }}>{entry.name} <span>{entry.sku} · {productOnHand(data, entry, branchId)} in stock</span></button>)}</div>}</label>
+        <label className="label">Quantity<input className="input" inputMode="numeric" value={qty} onChange={(event) => setQty(event.target.value.replace(/\D/g, ""))} /></label>
+        <button type="button" className="btn btn-ghost" style={{ alignSelf: "end" }} onClick={addLine}><Plus /> Add</button>
+      </div>
+      {lines.length > 0 && <div className="list" style={{ marginTop: 12 }}>{lines.map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.sku}</div></div><b>{line.qty} unit{line.qty === 1 ? "" : "s"}</b><button type="button" className="iconbtn" aria-label={`Remove ${line.productName}`} onClick={() => setLines((current) => current.filter((entry) => entry.productId !== line.productId))}><X /></button></div>)}</div>}
+      <label className="label" style={{ display: "block", marginTop: 12 }}>Notes (optional)<textarea className="input" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Reason, contact person, or other reference" /></label>
+      {error && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{error}</div>}
+      {notice && <div className="notice" style={{ marginTop: 12 }}>{notice}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}><button type="button" className="btn btn-primary" disabled={saving || !lines.length} onClick={issueLoan}><ArrowRight /> {saving ? "Saving…" : "Record loan"}</button></div>
+    </section>
+    <DocumentFile title="External loan ledger" count={ledger.length} meta={`${branchName} · stock issued and returned through the shared inventory ledger`}>
+      <div className="list">{ledger.map((loan) => <div className="row" key={loan.id}>
+        <div className="meta"><div className="nm">{loan.borrowerName}</div><div className="mt2">{loan.openItems.map((line) => `${line.productName} × ${line.qty}${line.outstandingQty ? ` (${line.outstandingQty} out)` : ""}`).join(", ")}{loan.dueAt ? ` · due ${dt(loan.dueAt)}` : ""}{loan.notes ? ` · ${loan.notes}` : ""}</div></div>
+        <span className={`ist ${loan.status === "returned" ? "paid" : loan.status === "overdue" ? "danger" : "open"}`}>{loan.status === "returned" ? "Returned" : loan.status === "overdue" ? "Overdue" : `${loan.outstandingQty} out`}</span>
+        <span className="pill plain">{dt(loan.issuedAt || loan.ts)}</span>
+        {loan.outstandingQty > 0 && <button type="button" className="btn xs btn-primary" onClick={() => openReturn(loan)}><RotateCcw /> Return</button>}
+      </div>)}{ledger.length === 0 && <div className="notice">No {filter === "all" ? "external stock loans" : filter + " loans"} for {branchName}.</div>}</div>
+    </DocumentFile>
+    {returnLoan && <div className="scrim" onClick={() => !saving && setReturnLoan(null)}><div className="modal" style={{ maxWidth: 620 }} onClick={(event) => event.stopPropagation()}>
+      <div className="modal-head"><div><div className="sub" style={{ margin: 0 }}>External stock return</div><div className="title" style={{ fontSize: 21 }}>{returnLoan.borrowerName}</div></div><button type="button" className="iconbtn" disabled={saving} onClick={() => setReturnLoan(null)}><X /></button></div>
+      <div className="list" style={{ marginTop: 14 }}>{returnLoan.openItems.filter((line) => line.outstandingQty > 0).map((line) => <div className="row" key={line.productId}><div className="meta"><div className="nm">{line.productName}</div><div className="mt2">{line.outstandingQty} still out</div></div><input className="input" style={{ width: 100, textAlign: "center" }} inputMode="numeric" value={returnQty[line.productId] || ""} onChange={(event) => setReturnQty((current) => ({ ...current, [line.productId]: event.target.value.replace(/\D/g, "") }))} /></div>)}</div>
+      <label className="label" style={{ display: "block", marginTop: 12 }}>Return notes (optional)<textarea className="input" value={returnNotes} onChange={(event) => setReturnNotes(event.target.value)} placeholder="Condition or reference" /></label>
+      {error && <div className="alert" style={{ marginTop: 12 }}><AlertCircle />{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}><button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setReturnLoan(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={recordReturn}><Check /> {saving ? "Saving…" : "Record return"}</button></div>
+    </div></div>}
+  </div>;
+}
+
 function PricingTab({ data, update, branch }) {
   const cur = data.settings.currency;
   const [bId, setBId] = useState(branch.id);

@@ -793,6 +793,8 @@ const EVENT_TYPES = new Set([
   "stockTransferDecision",
   "stockMovement",
   "borrowing",
+  "externalStockLoan",
+  "externalStockLoanReturn",
   "endOfDay",
   "cashMovement",
   "order",
@@ -847,6 +849,8 @@ const RECORD_TYPE_ALIASES = new Map([
 const TERMINAL_FORBIDDEN_RECORD_TYPES = new Set(["branch", "setting", "user", "expenseCategory", "stockCountSession", "branchProduct"]);
 const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "borrowing",
+  "externalStockLoan",
+  "externalStockLoanReturn",
   "cashMovement",
   "endOfDay",
   "payment",
@@ -1964,6 +1968,161 @@ async function validateApprovedStockTransferEvent(client, ev, type) {
   }
 }
 
+function normalizedExternalLoanLines(payload = {}) {
+  const byProduct = new Map();
+  for (const line of Array.isArray(payload.items) ? payload.items : []) {
+    const productId = String(line?.productId || "").trim();
+    const qty = Number(line?.qty);
+    if (!productId || !Number.isInteger(qty) || qty <= 0) continue;
+    byProduct.set(productId, (byProduct.get(productId) || 0) + qty);
+  }
+  return [...byProduct.entries()].map(([productId, qty]) => ({ productId, qty }));
+}
+
+async function processExternalStockLoanEvent(client, ev, type, req, deviceId, ts) {
+  if (!req.account || !MANAGEMENT_SYNC_ROLES.has(syncRole(req.account))) {
+    throw syncEventError("supervisor_authorization_required");
+  }
+  const duplicate = await existingEvent(client, ev.id);
+  if (duplicate) return { id: duplicate.id, ts: duplicate.server_ts, branchId: duplicate.branch_id };
+
+  const payload = ev.payload || {};
+  const branchId = String(eventBranchId(ev) || "").trim();
+  const actor = req.account.name || req.account.email || "Management";
+  if (!branchId) throw syncEventError("external_stock_loan_branch_required");
+
+  if (type === "externalStockLoan") {
+    const borrowerName = String(payload.borrowerName || "").trim();
+    const lines = normalizedExternalLoanLines(payload);
+    if (!borrowerName) throw syncEventError("external_stock_loan_borrower_required");
+    if (!lines.length) throw syncEventError("external_stock_loan_items_required");
+
+    return withInventoryWriteLock(client, `external-stock-loan:${branchId}`, async () => {
+      const products = new Map();
+      for (const line of lines) {
+        const result = await client.query("SELECT id, payload FROM records WHERE type = 'product' AND id = $1 AND deleted = false LIMIT 1", [line.productId]);
+        const product = result.rows[0] ? recordPayload(result.rows[0].payload) : null;
+        if (!product) throw syncEventError("external_stock_loan_product_not_found");
+        const snapshot = await currentStockSnapshot(client, branchId, line.productId);
+        if (snapshot.quantity < line.qty) throw syncEventError("external_stock_loan_insufficient_stock");
+        products.set(line.productId, { product, snapshot });
+      }
+
+      const issuedAt = Date.now();
+      const loanEvent = {
+        ...ev,
+        branchId,
+        payload: {
+          ...payload,
+          branchId,
+          borrowerName,
+          borrowerPhone: String(payload.borrowerPhone || "").trim(),
+          dueAt: Number(payload.dueAt || 0) || null,
+          notes: String(payload.notes || "").trim(),
+          issuedBy: actor,
+          issuedAt,
+          ts: Number(payload.ts || issuedAt),
+          items: lines.map((line) => {
+            const { product } = products.get(line.productId);
+            const costCents = Math.max(0, Math.round(Number(productOverlayFromPayload(product, branchId).costCents || 0)));
+            return { productId: line.productId, productName: productDisplayName(product), sku: String(product.sku || ""), qty: line.qty, unitCostCents: costCents };
+          }),
+        },
+      };
+      const acceptedTs = await insertAppendOnlyEvent(client, loanEvent, type, deviceId, ts);
+      for (const line of loanEvent.payload.items) {
+        const snapshot = products.get(line.productId)?.snapshot;
+        await insertAppendOnlyEvent(client, {
+          id: `external-loan-issue:${loanEvent.id}:${line.productId}`,
+          type: "stockMovement",
+          branchId,
+          clientTs: issuedAt,
+          payload: {
+            productId: line.productId,
+            branchId,
+            qty: -line.qty,
+            unitCostCents: line.unitCostCents,
+            externalStockLoanId: loanEvent.id,
+            borrowerName,
+            mode: "external_loan_issue",
+            reason: `External loan to ${borrowerName}`,
+            // Older branches can have a catalogue/branch-product quantity but
+            // no historical movement rows. Preserve that opening quantity on
+            // the first ledger movement so an issue of 3 from 10 becomes 7,
+            // not -3, in the authoritative stock calculation.
+            ...(!snapshot?.hasMovements ? { stockBaseQty: Math.max(0, Number(snapshot?.quantity) || 0) } : {}),
+            ts: issuedAt,
+          },
+        }, "stockMovement", deviceId, ts + 1);
+      }
+      return { id: loanEvent.id, ts: acceptedTs, branchId };
+    });
+  }
+
+  const loanId = String(payload.externalStockLoanId || payload.loanId || "").trim();
+  const returnLines = normalizedExternalLoanLines(payload);
+  if (!loanId || !returnLines.length) throw syncEventError("external_stock_loan_return_details_required");
+  const loanResult = await client.query("SELECT id, branch_id, payload FROM events WHERE id = $1 AND type = 'externalStockLoan' LIMIT 1", [loanId]);
+  const loan = loanResult.rows[0];
+  if (!loan || String(loan.branch_id || "") !== branchId) throw syncEventError("external_stock_loan_not_found");
+  const loanPayload = recordPayload(loan.payload);
+  const originalLines = new Map(normalizedExternalLoanLines(loanPayload).map((line) => [line.productId, line.qty]));
+  return withInventoryWriteLock(client, `external-stock-loan:${branchId}`, async () => {
+    const returnsResult = await client.query("SELECT payload FROM events WHERE type = 'externalStockLoanReturn'");
+    const returnedByProduct = new Map();
+    for (const row of returnsResult.rows) {
+      const prior = recordPayload(row.payload);
+      if (String(prior.externalStockLoanId || prior.loanId || "") !== loanId) continue;
+      for (const line of normalizedExternalLoanLines(prior)) returnedByProduct.set(line.productId, (returnedByProduct.get(line.productId) || 0) + line.qty);
+    }
+    for (const line of returnLines) {
+      const lent = originalLines.get(line.productId) || 0;
+      const alreadyReturned = returnedByProduct.get(line.productId) || 0;
+      if (!lent || alreadyReturned + line.qty > lent) throw syncEventError("external_stock_loan_return_exceeds_open_quantity");
+    }
+    const returnedAt = Date.now();
+    const returnEvent = {
+      ...ev,
+      branchId,
+      payload: {
+        ...payload,
+        branchId,
+        externalStockLoanId: loanId,
+        returnedBy: actor,
+        returnedAt,
+        notes: String(payload.notes || "").trim(),
+        ts: Number(payload.ts || returnedAt),
+        items: returnLines.map((line) => {
+          const source = (Array.isArray(loanPayload.items) ? loanPayload.items : []).find((item) => String(item?.productId || "") === line.productId) || {};
+          return { productId: line.productId, productName: String(source.productName || "Product"), sku: String(source.sku || ""), qty: line.qty, unitCostCents: Math.max(0, Number(source.unitCostCents || 0)) };
+        }),
+      },
+    };
+    const acceptedTs = await insertAppendOnlyEvent(client, returnEvent, type, deviceId, ts);
+    for (const line of returnEvent.payload.items) {
+      await insertAppendOnlyEvent(client, {
+        id: `external-loan-return:${returnEvent.id}:${line.productId}`,
+        type: "stockMovement",
+        branchId,
+        clientTs: returnedAt,
+        payload: {
+          productId: line.productId,
+          branchId,
+          qty: line.qty,
+          unitCostCents: line.unitCostCents,
+          externalStockLoanId: loanId,
+          externalStockLoanReturnId: returnEvent.id,
+          borrowerName: String(loanPayload.borrowerName || "External shop"),
+          mode: "external_loan_return",
+          reason: `External loan return from ${loanPayload.borrowerName || "shop"}`,
+          ts: returnedAt,
+        },
+      }, "stockMovement", deviceId, ts + 1);
+    }
+    return { id: returnEvent.id, ts: acceptedTs, branchId };
+  });
+}
+
 router.post("/push", requireSyncWrite, async (req, res) => {
   const events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
@@ -2073,6 +2232,12 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             recordDeviceId,
             nextServerTs()
           );
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+          acceptedBranchId = result.branchId || acceptedBranchId;
+        } else if (type === "externalStockLoan" || type === "externalStockLoanReturn") {
+          const loanEvent = remapEventProductReferences(guardedEvent, await getProductAliases());
+          const result = await processExternalStockLoanEvent(client, loanEvent, type, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
           acceptedId = result.id;
           acceptedBranchId = result.branchId || acceptedBranchId;
