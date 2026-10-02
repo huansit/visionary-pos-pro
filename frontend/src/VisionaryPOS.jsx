@@ -14714,6 +14714,30 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
     const units = `${settledQty} borrowed unit${settledQty === 1 ? "" : "s"} settled`;
     return `Purchase ${supplierName || ""} · ${units}${shops.length ? ` · ${shops.join(", ")}` : ""}`.trim();
   };
+  const borrowedSettlementAuditMovement = ({ purchaseId, batchId, batchNo, productId, branchId, supplierName, settlement, ts }) => {
+    const settledQty = Math.max(0, Number(settlement?.settledQty) || 0);
+    if (!settledQty) return null;
+    return {
+      id: uid("mv"),
+      // This is deliberately separate from purchaseId. The physical receipt
+      // movement owns that identifier and prevents a second receipt; this
+      // zero-net movement is the immutable outside-shop settlement audit.
+      settlementPurchaseId: purchaseId,
+      purchaseBatchId: batchId || null,
+      purchaseBatchNo: batchNo || null,
+      productId,
+      branchId,
+      qty: 0,
+      mode: "external_borrowed_settlement",
+      auditOnly: true,
+      source: "external_stock_borrowing",
+      externalBorrowedOffsetQty: settledQty,
+      externalBorrowedSettlements: settlement.allocations,
+      reason: `External borrowed stock settled by purchase ${batchNo || purchaseId}${supplierName ? ` · ${supplierName}` : ""}`,
+      ts,
+      synced: false,
+    };
+  };
   const onProduct = (pid) => {
     const r = recommend(pid);
     setProductQuery("");
@@ -14781,13 +14805,16 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const cur = d.products.find((p) => p.id === f.productId);
       const previousCostCents = cur ? branchInventoryCostCents(d, cur, lbr) : 0;
       const newCost = inventoryQty > 0 ? wacCost(onHand(d, f.productId, lbr), previousCostCents || cost, inventoryQty, cost) : previousCostCents;
+      const settlementAudit = inventoryQty > 0 ? borrowedSettlementAuditMovement({
+        purchaseId: po.id, batchId, batchNo, productId: f.productId, branchId: lbr, supplierName: sup?.name, settlement, ts,
+      }) : null;
       return { ...d,
         purchases: [receivedPurchase, ...settlement.purchases],
         // Record every received purchase, including one fully used to repay
         // outside borrowed stock. A zero-quantity receipt is audit-only: it
         // cannot change on-hand again, but it makes the settlement visible in
         // product stock history and reserves this purchase against re-receipt.
-        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty: inventoryQty, costCents: cost, previousCostCents, valueCents: inventoryQty * cost, mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: purchaseMovementReason(sup?.name, settlement), ts, synced: false }],
+        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty: inventoryQty, costCents: cost, previousCostCents, valueCents: inventoryQty * cost, mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: purchaseMovementReason(sup?.name, settlement), ts, synced: false }, ...(settlementAudit ? [settlementAudit] : [])],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -14831,6 +14858,10 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
           // Keep a receipt ledger entry even when borrowed stock consumes the
           // whole purchase. qty is then zero, so inventory remains unchanged.
           movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: inventoryQty, costCents: l.costCents, previousCostCents: curCost, valueCents: inventoryQty * l.costCents, mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: purchaseMovementReason(l.supplierName, settlement), ts, synced: false });
+          const settlementAudit = inventoryQty > 0 ? borrowedSettlementAuditMovement({
+            purchaseId: po.id, batchId, batchNo, productId: l.productId, branchId: lbr, supplierName: l.supplierName, settlement, ts,
+          }) : null;
+          if (settlementAudit) movements.push(settlementAudit);
         }
         purchases.push(receivedPurchase);
       }
@@ -14876,6 +14907,10 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
         externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations,
         reason: purchaseMovementReason(po.supplierName, settlement), ts: receivedAt, synced: false,
       });
+      const settlementAudit = inventoryQty > 0 ? borrowedSettlementAuditMovement({
+        purchaseId: po.id, batchId: po.batchId, batchNo: po.batchNo, productId: po.productId, branchId: targetBranchId, supplierName: po.supplierName, settlement, ts: receivedAt,
+      }) : null;
+      if (settlementAudit) movements.push(settlementAudit);
     }
 
     return {

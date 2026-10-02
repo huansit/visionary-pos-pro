@@ -26,13 +26,23 @@ async function main() {
   ]);
 
   const movementsByPurchase = new Map();
+  const settlementAuditsByPurchase = new Map();
   for (const row of movementResult.rows) {
     const payload = payloadOf(row.payload);
     const purchaseId = text(payload.purchaseId);
-    if (!purchaseId) continue;
-    const entries = movementsByPurchase.get(purchaseId) || [];
-    entries.push({ id: row.id, payload });
-    movementsByPurchase.set(purchaseId, entries);
+    if (purchaseId) {
+      const entries = movementsByPurchase.get(purchaseId) || [];
+      entries.push({ id: row.id, payload });
+      movementsByPurchase.set(purchaseId, entries);
+    }
+    const settlementPurchaseId = text(payload.settlementPurchaseId);
+    const isZeroNetSettlement = text(payload.mode).toLowerCase() === "external_borrowed_settlement"
+      || (text(payload.mode).toLowerCase() === "purchase_external_borrowed_settlement" && number(payload.qty) === 0);
+    if (settlementPurchaseId && isZeroNetSettlement) {
+      const entries = settlementAuditsByPurchase.get(settlementPurchaseId) || [];
+      entries.push({ id: row.id, payload });
+      settlementAuditsByPurchase.set(settlementPurchaseId, entries);
+    }
   }
 
   const repairs = [];
@@ -51,10 +61,11 @@ async function main() {
     ].some((value) => value.toLowerCase() === purchaseFilter)) continue;
 
     const existing = movementsByPurchase.get(purchaseId) || [];
-    const alreadyAudited = existing.some(({ payload }) => (
-      Math.max(0, number(payload.externalBorrowedOffsetQty)) > 0
-      || text(payload.mode).toLowerCase() === "purchase_external_borrowed_settlement"
-    ));
+    const alreadyAudited = (settlementAuditsByPurchase.get(purchaseId) || []).length > 0
+      || existing.some(({ payload }) => (
+        text(payload.mode).toLowerCase() === "purchase_external_borrowed_settlement"
+        && number(payload.qty) === 0
+      ));
     if (alreadyAudited) continue;
 
     const settlements = Array.isArray(purchase.externalBorrowedSettlements) ? purchase.externalBorrowedSettlements : [];
@@ -70,6 +81,7 @@ async function main() {
       offsetQty,
       shops,
       originalMovementIds: existing.map(({ id }) => id),
+      hasPurchaseReceipt: existing.length > 0,
       receivedAt: number(purchase.receivedAt || purchase.updatedAt || purchase.ts || Date.now()),
       settlements,
     });
@@ -87,12 +99,14 @@ async function main() {
       ts = Math.max(ts + 1, repair.receivedAt + 1);
       const reason = `Purchase ${repair.supplierName || repair.purchaseNo} · ${repair.offsetQty} borrowed unit${repair.offsetQty === 1 ? "" : "s"} settled${repair.shops.length ? ` · ${repair.shops.join(", ")}` : ""}`;
       const payload = {
-        purchaseId: repair.purchaseId,
+        // A partial receipt already owns purchaseId. Keep the audit row
+        // distinct so the sync duplicate-receipt guard remains effective.
+        ...(repair.hasPurchaseReceipt ? { settlementPurchaseId: repair.purchaseId } : { purchaseId: repair.purchaseId }),
         purchaseBatchNo: repair.purchaseNo,
         productId: repair.productId,
         branchId: repair.branchId,
         qty: 0,
-        mode: "purchase_external_borrowed_settlement",
+        mode: "external_borrowed_settlement",
         auditOnly: true,
         source: "external_stock_borrowing",
         externalBorrowedOffsetQty: repair.offsetQty,
