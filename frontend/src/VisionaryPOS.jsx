@@ -9418,6 +9418,12 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
   const workspaceRootRef = useRef(null);
   const accountRole = String(role || user?.role || user?.kind || "").toLowerCase();
   const isAdmin = accountRole === "admin" || accountRole === "owner";
+  // The admin shell receives its display name separately from the session
+  // role. Invoice settlement needs the complete actor so it can reveal only
+  // the owner/admin-only historic debt recovery controls.
+  const invoiceSettlementActor = typeof user === "object" && user
+    ? { ...user, role: role || user.role || user.kind, rights: rights || user.rights }
+    : { name: user, role, rights };
   // Admin (owner) sees everything; everyone else is limited to their granted rights.
   const canAccess = (tabId) => {
     if (isAdmin) return true;
@@ -9535,7 +9541,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     switch (tab) {
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
       case "ai": return <AIManagerTab data={data} sessionToken={sessionToken} />;
-      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={user} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "all"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
+      case "invoices": return <InvoicesTab key={invoiceFocus?.key || "invoices"} data={data} update={update} branch={branch} user={invoiceSettlementActor} initialCashier={invoiceFocus?.cashier || "all"} initialFilter={invoiceFocus?.filter || "all"} environmentMode={normalizeEnvironmentMode(environment?.mode || data?.settings?.environmentMode || "test")} onOpenDebtPayments={openDebtPayments} />;
     case "customers": return <CustomersTab data={data} branch={branch} />;
       case "glovo": return <GlovoOrdersTab data={data} update={update} />;
       case "pricing": return <PricingTab data={data} update={update} branch={branch} />;
