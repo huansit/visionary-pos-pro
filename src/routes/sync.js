@@ -934,9 +934,13 @@ const PAYROLL_CASHIER_DEBT_MINIMUM_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function recordEventTimestamp(row) {
   const payload = recordPayload(row?.payload);
-  for (const value of [payload.ts, payload.createdAt, row?.server_ts, row?.serverTs]) {
+  for (const value of [payload.ts, payload.issuedAt, payload.createdAt, payload.date, row?.server_ts, row?.serverTs]) {
     const timestamp = Number(value);
     if (Number.isFinite(timestamp) && timestamp > 0) return timestamp;
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
   }
   return 0;
 }

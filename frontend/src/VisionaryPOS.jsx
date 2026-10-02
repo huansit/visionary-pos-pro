@@ -11674,17 +11674,16 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
       if (timer) window.clearTimeout(timer);
     };
   }, [stkRequest?.id, out]);
-  const invoiceDebtAgeMs = now() - Number(live.ts || live.issuedAt || live.createdAt || 0);
-  const carriedOverDebtEligible = out > 0 && invoiceWasCarriedOver(data, live);
-  // Payroll recovery is governed by the debt age, not by whether the
-  // originating device happened to have recorded an End-of-Day carry-over
-  // marker. Older invoices imported from a legacy device still need the
-  // same owner/admin-only payroll recovery route.
-  const payrollEligible = out > 0
-    && invIsDebt(live)
+  const invoiceDebtAgeMs = now() - invoiceIssuedTimestamp(live);
+  // Historic invoice recovery must use the original issue date, rather than
+  // a mutable carry-over marker. A partial payment therefore cannot make a
+  // 30-day debt disappear from the owner's salary or tip-wallet options.
+  const historicInvoiceRecoveryEligible = out > 0
+    && invoiceIssuedTimestamp(live) > 0
     && invoiceDebtAgeMs >= 30 * 24 * 60 * 60 * 1000
     && ["owner", "admin"].includes(settlementRole);
-  const walletEligible = carriedOverDebtEligible;
+  const payrollEligible = historicInvoiceRecoveryEligible;
+  const walletEligible = historicInvoiceRecoveryEligible;
   const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
   const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
   const walletCents = settlementMethod === "wallet" ? clampPaymentCents(walletAmount, out) : 0;
@@ -11717,7 +11716,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   });
   let paymentValidationError = "";
   if (settlementMethod === "payroll" && !payrollEligible) paymentValidationError = "Payroll is available only to an owner or admin for invoice debts that are at least 30 days old.";
-  else if (settlementMethod === "wallet" && !walletEligible) paymentValidationError = "The cashier wallet can settle only carried-over debt invoices.";
+  else if (settlementMethod === "wallet" && !walletEligible) paymentValidationError = "Tip-wallet recovery is available only to an owner or admin for invoice debts that are at least 30 days old.";
   else if (settlementMethod === "wallet" && invoiceWallet.loading) paymentValidationError = "Loading cashier wallet balance.";
   else if (settlementMethod === "wallet" && invoiceWallet.error) paymentValidationError = invoiceWallet.error;
   else if (paymentCents <= 0) paymentValidationError = settlementMethod === "payroll" ? "Enter the payroll deduction amount." : settlementMethod === "wallet" ? "Enter the wallet amount to apply." : "Enter an M-Pesa code and amount.";
@@ -11847,7 +11846,9 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
         setRecordingPayment(false);
         const messages = {
           cashier_wallet_balance_exceeded: `Only ${fmt(invoiceWallet.balanceCents, cur)} is available in this cashier wallet.`,
-          cashier_wallet_invoice_not_debt: "This invoice is no longer an eligible carried-over debt.",
+          cashier_wallet_invoice_not_debt: "This invoice is no longer an eligible debt.",
+          cashier_wallet_invoice_admin_required: "Only an owner or admin can apply a cashier tip wallet to an invoice debt.",
+          cashier_wallet_invoice_minimum_age_not_met: "Tip-wallet recovery becomes available after this invoice has been outstanding for 30 days.",
           cashier_wallet_invoice_cashier_mismatch: "This invoice does not belong to the selected cashier wallet.",
           cashier_wallet_invoice_branch_mismatch: "The cashier wallet and invoice belong to different branches.",
         };

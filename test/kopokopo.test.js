@@ -728,6 +728,8 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
   const reference = "TGH7WAL9LET";
   const creditKey = "wallet-credit-test";
   const paymentKey = "wallet-payment-test";
+  const followUpPaymentKey = "wallet-payment-follow-up-test";
+  const thirtyOneDaysAgo = Date.now() - (31 * 24 * 60 * 60 * 1000);
   await signedWebhook(webhookPayload({
     eventId: "evt-cashier-wallet",
     resourceId: transactionId,
@@ -736,7 +738,7 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
   await pool.query(
     `INSERT INTO events (id, type, branch_id, device_id, client_ts, server_ts, payload)
      VALUES ($1, 'invoice', 'b_sip', NULL, 1, $2, $3::jsonb)`,
-    [invoiceId, Date.now(), JSON.stringify({
+    [invoiceId, thirtyOneDaysAgo, JSON.stringify({
       id: invoiceId,
       number: "RCP-SIP-WALLET",
       branchId: "b_sip",
@@ -744,8 +746,10 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
       cashierName: "SIP Cashier",
       totalCents: 30000,
       paidCents: 0,
-      carriedOver: true,
-      status: "debt",
+      // Legacy devices do not always set a carried-over marker. Recovery is
+      // governed by this original invoice age, not that mutable display flag.
+      ts: thirtyOneDaysAgo,
+      status: "open",
     })]
   );
 
@@ -795,9 +799,22 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
     assert.equal(ownWallet.body.wallet.branchId, "b_sip");
     assert.equal(ownWallet.body.wallet.balanceCents, 40000);
 
-    const settled = await request(app)
+    const supervisorRejected = await request(app)
       .post("/api/integrations/kopokopo/wallet/debt-payments")
       .set("X-Session-Token", supervisorSessionToken)
+      .send({
+        cashierId: "kopokopo-cashier",
+        branchId: "b_sip",
+        targets: [{ type: "invoice", id: invoiceId, amountCents: 15000 }],
+        note: "Apply cashier tip wallet",
+        idempotencyKey: paymentKey,
+      })
+      .expect(409);
+    assert.equal(supervisorRejected.body.error, "cashier_wallet_invoice_admin_required");
+
+    const settled = await request(app)
+      .post("/api/integrations/kopokopo/wallet/debt-payments")
+      .set("X-Session-Token", sessionToken)
       .send({
         cashierId: "kopokopo-cashier",
         branchId: "b_sip",
@@ -811,6 +828,21 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
     assert.equal(settled.body.paymentEvents[0].payload.method, "cashier-wallet");
     assert.equal(settled.body.paymentEvents[0].payload.amountCents, 15000);
 
+    // A partial payment must not make a qualifying historic invoice lose its
+    // salary/tip recovery eligibility on the next operation.
+    const followUp = await request(app)
+      .post("/api/integrations/kopokopo/wallet/debt-payments")
+      .set("X-Session-Token", sessionToken)
+      .send({
+        cashierId: "kopokopo-cashier",
+        branchId: "b_sip",
+        targets: [{ type: "invoice", id: invoiceId, amountCents: 5000 }],
+        note: "Apply remaining cashier tip wallet",
+        idempotencyKey: followUpPaymentKey,
+      })
+      .expect(200);
+    assert.equal(followUp.body.wallet.balanceCents, 20000);
+
     const ledger = await request(app)
       .get("/api/integrations/kopokopo/transactions?branchId=b_sip&search=9LET")
       .set("X-Session-Token", supervisorSessionToken)
@@ -821,9 +853,9 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
     assert.equal(ledger.body.transactions[0].walletCredits.length, 1);
     assert.equal(ledger.body.transactions[0].walletCredits[0].cashierId, "kopokopo-cashier");
   } finally {
-    await pool.query("DELETE FROM cashier_wallet_entries WHERE batch_idempotency_key IN ($1, $2)", [creditKey, paymentKey]);
-    await pool.query("DELETE FROM cashier_wallet_batches WHERE idempotency_key IN ($1, $2)", [creditKey, paymentKey]);
-    await pool.query("DELETE FROM events WHERE id = $1 OR (type = 'payment' AND payload->>'walletBatchId' = $2)", [invoiceId, paymentKey]);
+    await pool.query("DELETE FROM cashier_wallet_entries WHERE batch_idempotency_key IN ($1, $2, $3)", [creditKey, paymentKey, followUpPaymentKey]);
+    await pool.query("DELETE FROM cashier_wallet_batches WHERE idempotency_key IN ($1, $2, $3)", [creditKey, paymentKey, followUpPaymentKey]);
+    await pool.query("DELETE FROM events WHERE id = $1 OR (type = 'payment' AND payload->>'walletBatchId' IN ($2, $3))", [invoiceId, paymentKey, followUpPaymentKey]);
     await pool.query("DELETE FROM kopokopo_transactions WHERE id = $1", [transactionId]);
     await pool.query("DELETE FROM kopokopo_webhook_events WHERE event_id = $1", ["evt-cashier-wallet"]);
   }

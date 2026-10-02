@@ -27,6 +27,7 @@ import {
 
 const router = Router();
 const MAX_IDENTIFIER_LENGTH = 191;
+const CASHIER_INVOICE_RECOVERY_MINIMUM_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const requireKopokopoViewer = requireRoles(new Set(["owner", "admin", "manager", "supervisor", "cashier"]));
 
 function integerCents(value) {
@@ -78,6 +79,19 @@ function accountRole(account) {
   return String(account?.role || rights.role || rights.name || rights.accountRole || account?.kind || "")
     .trim()
     .toLowerCase();
+}
+
+function eventTimestamp(row) {
+  const payload = row?.payload || {};
+  for (const value of [payload.ts, payload.issuedAt, payload.createdAt, payload.date, row?.server_ts, row?.serverTs]) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
 }
 
 function nextWalletEventTs() {
@@ -875,8 +889,15 @@ async function payCashierDebtsFromWallet({ cashierId, branchId, targets, note, i
         if (approvedVoid || ["void", "voided", "cancelled", "canceled"].includes(String(payload.status || "").toLowerCase())) {
           return { conflict: "cashier_wallet_invoice_voided", targetId: target.id };
         }
-        if (!(payload.carriedOver || payload.carriedOverAt || payload.closedDayId || String(payload.status || "").toLowerCase() === "debt")) {
-          return { conflict: "cashier_wallet_invoice_not_debt", targetId: target.id };
+        // Invoice recovery is deliberately based on the original issue date.
+        // Carry-over flags are device-derived display state and may change after
+        // a partial settlement; they must never make an old debt ineligible.
+        if (!["owner", "admin"].includes(accountRole(account))) {
+          return { conflict: "cashier_wallet_invoice_admin_required", targetId: target.id };
+        }
+        const issuedAt = eventTimestamp(invoice);
+        if (!issuedAt || Date.now() - issuedAt < CASHIER_INVOICE_RECOVERY_MINIMUM_AGE_MS) {
+          return { conflict: "cashier_wallet_invoice_minimum_age_not_met", targetId: target.id };
         }
         const capturedCents = supportingEvents.reduce((sum, event) => {
           const payment = event.payload || {};
