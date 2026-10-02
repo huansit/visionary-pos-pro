@@ -14683,7 +14683,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const allocatedQty = Math.min(remaining, outstandingQty);
       if (!allocatedQty) return purchase;
       remaining -= allocatedQty;
-      allocations.push({ borrowedPurchaseId: purchase.id, qty: allocatedQty });
+      allocations.push({
+        borrowedPurchaseId: purchase.id,
+        qty: allocatedQty,
+        externalShopName: purchase.externalShopName || purchase.supplierName || "",
+      });
       const nextSettledQty = settledQty + allocatedQty;
       return {
         ...purchase,
@@ -14700,6 +14704,15 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
     });
     const settledQty = Math.max(0, Number(qty) || 0) - remaining;
     return { purchases: updatedPurchases, settledQty, inventoryQty: Math.max(0, Number(qty) || 0) - settledQty, allocations };
+  };
+  const purchaseMovementReason = (supplierName, settlement) => {
+    const settledQty = Math.max(0, Number(settlement?.settledQty) || 0);
+    if (!settledQty) return "Purchase " + (supplierName || "");
+    const shops = [...new Set((settlement?.allocations || [])
+      .map((allocation) => String(allocation?.externalShopName || "").trim())
+      .filter(Boolean))];
+    const units = `${settledQty} borrowed unit${settledQty === 1 ? "" : "s"} settled`;
+    return `Purchase ${supplierName || ""} · ${units}${shops.length ? ` · ${shops.join(", ")}` : ""}`.trim();
   };
   const onProduct = (pid) => {
     const r = recommend(pid);
@@ -14770,7 +14783,11 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       const newCost = inventoryQty > 0 ? wacCost(onHand(d, f.productId, lbr), previousCostCents || cost, inventoryQty, cost) : previousCostCents;
       return { ...d,
         purchases: [receivedPurchase, ...settlement.purchases],
-        stockMovements: inventoryQty > 0 ? [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty: inventoryQty, costCents: cost, previousCostCents, valueCents: inventoryQty * cost, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: "Purchase " + (sup?.name || ""), ts, synced: false }] : d.stockMovements,
+        // Record every received purchase, including one fully used to repay
+        // outside borrowed stock. A zero-quantity receipt is audit-only: it
+        // cannot change on-hand again, but it makes the settlement visible in
+        // product stock history and reserves this purchase against re-receipt.
+        stockMovements: [...d.stockMovements, { id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: f.productId, branchId: lbr, qty: inventoryQty, costCents: cost, previousCostCents, valueCents: inventoryQty * cost, mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: purchaseMovementReason(sup?.name, settlement), ts, synced: false }],
         products: withBranchProductCostForKey(d.products, cur, lbr, newCost),
       };
     });
@@ -14811,7 +14828,9 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
           const newCost = inventoryQty > 0 ? wacCost(oh, curCost, inventoryQty, l.costCents) : curCost;
           if (idx >= 0) products = withBranchProductCostForKey(products, products[idx], lbr, newCost);
           ohCache[lbr + ":" + l.productId] = oh + inventoryQty;
-          if (inventoryQty > 0) movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: inventoryQty, costCents: l.costCents, previousCostCents: curCost, valueCents: inventoryQty * l.costCents, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: "Purchase " + l.supplierName, ts, synced: false });
+          // Keep a receipt ledger entry even when borrowed stock consumes the
+          // whole purchase. qty is then zero, so inventory remains unchanged.
+          movements.push({ id: uid("mv"), purchaseId: po.id, purchaseBatchId: batchId, purchaseBatchNo: batchNo, productId: l.productId, branchId: lbr, qty: inventoryQty, costCents: l.costCents, previousCostCents: curCost, valueCents: inventoryQty * l.costCents, mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, reason: purchaseMovementReason(l.supplierName, settlement), ts, synced: false });
         }
         purchases.push(receivedPurchase);
       }
@@ -14846,12 +14865,16 @@ function PurchasesTab({ data, update, branch, isAdmin, actor, onNavigate, onSync
       purchases = purchases.map((entry) => entry.id === po.id
         ? { ...entry, status: "received", receivedAt, updatedAt: receivedAt, externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations, inventoryQty, synced: false }
         : entry);
-      if (inventoryQty > 0) movements.push({
+      // The receipt also locks a zero-net repayment against a second receive.
+      // This retains a complete stock audit without adding the borrowed units
+      // to inventory for a second time.
+      movements.push({
         id: uid("mv"), purchaseId: po.id, purchaseBatchId: po.batchId || null, purchaseBatchNo: po.batchNo || null,
         productId: po.productId, branchId: targetBranchId, qty: inventoryQty,
         costCents: receivedUnitCost, previousCostCents: currentCost, valueCents: inventoryQty * receivedUnitCost,
+        mode: settlement.settledQty > 0 ? "purchase_external_borrowed_settlement" : "purchase", auditOnly: inventoryQty === 0,
         externalBorrowedOffsetQty: settlement.settledQty, externalBorrowedSettlements: settlement.allocations,
-        reason: "Purchase " + po.supplierName, ts: receivedAt, synced: false,
+        reason: purchaseMovementReason(po.supplierName, settlement), ts: receivedAt, synced: false,
       });
     }
 
@@ -18718,9 +18741,17 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
               <div className="section-title" style={{ margin: "4px 0 8px" }}>Stock movement history{rb === "all" ? "" : " · " + bname(rb)}</div>
               {ledger.length === 0 ? <div className="notice">No movements recorded for this product.</div> : (
                 <div className="tablewrap tblscroll"><table className="tbl"><thead><tr><th>Date</th><th>Type / reason</th><th>Change</th><th>Balance</th>{rb === "all" ? <th>Branch</th> : null}</tr></thead>
-                  <tbody>{ledger.map((mv) => (<tr key={mv.id}><td>{dt(mv.ts)}</td><td>{mv.reason}</td>
-                    <td style={{ fontWeight: 700, color: mv.qty < 0 ? "var(--danger)" : "var(--ok)" }}>{mv.qty > 0 ? "+" : ""}{mv.qty}</td>
-                    <td style={{ fontWeight: 700 }}>{mv.bal}</td>{rb === "all" ? <td>{bname(mv.branchId)}</td> : null}</tr>))}</tbody></table></div>)}
+                  <tbody>{ledger.map((mv) => {
+                    const borrowedSettlementQty = Math.max(0, Number(mv.externalBorrowedOffsetQty) || 0);
+                    const settledShops = [...new Set((mv.externalBorrowedSettlements || [])
+                      .map((settlement) => String(settlement?.externalShopName || "").trim())
+                      .filter(Boolean))];
+                    return <tr key={mv.id}><td>{dt(mv.ts)}</td><td>{mv.reason}
+                      {borrowedSettlementQty > 0 && <div className="sub mt2">External borrowed stock settled: {borrowedSettlementQty}{settledShops.length ? ` · ${settledShops.join(", ")}` : ""}</div>}
+                    </td>
+                    <td style={{ fontWeight: 700, color: mv.qty < 0 ? "var(--danger)" : mv.qty > 0 ? "var(--ok)" : "var(--muted)" }}>{mv.qty > 0 ? "+" : ""}{mv.qty}</td>
+                    <td style={{ fontWeight: 700 }}>{mv.bal}</td>{rb === "all" ? <td>{bname(mv.branchId)}</td> : null}</tr>;
+                  })}</tbody></table></div>)}
             </div>
           );
         }
