@@ -1478,6 +1478,9 @@ async function getCashierWallet(filters = {}) {
   });
   return await authGet(`/api/integrations/kopokopo/wallet?${query}`, { session: true });
 }
+async function getInvoiceRecoveryEligibility(invoiceId) {
+  return await authGet(`/api/integrations/kopokopo/wallet/invoice-recovery?invoiceId=${encodeURIComponent(String(invoiceId || ""))}`, { session: true });
+}
 async function creditCashierWallet(payload) {
   return await authApi("/api/integrations/kopokopo/wallet/credits", payload, { session: true });
 }
@@ -11582,6 +11585,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   const [payrollAmount, setPayrollAmount] = useState("");
   const [walletAmount, setWalletAmount] = useState("");
   const [invoiceWallet, setInvoiceWallet] = useState({ balanceCents: 0, loading: false, error: "" });
+  const [invoiceRecovery, setInvoiceRecovery] = useState({ loading: true, canUsePayroll: false, canUseWallet: false });
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [providerTransactionId, setProviderTransactionId] = useState("");
@@ -11605,6 +11609,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
     setPayrollAmount("");
     setWalletAmount("");
     setInvoiceWallet({ balanceCents: 0, loading: false, error: "" });
+    setInvoiceRecovery({ loading: true, canUsePayroll: false, canUseWallet: false });
     setPaymentError("");
     setProviderTransactionId("");
     setStkPhone("");
@@ -11688,8 +11693,36 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
     && invoiceIssuedTimestamp(live) > 0
     && invoiceDebtAgeMs >= 30 * 24 * 60 * 60 * 1000
     && ["owner", "admin"].includes(settlementRole);
-  const payrollEligible = historicInvoiceRecoveryEligible;
-  const walletEligible = historicInvoiceRecoveryEligible;
+  // The cloud result is authoritative. Keep the local calculation only as a
+  // fast fallback while the request is in flight, for snapshots that already
+  // contain the complete invoice timestamp.
+  const payrollEligible = out > 0 && (invoiceRecovery.canUsePayroll || (invoiceRecovery.loading && historicInvoiceRecoveryEligible));
+  const walletEligible = out > 0 && (invoiceRecovery.canUseWallet || (invoiceRecovery.loading && historicInvoiceRecoveryEligible));
+  useEffect(() => {
+    let cancelled = false;
+    if (!live.id || out <= 0) {
+      setInvoiceRecovery({ loading: false, canUsePayroll: false, canUseWallet: false });
+      return undefined;
+    }
+    setInvoiceRecovery({ loading: true, canUsePayroll: false, canUseWallet: false });
+    getInvoiceRecoveryEligibility(live.id)
+      .then((result) => {
+        if (cancelled) return;
+        setInvoiceRecovery({
+          loading: false,
+          canUsePayroll: result?.canUsePayroll === true,
+          canUseWallet: result?.canUseWallet === true,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setInvoiceRecovery({ loading: false, canUsePayroll: false, canUseWallet: false });
+      });
+    return () => { cancelled = true; };
+  }, [live.id, out]);
+  useEffect(() => {
+    if (settlementMethod === "payroll" && !payrollEligible) setSettlementMethod("standard");
+    if (settlementMethod === "wallet" && !walletEligible) setSettlementMethod("standard");
+  }, [settlementMethod, payrollEligible, walletEligible]);
   const mpesaCents = settlementMethod === "standard" ? clampPaymentCents(mpesaAmount, out) : 0;
   const payrollCents = settlementMethod === "payroll" ? clampPaymentCents(payrollAmount, out) : 0;
   const walletCents = settlementMethod === "wallet" ? clampPaymentCents(walletAmount, out) : 0;

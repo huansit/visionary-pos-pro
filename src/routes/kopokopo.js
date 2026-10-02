@@ -1952,6 +1952,50 @@ router.get("/wallet", requireKopokopoViewer, async (req, res) => {
   }
 });
 
+// The admin UI must not infer recovery eligibility from a device snapshot.
+// Older snapshots can omit the original invoice timestamp even though the
+// canonical event in Postgres has it. This endpoint deliberately returns a
+// small, server-authoritative eligibility result; the payment route still
+// repeats every validation inside its transaction before writing anything.
+router.get("/wallet/invoice-recovery", requireKopokopoViewer, async (req, res) => {
+  try {
+    const invoiceId = identifier(req.query.invoiceId);
+    if (!invoiceId) return res.status(400).json({ error: "invalid_invoice_id" });
+
+    const invoice = (await q(
+      "SELECT id, branch_id, server_ts, payload FROM events WHERE id = $1 AND type = 'invoice' LIMIT 1",
+      [invoiceId]
+    )).rows[0];
+    if (!invoice) return res.status(404).json({ error: "invoice_not_found" });
+
+    const payload = invoice.payload || {};
+    const branchId = String(invoice.branch_id ?? invoice.branchId ?? payload.branchId ?? "").trim();
+    if (!branchId || !accountCanAccessBranch(req.account, branchId)) {
+      return res.status(403).json({ error: "branch_not_authorized" });
+    }
+
+    const issuedAt = eventTimestamp(invoice);
+    const role = accountRole(req.account);
+    const ageMs = issuedAt ? Math.max(0, Date.now() - issuedAt) : 0;
+    const oldEnough = Boolean(issuedAt) && ageMs >= CASHIER_INVOICE_RECOVERY_MINIMUM_AGE_MS;
+    const admin = ["owner", "admin"].includes(role);
+    const eligible = admin && oldEnough;
+    return res.json({
+      invoiceId,
+      branchId,
+      issuedAt: issuedAt || null,
+      ageDays: issuedAt ? Math.floor(ageMs / (24 * 60 * 60 * 1000)) : null,
+      eligible,
+      canUsePayroll: eligible,
+      canUseWallet: eligible,
+      reason: eligible ? null : !admin ? "admin_required" : !issuedAt ? "original_issue_date_unavailable" : "minimum_age_not_met",
+    });
+  } catch (error) {
+    console.error("Invoice recovery eligibility lookup failed:", error);
+    return res.status(500).json({ error: "invoice_recovery_eligibility_failed" });
+  }
+});
+
 router.post("/wallet/credits", requireAdminOrSupervisor, async (req, res) => {
   try {
     if (!kopokopoEnabled()) return res.status(409).json({ error: "kopokopo_disabled" });

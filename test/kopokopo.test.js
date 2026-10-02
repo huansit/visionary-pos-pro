@@ -799,6 +799,21 @@ test("funds a branch cashier wallet from verified M-Pesa balance and settles onl
     assert.equal(ownWallet.body.wallet.branchId, "b_sip");
     assert.equal(ownWallet.body.wallet.balanceCents, 40000);
 
+    const adminEligibility = await request(app)
+      .get(`/api/integrations/kopokopo/wallet/invoice-recovery?invoiceId=${invoiceId}`)
+      .set("X-Session-Token", sessionToken)
+      .expect(200);
+    assert.equal(adminEligibility.body.canUsePayroll, true);
+    assert.equal(adminEligibility.body.canUseWallet, true);
+    assert.ok(adminEligibility.body.ageDays >= 30);
+
+    const supervisorEligibility = await request(app)
+      .get(`/api/integrations/kopokopo/wallet/invoice-recovery?invoiceId=${invoiceId}`)
+      .set("X-Session-Token", supervisorSessionToken)
+      .expect(200);
+    assert.equal(supervisorEligibility.body.eligible, false);
+    assert.equal(supervisorEligibility.body.reason, "admin_required");
+
     const supervisorRejected = await request(app)
       .post("/api/integrations/kopokopo/wallet/debt-payments")
       .set("X-Session-Token", supervisorSessionToken)
