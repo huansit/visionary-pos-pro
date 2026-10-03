@@ -33,6 +33,10 @@ export default defineConfig({
   plugins: [react(), quarantineCashierArtifacts()],
   build: {
     rollupOptions: {
+      input: {
+        main: path.resolve("index.html"),
+        boltFoodSipcity: path.resolve("bolt-food-sipcity.html"),
+      },
       output: {
         manualChunks: {
           react: ["react", "react-dom", "react-dom/client"],
