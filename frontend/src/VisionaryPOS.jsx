@@ -11179,6 +11179,15 @@ function BulkSettleDayModal({ invoices, activeCashierNames = [], initialCashier 
 
 function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const cur = data.settings.currency;
+  // Invoices can be opened by the admin workspace, which passes the complete
+  // authenticated actor for settlement permissions. End-of-day records and
+  // JSX must always use a plain display name, never that actor object.
+  const displayName = (actor, fallback = "—") => {
+    if (typeof actor === "string" || typeof actor === "number") return String(actor).trim() || fallback;
+    if (actor && typeof actor === "object") return String(actor.name || actor.displayName || actor.email || fallback);
+    return fallback;
+  };
+  const actorName = displayName(user, "VISIONPOS");
   const [counted, setCounted] = useState("");
   const [note, setNote] = useState("");
   const [bId, setBId] = useState(branch.id);
@@ -11237,7 +11246,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
     const cBy = {}; inv.forEach((i) => { const cashierName = invoiceCashierName(i); const c = cBy[cashierName] || { invoices: 0, totalCents: 0 }; c.invoices++; c.totalCents += i.totalCents; cBy[cashierName] = c; });
     const now0 = new Date();
     d = {
-      cashier: user, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: formatBusinessTime(now0, data.settings.timeZone),
+      cashier: actorName, branchId: bId, branchName: effBranch.name, businessDate: todayStr(), date: todayStr(), time: formatBusinessTime(now0, data.settings.timeZone),
       periodStartedAt: since,
       transactions: inv.length, itemsSold: lines.reduce((s, l) => s + l.qty, 0), totalSalesCents: inv.reduce((s, i) => s + i.totalCents, 0),
       cashCents: cashC, mpesaCents: mpesaC, cardCents: cardC, invoiceCents: invoiceC, expenseCents: expenseC,
@@ -11298,13 +11307,14 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
   const closeBatchId = `eod_${d.branchId}_${periodStartedAt}_${periodLastInvoiceAt}`;
   const batchAlreadyClosed = live && (data.endOfDays || []).some((entry) => entry.id === closeBatchId);
   const hasInvoices = Number(d.transactions || 0) > 0;
+  const recordedCloseActor = displayName(d.closedBy || d.cashier);
   const printEndDay = () => {
     const report = buildReportDocument({
       title: "Z-Report",
       companyName: data.settings.store || "VISIONPOS",
       companyDetails: "Supervisor day close summary",
       branchName: d.branchName,
-      generatedBy: user || d.cashier || "VISIONPOS",
+      generatedBy: live ? actorName : recordedCloseActor,
       dateRange: d.date,
       filters: [
         { label: "Cashier", value: cashierFilter === "all" ? "All cashiers" : cashierFilter },
@@ -11368,7 +11378,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
         .map((invoice) => invoice.id),
       countedCashCents: counted ? Math.round(parseFloat(counted) * 100) : null,
       note: note.trim(),
-      closedBy: user,
+      closedBy: actorName,
       actionClosedAt,
       closedAt: closeBoundary,
       ts: closeBoundary,
@@ -11400,7 +11410,7 @@ function EndOfDayModal({ data, update, branch, user, doc, onClose }) {
           <button className="iconbtn" onClick={onClose}><X /></button></div>
 
         <div className="eodgrid">
-          <div className="eodcell"><div className="sl">Closed by</div><div className="ev">{live ? user : d.closedBy || d.cashier}</div></div>
+          <div className="eodcell"><div className="sl">Closed by</div><div className="ev">{live ? actorName : recordedCloseActor}</div></div>
           <div className="eodcell"><div className="sl">Branch</div><div className="ev">{d.branchName}</div></div>
           <div className="eodcell"><div className="sl">Date</div><div className="ev">{d.date}</div></div>
           <div className="eodcell"><div className="sl">Time</div><div className="ev">{d.time}</div></div>
