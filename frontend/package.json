@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
+    "build": "node scripts/generate-bolt-food-menu.mjs && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

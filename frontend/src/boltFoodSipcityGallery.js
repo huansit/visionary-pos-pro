@@ -53,7 +53,7 @@ document.getElementById("app").innerHTML = `
       <div>
         <p class="eyebrow">Bolt Food menu submission</p>
         <h1>SIPCITY product photos</h1>
-        <p>Public product-photo catalogue for Bolt Food. Each photo is labelled with its matching SIPCITY SKU and menu-item name.</p>
+        <p>Public product-photo catalogue for Bolt Food. Each photo is labelled with its SIPCITY SKU and a catalogue reference name.</p>
       </div>
       <button class="copy" id="copy-link" type="button">Copy page link</button>
     </header>
