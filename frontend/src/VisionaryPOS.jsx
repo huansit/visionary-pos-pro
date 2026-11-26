@@ -16073,6 +16073,13 @@ function BranchesTab({ data, update }) {
     reset();
   };
   const startEdit = (b) => { setEditId(b.id); setF({ name: b.name || "", code: b.code || "", location: b.location || "", managerId: b.managerId || "", active: b.active !== false, mpesaTill: b.mpesaTill || "" }); };
+  const setBranchActive = (id, active) => {
+    update((d) => ({
+      ...d,
+      branches: d.branches.map((branch) => branch.id === id ? { ...branch, active, synced: false } : branch),
+    }));
+    if (editId === id) setF((draft) => ({ ...draft, active }));
+  };
   const remove = (id) => update((d) => ({ ...d, branches: d.branches.length > 1 ? d.branches.filter((b) => b.id !== id) : d.branches }));
   return (
     <div className="branchwrap">
@@ -16099,6 +16106,8 @@ function BranchesTab({ data, update }) {
             <span className={"bpill " + (active ? "on" : "off")}>{active ? "Active" : "Inactive"}</span>
             <span className="bu">{s.units} units</span>
             <span className="bu">{fmt(s.value, cur)}</span>
+            <button type="button" className="btn xs btn-ghost" aria-label={(active ? "Disable " : "Enable ") + b.name}
+              onClick={() => setBranchActive(b.id, !active)}>{active ? "Disable" : "Enable"}</button>
             <button className="btn xs btn-ghost" onClick={() => startEdit(b)}>Edit</button>
             {data.branches.length > 1 && <button className="smdel" onClick={() => remove(b.id)}><Trash2 /></button>}
           </div>); })}
