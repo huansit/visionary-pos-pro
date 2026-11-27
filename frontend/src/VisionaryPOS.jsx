@@ -2542,7 +2542,8 @@ async function publishSyncEvents(events, data, { management = false, atomicWrite
     body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch(), ...(atomicWriteOff ? { atomicWriteOff } : {}) }),
   }, management ? SYNC_ADMIN_COMMAND_TIMEOUT_MS : SYNC_REQUEST_TIMEOUT_MS);
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || `push_failed_${response.status}`);
+  if (!response.ok) throw new Error((atomicWriteOff && result.rejected?.[0]?.reason)
+    || result.error || `push_failed_${response.status}`);
   const rejected = Array.isArray(result.rejected) ? result.rejected : [];
   const accepted = new Set(result.accepted || []);
   if (rejected.length || list.some((event) => !accepted.has(event.id))) {
@@ -9762,6 +9763,39 @@ function MpesaSettlementRail({ branch, timeZone, businessDayStart, readyCode, on
     </div>
   </aside>;
 }
+function invoiceWriteOffError(error) {
+  switch (error?.message) {
+    case "invoice_write_off_balance_changed": return "The server has a different balance. Sync invoices and review the amounts before retrying.";
+    case "invoice_already_written_off": return "This invoice already has a write-off. Sync to see its updated balance.";
+    case "invoice_write_off_unavailable": return "An invoice is archived, voided, or awaiting void approval.";
+    case "invoice_not_found": return "The server could not find an invoice in this branch. Sync invoices and retry.";
+    case "unknown_type": return "The server does not support write-offs yet. Deploy the backend update and retry.";
+    case "management_session_required":
+    case "invalid_or_missing_user_session":
+    case "admin_authorization_required":
+    case "insufficient_role": return "Sign in as an owner or admin to write off debts.";
+    case "operational_reset_required": return "Sync this workspace before retrying the write-off.";
+    default: return `Could not confirm the write-off (${error?.message || "connection error"}). Sync invoices before retrying.`;
+  }
+}
+
+function InvoiceWriteOffForm({ summary, busy, onConfirm, onCancel }) {
+  const [reason, setReason] = useState("");
+  return <div className="notice">
+    <b>{summary}</b>
+    <label className="label">
+      Write-off reason
+      <textarea className="input" value={reason} maxLength={500} disabled={busy}
+        onChange={(event) => setReason(event.target.value)} />
+    </label>
+    <div className="grid2">
+      <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+      <button type="button" className="btn btn-primary" disabled={busy || !reason.trim()}
+        onClick={() => onConfirm(reason.trim())}>{busy ? "Writing off..." : "Confirm write-off"}</button>
+    </div>
+  </div>;
+}
+
 function invoiceWriteOffEvent(invoice, reason) {
   return {
     id: `invoiceWriteOff:${encodeURIComponent(invoice.id)}`,
@@ -9796,6 +9830,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
   const [writingOffSelection, setWritingOffSelection] = useState(false);
+  const [writeOffSelection, setWriteOffSelection] = useState(null);
   const [selectionWriteOffMessage, setSelectionWriteOffMessage] = useState("");
   const [printingInvoices, setPrintingInvoices] = useState(false);
   const [printAuditError, setPrintAuditError] = useState("");
@@ -10000,21 +10035,17 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const eligibleWriteOffs = canWriteOffSelection
     ? selectedInvoices.filter((invoice) => invoice.branchId === branch.id && invoiceCanBeWrittenOff(data, invoice))
     : [];
-  const writeOffSelectedInvoices = async () => {
-    if (writingOffSelection || !eligibleWriteOffs.length) return;
+  const startSelectionWriteOff = () => {
     const count = eligibleWriteOffs.length;
     const total = eligibleWriteOffs.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
     const skipped = selectedInvoices.length - count;
-    const skipMessage = skipped ? ` ${skipped} ineligible selections will be skipped.` : "";
-    const reason = window.prompt(
-      `Write off ${fmt(total, cur)} across ${count} invoices at ${branch.name}?${skipMessage} Enter a reason to confirm.`
-    )?.trim();
-    if (!reason) return;
-    if (reason.length > 500) {
-      setSelectionWriteOffMessage("Use a reason of 500 characters or fewer.");
-      return;
-    }
-    const events = eligibleWriteOffs.map((invoice) => invoiceWriteOffEvent(invoice, reason));
+    setSelectionWriteOffMessage("");
+    setWriteOffSelection({ branchId: branch.id, branchName: branch.name, invoices: eligibleWriteOffs, count, total, skipped });
+  };
+  const writeOffSelectedInvoices = async (reason) => {
+    if (writingOffSelection || writeOffSelection?.branchId !== branch.id) return;
+    const { count, total, invoices } = writeOffSelection;
+    const events = invoices.map((invoice) => invoiceWriteOffEvent(invoice, reason));
     setWritingOffSelection(true);
     setSelectionWriteOffMessage("");
     try {
@@ -10022,12 +10053,13 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       update((current) => mergeSyncEvents(current, events), { skipSync: true });
       setSelectedInvoiceIds((current) => {
         const next = new Set(current);
-        eligibleWriteOffs.forEach(({ id }) => next.delete(id));
+        invoices.forEach(({ id }) => next.delete(id));
         return next;
       });
+      setWriteOffSelection(null);
       setSelectionWriteOffMessage(`Wrote off ${fmt(total, cur)} across ${count} invoices at ${branch.name}.`);
-    } catch {
-      setSelectionWriteOffMessage("Could not confirm the batch. Sync invoice balances before retrying.");
+    } catch (error) {
+      setSelectionWriteOffMessage(invoiceWriteOffError(error));
     } finally {
       setWritingOffSelection(false);
     }
@@ -10252,13 +10284,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
 
         {selectionWriteOffMessage && <div className="notice" role="status">{selectionWriteOffMessage}</div>}
+        {writeOffSelection?.branchId === branch.id && <InvoiceWriteOffForm
+          summary={`Write off ${fmt(writeOffSelection.total, cur)} across ${writeOffSelection.count} invoices at ${writeOffSelection.branchName}?${writeOffSelection.skipped ? ` ${writeOffSelection.skipped} ineligible selections will be skipped.` : ""}`}
+          busy={writingOffSelection} onConfirm={writeOffSelectedInvoices} onCancel={() => setWriteOffSelection(null)} />}
         {selectedInvoices.length > 0 && <div className="invoice-selection-bar">
           <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
           <div>
             <button type="button" className="btn sm btn-ghost" onClick={() => setSelectedInvoiceIds(new Set())}>Clear selection</button>
             <button type="button" className="btn sm btn-primary" disabled={printingInvoices} onClick={printSelectedInvoices}><Printer /> {printingInvoices ? "Loading audit..." : "Print selected"}</button>
             {eligibleWriteOffs.length > 0 && <button type="button" className="btn sm btn-ghost"
-              disabled={writingOffSelection} onClick={writeOffSelectedInvoices}>
+              disabled={Boolean(writeOffSelection) && writeOffSelection.branchId === branch.id} onClick={startSelectionWriteOff}>
               {writingOffSelection ? "Writing off..." : `Write off selected (${eligibleWriteOffs.length})`}
             </button>}
           </div>
@@ -11670,6 +11705,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [writingOff, setWritingOff] = useState(false);
+  const [confirmWriteOff, setConfirmWriteOff] = useState(false);
   const [writeOffError, setWriteOffError] = useState("");
   const [providerTransactionId, setProviderTransactionId] = useState("");
   const [stkPhone, setStkPhone] = useState("");
@@ -12063,21 +12099,17 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
     }
   };
   const canWriteOff = ["owner", "admin"].includes(settlementRole) && invoiceCanBeWrittenOff(data, live);
-  const writeOffDebt = async () => {
-    const reason = window.prompt(`Write off ${fmt(out, cur)} for invoice ${live.number}? Enter the reason to confirm.`)?.trim();
-    if (!reason) return;
-    if (reason.length > 500) {
-      setWriteOffError("Use a reason of 500 characters or fewer.");
-      return;
-    }
+  const writeOffDebt = async (reason) => {
+    if (writingOff || !canWriteOff) return;
     setWritingOff(true);
     setWriteOffError("");
     const event = invoiceWriteOffEvent(live, reason);
     try {
       await publishSyncEvents([event], data, { management: true });
       update((current) => mergeSyncEvents(current, [event]), { skipSync: true });
-    } catch {
-      setWriteOffError("Unable to confirm the write-off. Sync before retrying.");
+      setConfirmWriteOff(false);
+    } catch (error) {
+      setWriteOffError(invoiceWriteOffError(error));
     } finally {
       setWritingOff(false);
     }
@@ -12222,12 +12254,15 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           <b>Written off: {fmt(live.writeOff.amountCents, cur)}</b>
           <div>{live.writeOff.reason}</div>
         </div>}
-        {canWriteOff && <button type="button" className="btn btn-ghost"
-          disabled={writingOff || recordingPayment || stkBusy} onClick={writeOffDebt}>
+        {canWriteOff && !confirmWriteOff && <button type="button" className="btn btn-ghost"
+          disabled={writingOff || recordingPayment || stkBusy} onClick={() => { setWriteOffError(""); setConfirmWriteOff(true); }}>
           {writingOff ? "Writing off..." : "Write off debt"}
         </button>}
+        {canWriteOff && confirmWriteOff && <InvoiceWriteOffForm
+          summary={`Write off ${fmt(out, cur)} for invoice ${live.number}?`}
+          busy={writingOff} onConfirm={writeOffDebt} onCancel={() => setConfirmWriteOff(false)} />}
         {writeOffError && <div className="formerr" role="alert">{writeOffError}</div>}
-        {!writingOff && !voidPending && !voidApproved && out > 0 ? (
+        {!confirmWriteOff && !voidPending && !voidApproved && out > 0 ? (
           <div className="settlement-box invoice-payment-panel">
             <div className="invoice-payment-head">
               <b>Record payment</b>

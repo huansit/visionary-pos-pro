@@ -3893,3 +3893,34 @@ test("16. operational reset rejects stale terminal writes and exposes the new ep
     await pool.query("DELETE FROM records WHERE type = 'systemReset' AND id = 'operational-reset'");
   }
 });
+
+test("admin write-offs persist and sync separately from payments", async () => {
+  const invoices = ["first", "second"].map((suffix) => ({
+    id: `invoice-write-off-test-${suffix}`,
+    type: "invoice",
+    branchId: "b_sip",
+    payload: { totalCents: 12500, paidCents: 2500, status: "debt" },
+  }));
+  const writeOffs = invoices.map(({ id, branchId }) => ({
+    id: `invoiceWriteOff:${id}`,
+    type: "invoiceWriteOff",
+    branchId,
+    payload: { invoiceId: id, amountCents: 10000, reason: "Shop sale" },
+  }));
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: invoices }).expect(200)
+    .expect(({ body }) => assert.equal(body.accepted.length, 2));
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: writeOffs, atomicWriteOff: true }).expect(200)
+    .expect(({ body }) => assert.deepEqual(body.accepted, writeOffs.map(({ id }) => id)));
+  await withAdminSession(request(app).get("/api/sync/pull?since=0"))
+    .expect(200).expect(({ body }) => {
+      for (const invoice of invoices) {
+        assert.equal(body.events.find(({ id }) => id === invoice.id)?.payload.paidCents, 2500);
+        const writeOff = body.events.find(({ id }) => id === `invoiceWriteOff:${invoice.id}`);
+        assert.equal(writeOff?.payload.amountCents, 10000);
+        assert.equal(writeOff?.payload.reason, "Shop sale");
+        assert.equal(writeOff?.branchId, "b_sip");
+      }
+    });
+});
