@@ -1,3 +1,4 @@
+import { applyApprovedInvoiceLineVoids } from "../../frontend/src/admin/invoiceLineVoidReconciliation.js";
 import { Router } from "express";
 import { isMySql, isPgMem, pool, q, serverNow } from "../db.js";
 import { loadUserSession, requireDevice } from "../auth.js";
@@ -1491,8 +1492,18 @@ async function processInvoiceWriteOff(client, event, req, deviceId, ts, batchLed
     const paid = settlements.reduce((current, { payload }) => payload?.invoiceId === invoiceId
       ? Math.max(current, Number(payload.paidCents) || 0) : current, Math.max(
       centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0), paymentTotal));
-    const total = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
-    if (total - paid !== amountCents) throw syncEventError("invoice_write_off_balance_changed");
+    const lineVoidRows = batchLedger ? batchLedger.byInvoice.get(invoiceId) || []
+      : (await client.query("SELECT id, type, payload FROM events WHERE type IN ('invoiceLineVoidRequest', 'invoiceLineVoidDecision')")).rows;
+    const originalInvoice = { ...invoice.payload, id: invoiceId,
+      totalCents: centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0) };
+    const lineVoidHistory = {
+      invoiceLineVoidRequests: lineVoidRows.filter(({ type }) => type === "invoiceLineVoidRequest")
+        .map(({ id, payload }) => ({ ...payload, id })),
+      invoiceLineVoidDecisions: lineVoidRows.filter(({ type }) => type === "invoiceLineVoidDecision")
+        .map(({ payload }) => payload),
+    };
+    const [adjustedInvoice] = applyApprovedInvoiceLineVoids(lineVoidHistory, [originalInvoice]);
+    if (adjustedInvoice.totalCents - paid !== amountCents) throw syncEventError("invoice_write_off_balance_changed");
     const savedTs = await insertAppendOnlyEvent(client, {
       ...event, branchId,
       payload: { invoiceId, amountCents, branchId, reason: reason.trim(), ts,
@@ -1515,7 +1526,8 @@ async function loadInvoiceWriteOffLedger(client, events) {
   }
   const { rows } = await client.query(`
     SELECT id, type, payload FROM events
-    WHERE type IN ('payment', 'paymentRelease', 'invoiceSettlement', 'invoiceVoidRequest', 'invoiceVoidDecision')
+    WHERE type IN ('payment', 'paymentRelease', 'invoiceSettlement', 'invoiceVoidRequest', 'invoiceVoidDecision',
+      'invoiceLineVoidRequest', 'invoiceLineVoidDecision')
     ORDER BY server_ts ASC, id ASC
   `);
   const byInvoice = new Map();

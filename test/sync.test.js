@@ -3899,17 +3899,31 @@ test("admin write-offs persist and sync separately from payments", async () => {
     id: `invoice-write-off-test-${suffix}`,
     type: "invoice",
     branchId: "b_sip",
-    payload: { totalCents: 12500, paidCents: 2500, status: "debt" },
+    payload: { totalCents: 12500, paidCents: 2500, status: "debt",
+      items: [{ productId: "line-void-write-off-product", qty: 2, priceCents: 5000 }] },
   }));
-  const writeOffs = invoices.map(({ id, branchId }) => ({
+  const writeOffs = invoices.map(({ id, branchId }, index) => ({
     id: `invoiceWriteOff:${id}`,
     type: "invoiceWriteOff",
     branchId,
-    payload: { invoiceId: id, amountCents: 10000, reason: "Shop sale" },
+    payload: { invoiceId: id, amountCents: index === 0 ? 5000 : 10000, reason: "Shop sale" },
   }));
   await withAdminSession(request(app).post("/api/sync/push"))
     .send({ events: invoices }).expect(200)
     .expect(({ body }) => assert.equal(body.accepted.length, 2));
+  const voidRequest = {
+    id: "line-void-write-off-request",
+    type: "invoiceLineVoidRequest",
+    branchId: "b_sip",
+    payload: { invoiceId: invoices[0].id, lineIndex: 0, qty: 1, reason: "Item returned" },
+  };
+  const voidDecision = {
+    ...voidRequest, id: "line-void-write-off-decision", type: "invoiceLineVoidDecision",
+    payload: { ...voidRequest.payload, requestId: voidRequest.id, decision: "approved" },
+  };
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [voidRequest, voidDecision] }).expect(200)
+    .expect(({ body }) => assert.deepEqual(body.accepted, [voidRequest.id, voidDecision.id]));
   await withAdminSession(request(app).post("/api/sync/push"))
     .send({ events: writeOffs, atomicWriteOff: true }).expect(200)
     .expect(({ body }) => assert.deepEqual(body.accepted, writeOffs.map(({ id }) => id)));
@@ -3918,7 +3932,7 @@ test("admin write-offs persist and sync separately from payments", async () => {
       for (const invoice of invoices) {
         assert.equal(body.events.find(({ id }) => id === invoice.id)?.payload.paidCents, 2500);
         const writeOff = body.events.find(({ id }) => id === `invoiceWriteOff:${invoice.id}`);
-        assert.equal(writeOff?.payload.amountCents, 10000);
+        assert.equal(writeOff?.payload.amountCents, writeOffs.find(({ payload }) => payload.invoiceId === invoice.id).payload.amountCents);
         assert.equal(writeOff?.payload.reason, "Shop sale");
         assert.equal(writeOff?.branchId, "b_sip");
       }

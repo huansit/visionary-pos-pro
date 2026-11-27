@@ -11640,9 +11640,9 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen, 
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
-    : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
+    : voidStatus === "pending" ? "void pending" : inv.lineVoided && !inv.writeOff ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
+    : voidStatus === "pending" ? "void-pending" : inv.lineVoided && !inv.writeOff ? "line-voided" : status;
   const showStatus = String(displayStatus || "").toLowerCase() !== "open";
   return (
     <tr className="clickable" onClick={onOpen}>
@@ -11667,9 +11667,9 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
   const age = Math.max(0, Math.floor((now() - (inv.ts || now())) / 86400000));
   const voidStatus = voidInfo?.status || "none";
   const displayStatus = voidStatus === "approved" ? "voided"
-    : voidStatus === "pending" ? "void pending" : inv.lineVoided ? "item voided" : status;
+    : voidStatus === "pending" ? "void pending" : inv.lineVoided && !inv.writeOff ? "item voided" : status;
   const displayClass = voidStatus === "approved" ? "debt"
-    : voidStatus === "pending" ? "void-pending" : inv.lineVoided ? "line-voided" : status;
+    : voidStatus === "pending" ? "void-pending" : inv.lineVoided && !inv.writeOff ? "line-voided" : status;
   const showStatus = String(displayStatus || "").toLowerCase() !== "open";
   return (
     <article className="invoice-mobile-card" onClick={onOpen} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === "Enter" || event.key === " ") onOpen(); }} role="button" tabIndex={0}>
