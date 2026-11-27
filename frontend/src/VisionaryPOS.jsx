@@ -7762,7 +7762,9 @@ export default function VisionPOS() {
         <div className="content">
           {activeEnvironmentMode === "test" && <div className="env-watermark">TEST</div>}
           {view === "register" && (session && cashierBranch
-            ? <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
+            ? cashierBranch.active === false
+              ? <CloudDataRecovery title="Branch disabled" message={`${cashierBranch.name} is closed for operations. Sync after an admin enables the branch to reopen this register.`} syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />
+              : <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (restoringWorkspace
             ? <CloudDataRecovery title="Loading current workspace" message="Your latest cloud workspace is being verified before opening." loading={!syncError} complete={workspaceSnapshotComplete} syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />
@@ -9557,6 +9559,10 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     );
   };
   const render = () => {
+    if (branch.active === false && ["pricing", "products", "stock", "purchases", "borrowing", "externalLoans",
+      "mpesa", "cash", "payments", "expenses", "terminals", "glovo"].includes(tab)) {
+      return <div className="notice" role="status">{branch.name} is disabled. An admin can enable it in Branches.</div>;
+    }
     if (!canAccess(tab)) return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
     switch (tab) {
       case "dashboard": return <DashboardTab data={data} update={update} branch={branch} online={online} maintenance={maintenance} onSyncAll={onSyncAll} onRefreshMaintenance={onRefreshMaintenance} onRunMaintenance={onRunMaintenance} onOpenPayments={openDebtPayments} />;
@@ -9576,7 +9582,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
       case "cash": return <FinanceCashWorkspace data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} canViewCash={isAdmin || hasRight(rights, "cash")} canViewExpenses={isAdmin || hasRight(rights, "expenses")} />;
       case "payments": return <CashierDebtTab data={data} update={update} branch={branch} user={user} />;
       case "expenses": return <FinanceCashWorkspace data={data} update={update} branch={branch} user={user} onNavigate={activateWorkspace} initialView="expenses" canViewCash={isAdmin || hasRight(rights, "cash")} canViewExpenses={isAdmin || hasRight(rights, "expenses")} />;
-      case "branches": return <BranchesTab data={data} update={update} />;
+      case "branches": return <BranchesTab data={data} update={update} canToggle={isAdmin} />;
       case "documents": return <DocumentsTab data={data} />;
       case "reports": return <ReportsTab key="reports" data={data} initialTab="overview" onOpenCashierCredit={openCashierCreditInvoices} />;
       case "insights": return <InsightsTab data={data} online={online} />;
@@ -12272,7 +12278,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           summary={`Write off ${fmt(out, cur)} for invoice ${live.number}?`}
           busy={writingOff} onConfirm={writeOffDebt} onCancel={() => setConfirmWriteOff(false)} />}
         {writeOffError && <div className="formerr" role="alert">{writeOffError}</div>}
-        {!confirmWriteOff && !voidPending && !voidApproved && out > 0 ? (
+        {!confirmWriteOff && !voidPending && !voidApproved && out > 0
+          && data.branches.find(({ id }) => id === live.branchId)?.active !== false ? (
           <div className="settlement-box invoice-payment-panel">
             <div className="invoice-payment-head">
               <b>Record payment</b>
@@ -16179,7 +16186,9 @@ function CustomersTab({ data, branch }) {
     </div>
   );
 }
-function BranchesTab({ data, update }) {
+function BranchesTab({ data, update, canToggle }) {
+  const [pendingBranchId, setPendingBranchId] = useState("");
+  const [branchStatusError, setBranchStatusError] = useState("");
   const cur = data.settings.currency;
   const blank = { name: "", code: "", location: "", managerId: "", active: true, mpesaTill: "" };
   const [editId, setEditId] = useState(null);
@@ -16213,25 +16222,38 @@ function BranchesTab({ data, update }) {
     if (!f.name.trim()) return;
     const code = (f.code.trim() || f.name.trim().replace(/[^A-Za-z0-9]/g, "").slice(0, 3)).toUpperCase();
     update((d) => {
-      const patch = { name: f.name.trim(), code, location: f.location.trim(), managerId: f.managerId || null, active: f.active, mpesaTill: f.mpesaTill.trim(), synced: false };
+      const patch = { name: f.name.trim(), code, location: f.location.trim(), managerId: f.managerId || null, ...(!editId ? { active: f.active } : {}), mpesaTill: f.mpesaTill.trim(), synced: false };
       if (editId) return { ...d, branches: d.branches.map((b) => b.id === editId ? { ...b, ...patch } : b) };
       return { ...d, branches: [...d.branches, { id: uid("b"), ...patch }] };
     });
     reset();
   };
   const startEdit = (b) => { setEditId(b.id); setF({ name: b.name || "", code: b.code || "", location: b.location || "", managerId: b.managerId || "", active: b.active !== false, mpesaTill: b.mpesaTill || "" }); };
-  const setBranchActive = (id, active) => {
-    update((d) => ({
-      ...d,
-      branches: d.branches.map((branch) => branch.id === id ? { ...branch, active, synced: false } : branch),
-    }));
-    if (editId === id) setF((draft) => ({ ...draft, active }));
+  const setBranchActive = async (branch, active) => {
+    if (!canToggle || pendingBranchId) return;
+    setPendingBranchId(branch.id);
+    setBranchStatusError("");
+    const updated = {
+      ...branch, branchId: branch.id, active, enabled: active, status: active ? "active" : "disabled",
+      updatedAt: Math.max(now(), Number(branch.updatedAt || 0) + 1),
+    };
+    const event = eventFromRecord("branches", updated, data);
+    try {
+      const result = await publishSyncEvents([event], data, { management: true });
+      update((current) => mergeSyncEvents(current, [{ ...event, serverTs: result.serverTs?.[event.id] }]), { skipSync: true });
+      if (editId === branch.id) setF((draft) => ({ ...draft, active }));
+    } catch {
+      setBranchStatusError("Could not confirm the branch status. Sync and check the branch before retrying.");
+    } finally {
+      setPendingBranchId("");
+    }
   };
   const remove = (id) => update((d) => ({ ...d, branches: d.branches.length > 1 ? d.branches.filter((b) => b.id !== id) : d.branches }));
   return (
     <div className="branchwrap">
       <div>
         <PageHead title="Branches" sub="Set up shops, managers and status." />
+        {branchStatusError && <div className="formerr" role="alert">{branchStatusError}</div>}
         <div className="addpanel">
           <div className="grid2">
             <div><label className="label">Branch name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Mombasa" /></div>
@@ -16243,7 +16265,7 @@ function BranchesTab({ data, update }) {
               <option value="">No manager</option>{activeEmployees(data).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
           </div>
           <div className="field" style={{ marginTop: 12 }}><label className="label">M-Pesa Buy Goods Till (this branch)</label><input className="input" inputMode="numeric" value={f.mpesaTill} onChange={(e) => setF({ ...f, mpesaTill: e.target.value })} placeholder="e.g. 5204512" /></div>
-          <label className="checkrow"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Branch active</label>
+          {!editId && <label className="checkrow"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} /> Branch active</label>}
           <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={save}>{editId ? <><Check /> Update Branch</> : <><Plus /> Save Branch</>}</button>
           {editId && <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={reset}>Cancel edit</button>}
         </div>
@@ -16253,8 +16275,11 @@ function BranchesTab({ data, update }) {
             <span className={"bpill " + (active ? "on" : "off")}>{active ? "Active" : "Inactive"}</span>
             <span className="bu">{s.units} units</span>
             <span className="bu">{fmt(s.value, cur)}</span>
-            <button type="button" className="btn xs btn-ghost" aria-label={(active ? "Disable " : "Enable ") + b.name}
-              onClick={() => setBranchActive(b.id, !active)}>{active ? "Disable" : "Enable"}</button>
+            {canToggle && <button type="button" className="btn xs btn-ghost" disabled={Boolean(pendingBranchId)}
+              aria-label={(active ? "Disable " : "Enable ") + b.name}
+              onClick={() => setBranchActive(b, !active)}>
+              {pendingBranchId === b.id ? "Saving..." : active ? "Disable" : "Enable"}
+            </button>}
             <button className="btn xs btn-ghost" onClick={() => startEdit(b)}>Edit</button>
             {data.branches.length > 1 && <button className="smdel" onClick={() => remove(b.id)}><Trash2 /></button>}
           </div>); })}

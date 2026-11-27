@@ -3938,3 +3938,27 @@ test("admin write-offs persist and sync separately from payments", async () => {
       }
     });
 });
+
+test("branch status blocks new sales and transfers until re-enabled", async () => {
+  const branchId = "b_branch_status_test";
+  const setBranchStatus = async (active) => {
+    await withAdminSession(request(app).post("/api/sync/push"))
+      .send({ events: [{ id: branchId, type: "branch", branchId, payload: { name: "Status test", active } }] })
+      .expect(200).expect(({ body }) => assert.deepEqual(body.accepted, [branchId]));
+  };
+  const invoice = { id: "invoice-branch-status-test", type: "invoice", branchId,
+    payload: { totalCents: 1000, paidCents: 0 } };
+  const transfer = { id: "transfer-branch-status-test", type: "stockTransferRequest", branchId: "b_sip",
+    payload: { fromBranchId: "b_sip", toBranchId: branchId } };
+  await setBranchStatus(false);
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [invoice, transfer] }).expect(200)
+    .expect(({ body }) => {
+      assert.deepEqual(body.accepted, []);
+      assert.deepEqual(body.rejected.map(({ reason }) => reason), ["branch_disabled", "branch_disabled"]);
+    });
+  await setBranchStatus(true);
+  await withAdminSession(request(app).post("/api/sync/push"))
+    .send({ events: [invoice] }).expect(200)
+    .expect(({ body }) => assert.deepEqual(body.accepted, [invoice.id]));
+});

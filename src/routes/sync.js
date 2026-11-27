@@ -1,3 +1,4 @@
+import { branchPayloadIsEnabled, branchOperationsEnabled } from "../branchOperations.js";
 import { applyApprovedInvoiceLineVoids } from "../../frontend/src/admin/invoiceLineVoidReconciliation.js";
 import { Router } from "express";
 import { isMySql, isPgMem, pool, q, serverNow } from "../db.js";
@@ -168,11 +169,6 @@ function recordPayload(value) {
   if (!value) return {};
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return {}; }
-}
-
-function branchPayloadIsEnabled(payload = {}) {
-  if (payload.enabled === false || payload.active === false) return false;
-  return !["disabled", "inactive", "closed", "deleted"].includes(String(payload.status || "active").trim().toLowerCase());
 }
 
 function productCatalogKey(row) {
@@ -895,6 +891,38 @@ function hasPlainCredential(ev) {
 
 function eventBranchId(ev) {
   return ev?.branchId ?? ev?.payload?.branchId ?? null;
+}
+
+const BRANCH_OPERATION_TYPES = new Set([
+  "invoice", "invoiceSettlement", "payment", "paymentRelease", "invoiceNote",
+  "invoiceVoidRequest", "invoiceVoidDecision", "invoiceLineVoidRequest", "invoiceLineVoidDecision",
+  "stockTransferRequest", "stockTransferDecision", "stockMovement", "borrowing",
+  "externalStockLoan", "externalStockLoanReturn", "endOfDay", "cashMovement", "expense",
+  "purchase", "purchaseReversal", "branchProduct", "stockCountSession", "stockCountCorrection",
+  "countLog", "cashierJointDebt", "cashierJointDebtReview", "cashierJointDebtPayment",
+]);
+
+async function enforceBranchOperations(client, event, type, req) {
+  if (!BRANCH_OPERATION_TYPES.has(type)) return;
+  // A terminal can safely acknowledge a retry of an already recorded event.
+  if (EVENT_TYPES.has(type) && (await existingEvent(client, event.id))?.type === type) return;
+  const payload = event.payload || {};
+  const branches = new Set([eventBranchId(event), payload.branchId, payload.branch_id,
+    payload.fromBranchId, payload.toBranchId, req.deviceBranchId, req.syncBranchId]);
+  if (payload.invoiceId || payload.orderId) {
+    const invoice = await existingEvent(client, payload.invoiceId || payload.orderId);
+    if (invoice?.type === "invoice") branches.add(invoice.branch_id || invoice.branchId);
+  }
+  if (type === "stockTransferDecision" && (payload.requestId || payload.transferRequestId)) {
+    const transfer = await existingEvent(client, payload.requestId || payload.transferRequestId);
+    if (transfer?.type === "stockTransferRequest") {
+      branches.add(transfer.payload?.fromBranchId);
+      branches.add(transfer.payload?.toBranchId);
+    }
+  }
+  for (const branch of [...branches].filter(Boolean).sort()) {
+    if (!await branchOperationsEnabled(client, branch)) throw syncEventError("branch_disabled");
+  }
 }
 
 function enforceTerminalBranch(req, ev, type) {
@@ -2419,6 +2447,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       const savepoint = `sync_event_${eventIndex}`;
       if (!isPgMem) await client.query(`SAVEPOINT ${savepoint}`);
       try {
+        await enforceBranchOperations(client, guardedEvent, type, req);
         let acceptedId = null;
         let acceptedTs = null;
         let acceptedBranchId = eventBranchId(guardedEvent);

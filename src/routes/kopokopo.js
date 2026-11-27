@@ -1,3 +1,4 @@
+import { branchOperationsEnabled } from "../branchOperations.js";
 import crypto from "node:crypto";
 import { Router } from "express";
 import { requireAdminOrSupervisor, requireOwnerOrAdmin, requireRoles } from "../auth.js";
@@ -1129,6 +1130,7 @@ router.post("/incoming-payments", requireAdminOrSupervisor, async (req, res) => 
     const branchId = identifier(req.body?.branchId);
     if (!branchId) return res.status(400).json({ error: "branch_required" });
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    if (!await branchOperationsEnabled({ query: q }, branchId)) return res.status(409).json({ error: "branch_disabled" });
     const config = kopokopoConfigForBranch(branchId);
     if (!config?.enabled) return res.status(409).json({ error: "kopokopo_disabled_for_branch" });
     const result = await createTrackedKopokopoIncomingPayment({
@@ -2009,6 +2011,7 @@ router.post("/wallet/credits", requireAdminOrSupervisor, async (req, res) => {
       return res.status(400).json({ error: "invalid_cashier_wallet_credit" });
     }
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    if (!await branchOperationsEnabled({ query: q }, branchId)) return res.status(409).json({ error: "branch_disabled" });
     const result = await fundCashierWallet({
       transactionId,
       cashierId,
@@ -2058,6 +2061,7 @@ router.post("/wallet/debt-payments", requireAdminOrSupervisor, async (req, res) 
       return res.status(400).json({ error: "invalid_cashier_wallet_debt_payment" });
     }
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    if (!await branchOperationsEnabled({ query: q }, branchId)) return res.status(409).json({ error: "branch_disabled" });
     const result = await payCashierDebtsFromWallet({
       cashierId,
       branchId,
@@ -2119,6 +2123,7 @@ router.post("/offsets", requireAdminOrSupervisor, async (req, res) => {
       return res.status(400).json({ error: "invalid_kopokopo_offset_request" });
     }
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    if (!await branchOperationsEnabled({ query: q }, branchId)) return res.status(409).json({ error: "branch_disabled" });
     const result = await createKopokopoCashOffsets({
       transactionId,
       offsets,
@@ -2161,6 +2166,7 @@ router.post("/allocations", requireAdminOrSupervisor, async (req, res) => {
       return res.status(400).json({ error: "invalid_kopokopo_allocation_request" });
     }
     if (!accountCanAccessBranch(req.account, branchId)) return res.status(403).json({ error: "branch_not_authorized" });
+    if (!await branchOperationsEnabled({ query: q }, branchId)) return res.status(409).json({ error: "branch_disabled" });
     const invoiceIds = new Set();
     const allocations = [];
     for (const entry of requested) {
