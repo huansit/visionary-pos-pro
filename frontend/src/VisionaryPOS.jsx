@@ -8385,7 +8385,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   }, 0);
 
   const branchProducts = branchProductsUnique(data, branch.id).filter(productIsEnabled);
-  const canChooseService = branch.id === "b_cpt" && branch.takeawayCashierId === employee.id;
+  const canChooseService = branch.id === "b_cpt" && hasRight(employee.rights, "cape_town_takeaway");
   const takeaway = canChooseService && serviceType === "takeaway";
   const sipcityProducts = useMemo(() => new Map(
     branchProductsUnique(data, "b_sip").filter((product) => {
@@ -16309,18 +16309,6 @@ function BranchesTab({ data, update, canToggle }) {
       <div>
         <PageHead title="Branches" sub="Set up shops, managers and status." />
         {branchStatusError && <div className="formerr" role="alert">{branchStatusError}</div>}
-        {canToggle && data.branches.filter(({ id }) => id === "b_cpt").map((capeTown) => (
-          <label className="field" key={capeTown.id}>
-            <span className="label">Cape Town Take away cashier</span>
-            <select className="select" value={capeTown.takeawayCashierId || ""} disabled={Boolean(pendingBranchId)}
-              onChange={(event) => updateBranchOperations(capeTown, { takeawayCashierId: event.target.value })}>
-              <option value="">Take away disabled</option>
-              {activeEmployees(data).filter((employee) => employee.branchId === capeTown.id
-                && String(employee.role || employee.kind || "").toLowerCase() === "cashier")
-                .map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
-            </select>
-          </label>
-        ))}
         <div className="addpanel">
           <div className="grid2">
             <div><label className="label">Branch name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Mombasa" /></div>
@@ -19735,6 +19723,7 @@ function DocumentsTab({ data }) {
 const ROLES = ["Cashier", "Supervisor", "Manager"];
 const RIGHTS = [
   { id: "sell", label: "Sell at till" },
+  { id: "cape_town_takeaway", label: "Cape Town Take away" },
   { id: "invoices", label: "Sales & clearing" },
   { id: "customers", label: "Customers" },
   { id: "products", label: "Products & pricing" },
@@ -20181,10 +20170,26 @@ function UsersTab({ data, update, isAdmin }) {
     }
   };
   useEffect(() => { if (isAdmin) loadTerminals(); }, [isAdmin]); // eslint-disable-line
-  const RightsGrid = ({ selected, onToggle }) => {
+  const toggleTakeawayRight = async (employee) => {
+    if (userBusy || !isAdmin) return;
+    setUserBusy(true);
+    setErr("");
+    try {
+      const result = await authApi(`/api/auth/users/${encodeURIComponent(employee.id)}/takeaway-right`, {
+        enabled: !hasRight(employee.rights, "cape_town_takeaway"),
+      }, { session: true });
+      update((current) => ({ ...current, employees: current.employees.map((entry) =>
+        entry.id === employee.id ? { ...entry, rights: result.user.rights } : entry) }), { skipSync: true });
+    } catch (error) {
+      setErr("Could not update Take away access: " + credentialMessage(error));
+    } finally {
+      setUserBusy(false);
+    }
+  };
+  const RightsGrid = ({ selected, onToggle, canUseTakeaway = false }) => {
     const selectedRights = rightsList(selected);
-    return <div className="rights-grid">{RIGHTS.map((r) => { const on = selectedRights.includes(r.id); return (
-      <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>;
+    return <div className="rights-grid">{RIGHTS.filter((r) => r.id !== "cape_town_takeaway" || canUseTakeaway).map((r) => { const on = selectedRights.includes(r.id); return (
+      <button key={r.id} type="button" className={"rightchip" + (on ? " on" : "")} aria-pressed={on} disabled={r.id === "cape_town_takeaway" && userBusy} onClick={() => onToggle(r.id)}>{on ? <Check /> : <Plus />} {r.label}</button>); })}</div>;
   };
   return (
     <div><PageHead title="Users & Security" sub="Cashiers sign in with a PIN at their branch. Supervisors and managers sign in with email, password, and an email code." />
@@ -20236,7 +20241,7 @@ function UsersTab({ data, update, isAdmin }) {
             </div>
           )}
           <div className="field"><label className="label">Access rights <span style={{ color: "var(--muted-2)", fontWeight: 500 }}>· {f.rights.length} selected · defaults from role, tap to change</span></label>
-            <RightsGrid selected={f.rights} onToggle={toggleNew} /></div>
+            <RightsGrid selected={f.rights} onToggle={toggleNew} canUseTakeaway={isAdmin && f.role === "Cashier" && f.branchId === "b_cpt"} /></div>
           {err && <div className="alert"><AlertCircle />{err}</div>}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}><button className="btn btn-ghost" onClick={reset} disabled={userBusy}>Cancel</button><button className="btn btn-primary" onClick={add} disabled={userBusy || (f.role === "Cashier" && (terminalBusy || !selectedTerminal))}><Check /> {userBusy ? "Creating..." : "Create user"}</button></div></div>)}
       <div className="list">{visibleEmployees.map((e) => (
@@ -20287,7 +20292,8 @@ function UsersTab({ data, update, isAdmin }) {
           {editRights === e.id && (
             <div className="addpanel fade" style={{ marginTop: 8 }}>
               <div className="label" style={{ marginBottom: 8 }}>Access rights for {e.name}</div>
-              <RightsGrid selected={e.rights || []} onToggle={(r) => toggleRight(e.id, r)} />
+              <RightsGrid selected={e.rights || []} canUseTakeaway={isAdmin && e.role === "Cashier" && e.branchId === "b_cpt"}
+                onToggle={(r) => r === "cape_town_takeaway" ? toggleTakeawayRight(e) : toggleRight(e.id, r)} />
             </div>
           )}
         </div>))}</div>

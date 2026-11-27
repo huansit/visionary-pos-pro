@@ -19,7 +19,6 @@ export type Account = {
 };
 
 export type Branch = {
-  takeawayCashierId?: string;
   id: string;
   name: string;
   location?: string;

@@ -1188,7 +1188,7 @@ export async function pullCatalog(
         if (!id || !name) return;
         branchRecords.set(id, {
           id,
-          payload: { name, location: String(branch?.location || ""), takeawayCashierId: String(branch?.takeawayCashierId || "") },
+          payload: { name, location: String(branch?.location || "") },
           serverTs: Number.MAX_SAFE_INTEGER,
         });
       });
@@ -1488,7 +1488,7 @@ export async function pullCatalog(
 
   const branches = Array.from(branchRecords.values()).map((item) => {
     const payload = item.payload || {};
-    return { id: item.id, name: payload.name || payload.branchName || item.id, location: payload.location || "", takeawayCashierId: payload.takeawayCashierId || "" };
+    return { id: item.id, name: payload.name || payload.branchName || item.id, location: payload.location || "" };
   });
 
   const expenseCategories = Array.from(expenseCategoryRecords.values())

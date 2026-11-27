@@ -552,8 +552,6 @@ router.get("/catalog", requireDevice, async (req, res) => {
           name: String(payload.name || payload.branchName || row.id || "").trim(),
           location: String(payload.location || "").trim(),
           enabled: branchPayloadIsEnabled(payload),
-          ...(row.id === branchId && takeawaySource
-            ? { takeawayCashierId: String(payload.takeawayCashierId || "") } : {}),
         };
       })
       .filter((branch) => branch.id && branch.name && branch.enabled)
@@ -2468,17 +2466,15 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       if (!isPgMem) await client.query(`SAVEPOINT ${savepoint}`);
       try {
         await enforceBranchOperations(client, guardedEvent, type, req);
-        if (type === "branch" && Object.hasOwn(guardedEvent.payload || {}, "takeawayCashierId")
-            && (!req.account || !["owner", "admin"].includes(syncRole(req.account)))) {
-          throw syncEventError("admin_authorization_required");
-        }
         if (type === "invoice" && guardedEvent.payload?.serviceType === "takeaway"
             && !(await existingEvent(client, guardedEvent.id))) {
           const cashierId = String(guardedEvent.payload.cashierId || "");
-          const { rows: [capeTown] } = await client.query(
-            "SELECT payload FROM records WHERE type = 'branch' AND id = $1 AND deleted = false", ["b_cpt"]);
-          if (eventBranchId(guardedEvent) !== "b_cpt" || !cashierId
-              || recordPayload(capeTown?.payload).takeawayCashierId !== cashierId
+          const { rows: [cashier] } = await client.query(
+            "SELECT kind, branch_id, rights, status FROM credentials WHERE id = $1", [cashierId]);
+          const cashierRights = recordPayload(cashier?.rights).rights;
+          if (eventBranchId(guardedEvent) !== "b_cpt" || cashier?.kind !== "cashier"
+              || cashier.branch_id !== "b_cpt" || cashier.status !== "active"
+              || !Array.isArray(cashierRights) || !cashierRights.includes("cape_town_takeaway")
               || (req.account && req.account.id !== cashierId)) {
             throw syncEventError("takeaway_cashier_not_enabled");
           }

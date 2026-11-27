@@ -837,7 +837,7 @@ export default function App() {
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const accountRole = String(account?.role || account?.kind || "").trim().toLowerCase();
   const canManageStockCounts = ["owner", "admin", "manager", "supervisor"].includes(accountRole);
-  const canChooseService = terminal?.branchId === "b_cpt" && Boolean(account?.id && branch?.takeawayCashierId === account.id);
+  const canChooseService = terminal?.branchId === "b_cpt" && Boolean(account?.rights?.includes("cape_town_takeaway"));
   const takeaway = canChooseService && serviceType === "takeaway";
   const pricedProduct = (product: Product) => takeaway
     ? { ...product, priceCents: product.takeawayPriceCents || 0 }

@@ -1158,6 +1158,18 @@ router.post("/users", requireAdminOrSupervisor, async (req, res) => {
     const normalizedEmail = !isCashier ? String(email).trim().toLowerCase() : null;
     const normalizedPhone = !isCashier && phone ? String(phone).trim() : null;
     const rightsPayload = isAdmin ? { admin: true, role: "Admin" } : Array.isArray(rights) ? { role, rights } : { ...(rights || {}), role };
+    if (!isAdmin) {
+      delete rightsPayload.cape_town_takeaway;
+      const requestedRights = Array.isArray(rightsPayload.rights) ? rightsPayload.rights : [];
+      rightsPayload.rights = requestedRights.filter((right) => right !== "cape_town_takeaway");
+      if (isCashier && credentialBranchId === "b_cpt") {
+        const prior = await q("SELECT rights FROM credentials WHERE id = $1 LIMIT 1", [credentialId]);
+        if (prior.rows[0]?.rights?.rights?.includes("cape_town_takeaway")
+            || (["owner", "admin"].includes(credentialRole(req.account)) && requestedRights.includes("cape_town_takeaway"))) {
+          rightsPayload.rights.push("cape_town_takeaway");
+        }
+      }
+    }
 
     if (isMySql) {
       await q(
@@ -1235,6 +1247,30 @@ router.post("/users/:id/emergency-pin", requireOwnerOrAdmin, async (req, res) =>
     if (uniqueViolation(error)) return res.status(409).json({ error: "duplicate_pin" });
     console.error("emergency checkout PIN update failed:", error);
     res.status(500).json({ error: "emergency_pin_update_failed" });
+  }
+});
+
+router.post("/users/:id/takeaway-right", requireOwnerOrAdmin, async (req, res) => {
+  await ensureAuthSchema();
+  const id = String(req.params.id || "").trim();
+  const enabled = req.body?.enabled;
+  if (!id || typeof enabled !== "boolean") return res.status(400).json({ error: "invalid_takeaway_right" });
+  try {
+    const { rows: [account] } = await q(
+      "SELECT id, kind, name, email, phone, branch_id, rights, status FROM credentials WHERE id = $1 LIMIT 1", [id]);
+    if (!account || account.kind !== "cashier" || account.branch_id !== "b_cpt" || account.status === "deleted") {
+      return res.status(404).json({ error: "cape_town_cashier_required" });
+    }
+    const rights = { ...account.rights };
+    rights.rights = (Array.isArray(rights.rights) ? rights.rights : []).filter((right) => right !== "cape_town_takeaway");
+    if (enabled) rights.rights.push("cape_town_takeaway");
+    await q(`UPDATE credentials SET rights = $1, updated_at = ${isMySql ? "NOW()" : "now()"} WHERE id = $2`, [rights, id]);
+    const user = await persistUserRecord({ ...account, rights });
+    await audit("cashier_takeaway_right_changed", req, id, { enabled });
+    return res.json({ ok: true, user });
+  } catch (error) {
+    console.error("update cashier takeaway right failed:", error);
+    return res.status(500).json({ error: "takeaway_right_update_failed" });
   }
 });
 
