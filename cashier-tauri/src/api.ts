@@ -371,6 +371,7 @@ function normalizeProductForBranch(source: any, branchId: string): Product {
       image: payload.image || payload.imageUrl || payload.image_url || payload.photo || ""
     }),
     priceCents: branchPrice ?? directPrice,
+    takeawayPriceCents: centsFromPayload(payload, ["takeawayPriceCents"]),
     costCents: branchCost ?? directCost,
     stockQty: branchStock ?? directStock,
     serverTs: Number(payload.serverTs || payload.updatedAt || source?.serverTs || source?.updatedAt || 0)
@@ -1187,7 +1188,7 @@ export async function pullCatalog(
         if (!id || !name) return;
         branchRecords.set(id, {
           id,
-          payload: { name, location: String(branch?.location || "") },
+          payload: { name, location: String(branch?.location || ""), takeawayCashierId: String(branch?.takeawayCashierId || "") },
           serverTs: Number.MAX_SAFE_INTEGER,
         });
       });
@@ -1273,6 +1274,7 @@ export async function pullCatalog(
       const invoice: Invoice = {
         id: item.id,
         number: payload.number || item.id,
+        serviceType: payload.serviceType === "takeaway" || payload.serviceType === "dine_in" ? payload.serviceType : undefined,
         branchId: payload.branchId || item.branchId || "",
         cashierId: payload.cashierId,
         cashierName: payload.cashierName || payload.cashier || "",
@@ -1486,7 +1488,7 @@ export async function pullCatalog(
 
   const branches = Array.from(branchRecords.values()).map((item) => {
     const payload = item.payload || {};
-    return { id: item.id, name: payload.name || payload.branchName || item.id, location: payload.location || "" };
+    return { id: item.id, name: payload.name || payload.branchName || item.id, location: payload.location || "", takeawayCashierId: payload.takeawayCashierId || "" };
   });
 
   const expenseCategories = Array.from(expenseCategoryRecords.values())
@@ -1645,6 +1647,7 @@ export async function pushCheckout(terminal: TerminalCredentials, account: Accou
         branchId: terminal.branchId,
         date: businessDateValue(ts),
         totalCents: receipt.totalCents,
+        ...(receipt.serviceType ? { serviceType: receipt.serviceType } : {}),
         paidCents: 0,
         items: receipt.items,
         method: "Invoice",

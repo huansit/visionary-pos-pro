@@ -19,6 +19,7 @@ export type Account = {
 };
 
 export type Branch = {
+  takeawayCashierId?: string;
   id: string;
   name: string;
   location?: string;
@@ -42,6 +43,8 @@ export type ExpenseCategory = {
   serverTs?: number;
 };
 
+export type SaleService = "dine_in" | "takeaway";
+
 export type Product = {
   id: string;
   branchId: string;
@@ -56,12 +59,14 @@ export type Product = {
   status?: string;
   image?: string;
   priceCents: number;
+  takeawayPriceCents?: number;
   costCents: number;
   stockQty: number;
   serverTs?: number;
 };
 
 export type Invoice = {
+  serviceType?: SaleService;
   id: string;
   number: string;
   branchId: string;
@@ -149,6 +154,7 @@ export type CashSession = {
 };
 
 export type Receipt = {
+  serviceType?: SaleService;
   number: string;
   branchName: string;
   cashierName: string;

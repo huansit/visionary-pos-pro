@@ -4596,6 +4596,7 @@ body{overscroll-behavior:none}
 .purchase-product-result{width:100%;display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 12px;font:inherit;cursor:pointer}
 .purchase-product-result:hover,.purchase-product-result:focus-visible{background:var(--surface-2);outline:none}
 .purchase-product-result span:first-child{min-width:0;display:grid;gap:2px}.purchase-product-result b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.purchase-product-result small{color:var(--muted);font-size:12px}.purchase-product-result span:last-child{flex:none;color:var(--muted);font-size:12px;white-space:nowrap}.purchase-product-empty{padding:12px;color:var(--muted);font-size:13px}
+.cashier-service-choice{display:flex;align-items:center;gap:12px;margin:8px 0}.cashier-service-choice .select{width:auto}
 .posgridwrap{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
 .posgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
 .pn2{font-size:12.5px;font-weight:650;line-height:1.25;min-height:31px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -8349,6 +8350,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const cur = data.settings.currency;
   const reorder = data.settings.reorderLevel || 4;
   const [cart, setCart] = useState({});
+  const [serviceType, setServiceType] = useState("dine_in");
   const [q, setQ] = useState("");
   const [ident, setIdent] = useState("");
   const [note, setNote] = useState("");
@@ -8383,6 +8385,21 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   }, 0);
 
   const branchProducts = branchProductsUnique(data, branch.id).filter(productIsEnabled);
+  const canChooseService = branch.id === "b_cpt" && branch.takeawayCashierId === employee.id;
+  const takeaway = canChooseService && serviceType === "takeaway";
+  const sipcityProducts = useMemo(() => new Map(
+    branchProductsUnique(data, "b_sip").filter((product) => {
+      const productBranch = productBranchId(product);
+      return !productBranch || productBranch === "b_sip"
+        || branchMappedCentsState(product, "b_sip", BRANCH_PRICE_MAP_FIELDS, ["priceCents", "sellingPriceCents", "price", "sellingPrice"]).hasMap;
+    }).map((product) => [productDedupeKey(product), product])
+  ), [data.products]);
+  const salePrice = (product) => {
+    if (branch.id !== "b_cpt") return priceFor(data, product);
+    if (!takeaway) return priceFor(data, product, branch.id);
+    const sipcityProduct = sipcityProducts.get(productDedupeKey(product));
+    return sipcityProduct ? priceFor(data, sipcityProduct, "b_sip") : 0;
+  };
   const activeExpenseCategories = cashierExpenseCategories(data);
   const defaultExpenseCategoryId = activeExpenseCategories[0]?.id || "excat_other";
   const categoryCounts = CATS.map((cat) => ({ cat, count: branchProducts.filter((p) => (p.category || "Other") === cat).length })).filter((x) => x.count > 0);
@@ -8432,6 +8449,10 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       setSaleErr(p.name + " is disabled and cannot be sold.");
       return false;
     }
+    if (takeaway && salePrice(p) <= 0) {
+      setSaleErr(p.name + " has no Sipcity Take away price.");
+      return false;
+    }
     if (onHand(data, p.id, branch.id) - (cart[p.id] || 0) <= 0) return false;
     setCart((c) => ({ ...c, [p.id]: (c[p.id] || 0) + 1 }));
     setSaleErr("");
@@ -8439,7 +8460,9 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     return true;
   };
   const dec = (pid) => setCart((c) => { const n = { ...c }; n[pid] = (n[pid] || 0) - 1; if (n[pid] <= 0) delete n[pid]; return n; });
-  const lines = cartLines(data, cart);
+  const lines = cartLines(data, cart).map((line) => ({
+    ...line, priceCents: salePrice(data.products.find((product) => product.id === line.productId)),
+  }));
   const total = lines.reduce((s, l) => s + l.priceCents * l.qty, 0);
   const itemCount = lines.reduce((s, l) => s + l.qty, 0);
   const belowCostLines = lines.filter((l) => {
@@ -8447,7 +8470,11 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     return p && l.priceCents < branchInventoryCostCents(data, p, branch.id);
   });
   const disabledSaleLine = lines.find((line) => !productIsEnabled(data.products.find((product) => product.id === line.productId)));
-  const saleBlocked = belowCostLines.length > 0 || Boolean(disabledSaleLine);
+  const unpricedTakeaway = takeaway && lines.find((line) => line.priceCents <= 0);
+  const saleBlockMessage = disabledSaleLine ? disabledSaleLine.name + " is disabled."
+    : unpricedTakeaway ? unpricedTakeaway.name + " has no Sipcity Take away price."
+    : belowCostLines.length ? "Selling price is below cost for " + belowCostLines[0].name + "." : "";
+  const saleBlocked = Boolean(saleBlockMessage);
   const notifyScan = (message, kind = "success") => {
     setFlash(message);
     playScanSound(kind);
@@ -8599,8 +8626,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       return;
     }
     if (saleBlocked) {
-      const first = belowCostLines[0];
-      setSaleErr("Cannot complete sale: " + first.name + " is priced below cost. Edit the selling price first.");
+      setSaleErr(saleBlockMessage);
       notifyScan("Sale blocked: selling price is below cost.", "error");
       return;
     }
@@ -8657,21 +8683,20 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     if (lines.length === 0) return;
     if (ident.trim() === "") return;
     if (saleBlocked) {
-      const first = belowCostLines[0];
-      setSaleErr("Cannot complete sale: " + first.name + " is priced below cost. Edit the selling price first.");
+      setSaleErr(saleBlockMessage);
       return;
     }
     const ts = now(); const synced = online;
     const inv = { id: uid("inv"), number: receiptNo, customerId: null, customerName: ident.trim(), note: note.trim(),
       cashierId: employee.id, cashier: employee.name, branchId: branch.id, date: businessDateValue(ts, data.settings.timeZone), totalCents: total, paidCents: 0,
       items: lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { productId: l.productId, name: l.name, sku: product?.sku || "", qty: l.qty, priceCents: l.priceCents, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0 }; }),
-      method: "Invoice", carriedOver: false, ts, synced };
-    const movements = lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { id: uid("mv"), productId: l.productId, branchId: branch.id, qty: -l.qty, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0, reason: "Sale " + inv.number, ts, synced }; });
+      ...(canChooseService ? { serviceType } : {}), method: "Invoice", carriedOver: false, ts, synced };
+    const movements = lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { id: uid("mv"), productId: l.productId, branchId: branch.id, invoiceId: inv.id, qty: -l.qty, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0, reason: "Sale " + inv.number, ts, synced }; });
     update((d) => ({ ...d, invoices: [...d.invoices, inv], stockMovements: [...d.stockMovements, ...movements] }));
-    setReceipt(inv); setCart({}); setIdent(""); setNote("");
+    setReceipt(inv); setCart({}); setIdent(""); setNote(""); setServiceType("dine_in");
   };
-  const holdSale = () => { if (lines.length === 0) return; setHolds((h) => [...h, { id: uid("hold"), cart, ident, ts: now(), count: itemCount, total }]); setCart({}); setIdent(""); setFlash("Sale held."); };
-  const resume = (h) => { setCart(h.cart); setIdent(h.ident || ""); setHolds((hs) => hs.filter((x) => x.id !== h.id)); setPtab("cart"); };
+  const holdSale = () => { if (lines.length === 0) return; setHolds((h) => [...h, { id: uid("hold"), cart, ident, serviceType, ts: now(), count: itemCount, total }]); setCart({}); setIdent(""); setFlash("Sale held."); };
+  const resume = (h) => { setServiceType(h.serviceType || "dine_in"); setCart(h.cart); setIdent(h.ident || ""); setHolds((hs) => hs.filter((x) => x.id !== h.id)); setPtab("cart"); };
   useEffect(() => {
     const onKey = (e) => {
       const tag = String(document.activeElement?.tagName || "").toLowerCase();
@@ -8685,7 +8710,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinPrompt, scanProduct, receipt, debtsOpen, exp, lines.length, ident, cart, total]); // eslint-disable-line
+  }, [pinPrompt, scanProduct, receipt, debtsOpen, exp, lines.length, ident, cart, total, serviceType]); // eslint-disable-line
   const saveExp = () => {
     const c = Math.round(parseFloat(exp.amount) * 100); if (!c || c <= 0) return;
     const status = c > APPROVAL_LIMIT ? "pending" : "approved";
@@ -8726,6 +8751,14 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 
   return (
     <div className="fade cashier-workstation">
+      {canChooseService && <label className="cashier-service-choice">
+        <span>Service</span>
+        <select className="select" aria-label="Sale service" disabled={lines.length > 0} value={serviceType}
+          onChange={(event) => { setServiceType(event.target.value); setSaleErr(""); }}>
+          <option value="dine_in">Dine in</option>
+          <option value="takeaway">Take away</option>
+        </select>
+      </label>}
       <div className="postabs">
         {[["products", "Products"], ["cart", "Cart"], ["invoices", "Invoices"]].map(([k, l]) => (
           <button key={k} className={"ptab" + (ptab === k ? " on" : "")} onClick={() => setPtab(k)}>{l}{k === "cart" && itemCount ? " (" + itemCount + ")" : ""}</button>))}
@@ -8819,7 +8852,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
             ) : (
               <div className="posgrid workstation-grid">
                 {visible.map((p) => { const s = stock(p); return (
-                  <CashierProductCard key={p.id} product={p} stock={s} price={priceFor(data, p)} cur={cur} onAdd={() => add(p)} />
+                  <CashierProductCard key={p.id} product={p} stock={s} price={salePrice(p)} cur={cur} onAdd={() => add(p)} />
                 ); })}
               </div>
             )}
@@ -8853,7 +8886,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
               <button className="btn btn-ghost" style={{ flex: 1 }} disabled={lines.length === 0} onClick={() => { setCart({}); scanFocus(true); }}>Clear</button>
             </div>
             {(ident.trim() === "" && lines.length > 0) && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>Enter a customer name / identifier to complete.</div>}
-            {saleBlocked && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>Selling price is below cost for {belowCostLines[0]?.name}. Edit price before checkout.</div>}
+            {saleBlocked && <div className="cust-meta" style={{ textAlign: "center", marginTop: 6, color: "#E64368" }}>{saleBlockMessage}</div>}
             {saleErr && <div className="alert" style={{ marginTop: 10 }}><AlertCircle />{saleErr}</div>}
             <div className="cust-meta" style={{ textAlign: "center", marginTop: 8 }}>Issues an open invoice ({receiptNo}) cleared by admin or supervisor.</div>
           </div>
@@ -9242,6 +9275,7 @@ function InvoiceReceipt({ inv, cur, store, onClose }) {
           <div className="rc-s">{formatBusinessDateTime(inv.ts)}</div>
           <div className="rc-s">Receipt: {inv.number || inv.receiptNo}</div>
           <div className="rc-s">Cashier: {invoiceCashierName(inv)}</div>
+          {inv.serviceType && <div className="rc-s">Service: {inv.serviceType === "takeaway" ? "Take away" : "Dine in"}</div>}
           <div className="rc-s">Customer: {inv.customerName || "Walk-in"}</div>
           {inv.note && <div className="rc-s">Note: {inv.note}</div>}
           <div style={{ borderTop: "1px dashed var(--text)", borderBottom: "1px dashed var(--text)", margin: "8px 0", padding: "6px 0" }}>
@@ -16250,21 +16284,21 @@ function BranchesTab({ data, update, canToggle }) {
     reset();
   };
   const startEdit = (b) => { setEditId(b.id); setF({ name: b.name || "", code: b.code || "", location: b.location || "", managerId: b.managerId || "", active: b.active !== false, mpesaTill: b.mpesaTill || "" }); };
-  const setBranchActive = async (branch, active) => {
+  const updateBranchOperations = async (branch, patch) => {
     if (!canToggle || pendingBranchId) return;
     setPendingBranchId(branch.id);
     setBranchStatusError("");
     const updated = {
-      ...branch, branchId: branch.id, active, enabled: active, status: active ? "active" : "disabled",
+      ...branch, ...patch, branchId: branch.id,
       updatedAt: Math.max(now(), Number(branch.updatedAt || 0) + 1),
     };
     const event = eventFromRecord("branches", updated, data);
     try {
       const result = await publishSyncEvents([event], data, { management: true });
       update((current) => mergeSyncEvents(current, [{ ...event, serverTs: result.serverTs?.[event.id] }]), { skipSync: true });
-      if (editId === branch.id) setF((draft) => ({ ...draft, active }));
+      if (editId === branch.id && patch.active !== undefined) setF((draft) => ({ ...draft, active: patch.active }));
     } catch {
-      setBranchStatusError("Could not confirm the branch status. Sync and check the branch before retrying.");
+      setBranchStatusError("Could not confirm the branch settings. Sync and check the branch before retrying.");
     } finally {
       setPendingBranchId("");
     }
@@ -16275,6 +16309,18 @@ function BranchesTab({ data, update, canToggle }) {
       <div>
         <PageHead title="Branches" sub="Set up shops, managers and status." />
         {branchStatusError && <div className="formerr" role="alert">{branchStatusError}</div>}
+        {canToggle && data.branches.filter(({ id }) => id === "b_cpt").map((capeTown) => (
+          <label className="field" key={capeTown.id}>
+            <span className="label">Cape Town Take away cashier</span>
+            <select className="select" value={capeTown.takeawayCashierId || ""} disabled={Boolean(pendingBranchId)}
+              onChange={(event) => updateBranchOperations(capeTown, { takeawayCashierId: event.target.value })}>
+              <option value="">Take away disabled</option>
+              {activeEmployees(data).filter((employee) => employee.branchId === capeTown.id
+                && String(employee.role || employee.kind || "").toLowerCase() === "cashier")
+                .map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+            </select>
+          </label>
+        ))}
         <div className="addpanel">
           <div className="grid2">
             <div><label className="label">Branch name</label><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Mombasa" /></div>
@@ -16298,7 +16344,7 @@ function BranchesTab({ data, update, canToggle }) {
             <span className="bu">{fmt(s.value, cur)}</span>
             {canToggle && <button type="button" className="btn xs btn-ghost" disabled={Boolean(pendingBranchId)}
               aria-label={(active ? "Disable " : "Enable ") + b.name}
-              onClick={() => setBranchActive(b, !active)}>
+              onClick={() => updateBranchOperations(b, { active: !active, enabled: !active, status: active ? "disabled" : "active" })}>
               {pendingBranchId === b.id ? "Saving..." : active ? "Disable" : "Enable"}
             </button>}
             <button className="btn xs btn-ghost" onClick={() => startEdit(b)}>Edit</button>

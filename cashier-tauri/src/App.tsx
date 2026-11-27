@@ -391,6 +391,7 @@ function receiptPrintHtml(receipt: Receipt) {
   <p>Receipt: ${escapeHtml(receipt.number)}</p>
   <p>Cashier: ${escapeHtml(receipt.cashierName)}</p>
   <p>Customer: ${escapeHtml(receipt.customerName)}</p>
+  ${receipt.serviceType ? `<p>Service: ${receipt.serviceType === "takeaway" ? "Take away" : "Dine in"}</p>` : ""}
   ${receipt.note ? `<p>Note: ${escapeHtml(receipt.note)}</p>` : ""}
   <hr />
   ${lines}
@@ -472,6 +473,7 @@ function receiptPrintText(receipt: Receipt) {
     `Receipt: ${receipt.number}`,
     `Cashier: ${receipt.cashierName}`,
     `Customer: ${receipt.customerName}`,
+    ...(receipt.serviceType ? [`Service: ${receipt.serviceType === "takeaway" ? "Take away" : "Dine in"}`] : []),
     ...(receipt.note ? [`Note: ${receipt.note}`] : []),
     separator,
     ...receipt.items.flatMap(thermalItemLines),
@@ -786,6 +788,7 @@ export default function App() {
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
   const [businessDays, setBusinessDays] = useState<BusinessDayPeriod[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
+  const [serviceType, setServiceType] = useState<NonNullable<Receipt["serviceType"]>>("dine_in");
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Products");
   const [customerName, setCustomerName] = useState("");
@@ -834,7 +837,12 @@ export default function App() {
   const branch = branches.find((item) => item.id === terminal?.branchId) || null;
   const accountRole = String(account?.role || account?.kind || "").trim().toLowerCase();
   const canManageStockCounts = ["owner", "admin", "manager", "supervisor"].includes(accountRole);
-  const cartLines = Object.values(cart);
+  const canChooseService = terminal?.branchId === "b_cpt" && Boolean(account?.id && branch?.takeawayCashierId === account.id);
+  const takeaway = canChooseService && serviceType === "takeaway";
+  const pricedProduct = (product: Product) => takeaway
+    ? { ...product, priceCents: product.takeawayPriceCents || 0 }
+    : product;
+  const cartLines = Object.values(cart).map((line) => ({ ...line, product: pricedProduct(line.product) }));
   const totalCents = cartLines.reduce((sum, line) => sum + line.qty * line.product.priceCents, 0);
   const itemCount = cartLines.reduce((sum, line) => sum + line.qty, 0);
   const myInvoices = useMemo(() => {
@@ -1373,7 +1381,7 @@ export default function App() {
 
   function addToCart(product: Product) {
     const currentQty = cart[product.id]?.qty || 0;
-    const blocked = productSaleBlockReason(product, currentQty);
+    const blocked = productSaleBlockReason(pricedProduct(product), currentQty);
     if (blocked) {
       setError(blocked);
       setStatus("Sale blocked.");
@@ -1399,7 +1407,7 @@ export default function App() {
         const { [productId]: _removed, ...rest } = current;
         return rest;
       }
-      const blocked = productSaleBlockReason(line.product, qty - 1);
+      const blocked = delta > 0 ? productSaleBlockReason(pricedProduct(line.product), qty - 1) : "";
       if (blocked) {
         setError(blocked);
         setStatus("Sale blocked.");
@@ -1429,6 +1437,7 @@ export default function App() {
     const receiptNumber = `RCP-${terminal.branchId.toUpperCase()}-${Date.now().toString().slice(-6)}`;
     const nextReceipt: Receipt = {
       number: receiptNumber,
+      ...(canChooseService ? { serviceType } : {}),
       branchName: branch?.name || terminal.branchId,
       cashierName: account.name,
       customerName: customerName.trim(),
@@ -1450,6 +1459,7 @@ export default function App() {
       setReceipt(issuedReceipt);
       setLastReceipt(issuedReceipt);
       setCart({});
+      setServiceType("dine_in");
       setCustomerName("");
       setCheckoutFingerprintOpen(false);
       setStatus(`Open invoice ${assignedReceiptNumber} issued.`);
@@ -1848,6 +1858,14 @@ export default function App() {
               </label>
               <button className={"scanner-toggle" + (scannerOn ? " on" : "")} onClick={() => setScannerOn((value) => !value)}><Barcode size={20} />Scanner</button>
             </div>
+            {canChooseService && <label className="cashier-service-choice">
+              <span>Service</span>
+              <select aria-label="Sale service" value={serviceType} disabled={cartLines.length > 0}
+                onChange={(event) => setServiceType(event.target.value === "takeaway" ? "takeaway" : "dine_in")}>
+                <option value="dine_in">Dine in</option>
+                <option value="takeaway">Take away</option>
+              </select>
+            </label>}
             <div className="product-strip">
               <button
                 className={"category-chip favorites" + (selectedCategory === "Favorites" ? " active" : "")}
@@ -1874,7 +1892,8 @@ export default function App() {
                   <b>{commonProductIds.length === 0 ? "No recent sales yet" : "No matching favorites"}</b>
                 </div>
               )}
-              {filteredProducts.map((product) => {
+              {filteredProducts.map((catalogProduct) => {
+                const product = pricedProduct(catalogProduct);
                 const reservedQty = cart[product.id]?.qty || 0;
                 const blocked = productSaleBlockReason(product, reservedQty);
                 const productName = String(product.name || "").trim()
@@ -1885,7 +1904,7 @@ export default function App() {
                     className={"product-card" + (blocked ? " is-blocked" : "")}
                     key={product.id}
                     aria-disabled={Boolean(blocked)}
-                    onClick={() => addToCart(product)}
+                    onClick={() => addToCart(catalogProduct)}
                   >
                     <span className="product-name" title={productName}>{productName}</span>
                     <b className="product-price">{money(product.priceCents)}</b>
@@ -2078,6 +2097,7 @@ export default function App() {
           onReprint={(invoice, cashDepositOffsets) => {
             const nextReceipt: Receipt = {
               number: invoice.number,
+              serviceType: invoice.serviceType,
               branchName: branch?.name || terminal.branchId,
               cashierName: invoice.cashierName || account.name,
               customerName: invoiceCustomerLabel(invoice),

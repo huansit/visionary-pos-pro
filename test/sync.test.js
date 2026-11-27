@@ -2075,7 +2075,7 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
     .expect(200)
     .expect((res) => assert.deepEqual(res.body.accepted, [branchOnlyProduct.id]));
 
-  const expectAuthoritativeValues = async (terminal, priceCents, costCents) => {
+  const expectAuthoritativeValues = async (terminal, priceCents, costCents, takeawayPriceCents) => {
     await withTerminalAuth(request(app).get("/api/sync/catalog"), terminal)
       .expect(200)
       .expect((res) => {
@@ -2083,11 +2083,12 @@ test("6e. product branch maps isolate price and moving average cost by branch", 
         assert.ok(synced, "branch-authoritative product must appear in the cashier catalog");
         assert.equal(synced.priceCents, priceCents, JSON.stringify(synced));
         assert.equal(synced.costCents, costCents, JSON.stringify(synced));
+        assert.equal(synced.takeawayPriceCents, takeawayPriceCents);
       });
   };
 
   await expectAuthoritativeValues(sipTerminal, 310000, 200000);
-  await expectAuthoritativeValues(cptTerminal, 0, 0);
+  await expectAuthoritativeValues(cptTerminal, 0, 0, 310000);
 });
 
 test("6f. Cape Town catalog restores a missing name without discarding the newer product record", async () => {

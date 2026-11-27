@@ -529,6 +529,7 @@ function normalizeProduct(row, branchId, stockQty, overlay = {}) {
 
 router.get("/catalog", requireDevice, async (req, res) => {
   const branchId = req.deviceBranchId;
+  const takeawaySource = branchId === "b_cpt" ? "b_sip" : null;
   if (!branchId) return res.status(403).json({ error: "terminal_branch_required" });
 
   try {
@@ -551,6 +552,8 @@ router.get("/catalog", requireDevice, async (req, res) => {
           name: String(payload.name || payload.branchName || row.id || "").trim(),
           location: String(payload.location || "").trim(),
           enabled: branchPayloadIsEnabled(payload),
+          ...(row.id === branchId && takeawaySource
+            ? { takeawayCashierId: String(payload.takeawayCashierId || "") } : {}),
         };
       })
       .filter((branch) => branch.id && branch.name && branch.enabled)
@@ -613,14 +616,20 @@ router.get("/catalog", requireDevice, async (req, res) => {
       .filter((row) => productPayloadIsEnabled(row?.payload || {}));
     const productIndexes = buildCanonicalProductIndexes(records.rows, canonicalRows, productAliases);
     const overlaysByProduct = new Map();
+    const takeawayOverlays = new Map();
     for (const row of overlayRows.rows || []) {
       if (row.deleted) continue;
       const payload = row.payload || {};
       const recordBranchId = String(row.branchId || payload.branchId || payload.branch_id || "");
-      if (recordBranchId && recordBranchId !== branchId) continue;
+      if (recordBranchId && recordBranchId !== branchId && recordBranchId !== takeawaySource) continue;
       const productId = overlayProductId(payload, productIndexes, productAliases);
       if (!productId) continue;
-      overlaysByProduct.set(productId, mergeOverlay(overlaysByProduct.get(productId), productOverlayFromPayload(payload, branchId)));
+      if (!recordBranchId || recordBranchId === branchId) {
+        overlaysByProduct.set(productId, mergeOverlay(overlaysByProduct.get(productId), productOverlayFromPayload(payload, branchId)));
+      }
+      if (takeawaySource && (!recordBranchId || recordBranchId === takeawaySource)) {
+        takeawayOverlays.set(productId, mergeOverlay(takeawayOverlays.get(productId), productOverlayFromPayload(payload, takeawaySource)));
+      }
     }
 
     const canonicalIds = new Set(canonicalRows.map((row) => String(row.id)));
@@ -648,7 +657,18 @@ router.get("/catalog", requireDevice, async (req, res) => {
         const stockQty = movementStock
           ? movementStock.qty + (movementStock.stockBaseQty ?? 0)
           : baseStock;
-        return normalizeProduct(row, branchId, stockQty, overlay);
+        const product = normalizeProduct(row, branchId, stockQty, overlay);
+        if (!takeawaySource) return product;
+        const sipcityRow = (rowsByKey.get(productCatalogKey(row)) || [])
+          .filter((entry) => !entry.deleted && (entry.branchId || entry.payload?.branchId || entry.payload?.branch_id) === takeawaySource)
+          .reduce((preferred, entry) => preferCatalogRecord(preferred, entry), null);
+        const pricePayload = sipcityRow?.payload || row.payload || {};
+        const priceBranch = sipcityRow?.branchId || pricePayload.branchId || pricePayload.branch_id || row.branchId;
+        const sourcePrice = priceBranch && priceBranch !== takeawaySource && !hasBranchMap(pricePayload, PRODUCT_PRICE_MAP_FIELDS)
+          ? null : productOverlayFromPayload(pricePayload, takeawaySource).priceCents;
+        const takeawayPriceCents = takeawayOverlays.get(productId)?.priceCents ?? sourcePrice ?? 0;
+        return { ...product, takeawayPriceCents };
+
       })
       .sort((a, b) => a.name.localeCompare(b.name) || String(a.sku || "").localeCompare(String(b.sku || "")));
 
@@ -2448,6 +2468,25 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       if (!isPgMem) await client.query(`SAVEPOINT ${savepoint}`);
       try {
         await enforceBranchOperations(client, guardedEvent, type, req);
+        if (type === "branch" && Object.hasOwn(guardedEvent.payload || {}, "takeawayCashierId")
+            && (!req.account || !["owner", "admin"].includes(syncRole(req.account)))) {
+          throw syncEventError("admin_authorization_required");
+        }
+        if (type === "invoice" && guardedEvent.payload?.serviceType === "takeaway"
+            && !(await existingEvent(client, guardedEvent.id))) {
+          const cashierId = String(guardedEvent.payload.cashierId || "");
+          const { rows: [capeTown] } = await client.query(
+            "SELECT payload FROM records WHERE type = 'branch' AND id = $1 AND deleted = false", ["b_cpt"]);
+          if (eventBranchId(guardedEvent) !== "b_cpt" || !cashierId
+              || recordPayload(capeTown?.payload).takeawayCashierId !== cashierId
+              || (req.account && req.account.id !== cashierId)) {
+            throw syncEventError("takeaway_cashier_not_enabled");
+          }
+        }
+        if (type === "stockMovement" && guardedEvent.payload?.invoiceId
+            && rejected.some((entry) => entry.id === guardedEvent.payload.invoiceId && entry.type === "invoice")) {
+          throw syncEventError("sale_invoice_rejected");
+        }
         let acceptedId = null;
         let acceptedTs = null;
         let acceptedBranchId = eventBranchId(guardedEvent);

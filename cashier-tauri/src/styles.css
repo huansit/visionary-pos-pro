@@ -10098,3 +10098,6 @@ body {
   .purchase-receive-form { grid-template-columns: 1fr; padding: 14px; }.purchase-product-results { grid-template-columns: 1fr; margin: 0 14px 13px; }.purchase-lines { margin: 0 14px; }
   .purchase-line-columns { display: none; }.purchase-line { grid-template-columns: minmax(0, 1fr) 88px 106px 34px; gap: 8px; padding: 10px; }.purchase-line > b { grid-column: 1 / -1; padding: 0; }.purchase-line strong { display: none; }.purchase-receive-footer { margin: 12px 14px 0; }
 }
+
+.cashier-service-choice{display:flex;align-items:center;gap:10px;margin:8px 0}
+.cashier-service-choice select{font:inherit;color:inherit;background:transparent;border:1px solid currentColor;border-radius:6px;padding:6px 10px}
