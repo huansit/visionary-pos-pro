@@ -4114,7 +4114,7 @@ function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").tr
 function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").replace(/[\s-]/g, "")); }
 function normPhone(v) { return (v || "").replace(/[\s-]/g, ""); }
 function invStatus(inv) {
-  if (inv.writeOff && invOutstanding(inv) <= 0) return "written off";
+  if (inv.writeOff && invOutstanding(inv) <= 0) return "Write off";
   if (invOutstanding(inv) <= 0) return "paid";
   if (invIsDebt(inv)) return "debt";
   if (invIsOverdue(inv)) return "overdue";
@@ -10244,6 +10244,7 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
             <option value="debt">Debts ({periodDebtInvoices.length})</option>
             <option value="void_pending">Void pending ({voidPendingCount})</option>
             <option value="paid">Paid</option>
+            <option value="Write off">Write off</option>
             <option value="voided">Voided ({periodVoidedInvoices.length})</option>
             <option value="all">All invoices ({periodDisplayInvoices.length})</option>
           </select></label>
@@ -12251,7 +12252,7 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           </div>
         ) : null}
         {live.writeOff && <div className="notice">
-          <b>Written off: {fmt(live.writeOff.amountCents, cur)}</b>
+          <b>Write off: {fmt(live.writeOff.amountCents, cur)}</b>
           <div>{live.writeOff.reason}</div>
         </div>}
         {canWriteOff && !confirmWriteOff && <button type="button" className="btn btn-ghost"
@@ -18688,6 +18689,10 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
 
   // Recovery history must survive settlement clearing the invoice's current carried-over flag.
   const carried = activeInvoices.filter((i) => invoiceWasEverCarriedOver(data, i) && inBranch(i.branchId));
+  const writeOffList = activeInvoices
+    .filter((invoice) => invoice.writeOff && inBranch(invoice.branchId) && inRange(Number(invoice.writeOff.ts)))
+    .sort((a, b) => Number(b.writeOff.ts) - Number(a.writeOff.ts));
+  const writeOffTotal = writeOffList.reduce((sum, invoice) => sum + Number(invoice.writeOff.amountCents || 0), 0);
   const recoveredList = carried
     .filter((i) => !i.writeOff && invOutstanding(i) <= 0)
     .sort((a, b) => invoiceRecoveryTimestamp(data, b) - invoiceRecoveryTimestamp(data, a));
@@ -18735,10 +18740,21 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         return [invoice.number || invoice.receiptNo, invoiceCashierName(invoice), invoice.customerName, invoice.date, m(invoice.totalCents), voidInfo.decision?.reason || voidInfo.request?.reason || "", voidInfo.decision?.decidedByName || voidInfo.decision?.decidedBy || "Supervisor"];
       }),
     };
-    if (sub === "credit") return { name: "debt-recovery", headers: ["Invoice", "Cashier", "Customer", "Issued", "Recovered", "Total", "Outstanding", "State"], rows: carried.map((i) => {
-      const recoveredAt = invoiceRecoveryTimestamp(data, i);
-      return [i.number, invoiceCashierName(i), i.customerName, dt(i.ts), !i.writeOff && invOutstanding(i) <= 0 && recoveredAt > 0 ? dt(recoveredAt) : "-", m(i.totalCents), m(invOutstanding(i)), i.writeOff ? "written off" : (invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt"))];
-    }) };
+    if (sub === "credit") return {
+      name: "debt-recovery",
+      headers: ["Invoice", "Branch", "Cashier", "Customer", "Issued", "Recovered", "Total", "Outstanding", "State",
+        "Write off amount", "Write off date", "Write off reason", "Recorded by"],
+      rows: [...carried.filter((invoice) => !invoice.writeOff), ...writeOffList].map((invoice) => {
+        const adjustment = invoice.writeOff;
+        const balance = invOutstanding(invoice);
+        const recoveredAt = adjustment ? 0 : invoiceRecoveryTimestamp(data, invoice);
+        const status = adjustment ? "Write off" : balance <= 0 ? "recovered" : invoice.paidCents > 0 ? "partial debt" : "debt";
+        return [invoice.number || invoice.receiptNo, bname(invoice.branchId), invoiceCashierName(invoice), invoice.customerName,
+          dt(invoice.ts), balance <= 0 && recoveredAt > 0 ? dt(recoveredAt) : "-", m(invoice.totalCents), m(balance), status,
+          adjustment ? m(adjustment.amountCents) : "", adjustment?.ts ? dt(adjustment.ts) : "",
+          adjustment?.reason || "", adjustment?.recordedBy || ""];
+      }),
+    };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
     return { name: "overview", headers: ["Metric", "Value"], rows: [["Gross sales (cashier + fulfilled Glovo)", m(grossSales)], ["Glovo fulfilled sales", m(glovoRevenue)], ["Open invoice balance", m(openSales)], ["Overdue invoice balance", m(overdueSales)], ["Debt balance", m(debtSales)], ["Recognized sales", m(totalSales)], ["Inventory value", m(inventoryValue)], ["Cost of goods", m(cogs)], ["Gross profit", m(grossProfit)], ["Expenses", m(expTotal)], ["Loss & damage", m(lossTotal)], ["Net profit", m(netProfit)], ["Margin %", margin], ["Gross invoices", invs.length], ["Recognized transactions", recInvs.length + glovoPnl.orderCount], ["Items sold", itemsSold], ["Cleared payments", m(cleared)]] };
@@ -18805,6 +18821,8 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
       ];
       if (sub === "credit") return [
         { label: "Recovered", value: recoveredList.length },
+        { label: "Write off invoices", value: writeOffList.length },
+        { label: "Write off amount", value: fmt(writeOffTotal, cur) },
         { label: "Outstanding debts", value: pendingList.length },
         { label: "Outstanding", value: fmt(pendingTotal, cur) },
         { label: "Partial", value: partialCount },
@@ -19241,9 +19259,26 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
         <>
           <div className="stats">
             <Stat l="Recovered Credits" v={recoveredList.length} sub2={fmt(recoveredTotal, cur)} />
+            <Stat l="Write off" v={fmt(writeOffTotal, cur)} sub2={writeOffList.length + " invoice(s)"} />
             <Stat l="Outstanding Debt" v={fmt(pendingTotal, cur)} sub2={pendingList.length + " invoice(s)"} warn={pendingTotal > 0} />
             <Stat l="Partial Credits" v={partialCount} />
             <Stat l="Cleared Today" v={clearedTodayCount} />
+          </div>
+          <div className="panel">
+            <div className="section-title" style={{ marginTop: 0 }}>Invoice Write Offs</div>
+            {writeOffList.length === 0 ? <div className="notice">No invoice write-offs in this period.</div> : (
+              <div className="list">{writeOffList.map((invoice) => (
+                <div className="row" key={invoice.id}>
+                  <div className="meta">
+                    <div className="nm innum">{invoice.number || invoice.receiptNo || invoice.id}</div>
+                    <div className="mt2">{invoice.customerName} · {bname(invoice.branchId)} · {dt(invoice.writeOff.ts)}</div>
+                    <div className="mt2">{invoice.writeOff.reason}{invoice.writeOff.recordedBy ? ` · ${invoice.writeOff.recordedBy}` : ""}</div>
+                  </div>
+                  <span className="pill plain">Write off</span>
+                  <span className="pill plain">{fmt(invoice.writeOff.amountCents, cur)}</span>
+                </div>
+              ))}</div>
+            )}
           </div>
           <div className="grid2" style={{ gap: 16 }}>
             <div className="panel">
