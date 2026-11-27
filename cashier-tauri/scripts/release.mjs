@@ -103,11 +103,33 @@ const certificate = assertSigningCertificateReady();
 console.log(`Building VISIONPOS Cashier ${version} as a local release candidate...`);
 const npmCli = process.env.npm_execpath;
 if (!npmCli || !fs.existsSync(npmCli)) fail("Run this script through npm run release.");
-run(process.execPath, [npmCli, "run", "build"]);
-run(process.execPath, [npmCli, "exec", "--", "tauri", "build"]);
+const [mode, artifactDirectory] = process.argv.slice(2);
+if (mode && (mode !== "--bundle-compiled" || !artifactDirectory)) {
+  fail("Usage: npm run release -- [--bundle-compiled <extracted artifact directory>]");
+}
+const startedAt = Date.now();
+if (mode === "--bundle-compiled") {
+  const manifest = JSON.parse(fs.readFileSync(path.join(artifactDirectory, "cashier-compile.json"), "utf8").replace(/^\uFEFF/, ""));
+  const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout?.trim();
+  if (!commit || manifest.commit !== commit || manifest.version !== version) {
+    fail("The compile artifact must match this checkout's commit and cashier version.");
+  }
+  const executable = path.join(artifactDirectory, "src-tauri", "target", "release", "visionpos_cashier.exe");
+  const hash = createHash("sha256").update(fs.readFileSync(executable)).digest("hex");
+  if (hash !== String(manifest.sha256).toLowerCase()) fail("The compiled executable checksum does not match.");
+  const destination = path.join(tauriDir, "target", "release", "visionpos_cashier.exe");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.copyFileSync(executable, destination);
+  run(process.execPath, [npmCli, "exec", "--", "tauri", "bundle", "--bundles", "nsis"]);
+} else {
+  run(process.execPath, [npmCli, "run", "build"]);
+  run(process.execPath, [npmCli, "exec", "--", "tauri", "build"]);
+}
 
 const installer = latestFile(nsisDir, (name) => name.endsWith(".exe"));
-if (!installer) fail(`No NSIS installer .exe found in ${nsisDir}`);
+if (!installer || installer.mtime < startedAt - 2000) {
+  fail(`No new NSIS installer .exe found in ${nsisDir}`);
+}
 const signature = assertValidAuthenticode(installer.fullPath);
 assertEmbeddedAppAuthenticode(installer.fullPath);
 

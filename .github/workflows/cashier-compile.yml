@@ -1,0 +1,79 @@
+name: Cashier compile for local signing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cashier-compile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            cashier-tauri/package-lock.json
+
+      - name: Install locked dependencies
+        shell: pwsh
+        run: |
+          npm.cmd ci
+          npm.cmd --prefix frontend ci
+          npm.cmd --prefix cashier-tauri ci
+
+      - name: Audit locked dependencies
+        shell: pwsh
+        run: |
+          npm.cmd audit --audit-level=high
+          npm.cmd --prefix frontend audit --audit-level=high
+          npm.cmd --prefix cashier-tauri audit --audit-level=high
+
+      - name: Test application and build web clients
+        shell: pwsh
+        run: |
+          npm.cmd test
+          npm.cmd --prefix frontend run build
+          npm.cmd --prefix cashier-tauri run typecheck
+
+      - name: Compile cashier without bundling
+        working-directory: cashier-tauri
+        shell: pwsh
+        run: |
+          npm.cmd exec -- tauri build --no-bundle --no-sign
+          if ($LASTEXITCODE -ne 0) { throw "Cashier compile failed" }
+          $exe = 'src-tauri/target/release/visionpos_cashier.exe'
+          $version = (Get-Content -Raw 'src-tauri/tauri.conf.json' | ConvertFrom-Json).version
+          $manifest = @{
+            version = $version
+            commit = $env:GITHUB_SHA
+            sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+          }
+          $manifest | ConvertTo-Json | Set-Content -LiteralPath 'cashier-compile.json' -Encoding utf8
+
+      - name: Upload executable for local signing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: VISIONPOS-Cashier-local-signing-input
+          path: |
+            cashier-tauri/cashier-compile.json
+            cashier-tauri/src-tauri/target/release/visionpos_cashier.exe
+          if-no-files-found: error
+          retention-days: 3
