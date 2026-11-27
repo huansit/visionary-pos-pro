@@ -783,6 +783,7 @@ router.get("/catalog", requireDevice, async (req, res) => {
 const EVENT_TYPES = new Set([
   "invoice",
   "invoiceSettlement",
+  "invoiceWriteOff",
   "payment",
   "paymentRelease",
   "invoiceNote",
@@ -857,6 +858,7 @@ const TERMINAL_FORBIDDEN_EVENT_TYPES = new Set([
   "payment",
   "paymentRelease",
   "invoiceSettlement",
+  "invoiceWriteOff",
   "purchase",
   "purchaseReversal",
   "invoiceVoidDecision",
@@ -1455,8 +1457,50 @@ async function invoiceVoidState(client, invoiceId) {
   };
 }
 
+async function processInvoiceWriteOff(client, event, req, deviceId, ts) {
+  if (!req.account || !["owner", "admin"].includes(syncRole(req.account))) {
+    throw syncEventError("admin_authorization_required");
+  }
+  const { invoiceId, amountCents, reason } = event.payload || {};
+  if (typeof invoiceId !== "string" || event.id !== `invoiceWriteOff:${encodeURIComponent(invoiceId)}`
+      || !Number.isSafeInteger(amountCents) || amountCents <= 0
+      || typeof reason !== "string" || !reason.trim() || reason.trim().length > 500) {
+    throw syncEventError("invoice_write_off_invalid");
+  }
+  return withInventoryWriteLock(client, `invoice:${invoiceId}`, async () => {
+    const invoice = await existingEvent(client, invoiceId);
+    const branchId = invoice?.branch_id || invoice?.branchId;
+    if (invoice?.type !== "invoice" || !branchId || branchId !== eventBranchId(event)) {
+      throw syncEventError("invoice_not_found");
+    }
+    const existing = await existingEvent(client, event.id);
+    if (existing) {
+      if (existing.payload?.amountCents !== amountCents || existing.payload?.reason !== reason.trim()) {
+        throw syncEventError("invoice_already_written_off");
+      }
+      return { id: event.id, branchId, ts: existing.server_ts };
+    }
+    const voidState = await invoiceVoidState(client, invoiceId);
+    if (voidState.approved || voidState.pending || invoice.payload?.archived === true) {
+      throw syncEventError("invoice_write_off_unavailable");
+    }
+    const settlements = await client.query("SELECT payload FROM events WHERE type = 'invoiceSettlement'");
+    const paid = settlements.rows.reduce((current, { payload }) => payload?.invoiceId === invoiceId
+      ? Math.max(current, Number(payload.paidCents) || 0) : current, Math.max(
+      centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0), await invoicePaymentTotal(client, invoiceId)));
+    const total = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
+    if (total - paid !== amountCents) throw syncEventError("invoice_write_off_balance_changed");
+    const savedTs = await insertAppendOnlyEvent(client, {
+      ...event, branchId,
+      payload: { invoiceId, amountCents, branchId, reason: reason.trim(), ts,
+        recordedBy: req.account.name || req.account.email || "Admin" },
+    }, "invoiceWriteOff", deviceId, ts);
+    return { id: event.id, branchId, ts: savedTs };
+  });
+}
+
 async function invoicePaymentTotal(client, invoiceId) {
-  const result = await client.query("SELECT type, payload FROM events WHERE type IN ('payment', 'paymentRelease')");
+  const result = await client.query("SELECT id, type, payload FROM events WHERE type IN ('payment', 'paymentRelease')");
   const releasedPaymentIds = new Set(result.rows
     .filter((row) => row.type === "paymentRelease")
     .map((row) => String(row.payload?.paymentId || "").trim())
@@ -2246,8 +2290,18 @@ async function processExternalStockLoanEvent(client, ev, type, req, deviceId, ts
 }
 
 router.post("/push", requireSyncWrite, async (req, res) => {
-  const events = Array.isArray(req.body?.events) ? req.body.events : null;
+  let events = Array.isArray(req.body?.events) ? req.body.events : null;
   if (!events) return res.status(400).json({ error: "events_array_required" });
+  const atomicWriteOff = req.body?.atomicWriteOff === true;
+  if (atomicWriteOff) {
+    const branchId = eventBranchId(events[0]);
+    if (!branchId || !events.every((event) => event?.type === "invoiceWriteOff"
+      && typeof event.id === "string" && eventBranchId(event) === branchId)
+      || new Set(events.map(({ id }) => id)).size !== events.length) {
+      return res.status(400).json({ error: "invoice_write_off_batch_invalid" });
+    }
+    events = [...events].sort((a, b) => a.id.localeCompare(b.id));
+  }
 
   const resetEpoch = await operationalResetEpoch();
   if (resetEpoch && String(req.body?.resetEpoch || "") !== resetEpoch) {
@@ -2337,6 +2391,11 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           acceptedTs = result.ts;
           acceptedId = result.id;
           acceptedBranchId = result.branchId || acceptedBranchId;
+        } else if (type === "invoiceWriteOff") {
+          const result = await processInvoiceWriteOff(client, guardedEvent, req, recordDeviceId, nextServerTs());
+          acceptedTs = result.ts;
+          acceptedId = result.id;
+          acceptedBranchId = result.branchId;
         } else if (type === "invoiceLineVoidRequest" || type === "invoiceLineVoidDecision") {
           const result = await processInvoiceLineVoidEvent(client, guardedEvent, type, req, recordDeviceId, nextServerTs());
           acceptedTs = result.ts;
@@ -2493,9 +2552,23 @@ router.post("/push", requireSyncWrite, async (req, res) => {
             eventToStore = attachCanonicalInvoiceNumber(eventToStore, invoiceNumbers);
             eventToStore = attachCanonicalTransferNumber(eventToStore, transferNumbers);
           }
-          acceptedTs = type === "stockMovement"
-            ? await insertGuardedStockMovement(client, eventToStore, type, recordDeviceId, nextServerTs())
-            : await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, nextServerTs());
+          const paymentInvoiceId = type === "payment" || type === "invoiceSettlement"
+            ? String(eventToStore.payload?.invoiceId || eventToStore.payload?.orderId || "").trim()
+            : "";
+          const ts = nextServerTs();
+          if (paymentInvoiceId) {
+            acceptedTs = await withInventoryWriteLock(client, `invoice:${paymentInvoiceId}`, async () => {
+              const writeOff = await existingEvent(client, `invoiceWriteOff:${encodeURIComponent(paymentInvoiceId)}`);
+              if (writeOff && !await existingEvent(client, eventToStore.id)) {
+                throw syncEventError("invoice_already_written_off");
+              }
+              return insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, ts);
+            });
+          } else {
+            acceptedTs = type === "stockMovement"
+              ? await insertGuardedStockMovement(client, eventToStore, type, recordDeviceId, ts)
+              : await insertAppendOnlyEvent(client, eventToStore, type, recordDeviceId, ts);
+          }
           acceptedId = eventToStore.id;
           acceptedBranchId = eventBranchId(eventToStore) || acceptedBranchId;
         } else {
@@ -2561,6 +2634,10 @@ router.post("/push", requireSyncWrite, async (req, res) => {
       }
     }
 
+    if (atomicWriteOff && rejected.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "invoice_write_off_batch_rejected", rejected });
+    }
     if (req.deviceId) {
       await client.query(`UPDATE devices SET last_seen_at = ${isMySql ? "NOW()" : "now()"} WHERE device_id = $1`, [req.deviceId]);
     }

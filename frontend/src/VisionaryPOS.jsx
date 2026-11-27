@@ -1199,6 +1199,7 @@ const SYNC_APPEND = new Map([
   ["invoiceVoidDecisions", "invoiceVoidDecision"],
   ["invoiceLineVoidRequests", "invoiceLineVoidRequest"],
   ["invoiceLineVoidDecisions", "invoiceLineVoidDecision"],
+  ["invoiceWriteOffs", "invoiceWriteOff"],
   ["stockTransferRequests", "stockTransferRequest"],
   ["stockTransferDecisions", "stockTransferDecision"],
   ["payments", "payment"],
@@ -2371,6 +2372,13 @@ function mergeSyncEvents(data, events) {
     else record.ts = record.ts || ev.clientTs || ev.serverTs || now();
     next = { ...next, [collection]: mergeById(next[collection], record) };
   }
+  const writeOffs = new Map((next.invoiceWriteOffs || []).map((entry) => [entry.invoiceId, entry]));
+  if (writeOffs.size) {
+    next.invoices = (next.invoices || []).map((invoice) => {
+      const writeOff = writeOffs.get(invoice.id);
+      return writeOff?.branchId === invoice.branchId ? { ...invoice, writeOff } : invoice;
+    });
+  }
   return reconcileInvoicePayments(reconcileTransferRequestStates(next));
 }
 function markAcceptedSynced(data, acceptedIds) {
@@ -2517,7 +2525,7 @@ async function syncFetch(url, options = {}, timeoutMs = SYNC_REQUEST_TIMEOUT_MS)
     if (externalSignal) externalSignal.removeEventListener("abort", abortFromOutside);
   }
 }
-async function publishSyncEvents(events, data, { management = false } = {}) {
+async function publishSyncEvents(events, data, { management = false, atomicWriteOff = false } = {}) {
   const list = (events || []).filter(Boolean);
   if (!list.length) return { accepted: [], rejected: [] };
   const cfg = syncConfig();
@@ -2531,7 +2539,7 @@ async function publishSyncEvents(events, data, { management = false } = {}) {
     method: "POST",
     headers,
     cache: "no-store",
-    body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch() }),
+    body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch(), ...(atomicWriteOff ? { atomicWriteOff } : {}) }),
   }, management ? SYNC_ADMIN_COMMAND_TIMEOUT_MS : SYNC_REQUEST_TIMEOUT_MS);
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `push_failed_${response.status}`);
@@ -3767,7 +3775,10 @@ function CameraBarcodeScanner({ onClose, onScan, continuous = false, eyebrow = "
     </div>
   );
 }
-function invOutstanding(inv) { return Math.max(0, inv.totalCents - inv.paidCents); }
+function invOutstanding(inv) {
+  return Math.max(0, Number(inv.totalCents || 0) - Number(inv.paidCents || 0)
+    - Number(inv.writeOff?.amountCents || 0));
+}
 function invoiceCashierName(invoice) {
   return String(invoice?.cashier || invoice?.cashierName || invoice?.soldBy || "Cashier").trim() || "Cashier";
 }
@@ -3938,7 +3949,7 @@ function invoiceWasCarriedOver(data, inv) {
 // business day must have been closed. Open invoices stay out of profit/margin.
 function invRecognized(inv, source) {
   const closedAt = source?.settings ? branchLastEndDay(source, inv.branchId) : lastEndFor(source || {}, inv.branchId);
-  return invOutstanding(inv) <= 0 && Number(inv.ts || 0) <= closedAt;
+  return !inv.writeOff && invOutstanding(inv) <= 0 && Number(inv.ts || 0) <= closedAt;
 }
 function invIsDebt(inv) {
   if (invOutstanding(inv) <= 0) return false;
@@ -4102,6 +4113,7 @@ function isValidEmail(v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((v || "").tr
 function isValidPhone(v) { return /^(?:\+254\d{9}|0\d{9})$/.test((v || "").replace(/[\s-]/g, "")); }
 function normPhone(v) { return (v || "").replace(/[\s-]/g, ""); }
 function invStatus(inv) {
+  if (inv.writeOff && invOutstanding(inv) <= 0) return "written off";
   if (invOutstanding(inv) <= 0) return "paid";
   if (invIsDebt(inv)) return "debt";
   if (invIsOverdue(inv)) return "overdue";
@@ -9750,6 +9762,22 @@ function MpesaSettlementRail({ branch, timeZone, businessDayStart, readyCode, on
     </div>
   </aside>;
 }
+function invoiceWriteOffEvent(invoice, reason) {
+  return {
+    id: `invoiceWriteOff:${encodeURIComponent(invoice.id)}`,
+    type: "invoiceWriteOff",
+    branchId: invoice.branchId,
+    clientTs: now(),
+    payload: { invoiceId: invoice.id, amountCents: invOutstanding(invoice), reason },
+  };
+}
+
+function invoiceCanBeWrittenOff(data, invoice) {
+  const { status } = invoiceVoidState(data, invoice.id);
+  return Boolean(invoice.branchId) && !invoice.archived && !invoice.writeOff
+    && status !== "pending" && status !== "approved" && invOutstanding(invoice) > 0;
+}
+
 function InvoicesTab({ data, update, branch, user, initialCashier = "all", initialFilter = "all", environmentMode = "test", onOpenDebtPayments }) {
   const cur = data.settings.currency;
   const timeZone = normalizeBusinessTimeZone(data.settings.timeZone);
@@ -9767,6 +9795,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
   const [receipt, setReceipt] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set());
+  const [writingOffSelection, setWritingOffSelection] = useState(false);
+  const [selectionWriteOffMessage, setSelectionWriteOffMessage] = useState("");
   const [printingInvoices, setPrintingInvoices] = useState(false);
   const [printAuditError, setPrintAuditError] = useState("");
   const [debtReviewError, setDebtReviewError] = useState("");
@@ -9966,6 +9996,42 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
     0
   );
   const selectedInvoices = filtered.filter((invoice) => selectedInvoiceIds.has(invoice.id));
+  const canWriteOffSelection = ["owner", "admin"].includes(String(user?.role || user?.kind || "").toLowerCase());
+  const eligibleWriteOffs = canWriteOffSelection
+    ? selectedInvoices.filter((invoice) => invoice.branchId === branch.id && invoiceCanBeWrittenOff(data, invoice))
+    : [];
+  const writeOffSelectedInvoices = async () => {
+    if (writingOffSelection || !eligibleWriteOffs.length) return;
+    const count = eligibleWriteOffs.length;
+    const total = eligibleWriteOffs.reduce((sum, invoice) => sum + invOutstanding(invoice), 0);
+    const skipped = selectedInvoices.length - count;
+    const skipMessage = skipped ? ` ${skipped} ineligible selections will be skipped.` : "";
+    const reason = window.prompt(
+      `Write off ${fmt(total, cur)} across ${count} invoices at ${branch.name}?${skipMessage} Enter a reason to confirm.`
+    )?.trim();
+    if (!reason) return;
+    if (reason.length > 500) {
+      setSelectionWriteOffMessage("Use a reason of 500 characters or fewer.");
+      return;
+    }
+    const events = eligibleWriteOffs.map((invoice) => invoiceWriteOffEvent(invoice, reason));
+    setWritingOffSelection(true);
+    setSelectionWriteOffMessage("");
+    try {
+      await publishSyncEvents(events, data, { management: true, atomicWriteOff: true });
+      update((current) => mergeSyncEvents(current, events), { skipSync: true });
+      setSelectedInvoiceIds((current) => {
+        const next = new Set(current);
+        eligibleWriteOffs.forEach(({ id }) => next.delete(id));
+        return next;
+      });
+      setSelectionWriteOffMessage(`Wrote off ${fmt(total, cur)} across ${count} invoices at ${branch.name}.`);
+    } catch {
+      setSelectionWriteOffMessage("Could not confirm the batch. Sync invoice balances before retrying.");
+    } finally {
+      setWritingOffSelection(false);
+    }
+  };
   const allVisibleSelected = visibleInvoices.length > 0 && visibleInvoices.every((invoice) => selectedInvoiceIds.has(invoice.id));
   const toggleInvoiceSelection = (invoiceId) => {
     setSelectedInvoiceIds((current) => {
@@ -10185,11 +10251,16 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         </div>
         </div>
 
+        {selectionWriteOffMessage && <div className="notice" role="status">{selectionWriteOffMessage}</div>}
         {selectedInvoices.length > 0 && <div className="invoice-selection-bar">
           <div><b>{selectedInvoices.length} selected</b><span>{fmt(selectedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalCents || 0), 0), cur)} total</span></div>
           <div>
             <button type="button" className="btn sm btn-ghost" onClick={() => setSelectedInvoiceIds(new Set())}>Clear selection</button>
             <button type="button" className="btn sm btn-primary" disabled={printingInvoices} onClick={printSelectedInvoices}><Printer /> {printingInvoices ? "Loading audit..." : "Print selected"}</button>
+            {eligibleWriteOffs.length > 0 && <button type="button" className="btn sm btn-ghost"
+              disabled={writingOffSelection} onClick={writeOffSelectedInvoices}>
+              {writingOffSelection ? "Writing off..." : `Write off selected (${eligibleWriteOffs.length})`}
+            </button>}
           </div>
         </div>}
         {printAuditError ? <div className="formerr">{printAuditError}</div> : null}
@@ -11598,6 +11669,8 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
   const [invoiceRecovery, setInvoiceRecovery] = useState({ loading: true, canUsePayroll: false, canUseWallet: false });
   const [paymentError, setPaymentError] = useState("");
   const [recordingPayment, setRecordingPayment] = useState(false);
+  const [writingOff, setWritingOff] = useState(false);
+  const [writeOffError, setWriteOffError] = useState("");
   const [providerTransactionId, setProviderTransactionId] = useState("");
   const [stkPhone, setStkPhone] = useState("");
   const [stkAmount, setStkAmount] = useState("");
@@ -11989,6 +12062,26 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
           : "Kopo Kopo could not reserve this payment. No invoice was changed; please retry.");
     }
   };
+  const canWriteOff = ["owner", "admin"].includes(settlementRole) && invoiceCanBeWrittenOff(data, live);
+  const writeOffDebt = async () => {
+    const reason = window.prompt(`Write off ${fmt(out, cur)} for invoice ${live.number}? Enter the reason to confirm.`)?.trim();
+    if (!reason) return;
+    if (reason.length > 500) {
+      setWriteOffError("Use a reason of 500 characters or fewer.");
+      return;
+    }
+    setWritingOff(true);
+    setWriteOffError("");
+    const event = invoiceWriteOffEvent(live, reason);
+    try {
+      await publishSyncEvents([event], data, { management: true });
+      update((current) => mergeSyncEvents(current, [event]), { skipSync: true });
+    } catch {
+      setWriteOffError("Unable to confirm the write-off. Sync before retrying.");
+    } finally {
+      setWritingOff(false);
+    }
+  };
   const decideVoid = (decision) => {
     if (!voidInfo.request || voidInfo.status !== "pending") return;
     const reason = decisionReason.trim();
@@ -12125,7 +12218,16 @@ function InvoiceDetailModal({ inv, data, update, cur, user, initialMpesaCode = "
             <span>{voidInfo.decision?.reason || "No decision note supplied."}</span>
           </div>
         ) : null}
-        {!voidPending && !voidApproved && out > 0 ? (
+        {live.writeOff && <div className="notice">
+          <b>Written off: {fmt(live.writeOff.amountCents, cur)}</b>
+          <div>{live.writeOff.reason}</div>
+        </div>}
+        {canWriteOff && <button type="button" className="btn btn-ghost"
+          disabled={writingOff || recordingPayment || stkBusy} onClick={writeOffDebt}>
+          {writingOff ? "Writing off..." : "Write off debt"}
+        </button>}
+        {writeOffError && <div className="formerr" role="alert">{writeOffError}</div>}
+        {!writingOff && !voidPending && !voidApproved && out > 0 ? (
           <div className="settlement-box invoice-payment-panel">
             <div className="invoice-payment-head">
               <b>Record payment</b>
@@ -18552,7 +18654,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
   // Recovery history must survive settlement clearing the invoice's current carried-over flag.
   const carried = activeInvoices.filter((i) => invoiceWasEverCarriedOver(data, i) && inBranch(i.branchId));
   const recoveredList = carried
-    .filter((i) => invOutstanding(i) <= 0)
+    .filter((i) => !i.writeOff && invOutstanding(i) <= 0)
     .sort((a, b) => invoiceRecoveryTimestamp(data, b) - invoiceRecoveryTimestamp(data, a));
   const pendingList = carried.filter((i) => invIsDebt(i));
   const partialCount = carried.filter((i) => i.paidCents > 0 && invIsDebt(i)).length;
@@ -18600,7 +18702,7 @@ function ReportsTab({ data, initialTab, onOpenCashierCredit }) {
     };
     if (sub === "credit") return { name: "debt-recovery", headers: ["Invoice", "Cashier", "Customer", "Issued", "Recovered", "Total", "Outstanding", "State"], rows: carried.map((i) => {
       const recoveredAt = invoiceRecoveryTimestamp(data, i);
-      return [i.number, invoiceCashierName(i), i.customerName, dt(i.ts), invOutstanding(i) <= 0 && recoveredAt > 0 ? dt(recoveredAt) : "-", m(i.totalCents), m(invOutstanding(i)), invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt")];
+      return [i.number, invoiceCashierName(i), i.customerName, dt(i.ts), !i.writeOff && invOutstanding(i) <= 0 && recoveredAt > 0 ? dt(recoveredAt) : "-", m(i.totalCents), m(invOutstanding(i)), i.writeOff ? "written off" : (invOutstanding(i) <= 0 ? "recovered" : (i.paidCents > 0 ? "partial debt" : "debt"))];
     }) };
     if (sub === "expenses") return { name: "expenses", headers: ["Date", "Category", "Amount", "Note"], rows: periodExp.map((e) => [e.date, e.category, m(e.amountCents), e.note || ""]) };
     if (sub === "transfers") return { name: "transfers", headers: ["Transfer", "From", "To", "Product", "SKU", "Qty", "Date", "Status"], rows: transfers.flatMap((t) => normalizedTransferItems(t, data.products).map((item) => [t.number, bname(t.fromBranchId), bname(t.toBranchId), item.productName, item.sku, item.qty, new Date(t.ts).toLocaleString(), t.status || "completed"])) };
