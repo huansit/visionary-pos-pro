@@ -2540,10 +2540,14 @@ async function publishSyncEvents(events, data, { management = false, atomicWrite
     headers,
     cache: "no-store",
     body: JSON.stringify({ events: list, resetEpoch: await loadResetEpoch(), ...(atomicWriteOff ? { atomicWriteOff } : {}) }),
-  }, management ? SYNC_ADMIN_COMMAND_TIMEOUT_MS : SYNC_REQUEST_TIMEOUT_MS);
+  }, atomicWriteOff ? 60_000 : management ? SYNC_ADMIN_COMMAND_TIMEOUT_MS : SYNC_REQUEST_TIMEOUT_MS);
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((atomicWriteOff && result.rejected?.[0]?.reason)
-    || result.error || `push_failed_${response.status}`);
+  if (!response.ok) {
+    const rejection = atomicWriteOff ? result.rejected?.[0] : null;
+    const error = new Error(rejection?.reason || result.error || `push_failed_${response.status}`);
+    error.rejectedEventId = rejection?.id;
+    throw error;
+  }
   const rejected = Array.isArray(result.rejected) ? result.rejected : [];
   const accepted = new Set(result.accepted || []);
   if (rejected.length || list.some((event) => !accepted.has(event.id))) {
@@ -10059,7 +10063,12 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
       setWriteOffSelection(null);
       setSelectionWriteOffMessage(`Wrote off ${fmt(total, cur)} across ${count} invoices at ${branch.name}.`);
     } catch (error) {
-      setSelectionWriteOffMessage(invoiceWriteOffError(error));
+      const failedIndex = events.findIndex((event) => event.id === error.rejectedEventId);
+      const failedInvoice = invoices[failedIndex];
+      const reference = failedInvoice?.number || failedInvoice?.receiptNo || failedInvoice?.id;
+      setSelectionWriteOffMessage(reference
+        ? `Batch rejected at invoice ${reference}. ${invoiceWriteOffError(error)}`
+        : invoiceWriteOffError(error));
     } finally {
       setWritingOffSelection(false);
     }

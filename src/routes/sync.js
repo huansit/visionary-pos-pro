@@ -1439,15 +1439,15 @@ async function existingEvent(client, id) {
   return result.rows[0] || null;
 }
 
-async function invoiceVoidState(client, invoiceId) {
-  const result = await client.query(
+async function invoiceVoidState(client, invoiceId, rows) {
+  rows ??= (await client.query(
     `SELECT id, type, branch_id, server_ts, payload
        FROM events
       WHERE type IN ('invoiceVoidRequest', 'invoiceVoidDecision')
       ORDER BY server_ts ASC, id ASC`
-  );
-  const requests = result.rows.filter((row) => row.type === "invoiceVoidRequest" && row.payload?.invoiceId === invoiceId);
-  const decisions = result.rows.filter((row) => row.type === "invoiceVoidDecision" && row.payload?.invoiceId === invoiceId);
+  )).rows;
+  const requests = rows.filter((row) => row.type === "invoiceVoidRequest" && row.payload?.invoiceId === invoiceId);
+  const decisions = rows.filter((row) => row.type === "invoiceVoidDecision" && row.payload?.invoiceId === invoiceId);
   const decidedRequestIds = new Set(decisions.map((row) => row.payload?.requestId).filter(Boolean));
   return {
     requests,
@@ -1457,7 +1457,7 @@ async function invoiceVoidState(client, invoiceId) {
   };
 }
 
-async function processInvoiceWriteOff(client, event, req, deviceId, ts) {
+async function processInvoiceWriteOff(client, event, req, deviceId, ts, batchLedger) {
   if (!req.account || !["owner", "admin"].includes(syncRole(req.account))) {
     throw syncEventError("admin_authorization_required");
   }
@@ -1467,7 +1467,7 @@ async function processInvoiceWriteOff(client, event, req, deviceId, ts) {
       || typeof reason !== "string" || !reason.trim() || reason.trim().length > 500) {
     throw syncEventError("invoice_write_off_invalid");
   }
-  return withInventoryWriteLock(client, `invoice:${invoiceId}`, async () => {
+  const writeOff = async () => {
     const invoice = await existingEvent(client, invoiceId);
     const branchId = invoice?.branch_id || invoice?.branchId;
     if (invoice?.type !== "invoice" || !branchId || branchId !== eventBranchId(event)) {
@@ -1480,14 +1480,17 @@ async function processInvoiceWriteOff(client, event, req, deviceId, ts) {
       }
       return { id: event.id, branchId, ts: existing.server_ts };
     }
-    const voidState = await invoiceVoidState(client, invoiceId);
+    const voidState = await invoiceVoidState(client, invoiceId, batchLedger?.byInvoice.get(invoiceId) ?? (batchLedger ? [] : undefined));
     if (voidState.approved || voidState.pending || invoice.payload?.archived === true) {
       throw syncEventError("invoice_write_off_unavailable");
     }
-    const settlements = await client.query("SELECT payload FROM events WHERE type = 'invoiceSettlement'");
-    const paid = settlements.rows.reduce((current, { payload }) => payload?.invoiceId === invoiceId
+    const settlements = batchLedger ? (batchLedger.byInvoice.get(invoiceId) || [])
+      .filter(({ type }) => type === "invoiceSettlement")
+      : (await client.query("SELECT payload FROM events WHERE type = 'invoiceSettlement'")).rows;
+    const paymentTotal = await invoicePaymentTotal(client, invoiceId, batchLedger);
+    const paid = settlements.reduce((current, { payload }) => payload?.invoiceId === invoiceId
       ? Math.max(current, Number(payload.paidCents) || 0) : current, Math.max(
-      centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0), await invoicePaymentTotal(client, invoiceId)));
+      centsFromPayload(invoice.payload, ["paidCents"], ["paid"], 0), paymentTotal));
     const total = centsFromPayload(invoice.payload, ["totalCents"], ["total"], 0);
     if (total - paid !== amountCents) throw syncEventError("invoice_write_off_balance_changed");
     const savedTs = await insertAppendOnlyEvent(client, {
@@ -1496,16 +1499,42 @@ async function processInvoiceWriteOff(client, event, req, deviceId, ts) {
         recordedBy: req.account.name || req.account.email || "Admin" },
     }, "invoiceWriteOff", deviceId, ts);
     return { id: event.id, branchId, ts: savedTs };
-  });
+  };
+  return batchLedger ? writeOff() : withInventoryWriteLock(client, `invoice:${invoiceId}`, writeOff);
 }
 
-async function invoicePaymentTotal(client, invoiceId) {
-  const result = await client.query("SELECT id, type, payload FROM events WHERE type IN ('payment', 'paymentRelease')");
-  const releasedPaymentIds = new Set(result.rows
-    .filter((row) => row.type === "paymentRelease")
-    .map((row) => String(row.payload?.paymentId || "").trim())
-    .filter(Boolean));
-  return result.rows.reduce((total, row) => {
+function releasedInvoicePaymentIds(rows) {
+  return new Set(rows.filter(({ type }) => type === "paymentRelease")
+    .map(({ payload }) => String(payload?.paymentId || "").trim()).filter(Boolean));
+}
+
+async function loadInvoiceWriteOffLedger(client, events) {
+  const invoiceIds = new Set(events.map((event) => event.payload?.invoiceId).filter((id) => typeof id === "string" && id));
+  for (const id of [...invoiceIds].sort()) {
+    if (!isPgMem) await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`invoice:${id}`]);
+  }
+  const { rows } = await client.query(`
+    SELECT id, type, payload FROM events
+    WHERE type IN ('payment', 'paymentRelease', 'invoiceSettlement', 'invoiceVoidRequest', 'invoiceVoidDecision')
+    ORDER BY server_ts ASC, id ASC
+  `);
+  const byInvoice = new Map();
+  for (const row of rows) {
+    const ids = new Set([row.payload?.invoiceId, row.type === "payment" ? row.payload?.orderId : null]);
+    for (const id of ids) {
+      if (!invoiceIds.has(id)) continue;
+      if (!byInvoice.has(id)) byInvoice.set(id, []);
+      byInvoice.get(id).push(row);
+    }
+  }
+  return { byInvoice, releasedPaymentIds: releasedInvoicePaymentIds(rows) };
+}
+
+async function invoicePaymentTotal(client, invoiceId, batchLedger) {
+  const rows = batchLedger ? batchLedger.byInvoice.get(invoiceId) || []
+    : (await client.query("SELECT id, type, payload FROM events WHERE type IN ('payment', 'paymentRelease')")).rows;
+  const releasedPaymentIds = batchLedger?.releasedPaymentIds || releasedInvoicePaymentIds(rows);
+  return rows.reduce((total, row) => {
     if (row.type !== "payment") return total;
     if (row.payload?.invoiceId !== invoiceId && row.payload?.orderId !== invoiceId) return total;
     const paymentId = String(row.payload?.id || row.id || "").trim();
@@ -2338,6 +2367,9 @@ router.post("/push", requireSyncWrite, async (req, res) => {
 
   try {
     await client.query("BEGIN");
+    const writeOffLedger = atomicWriteOff && !isMySql
+      && ["owner", "admin"].includes(syncRole(req.account || {}))
+      ? await loadInvoiceWriteOffLedger(client, events) : undefined;
     for (const [eventIndex, ev] of events.entries()) {
       if (!ev || !ev.id || !ev.type) {
         rejected.push({ id: ev?.id, reason: "missing_id_or_type" });
@@ -2392,7 +2424,7 @@ router.post("/push", requireSyncWrite, async (req, res) => {
           acceptedId = result.id;
           acceptedBranchId = result.branchId || acceptedBranchId;
         } else if (type === "invoiceWriteOff") {
-          const result = await processInvoiceWriteOff(client, guardedEvent, req, recordDeviceId, nextServerTs());
+          const result = await processInvoiceWriteOff(client, guardedEvent, req, recordDeviceId, nextServerTs(), writeOffLedger);
           acceptedTs = result.ts;
           acceptedId = result.id;
           acceptedBranchId = result.branchId;
