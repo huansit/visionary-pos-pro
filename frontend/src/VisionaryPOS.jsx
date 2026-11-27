@@ -5126,6 +5126,10 @@ body{overscroll-behavior:none}
 .navside.collapsed .navsec svg{width:15px;height:15px}
 .navside.collapsed .navlabel{display:none}
 .admincontent{min-width:0}
+.branch-disabled-screen{min-height:calc(100dvh - 130px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+.branch-disabled-screen h1{margin:0;color:var(--danger);font-size:clamp(2.5rem,7vw,6rem);line-height:1.05}
+.branch-disabled-screen p{margin:0;font-size:clamp(1rem,2vw,1.4rem)}
+.branch-disabled-history{margin-bottom:16px}
 @media (max-width:1100px){
   .adminwrap{grid-template-columns:210px 1fr;gap:16px}
   .adminwrap.nav-collapsed{grid-template-columns:60px 1fr}
@@ -9435,6 +9439,7 @@ function InsightsTab({ data, online }) {
 function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken, online, onSyncNow, onSyncAll, environment, onRefreshEnvironment, onCleanReset, maintenance, onRefreshMaintenance, onRunMaintenance, deviceTheme, onDeviceThemeChange }) {
   const [tab, setTab] = useState("dashboard");
   const [invoiceFocus, setInvoiceFocus] = useState(null);
+  const [disabledBranchHistoryId, setDisabledBranchHistoryId] = useState("");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const workspaceRootRef = useRef(null);
@@ -9498,6 +9503,7 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     if (canAccess("payments")) setTab("payments");
   };
   const activateWorkspace = (tabId) => {
+    setDisabledBranchHistoryId("");
     setMobileMoreOpen(false);
     if (tabId === "payments") {
       openDebtPayments();
@@ -9559,6 +9565,17 @@ function AdminWorkspace({ data, update, branch, user, role, rights, sessionToken
     );
   };
   const render = () => {
+    if (branch.active === false && (tab === "dashboard"
+      || (tab === "invoices" && disabledBranchHistoryId !== branch.id))) {
+      return <section className="branch-disabled-screen" role="status">
+        <h1>Branch Disabled</h1>
+        <p>{branch.name}</p>
+        {tab === "invoices" && canAccess("invoices") && <button type="button"
+          className="btn btn-ghost" onClick={() => setDisabledBranchHistoryId(branch.id)}>
+          View invoice history
+        </button>}
+      </section>;
+    }
     if (branch.active === false && ["pricing", "products", "stock", "purchases", "borrowing", "externalLoans",
       "mpesa", "cash", "payments", "expenses", "terminals", "glovo"].includes(tab)) {
       return <div className="notice" role="status">{branch.name} is disabled. An admin can enable it in Branches.</div>;
@@ -10215,8 +10232,12 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
 
   return (
     <div className={"invoice-workspace" + (workspaceView === "invoices" ? " invoice-list-active" : "") + (workspaceView === "invoices" && mobileFiltersOpen ? " mobile-filters-open" : "")}>
-      <PageHead title="Sales & Invoices" sub={`Review sales, settle balances, and close the day - ${branch.name}`}
-        right={canCloseCurrentBusinessDay ? <button
+      {branch.active === false && <div className="notice branch-disabled-history" role="status">
+        <b>Branch Disabled</b> · {branch.name}
+      </div>}
+      <PageHead title="Sales & Invoices" sub={branch.active === false ? `Invoice history - ${branch.name}`
+        : `Review sales, settle balances, and close the day - ${branch.name}`}
+        right={branch.active !== false && canCloseCurrentBusinessDay ? <button
           className="btn sm btn-primary"
           disabled={sinceEndDay.length === 0}
           title={sinceEndDay.length === 0 ? `There are no new invoices to close for ${branch.name}.` : "Close this branch's current invoice period"}
@@ -10319,20 +10340,20 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         <div className="invoice-settlement-layout">
         <div className="invoice-settlement-main invoice-results-scroll">
           {filtered.length === 0 ? <div className="notice">No invoices match these filters.</div> : (
-            <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={() => setQuickSettlement(inv)} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
+            <>{mobileInvoiceLayout ? <div className="invoice-mobile-list">{visibleInvoices.map((inv) => <InvoiceMobileCard key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={branch.active !== false ? () => setQuickSettlement(inv) : undefined} />)}</div> : <div className="tablewrap tblscroll lg invoice-table-wrap invoice-table-desktop"><table className="tbl invoice-table">
               <thead><tr><th style={{ width: 44 }}><input type="checkbox" aria-label="Select all visible invoices" checked={allVisibleSelected} onChange={toggleAllVisibleInvoices} /></th><th>Invoice</th><th>Customer & products</th><th>Cashier</th><th className="amt">Total</th><th className="amt">Balance</th><th>Status</th></tr></thead>
-              <tbody>{visibleInvoices.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={() => setQuickSettlement(inv)} />)}</tbody>
+              <tbody>{visibleInvoices.map((inv) => <InvoiceRow key={inv.id} inv={inv} products={invoiceProductSummary(inv)} cur={cur} voidInfo={invoiceVoidState(data, inv.id)} selected={selectedInvoiceIds.has(inv.id)} onToggle={() => toggleInvoiceSelection(inv.id)} onOpen={() => setDetail(inv)} onSettle={branch.active !== false ? () => setQuickSettlement(inv) : undefined} />)}</tbody>
             </table></div>}
             {hasMoreInvoices ? <button type="button" className="btn btn-ghost invoice-load-more" onClick={() => setVisibleInvoiceCount((count) => count + 40)}>Show 40 more invoices ({filtered.length - visibleInvoices.length} remaining)</button> : null}</>
           )}
         </div>
-        <MpesaSettlementRail
+        {branch.active !== false && <MpesaSettlementRail
           branch={branch}
           timeZone={timeZone}
           businessDayStart={branchSinceEndDay > 0 ? new Date(branchSinceEndDay + 1).toISOString() : currentBusinessDayStart}
           readyCode={readyMpesaCode}
           onUseCode={setReadyMpesaCode}
-        />
+        />}
         </div>
       </div>}
 
@@ -10356,8 +10377,8 @@ function InvoicesTab({ data, update, branch, user, initialCashier = "all", initi
         )}
       </div>}
 
-      {eod && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
-      {quickSettlement && <InvoiceDetailModal inv={quickSettlement} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} settlementOnly onClose={() => setQuickSettlement(null)} />}
+      {eod && (branch.active !== false || eod.mode === "view") && <EndOfDayModal data={data} update={update} branch={branch} user={user} doc={eod.doc} onClose={() => setEod(null)} />}
+      {branch.active !== false && quickSettlement && <InvoiceDetailModal inv={quickSettlement} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} settlementOnly onClose={() => setQuickSettlement(null)} />}
       {detail && <InvoiceDetailModal inv={detail} data={data} update={update} cur={cur} user={user} initialMpesaCode={readyMpesaCode} onReprint={(live) => setReceipt(live)} onClose={() => setDetail(null)} />}
       {receipt && <InvoiceReceipt inv={receipt} cur={cur} store={branchForInvoice(receipt).name} location={branchForInvoice(receipt).location} till={branchForInvoice(receipt).mpesaTill || data.settings.mpesaTill} environmentMode={environmentMode} onClose={() => setReceipt(null)} />}
     </div>
@@ -11660,7 +11681,7 @@ function InvoiceRow({ inv, products, cur, voidInfo, selected, onToggle, onOpen, 
       <td className="amt">{fmt(out, cur)}</td>
       <td>
         {showStatus ? <span className={"ist " + displayClass}>{displayStatus}</span> : null}
-        {out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button> : null}
+        {onSettle && out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button> : null}
         {voidStatus === "rejected" ? <div className="mt2">Void request rejected</div> : null}
       </td>
     </tr>
@@ -11695,7 +11716,7 @@ function InvoiceMobileCard({ inv, products, cur, voidInfo, selected, onToggle, o
         <span className={out > 0 ? "due" : ""}><small>Balance</small><b>{fmt(out, cur)}</b></span>
         <span><small>Cashier</small><b>{invoiceCashierName(inv) || "Unknown"}</b></span>
       </div>
-      {out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <footer><button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button></footer> : null}
+      {onSettle && out > 0 && voidStatus !== "pending" && voidStatus !== "approved" ? <footer><button type="button" className="invoice-settle-action" onClick={(event) => { event.stopPropagation(); onSettle?.(); }}><CreditCard /> Settle</button></footer> : null}
     </article>
   );
 }
@@ -16306,8 +16327,17 @@ function BranchesTab({ data, update, canToggle }) {
 
 /* ---- Branch Transfer (Stock Borrowing) ---- */
 function BorrowingTab({ data, update, approver, approverRole }) {
-  const [fromB, setFromB] = useState(data.branches[1]?.id || data.branches[0]?.id || "");
-  const [toB, setToB] = useState(data.branches[0]?.id || "");
+  const activeBranches = data.branches.filter((branch) => branch.active !== false);
+  const activeBranchIds = new Set(activeBranches.map(({ id }) => id));
+  const [fromB, setFromB] = useState(activeBranches[1]?.id || activeBranches[0]?.id || "");
+  const [toB, setToB] = useState(activeBranches[1] ? activeBranches[0].id : "");
+  const transferBranchesEnabled = (from, to) => activeBranchIds.has(from) && activeBranchIds.has(to);
+  const selectedBranchesEnabled = transferBranchesEnabled(fromB, toB);
+  const transferBranchOptions = data.branches.map((branch) => (
+    <option key={branch.id} value={branch.id} disabled={!activeBranchIds.has(branch.id)}>
+      {branch.name}{branch.active === false ? " (Disabled)" : ""}
+    </option>
+  ));
   const [q, setQ] = useState("");
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState("");
@@ -16470,6 +16500,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const addLine = () => {
     setErr("");
     if (!product) return setErr("Search and select a product to add.");
+    if (!selectedBranchesEnabled) return setErr("Choose two enabled branches.");
     if (fromB === toB) return setErr("Source and destination branches must be different.");
     const n = parseInt(qty, 10);
     if (!n || n <= 0) return setErr("Enter a quantity greater than zero.");
@@ -16482,6 +16513,10 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const removeLine = (pid) => setLines((ls) => ls.filter((l) => l.productId !== pid));
 
   const useTransferSuggestion = (suggestion) => {
+    if (!transferBranchesEnabled(suggestion.sourceBranchId, suggestion.destinationBranchId)) {
+      setSuggestionMessage("Choose a transfer between enabled branches.");
+      return;
+    }
     if (lines.length > 0 && (fromB !== suggestion.sourceBranchId || toB !== suggestion.destinationBranchId)) {
       setSuggestionMessage("Save the current transfer before preparing a suggestion for another branch route.");
       return;
@@ -16580,6 +16615,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const saveAll = () => {
     setErr("");
     if (transferSaveLockRef.current) return;
+    if (!selectedBranchesEnabled) return setErr("Choose two enabled branches.");
     if (fromB === toB) return setErr("Source and destination branches must be different.");
     if (lines.length === 0) return setErr("Add at least one product to the transfer.");
     transferSaveLockRef.current = true;
@@ -16624,6 +16660,10 @@ function BorrowingTab({ data, update, approver, approverRole }) {
   const reviewCashierTransferRequest = (request, decision) => {
     setRequestReviewError("");
     if (transferDecisionsByRequest.has(request.id)) return;
+    if (!transferBranchesEnabled(request.fromBranchId, request.toBranchId)) {
+      setRequestReviewError("This request involves a disabled branch.");
+      return;
+    }
     const requestItems = normalizedTransferItems(request, data.products).filter((item) => Number(item.qty) > 0);
     if (decision === "approved") {
       for (const item of requestItems) {
@@ -16719,10 +16759,10 @@ function BorrowingTab({ data, update, approver, approverRole }) {
       <div className="addpanel transfer-builder">
         <div className="grid2 transfer-route-grid">
           <div><label className="label">From branch</label>
-            <select className="select" value={fromB} onChange={(e) => { setFromB(e.target.value); setProductId(""); setQ(""); setTransferScanMessage(""); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <select className="select" value={fromB} onChange={(e) => { setFromB(e.target.value); setProductId(""); setQ(""); setTransferScanMessage(""); setErr(""); }}><option value="">Choose a branch</option>{transferBranchOptions}</select></div>
           <span className="transfer-route-arrow" aria-hidden="true"><ArrowRight /></span>
           <div><label className="label">To branch</label>
-            <select className="select" value={toB} onChange={(e) => { setToB(e.target.value); setErr(""); }}>{data.branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <select className="select" value={toB} onChange={(e) => { setToB(e.target.value); setErr(""); }}><option value="">Choose a branch</option>{transferBranchOptions}</select></div>
         </div>
         <div className="field transfer-product-field"><label className="label">Product search</label>
           <div className="transfer-product-search">
@@ -16768,8 +16808,11 @@ function BorrowingTab({ data, update, approver, approverRole }) {
           <div><label className="label">Quantity to transfer</label>
             <input ref={transferQtyRef} className="input" inputMode="numeric" value={qty} onChange={(e) => { setQty(e.target.value.replace(/\D/g, "")); setErr(""); }} placeholder="0" /></div>
         </div>
+        {!selectedBranchesEnabled && <div className="notice" role="status">
+          {activeBranches.length < 2 ? "Transfers require two enabled branches." : "Choose two enabled branches."}
+        </div>}
         {err && <div className="alert"><AlertCircle />{err}</div>}
-        <button className="btn btn-ghost transfer-add-line" style={{ marginTop: 14 }} onClick={addLine}><Plus /> Add to transfer</button>
+        <button className="btn btn-ghost transfer-add-line" style={{ marginTop: 14 }} disabled={!selectedBranchesEnabled || fromB === toB} onClick={addLine}><Plus /> Add to transfer</button>
 
         {lines.length > 0 && (
           <div className="tablewrap" style={{ marginTop: 14 }}>
@@ -16784,7 +16827,7 @@ function BorrowingTab({ data, update, approver, approverRole }) {
         )}
         <div className="field transfer-note" style={{ marginTop: 14 }}><label className="label">Transfer notes</label>
           <input className="input" placeholder="Reason or reference (applies to whole transfer)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
-        <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
+        <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={!selectedBranchesEnabled || fromB === toB || lines.length === 0} onClick={saveAll}><ArrowLeftRight /> Save transfer ({lines.length} item{lines.length === 1 ? "" : "s"}{totalUnits ? " · " + totalUnits + " units" : ""})</button>
       </div>
 
       {pendingTransferRequests.length > 0 && <section className="transfer-approval-queue">
@@ -16793,10 +16836,11 @@ function BorrowingTab({ data, update, approver, approverRole }) {
         <div className="transfer-approval-list">{pendingTransferRequests.map((request) => {
           const items = normalizedTransferItems(request, data.products).filter((item) => Number(item.qty) > 0);
           const units = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+          const branchDisabled = !transferBranchesEnabled(request.fromBranchId, request.toBranchId);
           return <div className="transfer-approval-row" key={request.id}>
             <div className="transfer-approval-main"><strong>{request.cashierName || "Cashier"}</strong><span>{bn(request.fromBranchId)} <ArrowRight /> {bn(request.toBranchId)}</span><small>{items.map((item) => `${item.productName} × ${item.qty}`).join(", ")}{request.note ? ` · ${request.note}` : ""}</small></div>
             <div className="transfer-approval-meta"><span>{units} unit{units === 1 ? "" : "s"}</span><small>{dt(request.requestedAt || request.ts)}</small></div>
-            <div className="transfer-approval-actions"><button type="button" className="btn sm btn-ghost" onClick={() => reviewCashierTransferRequest(request, "rejected")}>Reject</button><button type="button" className="btn sm btn-primary" onClick={() => reviewCashierTransferRequest(request, "approved")}><Check /> Approve</button></div>
+            <div className="transfer-approval-actions">{branchDisabled && <span>Branch disabled</span>}<button type="button" className="btn sm btn-ghost" disabled={branchDisabled} onClick={() => reviewCashierTransferRequest(request, "rejected")}>Reject</button><button type="button" className="btn sm btn-primary" disabled={branchDisabled} onClick={() => reviewCashierTransferRequest(request, "approved")}><Check /> Approve</button></div>
           </div>;
         })}</div>
       </section>}
