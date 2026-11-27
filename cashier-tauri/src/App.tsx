@@ -788,7 +788,7 @@ export default function App() {
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>(DEFAULT_CASHIER_EXPENSE_CATEGORIES);
   const [businessDays, setBusinessDays] = useState<BusinessDayPeriod[]>([]);
   const [cart, setCart] = useState<Record<string, CartLine>>({});
-  const [serviceType, setServiceType] = useState<NonNullable<Receipt["serviceType"]>>("dine_in");
+  const [serviceType, setServiceType] = useState<Receipt["serviceType"]>(undefined);
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Products");
   const [customerName, setCustomerName] = useState("");
@@ -838,6 +838,7 @@ export default function App() {
   const accountRole = String(account?.role || account?.kind || "").trim().toLowerCase();
   const canManageStockCounts = ["owner", "admin", "manager", "supervisor"].includes(accountRole);
   const canChooseService = terminal?.branchId === "b_cpt" && Boolean(account?.rights?.includes("cape_town_takeaway"));
+  const choosingService = canChooseService && !serviceType;
   const takeaway = canChooseService && serviceType === "takeaway";
   const pricedProduct = (product: Product) => takeaway
     ? { ...product, priceCents: product.takeawayPriceCents || 0 }
@@ -910,7 +911,7 @@ export default function App() {
   }, [carriedDebts, customerName]);
   const customerOutstandingDebt = customerDebtInvoices.reduce((sum, invoice) => sum + outstanding(invoice), 0);
   const creditLocked = customerOutstandingDebt > 0;
-  const canCompleteSale = cartLines.length > 0
+  const canCompleteSale = !choosingService && cartLines.length > 0
     && Boolean(customerName.trim())
     && !creditLocked;
   const updateStatusLabel = `v${APP_VERSION} · manual updates`;
@@ -1206,10 +1207,10 @@ export default function App() {
     };
   }, [account?.id, mpesaBadgeRefreshNonce, mpesaOpen, sessionToken, terminal?.branchId, terminal?.uuid]);
 
-  useScanner((barcode) => handleScan(barcode), Boolean(account) && scannerOn && !transferRequestOpen && !mpesaOpen);
+  useScanner((barcode) => handleScan(barcode), Boolean(account) && !choosingService && scannerOn && !transferRequestOpen && !mpesaOpen);
 
   useEffect(() => {
-    if (!account) return;
+    if (!account || choosingService) return;
     const handler = (event: KeyboardEvent) => {
       if (event.key === "F2") {
         event.preventDefault();
@@ -1235,7 +1236,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [account, cartLines.length, customerName, totalCents]);
+  }, [account, cartLines.length, customerName, totalCents, choosingService]);
 
   useEffect(() => {
     if (!account) return;
@@ -1380,6 +1381,7 @@ export default function App() {
   }
 
   function addToCart(product: Product) {
+    if (choosingService) return false;
     const currentQty = cart[product.id]?.qty || 0;
     const blocked = productSaleBlockReason(pricedProduct(product), currentQty);
     if (blocked) {
@@ -1459,7 +1461,6 @@ export default function App() {
       setReceipt(issuedReceipt);
       setLastReceipt(issuedReceipt);
       setCart({});
-      setServiceType("dine_in");
       setCustomerName("");
       setCheckoutFingerprintOpen(false);
       setStatus(`Open invoice ${assignedReceiptNumber} issued.`);
@@ -1493,6 +1494,7 @@ export default function App() {
   }
 
   function resetCashierSessionUi() {
+    setServiceType(undefined);
     setCart({});
     setCustomerName("");
     setReceipt(null);
@@ -1589,6 +1591,21 @@ export default function App() {
         {updateModal}
       </>
     );
+  }
+
+  if (choosingService) {
+    return <main className="terminal-role-notice">
+      <section>
+        <span>Cape Town</span>
+        <h1>Choose sale service</h1>
+        <p>Dine in uses Cape Town prices. Take away uses Sipcity prices.</p>
+        <div>
+          <button type="button" onClick={() => setServiceType("dine_in")}>Dine in</button>
+          <button type="button" onClick={() => setServiceType("takeaway")}>Take away</button>
+          <button type="button" onClick={() => { void handleLogout(); }}>Sign out</button>
+        </div>
+      </section>
+    </main>;
   }
 
   // Cashier terminals intentionally do not expose the web administration

@@ -4596,6 +4596,7 @@ body{overscroll-behavior:none}
 .purchase-product-result{width:100%;display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left;border:0;border-radius:10px;background:transparent;color:var(--text);padding:10px 12px;font:inherit;cursor:pointer}
 .purchase-product-result:hover,.purchase-product-result:focus-visible{background:var(--surface-2);outline:none}
 .purchase-product-result span:first-child{min-width:0;display:grid;gap:2px}.purchase-product-result b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.purchase-product-result small{color:var(--muted);font-size:12px}.purchase-product-result span:last-child{flex:none;color:var(--muted);font-size:12px;white-space:nowrap}.purchase-product-empty{padding:12px;color:var(--muted);font-size:13px}
+.cashier-service-picker{display:grid;place-items:center;min-height:65dvh;padding:16px}.cashier-service-picker>.addpanel{width:min(100%,480px)}
 .cashier-service-choice{display:flex;align-items:center;gap:12px;margin:8px 0}.cashier-service-choice .select{width:auto}
 .posgridwrap{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
 .posgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:12px}
@@ -7769,7 +7770,7 @@ export default function VisionPOS() {
           {view === "register" && (session && cashierBranch
             ? cashierBranch.active === false
               ? <CloudDataRecovery title="Branch disabled" message={`${cashierBranch.name} is closed for operations. Sync after an admin enables the branch to reopen this register.`} syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />
-              : <Register data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
+              : <Register key={session.id + ":" + cashierBranch.id} data={data} update={update} online={online} employee={session} branch={cashierBranch} environmentMode={activeEnvironmentMode} />
             : <CloudDataRecovery title="Restoring cashier workspace" message="This device has a valid login, but its local branch catalog is missing. VISIONPOS is syncing from the cloud automatically; use Sync now if it takes more than a few seconds." syncError={syncError} onSync={recoverCloudData} onSignOut={signOutSession} />)}
           {view === "admin" && (restoringWorkspace
             ? <CloudDataRecovery title="Loading current workspace" message="Your latest cloud workspace is being verified before opening." loading={!syncError} complete={workspaceSnapshotComplete} syncError={syncError} onSync={() => recoverCloudData({ workspace: true })} onSignOut={signOutSession} />
@@ -8350,7 +8351,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   const cur = data.settings.currency;
   const reorder = data.settings.reorderLevel || 4;
   const [cart, setCart] = useState({});
-  const [serviceType, setServiceType] = useState("dine_in");
+  const [serviceType, setServiceType] = useState("");
   const [q, setQ] = useState("");
   const [ident, setIdent] = useState("");
   const [note, setNote] = useState("");
@@ -8386,6 +8387,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
 
   const branchProducts = branchProductsUnique(data, branch.id).filter(productIsEnabled);
   const canChooseService = branch.id === "b_cpt" && hasRight(employee.rights, "cape_town_takeaway");
+  const choosingService = canChooseService && !serviceType;
   const takeaway = canChooseService && serviceType === "takeaway";
   const sipcityProducts = useMemo(() => new Map(
     branchProductsUnique(data, "b_sip").filter((product) => {
@@ -8444,7 +8446,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
   }, [employee.id, branch.id]);
 
   const add = (p) => {
-    if (!p) return false;
+    if (!p || choosingService) return false;
     if (!productIsEnabled(p)) {
       setSaleErr(p.name + " is disabled and cannot be sold.");
       return false;
@@ -8555,7 +8557,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     appendBarcodeScanLog({ barcode, status: ok ? "sell:added" : "sell:out_of_stock", productId: hit.product.id });
     if (ok) setPtab("cart");
   };
-  useBarcodeScanner({ enabled: scannerOn && ptab !== "invoices" && !pinPrompt && !scanProduct, mode: "sell", onScan: handleSellScan });
+  useBarcodeScanner({ enabled: !choosingService && scannerOn && ptab !== "invoices" && !pinPrompt && !scanProduct, mode: "sell", onScan: handleSellScan });
   useEffect(() => {
     if (ptab === "products" && scannerOn && !pinPrompt && !scanProduct) scanFocus();
   }, [ptab, scannerOn, pinPrompt, scanProduct]);
@@ -8619,7 +8621,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
   }); // eslint-disable-line
   const startCheckout = () => {
-    if (lines.length === 0 || ident.trim() === "") return;
+    if (choosingService || lines.length === 0 || ident.trim() === "") return;
     if (disabledSaleLine) {
       setSaleErr("Cannot complete sale: " + disabledSaleLine.name + " has been disabled by an administrator.");
       notifyScan("Sale blocked: a product is disabled.", "error");
@@ -8693,7 +8695,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       ...(canChooseService ? { serviceType } : {}), method: "Invoice", carriedOver: false, ts, synced };
     const movements = lines.map((l) => { const product = data.products.find((entry) => entry.id === l.productId); return { id: uid("mv"), productId: l.productId, branchId: branch.id, invoiceId: inv.id, qty: -l.qty, unitCostCents: product ? branchInventoryCostCents(data, product, branch.id) : 0, reason: "Sale " + inv.number, ts, synced }; });
     update((d) => ({ ...d, invoices: [...d.invoices, inv], stockMovements: [...d.stockMovements, ...movements] }));
-    setReceipt(inv); setCart({}); setIdent(""); setNote(""); setServiceType("dine_in");
+    setReceipt(inv); setCart({}); setIdent(""); setNote("");
   };
   const holdSale = () => { if (lines.length === 0) return; setHolds((h) => [...h, { id: uid("hold"), cart, ident, serviceType, ts: now(), count: itemCount, total }]); setCart({}); setIdent(""); setFlash("Sale held."); };
   const resume = (h) => { setServiceType(h.serviceType || "dine_in"); setCart(h.cart); setIdent(h.ident || ""); setHolds((hs) => hs.filter((x) => x.id !== h.id)); setPtab("cart"); };
@@ -8701,7 +8703,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     const onKey = (e) => {
       const tag = String(document.activeElement?.tagName || "").toLowerCase();
       const isEditing = document.activeElement?.isContentEditable || tag === "input" || tag === "textarea" || tag === "select";
-      if (pinPrompt || scanProduct || receipt || debtsOpen || exp) return;
+      if (choosingService || pinPrompt || scanProduct || receipt || debtsOpen || exp) return;
       if (e.key === "F2") { e.preventDefault(); setPtab("products"); scanFocus(true); }
       if (e.key === "F4") { e.preventDefault(); startCheckout(); }
       if (e.key === "F6") { e.preventDefault(); holdSale(); scanFocus(true); }
@@ -8710,7 +8712,7 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinPrompt, scanProduct, receipt, debtsOpen, exp, lines.length, ident, cart, total, serviceType]); // eslint-disable-line
+  }, [pinPrompt, scanProduct, receipt, debtsOpen, exp, lines.length, ident, cart, total, serviceType, choosingService]); // eslint-disable-line
   const saveExp = () => {
     const c = Math.round(parseFloat(exp.amount) * 100); if (!c || c <= 0) return;
     const status = c > APPROVAL_LIMIT ? "pending" : "approved";
@@ -8748,6 +8750,18 @@ function Register({ data, update, online, employee, branch, environmentMode = "t
       </span>
     </div>
   );
+
+  if (choosingService) {
+    return <section className="cashier-service-picker">
+      <div className="addpanel">
+        <PageHead title="Choose sale service" sub="Dine in uses Cape Town prices. Take away uses Sipcity prices." />
+        <div className="grid2">
+          <button type="button" className="btn btn-primary" onClick={() => setServiceType("dine_in")}>Dine in</button>
+          <button type="button" className="btn btn-primary" onClick={() => setServiceType("takeaway")}>Take away</button>
+        </div>
+      </div>
+    </section>;
+  }
 
   return (
     <div className="fade cashier-workstation">
